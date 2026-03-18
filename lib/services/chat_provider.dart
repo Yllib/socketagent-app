@@ -502,6 +502,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       } catch (_) {
         _serverConfigs = [];
       }
+      // Migrate old relay URLs to wss://
+      bool relayMigrated = false;
+      _serverConfigs = _serverConfigs.map((c) {
+        if (c.relayUrl == 'ws://jarofdirt.info:9988') {
+          relayMigrated = true;
+          return c.copyWith(relayUrl: 'wss://relay.jarofdirt.info');
+        }
+        return c;
+      }).toList();
+      if (relayMigrated) await _saveServerConfigs();
     }
     // Migrate old single-server config if no multi-server configs exist
     if (_serverConfigs.isEmpty && _serverHost.isNotEmpty) {
