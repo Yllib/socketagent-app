@@ -1,0 +1,45 @@
+name: app
+description: "Claude Voice Assistant - Flutter Chat App with Voice Support"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  speech_to_text: ^7.0.0
+  web_socket_channel: ^3.0.0
+  provider: ^6.1.0
+  google_fonts: ^8.0.0
+  shared_preferences: ^2.3.0
+  flutter_secure_storage: ^9.2.2
+  flag_secure: ^2.0.2
+  flutter_markdown: ^0.7.7+1
+  url_launcher: ^6.3.2
+  flutter_tts: 4.1.0
+  path_provider: ^2.1.0
+  open_filex: ^4.5.0
+  file_picker: ^8.0.0
+  flutter_local_notifications: ^20.1.0
+  timezone: ^0.10.0
+  flutter_timezone: ^3.0.1
+  pinenacl: ^0.6.0
+  mobile_scanner: ^6.0.0
+  qr_flutter: ^4.1.0
+  webview_flutter: ^4.10.0
+  http: ^1.2.0
+  just_audio: ^0.10.5
+  sherpa_onnx: ^1.12.25
+  record: ^6.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true

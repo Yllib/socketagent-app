@@ -1,0 +1,1287 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../services/chat_provider.dart';
+import '../services/websocket_service.dart';
+import '../models/server_config.dart';
+import '../widgets/folder_browser_screen.dart';
+import 'home_screen.dart';
+
+class ScheduledTasksScreen extends StatefulWidget {
+  const ScheduledTasksScreen({super.key});
+
+  @override
+  State<ScheduledTasksScreen> createState() => _ScheduledTasksScreenState();
+}
+
+class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
+  final Set<String> _expandedTasks = {};
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'pending':
+        return Colors.orange;
+      case 'running':
+        return Colors.blue;
+      case 'completed':
+        return Colors.green;
+      case 'failed':
+        return Colors.red;
+      case 'cancelled':
+        return Colors.grey;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  IconData _statusIcon(String status) {
+    switch (status) {
+      case 'pending':
+        return Icons.schedule;
+      case 'running':
+        return Icons.play_circle_outline;
+      case 'completed':
+        return Icons.check_circle_outline;
+      case 'failed':
+        return Icons.error_outline;
+      case 'cancelled':
+        return Icons.cancel_outlined;
+      default:
+        return Icons.help_outline;
+    }
+  }
+
+  String _formatTime(String? isoString) {
+    if (isoString == null) return '';
+    final dt = DateTime.tryParse(isoString)?.toLocal();
+    if (dt == null) return isoString;
+    final now = DateTime.now();
+    final diff = dt.difference(now);
+
+    if (diff.isNegative) {
+      if (diff.inMinutes.abs() < 1) return 'just now';
+      if (diff.inHours.abs() < 1) return '${diff.inMinutes.abs()}m ago';
+      if (diff.inDays.abs() < 1) return '${diff.inHours.abs()}h ago';
+      return '${diff.inDays.abs()}d ago';
+    } else {
+      if (diff.inMinutes < 1) return 'in < 1m';
+      if (diff.inHours < 1) return 'in ${diff.inMinutes}m';
+      if (diff.inDays < 1) return 'in ${diff.inHours}h';
+      return 'in ${diff.inDays}d';
+    }
+  }
+
+  String _formatDateTime(String? isoString) {
+    if (isoString == null) return '';
+    final dt = DateTime.tryParse(isoString)?.toLocal();
+    if (dt == null) return isoString;
+    final months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
+    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
+    final min = dt.minute.toString().padLeft(2, '0');
+    return '${months[dt.month - 1]} ${dt.day}, $h:$min $ampm';
+  }
+
+  String _recurrenceLabel(Map<String, dynamic>? recurrence) {
+    if (recurrence == null) return 'Once';
+    switch (recurrence['type'] as String? ?? 'once') {
+      case 'daily':
+        return 'Daily';
+      case 'weekly':
+        return 'Weekly';
+      case 'monthly':
+        return 'Monthly';
+      case 'custom':
+        final ms = recurrence['intervalMs'] as int? ?? 0;
+        final totalMinutes = ms ~/ 60000;
+        final h = totalMinutes ~/ 60;
+        final m = totalMinutes % 60;
+        if (h > 0 && m > 0) return 'Every ${h}h ${m}m';
+        if (h > 0) return 'Every ${h}h';
+        if (m > 0) return 'Every ${m}m';
+        return 'Custom';
+      default:
+        return 'Once';
+    }
+  }
+
+  String _shortenCwd(String cwd) {
+    final homePattern = RegExp(r'^/home/[^/]+/');
+    if (homePattern.hasMatch(cwd)) {
+      return '~/${cwd.replaceFirst(homePattern, '')}';
+    }
+    return cwd;
+  }
+
+  List<String> _getRecentCwds(ChatProvider provider, {String? serverId}) {
+    final seen = <String>{};
+    final cwds = <String>[];
+    for (final session in provider.sessions) {
+      if (serverId != null && session.serverId != serverId) continue;
+      if (seen.add(session.cwd)) {
+        cwds.add(session.cwd);
+      }
+    }
+    if (serverId == null || provider.serverConfigs.length <= 1) {
+      if (seen.add(provider.defaultCwd)) {
+        cwds.add(provider.defaultCwd);
+      }
+    }
+    return cwds;
+  }
+
+  Future<String?> _showFolderBrowser(ChatProvider provider, {String? serverId}) async {
+    return Navigator.of(context).push<String>(
+      MaterialPageRoute(
+        builder: (_) => FolderBrowserScreen(provider: provider, serverId: serverId),
+      ),
+    );
+  }
+
+  void _showCreateDialog() {
+    final provider = context.read<ChatProvider>();
+    final promptController = TextEditingController();
+    final cwdController = TextEditingController(text: provider.defaultCwd);
+    DateTime selectedDate = DateTime.now().add(const Duration(hours: 1));
+    String recurrenceType = 'once';
+    bool reuseSession = false;
+    int customHours = 0;
+    int customMinutes = 30;
+    final hoursController = TextEditingController(text: '0');
+    final minutesController = TextEditingController(text: '30');
+
+    // Server selection
+    final configs = provider.serverConfigs;
+    final hasMultipleServers = configs.length > 1;
+    String? selectedServerId;
+    if (hasMultipleServers) {
+      final connected = configs
+          .where((c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected)
+          .toList();
+      selectedServerId = connected.isNotEmpty ? connected.first.id : configs.first.id;
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final recentCwds = _getRecentCwds(provider, serverId: selectedServerId);
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: Text(
+                        'Schedule Task',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+
+                    // Prompt
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: TextField(
+                        controller: promptController,
+                        decoration: const InputDecoration(
+                          labelText: 'Prompt',
+                          hintText: 'What should Claude do?',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.chat_outlined),
+                        ),
+                        maxLines: 4,
+                        minLines: 2,
+                        autofocus: true,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Server picker (only if multiple servers)
+                    if (hasMultipleServers) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: SegmentedButton<String>(
+                            segments: configs.map((config) {
+                              final isConnected = provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
+                              return ButtonSegment(
+                                value: config.id,
+                                label: Text(
+                                  config.name,
+                                  style: const TextStyle(fontSize: 12),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                                icon: Icon(
+                                  isConnected ? Icons.cloud_done : Icons.cloud_off,
+                                  size: 14,
+                                  color: isConnected ? Colors.green : Colors.grey,
+                                ),
+                              );
+                            }).toList(),
+                            selected: {if (selectedServerId != null) selectedServerId!},
+                            onSelectionChanged: (v) {
+                              setSheetState(() => selectedServerId = v.first);
+                            },
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.compact,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    const Divider(height: 1),
+
+                    // Working Directory section
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Text(
+                        'Working Directory',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                        ),
+                      ),
+                    ),
+
+                    // Recent CWDs
+                    if (recentCwds.isNotEmpty) ...[
+                      ...recentCwds.take(5).map((cwd) => ListTile(
+                        dense: true,
+                        leading: Icon(Icons.folder_outlined, size: 20,
+                          color: Theme.of(context).colorScheme.primary),
+                        title: Text(_shortenCwd(cwd), style: const TextStyle(fontSize: 14)),
+                        trailing: cwdController.text == cwd
+                            ? Icon(Icons.check, size: 18, color: Theme.of(context).colorScheme.primary)
+                            : null,
+                        onTap: () {
+                          cwdController.text = cwd;
+                          setSheetState(() {});
+                        },
+                      )),
+                      const Divider(height: 1),
+                    ],
+
+                    // Browse button
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final picked = await _showFolderBrowser(
+                              provider,
+                              serverId: selectedServerId,
+                            );
+                            if (picked != null && ctx.mounted) {
+                              cwdController.text = picked;
+                              setSheetState(() {});
+                            }
+                          },
+                          icon: const Icon(Icons.folder_open, size: 18),
+                          label: const Text('Browse Server'),
+                        ),
+                      ),
+                    ),
+
+                    // Manual path input
+                    const SizedBox(height: 4),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                      child: Text(
+                        'Or type a path',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: TextField(
+                        controller: cwdController,
+                        decoration: InputDecoration(
+                          hintText: '/path/to/project',
+                          filled: true,
+                          fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10,
+                          ),
+                          isDense: true,
+                        ),
+                        style: const TextStyle(fontSize: 14),
+                        onChanged: (_) => setSheetState(() {}),
+                      ),
+                    ),
+
+                    const Divider(height: 1),
+
+                    // Date/time picker
+                    ListTile(
+                      leading: const Icon(Icons.calendar_today),
+                      title: Text(_formatDateTime(selectedDate.toIso8601String())),
+                      subtitle: Text(_formatTime(selectedDate.toIso8601String())),
+                      onTap: () async {
+                        final date = await showDatePicker(
+                          context: ctx,
+                          initialDate: selectedDate,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (date == null) return;
+                        if (!ctx.mounted) return;
+                        final time = await showTimePicker(
+                          context: ctx,
+                          initialTime: TimeOfDay.fromDateTime(selectedDate),
+                        );
+                        if (time == null) return;
+                        setSheetState(() {
+                          selectedDate = DateTime(
+                            date.year, date.month, date.day,
+                            time.hour, time.minute,
+                          );
+                        });
+                      },
+                    ),
+
+                    // Recurrence picker
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: DropdownButtonFormField<String>(
+                        value: recurrenceType,
+                        decoration: const InputDecoration(
+                          labelText: 'Repeat',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.repeat),
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'once', child: Text('Once')),
+                          DropdownMenuItem(value: 'daily', child: Text('Daily')),
+                          DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
+                          DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
+                          DropdownMenuItem(value: 'custom', child: Text('Custom interval')),
+                        ],
+                        onChanged: (v) {
+                          setSheetState(() {
+                            recurrenceType = v ?? 'once';
+                            if (recurrenceType != 'once') {
+                              reuseSession = true;
+                            }
+                          });
+                        },
+                      ),
+                    ),
+
+                    // Custom interval (only for custom)
+                    if (recurrenceType == 'custom') ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                        child: Row(
+                          children: [
+                            const Text('Every  '),
+                            SizedBox(
+                              width: 52,
+                              child: TextField(
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                ),
+                                controller: hoursController,
+                                onChanged: (v) {
+                                  customHours = int.tryParse(v) ?? 0;
+                                  setSheetState(() {});
+                                },
+                              ),
+                            ),
+                            const Text('h  '),
+                            SizedBox(
+                              width: 52,
+                              child: TextField(
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                ),
+                                controller: minutesController,
+                                onChanged: (v) {
+                                  final raw = int.tryParse(v) ?? 0;
+                                  if (raw >= 60) {
+                                    // Auto-normalize: overflow minutes into hours
+                                    customHours += raw ~/ 60;
+                                    customMinutes = raw % 60;
+                                    hoursController.text = customHours.toString();
+                                    minutesController.text = customMinutes.toString();
+                                    minutesController.selection = TextSelection.fromPosition(
+                                      TextPosition(offset: minutesController.text.length),
+                                    );
+                                  } else {
+                                    customMinutes = raw;
+                                  }
+                                  setSheetState(() {});
+                                },
+                              ),
+                            ),
+                            const Text('m'),
+                          ],
+                        ),
+                      ),
+                      // Warning for frequent intervals
+                      if ((customHours * 60 + customMinutes) > 0 &&
+                          (customHours * 60 + customMinutes) < 30)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                          child: Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded, size: 14, color: Colors.orange.shade300),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Intervals under 30 minutes may incur high API usage and costs.',
+                                  style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(height: 4),
+                    ],
+
+                    // Reuse session toggle (only for recurring)
+                    if (recurrenceType != 'once') ...[
+                      SwitchListTile(
+                        title: const Text('Reuse same session', style: TextStyle(fontSize: 14)),
+                        subtitle: const Text(
+                          'Continue in the same session across runs',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        value: reuseSession,
+                        onChanged: (v) => setSheetState(() => reuseSession = v),
+                      ),
+                    ],
+
+                    // Schedule button
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () {
+                            final prompt = promptController.text.trim();
+                            final cwd = cwdController.text.trim();
+                            if (prompt.isEmpty || cwd.isEmpty) return;
+                            provider.scheduleTask(
+                              prompt: prompt,
+                              cwd: cwd,
+                              scheduledTime: selectedDate.toUtc().toIso8601String(),
+                              recurrenceType: recurrenceType != 'once' ? recurrenceType : null,
+                              customIntervalMs: recurrenceType == 'custom' ? (customHours * 3600000 + customMinutes * 60000) : null,
+                              reuseSession: reuseSession,
+                              serverId: selectedServerId,
+                            );
+                            Navigator.pop(ctx);
+                          },
+                          icon: const Icon(Icons.schedule_send),
+                          label: const Text('Schedule'),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) {
+      promptController.dispose();
+      cwdController.dispose();
+      hoursController.dispose();
+      minutesController.dispose();
+    });
+  }
+
+  void _showTaskActions(Map<String, dynamic> task) {
+    final provider = context.read<ChatProvider>();
+    final status = task['status'] as String? ?? '';
+    final sessionId = task['sessionId'] as String?;
+    final isRecurring = task['recurrence'] != null;
+    final canEdit = status == 'pending' || status == 'cancelled' || status == 'completed' || status == 'failed';
+
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (canEdit)
+                ListTile(
+                  leading: const Icon(Icons.edit_outlined),
+                  title: const Text('Edit Task'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showEditDialog(task);
+                  },
+                ),
+              if (sessionId != null && sessionId.isNotEmpty)
+                ListTile(
+                  leading: const Icon(Icons.open_in_new),
+                  title: const Text('View Latest Session'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    provider.resumeSession(sessionId);
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (_) => const HomeScreen()),
+                    );
+                  },
+                ),
+              if (status == 'pending')
+                ListTile(
+                  leading: Icon(Icons.cancel, color: Colors.orange.shade300),
+                  title: Text(
+                    isRecurring ? 'Stop Recurring Task' : 'Cancel Task',
+                    style: TextStyle(color: Colors.orange.shade300),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    provider.cancelScheduledTask(task['id'] as String);
+                  },
+                ),
+              if (status != 'running')
+                ListTile(
+                  leading: Icon(Icons.delete, color: Colors.red.shade300),
+                  title: Text('Delete Task',
+                      style: TextStyle(color: Colors.red.shade300)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    provider.deleteScheduledTask(task['id'] as String);
+                  },
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _showEditDialog(Map<String, dynamic> task) {
+    final provider = context.read<ChatProvider>();
+    final taskId = task['id'] as String;
+    final promptController = TextEditingController(text: task['prompt'] as String? ?? '');
+    final cwdController = TextEditingController(text: task['cwd'] as String? ?? '');
+
+    // Parse existing scheduled time
+    DateTime selectedDate = DateTime.tryParse(task['scheduledTime'] as String? ?? '')?.toLocal()
+        ?? DateTime.now().add(const Duration(hours: 1));
+    // If in the past, default to 1 hour from now
+    if (selectedDate.isBefore(DateTime.now())) {
+      selectedDate = DateTime.now().add(const Duration(hours: 1));
+    }
+
+    // Parse existing recurrence
+    final existingRecurrence = task['recurrence'] as Map<String, dynamic>?;
+    String recurrenceType = existingRecurrence?['type'] as String? ?? 'once';
+    bool reuseSession = task['reuseSession'] as bool? ?? false;
+
+    // Parse custom interval
+    final existingIntervalMs = existingRecurrence?['intervalMs'] as int? ?? 1800000;
+    int customHours = existingIntervalMs ~/ 3600000;
+    int customMinutes = (existingIntervalMs % 3600000) ~/ 60000;
+    final hoursController = TextEditingController(text: customHours.toString());
+    final minutesController = TextEditingController(text: customMinutes.toString());
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final recentCwds = _getRecentCwds(provider);
+
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                      child: Text(
+                        'Edit Task',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ),
+
+                    // Prompt
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: TextField(
+                        controller: promptController,
+                        decoration: const InputDecoration(
+                          labelText: 'Prompt',
+                          hintText: 'What should Claude do?',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.chat_outlined),
+                        ),
+                        maxLines: 4,
+                        minLines: 2,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    const Divider(height: 1),
+
+                    // Working Directory section
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Text(
+                        'Working Directory',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                        ),
+                      ),
+                    ),
+
+                    // Recent CWDs
+                    if (recentCwds.isNotEmpty) ...[
+                      ...recentCwds.take(5).map((cwd) => ListTile(
+                        dense: true,
+                        leading: Icon(Icons.folder_outlined, size: 20,
+                          color: Theme.of(context).colorScheme.primary),
+                        title: Text(_shortenCwd(cwd), style: const TextStyle(fontSize: 14)),
+                        trailing: cwdController.text == cwd
+                            ? Icon(Icons.check, size: 18, color: Theme.of(context).colorScheme.primary)
+                            : null,
+                        onTap: () {
+                          cwdController.text = cwd;
+                          setSheetState(() {});
+                        },
+                      )),
+                      const Divider(height: 1),
+                    ],
+
+                    // Browse button
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: () async {
+                            final picked = await _showFolderBrowser(provider);
+                            if (picked != null && ctx.mounted) {
+                              cwdController.text = picked;
+                              setSheetState(() {});
+                            }
+                          },
+                          icon: const Icon(Icons.folder_open, size: 18),
+                          label: const Text('Browse Server'),
+                        ),
+                      ),
+                    ),
+
+                    // Manual path input
+                    const SizedBox(height: 4),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                      child: Text(
+                        'Or type a path',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                        ),
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: TextField(
+                        controller: cwdController,
+                        decoration: InputDecoration(
+                          hintText: '/path/to/project',
+                          filled: true,
+                          fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide.none,
+                          ),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 10,
+                          ),
+                          isDense: true,
+                        ),
+                        style: const TextStyle(fontSize: 14),
+                        onChanged: (_) => setSheetState(() {}),
+                      ),
+                    ),
+
+                    const Divider(height: 1),
+
+                    // Date/time picker
+                    ListTile(
+                      leading: const Icon(Icons.calendar_today),
+                      title: Text(_formatDateTime(selectedDate.toIso8601String())),
+                      subtitle: Text(_formatTime(selectedDate.toIso8601String())),
+                      onTap: () async {
+                        final date = await showDatePicker(
+                          context: ctx,
+                          initialDate: selectedDate,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (date == null) return;
+                        if (!ctx.mounted) return;
+                        final time = await showTimePicker(
+                          context: ctx,
+                          initialTime: TimeOfDay.fromDateTime(selectedDate),
+                        );
+                        if (time == null) return;
+                        setSheetState(() {
+                          selectedDate = DateTime(
+                            date.year, date.month, date.day,
+                            time.hour, time.minute,
+                          );
+                        });
+                      },
+                    ),
+
+                    // Recurrence picker
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: DropdownButtonFormField<String>(
+                        value: recurrenceType,
+                        decoration: const InputDecoration(
+                          labelText: 'Repeat',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.repeat),
+                          isDense: true,
+                        ),
+                        items: const [
+                          DropdownMenuItem(value: 'once', child: Text('Once')),
+                          DropdownMenuItem(value: 'daily', child: Text('Daily')),
+                          DropdownMenuItem(value: 'weekly', child: Text('Weekly')),
+                          DropdownMenuItem(value: 'monthly', child: Text('Monthly')),
+                          DropdownMenuItem(value: 'custom', child: Text('Custom interval')),
+                        ],
+                        onChanged: (v) {
+                          setSheetState(() {
+                            recurrenceType = v ?? 'once';
+                            if (recurrenceType != 'once') {
+                              reuseSession = true;
+                            }
+                          });
+                        },
+                      ),
+                    ),
+
+                    // Custom interval
+                    if (recurrenceType == 'custom') ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                        child: Row(
+                          children: [
+                            const Text('Every  '),
+                            SizedBox(
+                              width: 52,
+                              child: TextField(
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                ),
+                                controller: hoursController,
+                                onChanged: (v) {
+                                  customHours = int.tryParse(v) ?? 0;
+                                  setSheetState(() {});
+                                },
+                              ),
+                            ),
+                            const Text('h  '),
+                            SizedBox(
+                              width: 52,
+                              child: TextField(
+                                keyboardType: TextInputType.number,
+                                textAlign: TextAlign.center,
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                ),
+                                controller: minutesController,
+                                onChanged: (v) {
+                                  final raw = int.tryParse(v) ?? 0;
+                                  if (raw >= 60) {
+                                    customHours += raw ~/ 60;
+                                    customMinutes = raw % 60;
+                                    hoursController.text = customHours.toString();
+                                    minutesController.text = customMinutes.toString();
+                                    minutesController.selection = TextSelection.fromPosition(
+                                      TextPosition(offset: minutesController.text.length),
+                                    );
+                                  } else {
+                                    customMinutes = raw;
+                                  }
+                                  setSheetState(() {});
+                                },
+                              ),
+                            ),
+                            const Text('m'),
+                          ],
+                        ),
+                      ),
+                      if ((customHours * 60 + customMinutes) > 0 &&
+                          (customHours * 60 + customMinutes) < 30)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                          child: Row(
+                            children: [
+                              Icon(Icons.warning_amber_rounded, size: 14, color: Colors.orange.shade300),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  'Intervals under 30 minutes may incur high API usage and costs.',
+                                  style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      const SizedBox(height: 4),
+                    ],
+
+                    // Reuse session toggle
+                    if (recurrenceType != 'once') ...[
+                      SwitchListTile(
+                        title: const Text('Reuse same session', style: TextStyle(fontSize: 14)),
+                        subtitle: const Text(
+                          'Continue in the same session across runs',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        value: reuseSession,
+                        onChanged: (v) => setSheetState(() => reuseSession = v),
+                      ),
+                    ],
+
+                    // Save button
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: () {
+                            final prompt = promptController.text.trim();
+                            final cwd = cwdController.text.trim();
+                            if (prompt.isEmpty || cwd.isEmpty) return;
+                            provider.updateScheduledTask(
+                              taskId: taskId,
+                              prompt: prompt,
+                              cwd: cwd,
+                              scheduledTime: selectedDate.toUtc().toIso8601String(),
+                              recurrenceType: recurrenceType,
+                              customIntervalMs: recurrenceType == 'custom'
+                                  ? (customHours * 3600000 + customMinutes * 60000)
+                                  : null,
+                              reuseSession: reuseSession,
+                            );
+                            Navigator.pop(ctx);
+                          },
+                          icon: const Icon(Icons.save_outlined),
+                          label: const Text('Save Changes'),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((_) {
+      promptController.dispose();
+      cwdController.dispose();
+      hoursController.dispose();
+      minutesController.dispose();
+    });
+  }
+
+  void _viewRunSession(String sessionId) {
+    final provider = context.read<ChatProvider>();
+    provider.resumeSession(sessionId);
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
+    );
+  }
+
+  Widget _buildRunHistory(Map<String, dynamic> task) {
+    final runs = (task['runs'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    if (runs.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 16),
+        Padding(
+          padding: const EdgeInsets.only(left: 36, bottom: 4),
+          child: Text(
+            'Run History (${runs.length})',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(context).colorScheme.onSurface.withAlpha(160),
+            ),
+          ),
+        ),
+        ...runs.reversed.map((run) {
+          final runStatus = run['status'] as String? ?? 'running';
+          final runSessionId = run['sessionId'] as String? ?? '';
+          final startedAt = run['startedAt'] as String?;
+          final summary = run['resultSummary'] as String?;
+          final runError = run['error'] as String?;
+
+          return InkWell(
+            onTap: runSessionId.isNotEmpty ? () => _viewRunSession(runSessionId) : null,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 36, right: 12, top: 4, bottom: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(
+                    _statusIcon(runStatus),
+                    size: 16,
+                    color: _statusColor(runStatus).withAlpha(180),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _formatDateTime(startedAt),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Theme.of(context).colorScheme.onSurface.withAlpha(160),
+                          ),
+                        ),
+                        if (summary != null && summary.isNotEmpty)
+                          Text(
+                            summary,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: Colors.green.shade300),
+                          ),
+                        if (runError != null && runError.isNotEmpty)
+                          Text(
+                            runError,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 11, color: Colors.red.shade300),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (runSessionId.isNotEmpty)
+                    Icon(
+                      Icons.chevron_right,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurface.withAlpha(80),
+                    ),
+                ],
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ChatProvider>(
+      builder: (context, provider, _) {
+        final tasks = provider.scheduledTasks;
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Scheduled Tasks'),
+          ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: _showCreateDialog,
+            child: const Icon(Icons.add),
+          ),
+          body: tasks.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.schedule,
+                        size: 64,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        'No scheduled tasks',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Theme.of(context).colorScheme.outline,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tap + to schedule a task, or ask Claude\nto schedule one for you',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Theme.of(context).colorScheme.outline.withAlpha(178),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.only(top: 8, bottom: 80, left: 8, right: 8),
+                  itemCount: tasks.length,
+                  itemBuilder: (context, index) {
+                    final task = tasks[index];
+                    final taskId = task['id'] as String? ?? '';
+                    final status = task['status'] as String? ?? 'pending';
+                    final prompt = task['prompt'] as String? ?? '';
+                    final cwd = task['cwd'] as String? ?? '';
+                    final scheduledTime = task['scheduledTime'] as String?;
+                    final resultSummary = task['resultSummary'] as String?;
+                    final error = task['error'] as String?;
+                    final recurrence = task['recurrence'] as Map<String, dynamic>?;
+                    final runCount = task['runCount'] as int? ?? 0;
+                    final runs = (task['runs'] as List?) ?? [];
+                    final isRecurring = recurrence != null;
+                    final isExpanded = _expandedTasks.contains(taskId);
+
+                    return Card(
+                      child: Column(
+                        children: [
+                          InkWell(
+                            onTap: () => _showTaskActions(task),
+                            onLongPress: runs.isNotEmpty
+                                ? () {
+                                    setState(() {
+                                      if (isExpanded) {
+                                        _expandedTasks.remove(taskId);
+                                      } else {
+                                        _expandedTasks.add(taskId);
+                                      }
+                                    });
+                                  }
+                                : null,
+                            borderRadius: BorderRadius.circular(12),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // Status icon
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2, right: 12),
+                                    child: status == 'running'
+                                        ? SizedBox(
+                                            width: 24,
+                                            height: 24,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              color: _statusColor(status),
+                                            ),
+                                          )
+                                        : Icon(
+                                            _statusIcon(status),
+                                            color: _statusColor(status),
+                                            size: 24,
+                                          ),
+                                  ),
+                                  // Content
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        // Prompt
+                                        Text(
+                                          prompt,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontSize: 14,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 4),
+                                        // Recurrence + run count badge
+                                        if (isRecurring) ...[
+                                          Row(
+                                            children: [
+                                              Icon(Icons.repeat, size: 12,
+                                                  color: Theme.of(context).colorScheme.primary.withAlpha(180)),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                _recurrenceLabel(recurrence),
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Theme.of(context).colorScheme.primary.withAlpha(180),
+                                                  fontWeight: FontWeight.w500,
+                                                ),
+                                              ),
+                                              if (runCount > 0) ...[
+                                                const SizedBox(width: 8),
+                                                Container(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                                                  decoration: BoxDecoration(
+                                                    color: Theme.of(context).colorScheme.primary.withAlpha(30),
+                                                    borderRadius: BorderRadius.circular(8),
+                                                  ),
+                                                  child: Text(
+                                                    '$runCount run${runCount == 1 ? '' : 's'}',
+                                                    style: TextStyle(
+                                                      fontSize: 10,
+                                                      color: Theme.of(context).colorScheme.primary.withAlpha(200),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ],
+                                              if (task['reuseSession'] == true) ...[
+                                                const SizedBox(width: 6),
+                                                Icon(Icons.link, size: 11,
+                                                    color: Theme.of(context).colorScheme.onSurface.withAlpha(100)),
+                                              ],
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                        ],
+                                        // CWD
+                                        Row(
+                                          children: [
+                                            Icon(Icons.folder_outlined,
+                                                size: 12,
+                                                color: Theme.of(context).colorScheme.onSurface.withAlpha(128)),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                _shortenCwd(cwd),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
+                                        // Scheduled time
+                                        Row(
+                                          children: [
+                                            Icon(Icons.schedule,
+                                                size: 12,
+                                                color: _statusColor(status).withAlpha(180)),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              isRecurring && status == 'pending'
+                                                  ? 'Next: ${_formatDateTime(scheduledTime)} (${_formatTime(scheduledTime)})'
+                                                  : '${_formatDateTime(scheduledTime)} (${_formatTime(scheduledTime)})',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: _statusColor(status).withAlpha(180),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        // Result or error
+                                        if (resultSummary != null && resultSummary.isNotEmpty) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            resultSummary,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.green.shade300,
+                                            ),
+                                          ),
+                                        ],
+                                        if (error != null && error.isNotEmpty) ...[
+                                          const SizedBox(height: 4),
+                                          Text(
+                                            error,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Colors.red.shade300,
+                                            ),
+                                          ),
+                                        ],
+                                        // Expand hint for runs
+                                        if (runs.isNotEmpty && !isExpanded) ...[
+                                          const SizedBox(height: 4),
+                                          Row(
+                                            children: [
+                                              Icon(Icons.expand_more, size: 14,
+                                                  color: Theme.of(context).colorScheme.onSurface.withAlpha(80)),
+                                              const SizedBox(width: 2),
+                                              Text(
+                                                'Long-press to show ${runs.length} run${runs.length == 1 ? '' : 's'}',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  color: Theme.of(context).colorScheme.onSurface.withAlpha(80),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          // Expanded run history
+                          if (isExpanded) _buildRunHistory(task),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        );
+      },
+    );
+  }
+}
