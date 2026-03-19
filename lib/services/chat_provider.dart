@@ -3418,6 +3418,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isProcessing = false;
     _processingSetAt = null;
     _isCompacting = false;
+    _permissionMode = null;
     _historyTotal = 0;
     _historyOffset = 0;
     _isLoadingMore = false;
@@ -3474,6 +3475,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _currentThinkingMessage = null;
     _isProcessing = false;
     _processingSetAt = null;
+    _permissionMode = null;
     _isCompacting = false;
     _isLoadingHistory = true;
     _historyTotal = 0;
