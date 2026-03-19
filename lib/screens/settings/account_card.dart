@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import '../../services/chat_provider.dart';
 import '../paywall_screen.dart';
 
@@ -34,19 +35,7 @@ class AccountCard extends StatelessWidget {
 
         // State 2: Signed in
         if (hasToken) {
-          return _buildCard(
-            context,
-            icon: Icons.check_circle,
-            iconColor: Colors.green.shade400,
-            title: 'Signed in',
-            subtitle: provider.subscriberEmail.isNotEmpty
-                ? provider.subscriberEmail
-                : 'Subscription active',
-            action: TextButton(
-              onPressed: () => _confirmSignOut(context, provider),
-              child: const Text('Sign out'),
-            ),
-          );
+          return _SignedInCard(provider: provider);
         }
 
         // State 3: Has relay servers but not signed in
@@ -79,7 +68,7 @@ class AccountCard extends StatelessWidget {
     );
   }
 
-  Widget _buildCard(
+  static Widget _buildCard(
     BuildContext context, {
     required IconData icon,
     required Color iconColor,
@@ -125,6 +114,144 @@ class AccountCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _SignedInCard extends StatefulWidget {
+  final ChatProvider provider;
+  const _SignedInCard({required this.provider});
+
+  @override
+  State<_SignedInCard> createState() => _SignedInCardState();
+}
+
+class _SignedInCardState extends State<_SignedInCard> {
+  bool _detailsLoaded = false;
+  bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDetails();
+  }
+
+  Future<void> _loadDetails() async {
+    if (_detailsLoaded) return;
+    setState(() => _loading = true);
+    await widget.provider.checkSubscriptionStatus();
+    if (mounted) setState(() { _detailsLoaded = true; _loading = false; });
+  }
+
+  String _statusLine(ChatProvider p) {
+    if (_loading) return 'Checking subscription...';
+    if (p.subscriptionStatus == 'owner') return 'Owner account';
+    if (p.subscriptionStatus == 'trialing' && p.trialEnd != null) {
+      final daysLeft = p.trialEnd!.difference(DateTime.now()).inDays;
+      if (daysLeft <= 0) return 'Trial ends today';
+      return 'Free trial \u2022 $daysLeft day${daysLeft == 1 ? '' : 's'} left';
+    }
+    if (p.cancelAtPeriodEnd && p.periodEnd != null) {
+      final daysLeft = p.periodEnd!.difference(DateTime.now()).inDays;
+      return 'Cancels in $daysLeft day${daysLeft == 1 ? '' : 's'}';
+    }
+    if (p.subscriptionStatus == 'active') return 'Subscription active';
+    return 'Subscription active';
+  }
+
+  IconData _statusIcon(ChatProvider p) {
+    if (p.subscriptionStatus == 'trialing') return Icons.hourglass_top;
+    if (p.cancelAtPeriodEnd) return Icons.event_busy;
+    return Icons.check_circle;
+  }
+
+  Color _statusColor(ChatProvider p) {
+    if (p.subscriptionStatus == 'trialing') return Colors.blue.shade400;
+    if (p.cancelAtPeriodEnd) return Colors.orange.shade400;
+    return Colors.green.shade400;
+  }
+
+  Future<void> _openBillingPortal() async {
+    final url = await widget.provider.getBillingPortalUrl();
+    if (url == null || !mounted) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Could not open billing portal')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => _BillingPortalScreen(url: url),
+    )).then((_) => _loadDetails());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<ChatProvider>(
+      builder: (context, provider, _) {
+        final theme = Theme.of(context);
+        final status = _statusLine(provider);
+        final isOwner = provider.subscriptionStatus == 'owner';
+
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Icon(_statusIcon(provider), size: 32, color: _statusColor(provider)),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            status,
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w600,
+                              color: theme.colorScheme.onSurface,
+                            ),
+                          ),
+                          if (provider.subscriberEmail.isNotEmpty) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              provider.subscriberEmail,
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: theme.colorScheme.onSurface.withAlpha(160),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (!isOwner)
+                      TextButton(
+                        onPressed: _openBillingPortal,
+                        child: const Text('Manage Subscription'),
+                      ),
+                    TextButton(
+                      onPressed: () => _confirmSignOut(context, provider),
+                      child: const Text('Sign Out'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   Future<void> _confirmSignOut(BuildContext context, ChatProvider provider) async {
     final confirm = await showDialog<bool>(
@@ -151,5 +278,24 @@ class AccountCard extends StatelessWidget {
       provider.disconnect();
       provider.connectToServer();
     }
+  }
+}
+
+class _BillingPortalScreen extends StatelessWidget {
+  final String url;
+  const _BillingPortalScreen({required this.url});
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..loadRequest(Uri.parse(url));
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Manage Subscription'),
+      ),
+      body: WebViewWidget(controller: controller),
+    );
   }
 }

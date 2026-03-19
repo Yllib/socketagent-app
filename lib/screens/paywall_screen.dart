@@ -213,12 +213,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Subscribe — \$3/month'),
+                      : const Text('Start 7-Day Free Trial'),
                 ),
               ),
               const SizedBox(height: 12),
               Text(
-                'Subscription required for remote access via relay.\nCancel anytime.',
+                'Try free for 7 days, then \$3/month.\nNo charge during trial. Cancel anytime.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,

@@ -144,6 +144,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _subscriberToken = '';  // HMAC-signed token from relay
   bool _subscriptionActive = false;
   bool _subscriptionChecked = false;
+  String _subscriptionStatus = ''; // "active", "trialing", "owner"
+  DateTime? _trialEnd;
+  DateTime? _periodEnd;
+  bool _cancelAtPeriodEnd = false;
 
   final Completer<void> _settingsLoaded = Completer<void>();
   Completer<bool>? _pendingCwdCheck;
@@ -415,6 +419,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String get subscriberToken => _subscriberToken;
   bool get subscriptionActive => _subscriptionActive;
   bool get subscriptionChecked => _subscriptionChecked;
+  String get subscriptionStatus => _subscriptionStatus;
+  DateTime? get trialEnd => _trialEnd;
+  DateTime? get periodEnd => _periodEnd;
+  bool get cancelAtPeriodEnd => _cancelAtPeriodEnd;
   Stream<void> get onSubscriptionRequired => _subscriptionRequiredController.stream;
   String? get sessionModel => _sessionModel;
   List<Map<String, dynamic>> get supportedModels => _supportedModels;
@@ -958,6 +966,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         _subscriptionActive = data['active'] == true;
+        _subscriptionStatus = data['status'] as String? ?? '';
+        _trialEnd = data['trialEnd'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(data['trialEnd'] as int)
+            : null;
+        _periodEnd = data['periodEnd'] != null
+            ? DateTime.fromMillisecondsSinceEpoch(data['periodEnd'] as int)
+            : null;
+        _cancelAtPeriodEnd = data['cancelAtPeriodEnd'] == true;
       } else {
         _subscriptionActive = false;
       }
@@ -1030,6 +1046,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       debugPrint('[Subscription] Verify error: $e');
     }
     return false;
+  }
+
+  /// Get Stripe billing portal URL for subscription management
+  Future<String?> getBillingPortalUrl() async {
+    if (_subscriberEmail.isEmpty) return null;
+    final httpUrl = _relayHttpUrl();
+    if (httpUrl == null) return null;
+
+    try {
+      final uri = Uri.parse('$httpUrl/api/billing-portal');
+      final response = await http.post(
+        uri,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'email': _subscriberEmail}),
+      ).timeout(const Duration(seconds: 15));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        return data['url'] as String?;
+      }
+    } catch (e) {
+      debugPrint('[Subscription] Billing portal error: $e');
+    }
+    return null;
   }
 
   /// Save subscriber token and email
