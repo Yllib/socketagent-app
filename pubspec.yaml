@@ -35,6 +35,7 @@ dependencies:
   just_audio: ^0.10.5
   sherpa_onnx: ^1.12.25
   record: ^6.2.0
+  package_info_plus: ^8.0.0
 
 dev_dependencies:
   flutter_test:

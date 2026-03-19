@@ -3,10 +3,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
+import '../services/update_service.dart';
 import '../services/websocket_service.dart';
 import 'sessions_screen.dart';
 import 'scheduled_tasks_screen.dart';
 import 'settings/settings_hub.dart';
+import 'settings/about_screen.dart';
 import 'paywall_screen.dart';
 
 class MainShellScreen extends StatefulWidget {
@@ -19,10 +21,13 @@ class MainShellScreen extends StatefulWidget {
 class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   int _currentIndex = 0;
   StreamSubscription? _subRequiredSub;
+  final UpdateService _updateService = UpdateService();
+  bool _updateBannerDismissed = false;
 
   @override
   void initState() {
     super.initState();
+    _updateService.addListener(_onUpdateChange);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
       _subRequiredSub = provider.onSubscriptionRequired.listen((_) {
@@ -30,7 +35,13 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
       });
       await provider.connectToServer();
       provider.requestSessionList();
+      // Silent update check on startup
+      _updateService.checkForUpdate();
     });
+  }
+
+  void _onUpdateChange() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -45,6 +56,7 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   @override
   void dispose() {
     _subRequiredSub?.cancel();
+    _updateService.removeListener(_onUpdateChange);
     routeObserver.unsubscribe(this);
     super.dispose();
   }
@@ -96,12 +108,40 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
         }
       },
       child: Scaffold(
-        body: IndexedStack(
-          index: _currentIndex,
-          children: const [
-            SessionsTab(),
-            ScheduledTasksScreen(),
-            SettingsHub(),
+        body: Column(
+          children: [
+            if (_updateService.updateAvailable && !_updateBannerDismissed)
+              MaterialBanner(
+                content: Text(
+                  'Update available: v${_updateService.updateInfo!.latestVersion}',
+                ),
+                leading: const Icon(Icons.system_update),
+                actions: [
+                  TextButton(
+                    onPressed: () => setState(() => _updateBannerDismissed = true),
+                    child: const Text('Later'),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      setState(() => _updateBannerDismissed = true);
+                      Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const AboutScreen()),
+                      );
+                    },
+                    child: const Text('View'),
+                  ),
+                ],
+              ),
+            Expanded(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: const [
+                  SessionsTab(),
+                  ScheduledTasksScreen(),
+                  SettingsHub(),
+                ],
+              ),
+            ),
           ],
         ),
         bottomNavigationBar: Consumer<ChatProvider>(
