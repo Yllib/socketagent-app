@@ -215,35 +215,47 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _viewingSessionId = sessionId;
   }
 
-  /// Get persistent recent CWDs for a server.
+  /// Get recent CWDs (server-side, keyed by serverId).
   List<String> getRecentCwds({String? serverId}) {
     final key = serverId ?? '';
     return _recentCwds[key] ?? [];
   }
 
-  /// Record a CWD as recently used for a server.
+  /// Request recent CWDs from a server.
+  void requestRecentCwds({String? serverId}) {
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, {'type': 'get_recent_cwds'});
+    } else {
+      _connMgr.sendToAll({'type': 'get_recent_cwds'});
+    }
+  }
+
+  /// Record a CWD as recently used (sends to server for persistence).
   void addRecentCwd(String path, {String? serverId}) {
-    final key = serverId ?? '';
+    final sid = serverId ?? _connMgr.activeServerId;
+    if (sid != null) {
+      _connMgr.sendToServer(sid, {'type': 'add_recent_cwd', 'cwd': path});
+    }
+    // Optimistic local update
+    final key = sid ?? '';
     final list = _recentCwds[key] ?? [];
     list.remove(path);
     list.insert(0, path);
     if (list.length > 20) list.removeLast();
     _recentCwds[key] = list;
-    _saveRecentCwds();
-  }
-
-  /// Remove a CWD from the recent list for a server.
-  void removeRecentCwd(String path, {String? serverId}) {
-    final key = serverId ?? '';
-    _recentCwds[key]?.remove(path);
-    _saveRecentCwds();
     notifyListeners();
   }
 
-  void _saveRecentCwds() {
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setString('recent_cwds', jsonEncode(_recentCwds));
-    });
+  /// Remove a CWD from the recent list (sends to server for persistence).
+  void removeRecentCwd(String path, {String? serverId}) {
+    final sid = serverId ?? _connMgr.activeServerId;
+    if (sid != null) {
+      _connMgr.sendToServer(sid, {'type': 'remove_recent_cwd', 'cwd': path});
+    }
+    // Optimistic local update
+    final key = sid ?? '';
+    _recentCwds[key]?.remove(path);
+    notifyListeners();
   }
 
   void _maybeNotify({required String title, required String body}) {
@@ -550,14 +562,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _lastServerStartedAt = prefs.getString('server_started_at');
     _notifEnabledSessions = (prefs.getStringList('notif_enabled_sessions') ?? []).toSet();
     _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
-    final recentCwdsJson = prefs.getString('recent_cwds');
-    if (recentCwdsJson != null) {
-      try {
-        final map = jsonDecode(recentCwdsJson) as Map<String, dynamic>;
-        _recentCwds = map.map((k, v) =>
-            MapEntry(k, (v as List).cast<String>()));
-      } catch (_) {}
-    }
+    // Recent CWDs are now server-side — loaded via get_recent_cwds on connect
     _ttsEnabled = prefs.getBool('tts_enabled') ?? false;
     _effort = prefs.getString('effort') ?? 'high';
     final savedThinking = prefs.getString('thinking');
@@ -1426,6 +1431,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'session_list', 'status_sync', 'subscription_required',
       'directory_listing', 'cwd_check', 'sdk_session_list',
       'active_subagents', 'version_info', 'update_result',
+      'recent_cwds',
     };
 
     // Route: only process non-global messages from the active server
@@ -1570,6 +1576,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'directory_listing':
         _pendingDirList?.complete(Map<String, dynamic>.from(msg));
         _pendingDirList = null;
+        break;
+      case 'recent_cwds':
+        final cwds = (msg['cwds'] as List?)?.cast<String>() ?? [];
+        final key = serverId ?? '';
+        _recentCwds[key] = cwds;
+        notifyListeners();
         break;
       case 'sdk_session_list':
         // Only accept response from the server we sent the request to
@@ -3657,6 +3669,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void requestSessionList() {
     _connMgr.sendToAll({'type': 'list_sessions'});
+    _connMgr.sendToAll({'type': 'get_recent_cwds'});
   }
 
   void requestScheduledTasks() {
