@@ -218,7 +218,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Try free for 7 days, then \$3/month.\nNo charge during trial. Cancel anytime.',
+                'Try free for 7 days, then \$5/month.\nNo charge during trial. Cancel anytime.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,

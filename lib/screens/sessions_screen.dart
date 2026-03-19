@@ -7,6 +7,7 @@ import '../models/message.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'home_screen.dart';
 import 'main_shell_screen.dart';
+import 'onboarding_screen.dart';
 
 class SessionsTab extends StatefulWidget {
   const SessionsTab({super.key});
@@ -568,6 +569,12 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     return Consumer<ChatProvider>(
       builder: (context, provider, _) {
         final configs = provider.serverConfigs;
+
+        // No servers configured — show onboarding
+        if (configs.isEmpty) {
+          return const OnboardingScreen();
+        }
+
         final multiServer = configs.length > 1;
         _ensureTabController(configs.length);
 

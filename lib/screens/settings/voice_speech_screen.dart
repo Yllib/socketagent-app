@@ -193,7 +193,17 @@ class VoiceSpeechScreen extends StatelessWidget {
               ),
             ),
             onTap: () => provider.setKokoroVoice(voice),
-            onLongPress: () => provider.previewKokoroVoice(voice),
+            onLongPress: () async {
+              try {
+                await provider.previewKokoroVoice(voice);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('$e')),
+                  );
+                }
+              }
+            },
           );
         }),
         const SizedBox(height: 4),

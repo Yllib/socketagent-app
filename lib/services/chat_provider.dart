@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
+import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import 'websocket_service.dart';
@@ -645,6 +646,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final ws = _connMgr.getConnection(config.id);
     ws?.connect();
     notifyListeners();
+  }
+
+  /// Create a new server from a QR pairing result and connect via relay.
+  Future<void> addServerFromPairing(PairingResult result) async {
+    final config = ServerConfig(
+      id: ServerConfig.generateId(),
+      name: 'My Server',
+      host: '',
+      port: 8085,
+      token: '',
+      useRelay: true,
+      sortOrder: _serverConfigs.length,
+      relayUrl: result.relayUrl,
+      pairingToken: result.pairingToken,
+      serverPubkey: result.serverPubkey,
+    );
+    await addServer(config);
+    await _connMgr.configureServerRelay(
+      config.id,
+      relayUrl: result.relayUrl,
+      pairingToken: result.pairingToken,
+      serverPubkey: result.serverPubkey,
+    );
   }
 
   Future<void> updateServer(ServerConfig config) async {
@@ -4151,10 +4175,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> previewKokoroVoice(TtsEngineVoice voice) async {
-    if (_ttsEngineMode == TtsEngineMode.kokoroDevice && _kokoroDeviceEngine.isModelLoaded) {
+    if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
+      if (!_kokoroDeviceEngine.isModelLoaded) {
+        await _kokoroDeviceEngine.initialize();
+      }
+      if (!_kokoroDeviceEngine.isModelLoaded) {
+        throw Exception('Kokoro on-device model is not loaded. Download it first.');
+      }
       await _kokoroDeviceEngine.setVoice(voice);
       await _kokoroDeviceEngine.speak('Hello, this is a preview of my voice.');
-    } else {
+    } else if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
       await _kokoroServerEngine.setVoice(voice);
       _ws.send({
         'type': 'request_tts_audio',
@@ -4162,6 +4192,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'voice': voice.id,
         'speed': 1.0,
       });
+    } else {
+      throw Exception('Voice preview is only available for Kokoro engines.');
     }
   }
 
