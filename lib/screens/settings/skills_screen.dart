@@ -487,12 +487,27 @@ class _SkillsScreenState extends State<SkillsScreen> {
       ));
     }
 
+    // Build a lookup from plugin name -> marketplace plugin data (for toggle)
+    final allMpPlugins = _pluginsByServer.values.expand((v) => v).toList();
+    final mpByName = <String, MapEntry<String, Map<String, dynamic>>>{};
+    for (final entry in _pluginsByServer.entries) {
+      for (final p in entry.value) {
+        final name = p['name'] as String? ?? '';
+        if (name.isNotEmpty && !mpByName.containsKey(name)) {
+          mpByName[name] = MapEntry(entry.key, p);
+        }
+      }
+    }
+
     // Plugin groups by plugin name, deduplicated within each
+    final shownPluginNames = <String>{};
     for (final pe in groupedPlugin.entries) {
       final deduped = pe.value.values.map((list) => list.first).toList();
       final servers = pe.value.values
           .expand((list) => list.map((s) => s.server))
           .toSet();
+      final mp = mpByName[pe.key];
+      shownPluginNames.add(pe.key);
       sections.add(_buildGroup(
         key: 'plugin_${pe.key}',
         title: pe.key,
@@ -500,25 +515,30 @@ class _SkillsScreenState extends State<SkillsScreen> {
         color: Colors.orange,
         items: deduped,
         servers: servers.toList(),
+        pluginId: mp?.value['id'] as String?,
+        pluginEnabled: mp?.value['enabled'] as bool?,
+        pluginServerId: mp?.key,
       ));
     }
 
-    // Marketplace plugins section
-    final allPlugins = _pluginsByServer.values.expand((v) => v).toList();
-    if (allPlugins.isNotEmpty) {
-      // Deduplicate by plugin id, pick first server
-      final seen = <String>{};
-      final deduped = <MapEntry<String, Map<String, dynamic>>>[];
-      for (final entry in _pluginsByServer.entries) {
-        for (final p in entry.value) {
-          final id = p['id'] as String? ?? '';
-          if (id.isNotEmpty && seen.add(id)) {
-            deduped.add(MapEntry(entry.key, p));
-          }
+    // Show marketplace plugins that have no skills (toggle-only, no expansion)
+    for (final entry in _pluginsByServer.entries) {
+      for (final p in entry.value) {
+        final name = p['name'] as String? ?? '';
+        if (name.isNotEmpty && !shownPluginNames.contains(name)) {
+          shownPluginNames.add(name);
+          sections.add(_buildGroup(
+            key: 'plugin_$name',
+            title: name,
+            icon: Icons.extension_outlined,
+            color: Colors.orange,
+            items: const [],
+            pluginId: p['id'] as String?,
+            pluginEnabled: p['enabled'] as bool?,
+            pluginServerId: entry.key,
+          ));
         }
       }
-
-      sections.add(_buildPluginsSection(deduped));
     }
 
     return sections;
@@ -549,9 +569,13 @@ class _SkillsScreenState extends State<SkillsScreen> {
     required Color color,
     required List<_ServerSkill> items,
     List<ServerConfig> servers = const [],
+    String? pluginId,
+    bool? pluginEnabled,
+    String? pluginServerId,
   }) {
     final theme = Theme.of(context);
     final isExpanded = _expanded.contains(key);
+    final hasToggle = pluginId != null && pluginEnabled != null;
 
     return ExpansionTile(
       key: PageStorageKey(key),
@@ -570,6 +594,19 @@ class _SkillsScreenState extends State<SkillsScreen> {
       dense: true,
       visualDensity: VisualDensity.compact,
       leading: Icon(icon, size: 18, color: color.withAlpha(180)),
+      trailing: hasToggle
+          ? SizedBox(
+              height: 32,
+              child: FittedBox(
+                child: Switch(
+                  value: pluginEnabled!,
+                  onChanged: _toggling.contains(pluginId)
+                      ? null
+                      : (val) => _togglePlugin(pluginServerId!, pluginId!, val),
+                ),
+              ),
+            )
+          : null,
       title: Row(
         children: [
           Flexible(
@@ -583,22 +620,24 @@ class _SkillsScreenState extends State<SkillsScreen> {
               ),
             ),
           ),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
-            decoration: BoxDecoration(
-              color: color.withAlpha(25),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '${items.length}',
-              style: TextStyle(
-                fontSize: 10,
-                color: color,
-                fontWeight: FontWeight.w600,
+          if (items.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
+              decoration: BoxDecoration(
+                color: color.withAlpha(25),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${items.length}',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
-          ),
+          ],
           const SizedBox(width: 6),
           ...servers.map((s) => Padding(
                 padding: const EdgeInsets.only(right: 3),
@@ -693,107 +732,4 @@ class _SkillsScreenState extends State<SkillsScreen> {
     );
   }
 
-  Widget _buildPluginsSection(List<MapEntry<String, Map<String, dynamic>>> plugins) {
-    final theme = Theme.of(context);
-    final isExpanded = _expanded.contains('marketplace_plugins');
-    final enabledCount = plugins.where((e) => e.value['enabled'] == true).length;
-
-    return ExpansionTile(
-      key: const PageStorageKey('marketplace_plugins'),
-      initiallyExpanded: isExpanded,
-      onExpansionChanged: (expanded) {
-        setState(() {
-          if (expanded) {
-            _expanded.add('marketplace_plugins');
-          } else {
-            _expanded.remove('marketplace_plugins');
-          }
-        });
-      },
-      tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-      childrenPadding: EdgeInsets.zero,
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      leading: Icon(Icons.extension, size: 18, color: Colors.purple.withAlpha(180)),
-      title: Row(
-        children: [
-          Flexible(
-            child: Text(
-              'Marketplace Plugins',
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: theme.colorScheme.onSurface.withAlpha(220),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
-            decoration: BoxDecoration(
-              color: Colors.purple.withAlpha(25),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              '$enabledCount/${plugins.length}',
-              style: const TextStyle(
-                fontSize: 10,
-                color: Colors.purple,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-        ],
-      ),
-      subtitle: Text(
-        'Changes apply to new sessions',
-        style: TextStyle(
-          fontSize: 10,
-          color: theme.colorScheme.onSurface.withAlpha(80),
-        ),
-      ),
-      children: plugins.map((e) => _buildPluginTile(e.key, e.value)).toList(),
-    );
-  }
-
-  Widget _buildPluginTile(String serverId, Map<String, dynamic> plugin) {
-    final theme = Theme.of(context);
-    final id = plugin['id'] as String? ?? '';
-    final name = plugin['name'] as String? ?? id;
-    final description = plugin['description'] as String? ?? '';
-    final enabled = plugin['enabled'] as bool? ?? false;
-    final isToggling = _toggling.contains(id);
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-      child: SwitchListTile(
-        value: enabled,
-        onChanged: isToggling ? null : (val) => _togglePlugin(serverId, id, val),
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        title: Text(
-          name,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: enabled
-                ? theme.colorScheme.onSurface
-                : theme.colorScheme.onSurface.withAlpha(160),
-          ),
-        ),
-        subtitle: description.isNotEmpty
-            ? Text(
-                description,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: theme.colorScheme.onSurface.withAlpha(100),
-                ),
-              )
-            : null,
-      ),
-    );
-  }
 }
