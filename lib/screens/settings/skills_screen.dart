@@ -518,6 +518,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
         pluginId: mp?.value['id'] as String?,
         pluginEnabled: mp?.value['enabled'] as bool?,
         pluginServerId: mp?.key,
+        pluginDescription: mp?.value['description'] as String?,
       ));
     }
 
@@ -536,6 +537,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             pluginId: p['id'] as String?,
             pluginEnabled: p['enabled'] as bool?,
             pluginServerId: entry.key,
+            pluginDescription: p['description'] as String?,
           ));
         }
       }
@@ -572,6 +574,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
     String? pluginId,
     bool? pluginEnabled,
     String? pluginServerId,
+    String? pluginDescription,
   }) {
     final theme = Theme.of(context);
     final isExpanded = _expanded.contains(key);
@@ -594,6 +597,17 @@ class _SkillsScreenState extends State<SkillsScreen> {
       dense: true,
       visualDensity: VisualDensity.compact,
       leading: Icon(icon, size: 18, color: color.withAlpha(180)),
+      subtitle: pluginDescription != null && pluginDescription.isNotEmpty
+          ? Text(
+              pluginDescription,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurface.withAlpha(100),
+              ),
+            )
+          : null,
       trailing: hasToggle
           ? SizedBox(
               height: 32,
