@@ -487,14 +487,13 @@ class _SkillsScreenState extends State<SkillsScreen> {
       ));
     }
 
-    // Build a lookup from plugin name -> marketplace plugin data (for toggle)
-    final allMpPlugins = _pluginsByServer.values.expand((v) => v).toList();
-    final mpByName = <String, MapEntry<String, Map<String, dynamic>>>{};
+    // Build a lookup from plugin name -> list of (serverId, pluginData) across all servers
+    final mpByName = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
     for (final entry in _pluginsByServer.entries) {
       for (final p in entry.value) {
         final name = p['name'] as String? ?? '';
-        if (name.isNotEmpty && !mpByName.containsKey(name)) {
-          mpByName[name] = MapEntry(entry.key, p);
+        if (name.isNotEmpty) {
+          mpByName.putIfAbsent(name, () => []).add(MapEntry(entry.key, p));
         }
       }
     }
@@ -506,7 +505,14 @@ class _SkillsScreenState extends State<SkillsScreen> {
       final servers = pe.value.values
           .expand((list) => list.map((s) => s.server))
           .toSet();
-      final mp = mpByName[pe.key];
+      final mpEntries = mpByName[pe.key];
+      final mp = mpEntries?.first; // use first for toggle data
+      // Collect server configs that have this marketplace plugin
+      final mpServers = <ServerConfig>{};
+      for (final me in mpEntries ?? <MapEntry<String, Map<String, dynamic>>>[]) {
+        final config = _connMgr.configs.where((c) => c.id == me.key).firstOrNull;
+        if (config != null) mpServers.add(config);
+      }
       shownPluginNames.add(pe.key);
       sections.add(_buildGroup(
         key: 'plugin_${pe.key}',
@@ -514,7 +520,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
         icon: Icons.extension_outlined,
         color: Colors.orange,
         items: deduped,
-        servers: servers.toList(),
+        servers: {...servers, ...mpServers}.toList(),
         pluginId: mp?.value['id'] as String?,
         pluginEnabled: mp?.value['enabled'] as bool?,
         pluginServerId: mp?.key,
@@ -523,14 +529,17 @@ class _SkillsScreenState extends State<SkillsScreen> {
     }
 
     // Show marketplace plugins that have no skills as flat toggle rows
-    for (final entry in _pluginsByServer.entries) {
-      for (final p in entry.value) {
-        final name = p['name'] as String? ?? '';
-        if (name.isNotEmpty && !shownPluginNames.contains(name)) {
-          shownPluginNames.add(name);
-          sections.add(_buildPluginToggleRow(entry.key, p));
-        }
+    for (final name in mpByName.keys) {
+      if (shownPluginNames.contains(name)) continue;
+      shownPluginNames.add(name);
+      final entries = mpByName[name]!;
+      // Collect all servers that have this plugin
+      final servers = <ServerConfig>[];
+      for (final me in entries) {
+        final config = _connMgr.configs.where((c) => c.id == me.key).firstOrNull;
+        if (config != null) servers.add(config);
       }
+      sections.add(_buildPluginToggleRow(entries.first.key, entries.first.value, servers));
     }
 
     return sections;
@@ -772,8 +781,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }
 
   /// Flat list tile for marketplace plugins that have no skills — just name,
-  /// description, and a toggle.  Not expandable.
-  Widget _buildPluginToggleRow(String serverId, Map<String, dynamic> plugin) {
+  /// description, server badges, and a toggle.  Not expandable.
+  Widget _buildPluginToggleRow(String serverId, Map<String, dynamic> plugin, [List<ServerConfig> servers = const []]) {
     final theme = Theme.of(context);
     final id = plugin['id'] as String? ?? '';
     final name = plugin['name'] as String? ?? id;
@@ -789,13 +798,27 @@ class _SkillsScreenState extends State<SkillsScreen> {
         onTap: () => _openPluginReadme(serverId, plugin),
         leading: Icon(Icons.extension_outlined,
             size: 18, color: Colors.orange.withAlpha(180)),
-        title: Text(
-          name,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-            color: theme.colorScheme.onSurface.withAlpha(220),
-          ),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                name,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onSurface.withAlpha(220),
+                ),
+              ),
+            ),
+            if (servers.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              ...servers.map((s) => Padding(
+                    padding: const EdgeInsets.only(right: 3),
+                    child: _buildServerBadge(s),
+                  )),
+            ],
+          ],
         ),
         subtitle: description.isNotEmpty
             ? Text(
