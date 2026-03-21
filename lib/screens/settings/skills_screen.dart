@@ -499,6 +499,30 @@ class _SkillsScreenState extends State<SkillsScreen> {
       }
     }
 
+    // Fill in missing servers — every connected server that responded to plugins_list
+    // should appear on every plugin, even if that server didn't return it
+    final respondedServerIds = _pluginsByServer.keys.toSet();
+    for (final pluginName in mpByName.keys.toList()) {
+      final entries = mpByName[pluginName]!;
+      final existingServerIds = entries.map((e) => e.key).toSet();
+      final first = entries.first.value;
+      for (final serverId in respondedServerIds) {
+        if (!existingServerIds.contains(serverId)) {
+          // Stub entry for server that doesn't have this plugin
+          entries.add(MapEntry(serverId, <String, dynamic>{
+            'id': first['id'] ?? '$pluginName@unknown',
+            'name': pluginName,
+            'description': first['description'] ?? '',
+            'category': first['category'] ?? '',
+            'installed': false,
+            'enabled': false,
+            'readme': '',
+            'homepage': first['homepage'] ?? '',
+          }));
+        }
+      }
+    }
+
     // Plugin groups by plugin name (from skills scan), with marketplace toggle
     final shownPluginNames = <String>{};
     for (final pe in groupedPlugin.entries) {
