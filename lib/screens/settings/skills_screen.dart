@@ -865,20 +865,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }
 
   /// Builds the trailing action widget for a marketplace plugin across servers.
-  /// Single server: inline install/toggle/uninstall.
-  /// Multiple servers: tap opens server picker.
+  /// Always shows per-server badges with state. Tap opens server picker for actions.
   Widget _buildPluginActions(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
-    if (serverEntries.length == 1) {
-      // Single server — inline action
-      final entry = serverEntries.first;
-      final serverId = entry.key;
-      final pluginId = entry.value['id'] as String? ?? '';
-      final installed = entry.value['installed'] as bool? ?? false;
-      final enabled = entry.value['enabled'] as bool? ?? false;
-      return _buildSingleServerAction(serverId, pluginId, installed, enabled);
-    }
-
-    // Multiple servers — show per-server badges, tap opens picker
     return GestureDetector(
       onTap: () => _showPluginServerPicker(serverEntries),
       child: Row(
