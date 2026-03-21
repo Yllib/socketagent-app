@@ -736,6 +736,41 @@ class _SkillsScreenState extends State<SkillsScreen> {
     );
   }
 
+  void _openPluginReadme(String serverId, Map<String, dynamic> plugin) {
+    final name = plugin['name'] as String? ?? '';
+    final description = plugin['description'] as String? ?? '';
+    final readme = plugin['readme'] as String? ?? '';
+    if (readme.isEmpty && description.isEmpty) return;
+
+    final config = _connMgr.configs.firstWhere(
+      (c) => c.id == serverId,
+      orElse: () => ServerConfig(id: serverId, name: serverId, host: '', port: 0, token: ''),
+    );
+    final baseUrl = config.useRelay ? '' : 'http://${config.host}:${config.port}';
+
+    // Construct a fake skill entry so the editor opens in read-only plugin mode
+    final fakeSkill = <String, dynamic>{
+      'name': name,
+      'description': description,
+      'scope': 'plugin',
+      'pluginName': name,
+      'format': 'skill',
+      'frontmatter': <String, dynamic>{'description': description},
+      'body': readme,
+    };
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => SkillEditScreen(
+          baseUrl: baseUrl,
+          token: config.token,
+          existing: fakeSkill,
+          serverConfig: config,
+        ),
+      ),
+    );
+  }
+
   /// Flat list tile for marketplace plugins that have no skills — just name,
   /// description, and a toggle.  Not expandable.
   Widget _buildPluginToggleRow(String serverId, Map<String, dynamic> plugin) {
@@ -751,6 +786,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       child: ListTile(
         dense: true,
         visualDensity: VisualDensity.compact,
+        onTap: () => _openPluginReadme(serverId, plugin),
         leading: Icon(Icons.extension_outlined,
             size: 18, color: Colors.orange.withAlpha(180)),
         title: Text(
