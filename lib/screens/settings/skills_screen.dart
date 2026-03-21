@@ -112,7 +112,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                (sm.data['type'] as String).startsWith('plugins_') &&
                (sm.data['type'] as String).endsWith('_result')) {
       final pluginId = sm.data['pluginId'] as String?;
-      if (pluginId != null) _toggling.remove(pluginId);
+      if (pluginId != null) _toggling.remove('${sm.serverId}:$pluginId');
       if (sm.data['ok'] == true) {
         final plugins = (sm.data['plugins'] as List? ?? [])
             .map((e) => Map<String, dynamic>.from(e as Map))
@@ -131,7 +131,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }
 
   void _pluginAction(String serverId, String pluginId, String action) {
-    setState(() => _toggling.add(pluginId));
+    setState(() => _toggling.add('$serverId:$pluginId'));
     _connMgr.sendToServer(serverId, {
       'type': 'plugins_$action',
       'pluginId': pluginId,
@@ -506,13 +506,6 @@ class _SkillsScreenState extends State<SkillsScreen> {
       final servers = pe.value.values
           .expand((list) => list.map((s) => s.server))
           .toSet();
-      final mpEntries = mpByName[pe.key];
-      final mp = mpEntries?.first;
-      final mpServers = <ServerConfig>{};
-      for (final me in mpEntries ?? <MapEntry<String, Map<String, dynamic>>>[]) {
-        final config = _connMgr.configs.where((c) => c.id == me.key).firstOrNull;
-        if (config != null) mpServers.add(config);
-      }
       shownPluginNames.add(pe.key);
       sections.add(_buildGroup(
         key: 'plugin_${pe.key}',
@@ -520,29 +513,25 @@ class _SkillsScreenState extends State<SkillsScreen> {
         icon: Icons.extension_outlined,
         color: Colors.orange,
         items: deduped,
-        servers: {...servers, ...mpServers}.toList(),
-        pluginId: mp?.value['id'] as String?,
-        pluginInstalled: mp?.value['installed'] as bool?,
-        pluginEnabled: mp?.value['enabled'] as bool?,
-        pluginServerId: mp?.key,
-        pluginDescription: mp?.value['description'] as String?,
+        servers: servers.toList(),
+        pluginServerEntries: mpByName[pe.key],
       ));
     }
 
     // Group remaining marketplace plugins by category
-    final byCategory = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
+    final byCategory = <String, List<String>>{};
     for (final name in mpByName.keys) {
       if (shownPluginNames.contains(name)) continue;
       shownPluginNames.add(name);
       final entries = mpByName[name]!;
       final category = entries.first.value['category'] as String? ?? '';
-      byCategory.putIfAbsent(category, () => []).addAll([entries.first]);
+      byCategory.putIfAbsent(category, () => []).add(name);
     }
 
     // Render each category as an expandable group containing plugin toggle rows
     final sortedCategories = byCategory.keys.toList()..sort();
     for (final category in sortedCategories) {
-      final pluginEntries = byCategory[category]!;
+      final pluginNames = byCategory[category]!;
       final categoryTitle = category.isEmpty ? 'Uncategorized' : category
           .split('-').map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
       final isExpanded = _expanded.contains('cat_$category');
@@ -583,7 +572,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                '${pluginEntries.length}',
+                '${pluginNames.length}',
                 style: const TextStyle(
                   fontSize: 10,
                   color: Colors.purple,
@@ -593,15 +582,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ),
           ],
         ),
-        children: pluginEntries.map((me) {
-          final servers = <ServerConfig>[];
-          final allEntries = mpByName[me.value['name']] ?? [me];
-          for (final e in allEntries) {
-            final config = _connMgr.configs.where((c) => c.id == e.key).firstOrNull;
-            if (config != null) servers.add(config);
-          }
-          return _buildPluginToggleRow(me.key, me.value, servers);
-        }).toList(),
+        children: pluginNames.map((name) =>
+            _buildPluginToggleRow(mpByName[name]!)).toList(),
       ));
     }
 
@@ -633,15 +615,14 @@ class _SkillsScreenState extends State<SkillsScreen> {
     required Color color,
     required List<_ServerSkill> items,
     List<ServerConfig> servers = const [],
-    String? pluginId,
-    bool? pluginEnabled,
-    bool? pluginInstalled,
-    String? pluginServerId,
-    String? pluginDescription,
+    List<MapEntry<String, Map<String, dynamic>>>? pluginServerEntries,
   }) {
     final theme = Theme.of(context);
     final isExpanded = _expanded.contains(key);
-    final hasPlugin = pluginId != null && pluginServerId != null;
+    final hasPlugin = pluginServerEntries != null && pluginServerEntries.isNotEmpty;
+    final pluginDescription = hasPlugin
+        ? pluginServerEntries!.first.value['description'] as String? ?? ''
+        : '';
 
     return ExpansionTile(
       key: PageStorageKey(key),
@@ -660,7 +641,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       dense: true,
       visualDensity: VisualDensity.compact,
       leading: Icon(icon, size: 18, color: color.withAlpha(180)),
-      subtitle: pluginDescription != null && pluginDescription.isNotEmpty
+      subtitle: pluginDescription.isNotEmpty
           ? Text(
               pluginDescription,
               maxLines: 2,
@@ -672,7 +653,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             )
           : null,
       trailing: hasPlugin
-          ? _buildPluginAction(pluginServerId!, pluginId!, pluginInstalled ?? false, pluginEnabled ?? false)
+          ? _buildPluginActions(pluginServerEntries!)
           : null,
       title: Row(
         children: [
@@ -705,11 +686,13 @@ class _SkillsScreenState extends State<SkillsScreen> {
               ),
             ),
           ],
-          const SizedBox(width: 6),
-          ...servers.map((s) => Padding(
-                padding: const EdgeInsets.only(right: 3),
-                child: _buildServerBadge(s),
-              )),
+          if (!hasPlugin) ...[
+            const SizedBox(width: 6),
+            ...servers.map((s) => Padding(
+                  padding: const EdgeInsets.only(right: 3),
+                  child: _buildServerBadge(s),
+                )),
+          ],
         ],
       ),
       children: items.map((s) => _buildSkillRow(s)).toList(),
@@ -834,22 +817,20 @@ class _SkillsScreenState extends State<SkillsScreen> {
     );
   }
 
-  /// Flat list tile for marketplace plugins that have no skills — just name,
-  /// description, server badges, and a toggle.  Not expandable.
-  Widget _buildPluginToggleRow(String serverId, Map<String, dynamic> plugin, [List<ServerConfig> servers = const []]) {
+  /// Flat list tile for marketplace plugins — shows per-server status badges
+  /// and routes actions through the server picker when multiple servers.
+  Widget _buildPluginToggleRow(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
     final theme = Theme.of(context);
-    final id = plugin['id'] as String? ?? '';
-    final name = plugin['name'] as String? ?? id;
-    final description = plugin['description'] as String? ?? '';
-    final installed = plugin['installed'] as bool? ?? false;
-    final enabled = plugin['enabled'] as bool? ?? false;
+    final first = serverEntries.first.value;
+    final name = first['name'] as String? ?? '';
+    final description = first['description'] as String? ?? '';
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: ListTile(
         dense: true,
         visualDensity: VisualDensity.compact,
-        onTap: () => _openPluginReadme(serverId, plugin),
+        onTap: () => _openPluginReadme(serverEntries.first.key, first),
         leading: Icon(Icons.extension_outlined,
             size: 18, color: Colors.orange.withAlpha(180)),
         title: Row(
@@ -865,13 +846,6 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 ),
               ),
             ),
-            if (servers.isNotEmpty) ...[
-              const SizedBox(width: 6),
-              ...servers.map((s) => Padding(
-                    padding: const EdgeInsets.only(right: 3),
-                    child: _buildServerBadge(s),
-                  )),
-            ],
           ],
         ),
         subtitle: description.isNotEmpty
@@ -885,19 +859,50 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 ),
               )
             : null,
-        trailing: _buildPluginAction(serverId, id, installed, enabled),
+        trailing: _buildPluginActions(serverEntries),
       ),
     );
   }
 
-  /// Builds the trailing action widget for a marketplace plugin:
-  /// - Not installed: "Install" text button
-  /// - Installed: Toggle switch (enable/disable) + uninstall in long-press menu
-  Widget _buildPluginAction(String serverId, String pluginId, bool installed, bool enabled) {
-    final isToggling = _toggling.contains(pluginId);
+  /// Builds the trailing action widget for a marketplace plugin across servers.
+  /// Single server: inline install/toggle/uninstall.
+  /// Multiple servers: tap opens server picker.
+  Widget _buildPluginActions(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
+    if (serverEntries.length == 1) {
+      // Single server — inline action
+      final entry = serverEntries.first;
+      final serverId = entry.key;
+      final pluginId = entry.value['id'] as String? ?? '';
+      final installed = entry.value['installed'] as bool? ?? false;
+      final enabled = entry.value['enabled'] as bool? ?? false;
+      return _buildSingleServerAction(serverId, pluginId, installed, enabled);
+    }
+
+    // Multiple servers — show per-server badges, tap opens picker
+    return GestureDetector(
+      onTap: () => _showPluginServerPicker(serverEntries),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: serverEntries.map((entry) {
+          final serverId = entry.key;
+          final installed = entry.value['installed'] as bool? ?? false;
+          final enabled = entry.value['enabled'] as bool? ?? false;
+          final config = _connMgr.configs.where((c) => c.id == serverId).firstOrNull;
+          if (config == null) return const SizedBox.shrink();
+          return Padding(
+            padding: const EdgeInsets.only(left: 2),
+            child: _buildServerPluginBadge(config, installed, enabled),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  /// Inline action widget for a single server's plugin state.
+  Widget _buildSingleServerAction(String serverId, String pluginId, bool installed, bool enabled) {
+    final isToggling = _toggling.contains('$serverId:$pluginId');
 
     if (!installed) {
-      // Show install button
       return SizedBox(
         height: 32,
         child: TextButton(
@@ -914,7 +919,6 @@ class _SkillsScreenState extends State<SkillsScreen> {
       );
     }
 
-    // Installed: show toggle + popup menu for uninstall
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -950,6 +954,87 @@ class _SkillsScreenState extends State<SkillsScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Server badge with install/enable state coloring.
+  Widget _buildServerPluginBadge(ServerConfig server, bool installed, bool enabled) {
+    final c = server.colorValue != null
+        ? Color(server.colorValue!)
+        : Theme.of(context).colorScheme.primary;
+    final alpha = !installed ? 40 : (enabled ? 200 : 100);
+    final bgAlpha = !installed ? 8 : (enabled ? 30 : 15);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      decoration: BoxDecoration(
+        color: c.withAlpha(bgAlpha),
+        borderRadius: BorderRadius.circular(5),
+        border: !installed ? Border.all(color: c.withAlpha(30), width: 0.5) : null,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (installed && enabled)
+            Padding(
+              padding: const EdgeInsets.only(right: 2),
+              child: Icon(Icons.check, size: 7, color: c.withAlpha(alpha)),
+            ),
+          Text(
+            server.name,
+            style: TextStyle(fontSize: 8, fontWeight: FontWeight.w500, color: c.withAlpha(alpha)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bottom sheet showing per-server plugin state with action buttons.
+  void _showPluginServerPicker(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
+    final pluginName = serverEntries.first.value['name'] as String? ?? '';
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(pluginName,
+                  style: Theme.of(ctx).textTheme.titleSmall),
+            ),
+            ...serverEntries.map((entry) {
+              final serverId = entry.key;
+              final pluginId = entry.value['id'] as String? ?? '';
+              final installed = entry.value['installed'] as bool? ?? false;
+              final enabled = entry.value['enabled'] as bool? ?? false;
+              final config = _connMgr.configs.where((c) => c.id == serverId).firstOrNull;
+              if (config == null) return const SizedBox.shrink();
+
+              final serverColor = config.colorValue != null
+                  ? Color(config.colorValue!)
+                  : Theme.of(ctx).colorScheme.primary;
+
+              String statusText;
+              if (!installed) {
+                statusText = 'Not installed';
+              } else if (enabled) {
+                statusText = 'Installed, enabled';
+              } else {
+                statusText = 'Installed, disabled';
+              }
+
+              return ListTile(
+                leading: Icon(Icons.dns, color: serverColor),
+                title: Text(config.name),
+                subtitle: Text(statusText, style: const TextStyle(fontSize: 12)),
+                trailing: _buildSingleServerAction(serverId, pluginId, installed, enabled),
+              );
+            }),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
     );
   }
 }
