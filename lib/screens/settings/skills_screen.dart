@@ -522,23 +522,13 @@ class _SkillsScreenState extends State<SkillsScreen> {
       ));
     }
 
-    // Show marketplace plugins that have no skills (toggle-only, no expansion)
+    // Show marketplace plugins that have no skills as flat toggle rows
     for (final entry in _pluginsByServer.entries) {
       for (final p in entry.value) {
         final name = p['name'] as String? ?? '';
         if (name.isNotEmpty && !shownPluginNames.contains(name)) {
           shownPluginNames.add(name);
-          sections.add(_buildGroup(
-            key: 'plugin_$name',
-            title: name,
-            icon: Icons.extension_outlined,
-            color: Colors.orange,
-            items: const [],
-            pluginId: p['id'] as String?,
-            pluginEnabled: p['enabled'] as bool?,
-            pluginServerId: entry.key,
-            pluginDescription: p['description'] as String?,
-          ));
+          sections.add(_buildPluginToggleRow(entry.key, p));
         }
       }
     }
@@ -746,4 +736,54 @@ class _SkillsScreenState extends State<SkillsScreen> {
     );
   }
 
+  /// Flat list tile for marketplace plugins that have no skills — just name,
+  /// description, and a toggle.  Not expandable.
+  Widget _buildPluginToggleRow(String serverId, Map<String, dynamic> plugin) {
+    final theme = Theme.of(context);
+    final id = plugin['id'] as String? ?? '';
+    final name = plugin['name'] as String? ?? id;
+    final description = plugin['description'] as String? ?? '';
+    final enabled = plugin['enabled'] as bool? ?? false;
+    final isToggling = _toggling.contains(id);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: Icon(Icons.extension_outlined,
+            size: 18, color: Colors.orange.withAlpha(180)),
+        title: Text(
+          name,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w500,
+            color: theme.colorScheme.onSurface.withAlpha(220),
+          ),
+        ),
+        subtitle: description.isNotEmpty
+            ? Text(
+                description,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurface.withAlpha(100),
+                ),
+              )
+            : null,
+        trailing: SizedBox(
+          height: 32,
+          child: FittedBox(
+            child: Switch(
+              value: enabled,
+              onChanged: isToggling
+                  ? null
+                  : (val) => _togglePlugin(serverId, id, val),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
