@@ -498,7 +498,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       }
     }
 
-    // Plugin groups by plugin name, deduplicated within each
+    // Plugin groups by plugin name (from skills scan), with marketplace toggle
     final shownPluginNames = <String>{};
     for (final pe in groupedPlugin.entries) {
       final deduped = pe.value.values.map((list) => list.first).toList();
@@ -506,8 +506,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
           .expand((list) => list.map((s) => s.server))
           .toSet();
       final mpEntries = mpByName[pe.key];
-      final mp = mpEntries?.first; // use first for toggle data
-      // Collect server configs that have this marketplace plugin
+      final mp = mpEntries?.first;
       final mpServers = <ServerConfig>{};
       for (final me in mpEntries ?? <MapEntry<String, Map<String, dynamic>>>[]) {
         final config = _connMgr.configs.where((c) => c.id == me.key).firstOrNull;
@@ -528,18 +527,80 @@ class _SkillsScreenState extends State<SkillsScreen> {
       ));
     }
 
-    // Show marketplace plugins that have no skills as flat toggle rows
+    // Group remaining marketplace plugins by category
+    final byCategory = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
     for (final name in mpByName.keys) {
       if (shownPluginNames.contains(name)) continue;
       shownPluginNames.add(name);
       final entries = mpByName[name]!;
-      // Collect all servers that have this plugin
-      final servers = <ServerConfig>[];
-      for (final me in entries) {
-        final config = _connMgr.configs.where((c) => c.id == me.key).firstOrNull;
-        if (config != null) servers.add(config);
-      }
-      sections.add(_buildPluginToggleRow(entries.first.key, entries.first.value, servers));
+      final category = entries.first.value['category'] as String? ?? '';
+      byCategory.putIfAbsent(category, () => []).addAll([entries.first]);
+    }
+
+    // Render each category as an expandable group containing plugin toggle rows
+    final sortedCategories = byCategory.keys.toList()..sort();
+    for (final category in sortedCategories) {
+      final pluginEntries = byCategory[category]!;
+      final categoryTitle = category.isEmpty ? 'Uncategorized' : category
+          .split('-').map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
+      final isExpanded = _expanded.contains('cat_$category');
+
+      sections.add(ExpansionTile(
+        key: PageStorageKey('cat_$category'),
+        initiallyExpanded: isExpanded,
+        onExpansionChanged: (expanded) {
+          setState(() {
+            if (expanded) _expanded.add('cat_$category');
+            else _expanded.remove('cat_$category');
+          });
+        },
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: EdgeInsets.zero,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: Icon(Icons.category_outlined, size: 18,
+            color: Colors.purple.withAlpha(180)),
+        title: Row(
+          children: [
+            Flexible(
+              child: Text(
+                categoryTitle,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: Theme.of(context).colorScheme.onSurface.withAlpha(220),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
+              decoration: BoxDecoration(
+                color: Colors.purple.withAlpha(25),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '${pluginEntries.length}',
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: Colors.purple,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+        children: pluginEntries.map((me) {
+          final servers = <ServerConfig>[];
+          final allEntries = mpByName[me.value['name']] ?? [me];
+          for (final e in allEntries) {
+            final config = _connMgr.configs.where((c) => c.id == e.key).firstOrNull;
+            if (config != null) servers.add(config);
+          }
+          return _buildPluginToggleRow(me.key, me.value, servers);
+        }).toList(),
+      ));
     }
 
     return sections;
