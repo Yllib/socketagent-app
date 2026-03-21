@@ -108,7 +108,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
       if (mounted) {
         setState(() => _pluginsByServer[sm.serverId] = plugins);
       }
-    } else if (sm.data['type'] == 'plugins_toggle_result') {
+    } else if (sm.data['type'] != null &&
+               (sm.data['type'] as String).startsWith('plugins_') &&
+               (sm.data['type'] as String).endsWith('_result')) {
       final pluginId = sm.data['pluginId'] as String?;
       if (pluginId != null) _toggling.remove(pluginId);
       if (sm.data['ok'] == true) {
@@ -119,7 +121,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sm.data['error'] as String? ?? 'Toggle failed'),
+            content: Text(sm.data['error'] as String? ?? 'Action failed'),
             backgroundColor: Colors.red.shade700,
           ),
         );
@@ -128,12 +130,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
     }
   }
 
-  void _togglePlugin(String serverId, String pluginId, bool enabled) {
+  void _pluginAction(String serverId, String pluginId, String action) {
     setState(() => _toggling.add(pluginId));
     _connMgr.sendToServer(serverId, {
-      'type': 'plugins_toggle',
+      'type': 'plugins_$action',
       'pluginId': pluginId,
-      'enabled': enabled,
     });
   }
 
@@ -521,6 +522,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
         items: deduped,
         servers: {...servers, ...mpServers}.toList(),
         pluginId: mp?.value['id'] as String?,
+        pluginInstalled: mp?.value['installed'] as bool?,
         pluginEnabled: mp?.value['enabled'] as bool?,
         pluginServerId: mp?.key,
         pluginDescription: mp?.value['description'] as String?,
@@ -633,12 +635,13 @@ class _SkillsScreenState extends State<SkillsScreen> {
     List<ServerConfig> servers = const [],
     String? pluginId,
     bool? pluginEnabled,
+    bool? pluginInstalled,
     String? pluginServerId,
     String? pluginDescription,
   }) {
     final theme = Theme.of(context);
     final isExpanded = _expanded.contains(key);
-    final hasToggle = pluginId != null && pluginEnabled != null;
+    final hasPlugin = pluginId != null && pluginServerId != null;
 
     return ExpansionTile(
       key: PageStorageKey(key),
@@ -668,18 +671,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
               ),
             )
           : null,
-      trailing: hasToggle
-          ? SizedBox(
-              height: 32,
-              child: FittedBox(
-                child: Switch(
-                  value: pluginEnabled!,
-                  onChanged: _toggling.contains(pluginId)
-                      ? null
-                      : (val) => _togglePlugin(pluginServerId!, pluginId!, val),
-                ),
-              ),
-            )
+      trailing: hasPlugin
+          ? _buildPluginAction(pluginServerId!, pluginId!, pluginInstalled ?? false, pluginEnabled ?? false)
           : null,
       title: Row(
         children: [
@@ -848,8 +841,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
     final id = plugin['id'] as String? ?? '';
     final name = plugin['name'] as String? ?? id;
     final description = plugin['description'] as String? ?? '';
+    final installed = plugin['installed'] as bool? ?? false;
     final enabled = plugin['enabled'] as bool? ?? false;
-    final isToggling = _toggling.contains(id);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -892,18 +885,71 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 ),
               )
             : null,
-        trailing: SizedBox(
+        trailing: _buildPluginAction(serverId, id, installed, enabled),
+      ),
+    );
+  }
+
+  /// Builds the trailing action widget for a marketplace plugin:
+  /// - Not installed: "Install" text button
+  /// - Installed: Toggle switch (enable/disable) + uninstall in long-press menu
+  Widget _buildPluginAction(String serverId, String pluginId, bool installed, bool enabled) {
+    final isToggling = _toggling.contains(pluginId);
+
+    if (!installed) {
+      // Show install button
+      return SizedBox(
+        height: 32,
+        child: TextButton(
+          onPressed: isToggling ? null : () => _pluginAction(serverId, pluginId, 'install'),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            minimumSize: Size.zero,
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          child: isToggling
+              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Install', style: TextStyle(fontSize: 12)),
+        ),
+      );
+    }
+
+    // Installed: show toggle + popup menu for uninstall
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
           height: 32,
           child: FittedBox(
             child: Switch(
               value: enabled,
               onChanged: isToggling
                   ? null
-                  : (val) => _togglePlugin(serverId, id, val),
+                  : (val) => _pluginAction(serverId, pluginId, val ? 'enable' : 'disable'),
             ),
           ),
         ),
-      ),
+        SizedBox(
+          width: 24,
+          height: 32,
+          child: PopupMenuButton<String>(
+            padding: EdgeInsets.zero,
+            iconSize: 14,
+            icon: Icon(Icons.more_vert, size: 14,
+                color: Theme.of(context).colorScheme.onSurface.withAlpha(100)),
+            onSelected: (action) {
+              if (action == 'uninstall') _pluginAction(serverId, pluginId, 'uninstall');
+            },
+            itemBuilder: (ctx) => [
+              const PopupMenuItem(
+                value: 'uninstall',
+                height: 36,
+                child: Text('Uninstall', style: TextStyle(fontSize: 13, color: Colors.red)),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
