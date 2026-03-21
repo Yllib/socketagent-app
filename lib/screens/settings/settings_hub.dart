@@ -9,7 +9,6 @@ import 'servers_screen.dart';
 import 'voice_speech_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
-import 'plugins_screen.dart';
 import 'about_screen.dart';
 
 class SettingsHub extends StatelessWidget {
@@ -91,17 +90,6 @@ class SettingsHub extends StatelessWidget {
                 subtitle: 'View and manage Claude slash commands',
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SkillsScreen()),
-                ),
-              ),
-
-              // Marketplace Plugins
-              _buildCategoryTile(
-                context,
-                icon: Icons.extension,
-                title: 'Marketplace Plugins',
-                subtitle: 'Enable or disable SDK plugins',
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const PluginsScreen()),
                 ),
               ),
 
