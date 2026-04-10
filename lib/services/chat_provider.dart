@@ -3376,6 +3376,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ));
           }
           break;
+        case 'monitor':
+          // Restore monitor output cards from history
+          if (content.isNotEmpty) {
+            final monitorTaskId = entry['taskId'] as String? ?? '';
+            final monitorDesc = entry['description'] as String? ?? 'Monitor';
+            // Accumulate into an existing monitor card for this taskId, or create new
+            ChatMessage? existingMonitor;
+            for (int i = loaded.length - 1; i >= 0; i--) {
+              if (loaded[i].type == MessageType.monitorOutput && loaded[i].toolUseId == monitorTaskId) {
+                existingMonitor = loaded[i];
+                break;
+              }
+            }
+            if (existingMonitor != null) {
+              existingMonitor.toolOutput = (existingMonitor.toolOutput ?? '') + '\n' + content;
+            } else {
+              loaded.add(ChatMessage(
+                id: 'monitor_${monitorTaskId}_${DateTime.now().microsecondsSinceEpoch}_$offset',
+                sender: MessageSender.system,
+                type: MessageType.monitorOutput,
+                timestamp: DateTime.now(),
+                textContent: monitorDesc,
+                toolUseId: monitorTaskId,
+                toolOutput: content,
+              ));
+            }
+          }
+          break;
         case 'user_uuid':
           // Retroactively assign UUID to the most recent user message
           final userUuid = content;
