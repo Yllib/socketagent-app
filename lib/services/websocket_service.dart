@@ -291,6 +291,10 @@ class WebSocketService {
     send({'type': 'stop_task', 'taskId': taskId});
   }
 
+  void sendStopMonitor(String taskId) {
+    send({'type': 'stop_monitor', 'taskId': taskId});
+  }
+
   void sendForkSession(String sessionId) {
     send({'type': 'fork_session', 'sessionId': sessionId});
   }
@@ -301,6 +305,10 @@ class WebSocketService {
 
   void sendSetModel(String? model) {
     send({'type': 'set_model', if (model != null) 'model': model});
+  }
+
+  void sendSetPermissionMode(String mode) {
+    send({'type': 'set_permission_mode', 'mode': mode});
   }
 
   void sendMcpStatus() {
@@ -317,6 +325,14 @@ class WebSocketService {
 
   void sendRewind(String userMessageUuid, {bool dryRun = false}) {
     send({'type': 'rewind', 'userMessageUuid': userMessageUuid, 'dryRun': dryRun});
+  }
+
+  void sendRewindConversation(String userMessageUuid, {bool dryRun = false, bool rewindFiles = true}) {
+    send({'type': 'rewind_conversation', 'userMessageUuid': userMessageUuid, 'dryRun': dryRun, 'rewindFiles': rewindFiles});
+  }
+
+  void sendBranchFromMessage(String sessionId, String userMessageUuid) {
+    send({'type': 'branch_from_message', 'sessionId': sessionId, 'userMessageUuid': userMessageUuid});
   }
 
   void disconnect() {

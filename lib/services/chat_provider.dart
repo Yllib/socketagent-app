@@ -67,7 +67,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeSessionCwd;
   String? _activeSessionTitle;
   // Per-session notification toggles
-  Set<String> _notifEnabledSessions = {};
+  Set<String> _notifMutedSessions = {};
   // Pinned sessions
   Set<String> _pinnedSessionIds = {};
   // Persistent recent CWDs per server (serverId → ordered list, most recent first)
@@ -82,10 +82,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isProcessing = false;
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
   bool _isCompacting = false;
-  String? _permissionMode;  // 'plan', 'bypassPermissions', 'default', etc.
+  bool _requiresAction = false;  // SDK says session needs user input
+  String? _permissionMode;  // 'plan', 'bypassPermissions', 'default', 'auto', etc.
   bool _isRateLimited = false;
   double? _rateLimitUtilization;
   bool _isRetrying = false;
+  String? _activeHookName;
   List<String> _promptSuggestions = [];
   List<dynamic>? _supportedCommands;
   List<dynamic>? _supportedAgents;
@@ -110,6 +112,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ChatMessage? _currentStreamingMessage;
   ChatMessage? _currentThinkingMessage;
   String? _lastServerStartedAt;  // detect server restarts
+  bool _desktopCliActive = false;  // desktop CLI actively using this session
+  Set<String> _desktopCliSessionIds = {};  // all sessions with active desktop CLI
+  Map<String, dynamic>? _contextUsage;  // detailed context breakdown from SDK
   // SDK session info
   String? _sessionModel;
   List<Map<String, dynamic>> _supportedModels = [];
@@ -174,16 +179,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? get activeSessionTitle => _activeSessionTitle;
 
   // Session notifications
-  bool isNotifEnabled(String sessionId) => _notifEnabledSessions.contains(sessionId);
+  bool isNotifEnabled(String sessionId) => !_notifMutedSessions.contains(sessionId);
 
   void toggleSessionNotifications(String sessionId) {
-    if (_notifEnabledSessions.contains(sessionId)) {
-      _notifEnabledSessions.remove(sessionId);
+    if (_notifMutedSessions.contains(sessionId)) {
+      _notifMutedSessions.remove(sessionId);
     } else {
-      _notifEnabledSessions.add(sessionId);
+      _notifMutedSessions.add(sessionId);
     }
     SharedPreferences.getInstance().then((prefs) {
-      prefs.setStringList('notif_enabled_sessions', _notifEnabledSessions.toList());
+      prefs.setStringList('notif_muted_sessions', _notifMutedSessions.toList());
     });
     notifyListeners();
   }
@@ -261,7 +266,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _maybeNotify({required String title, required String body}) {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
-    if (!_notifEnabledSessions.contains(sessionId)) return;
+    if (_notifMutedSessions.contains(sessionId)) return;
     if (_viewingSessionId == sessionId && _appInForeground) return;
 
     final notifId = sessionId.hashCode & 0x7FFFFFFF;
@@ -328,11 +333,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
   bool get isProcessing => _isProcessing;
   bool get isCompacting => _isCompacting;
+  bool get requiresAction => _requiresAction;
   String? get permissionMode => _permissionMode;
   bool get isPlanMode => _permissionMode == 'plan';
   bool get isRateLimited => _isRateLimited;
   double? get rateLimitUtilization => _rateLimitUtilization;
   bool get isRetrying => _isRetrying;
+  String? get activeHookName => _activeHookName;
+  bool get desktopCliActive => _desktopCliActive;
+  bool isDesktopCliActiveForSession(String sessionId) => _desktopCliSessionIds.contains(sessionId);
+  Map<String, dynamic>? get contextUsage => _contextUsage;
   List<String> get promptSuggestions => _promptSuggestions;
   List<dynamic>? get supportedCommands => _supportedCommands;
   List<dynamic>? get supportedAgents => _supportedAgents;
@@ -560,7 +570,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
     _lastServerStartedAt = prefs.getString('server_started_at');
-    _notifEnabledSessions = (prefs.getStringList('notif_enabled_sessions') ?? []).toSet();
+    _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? []).toSet();
     _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
     // Recent CWDs are now server-side — loaded via get_recent_cwds on connect
     _ttsEnabled = prefs.getBool('tts_enabled') ?? false;
@@ -1623,7 +1633,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         });
         break;
       case 'task_started':
-        // SDK lifecycle event for background tasks — logged for now
+        // Register monitor-spawned tasks in the background tasks pane
+        final tsTaskType = msg['taskType'] as String?;
+        if (tsTaskType == 'monitor') {
+          final tsTaskId = msg['taskId'] as String? ?? '';
+          final tsDesc = msg['description'] as String? ?? 'Monitored process';
+          final tsToolUseId = msg['toolUseId'] as String?;
+          _backgroundTasks[tsTaskId] = {
+            'status': 'running',
+            'summary': tsDesc,
+            'isMonitor': true,
+            if (tsToolUseId != null) 'originToolUseId': tsToolUseId,
+          };
+          notifyListeners();
+        }
         break;
       case 'bg_task_progress':
         // Update subagent with progress summary if available
@@ -1635,6 +1658,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (lastTool != null) _subagentTasks[progressToolId]!['lastToolName'] = lastTool;
           notifyListeners();
         }
+        break;
+      case 'hook_started':
+        _activeHookName = msg['hookName'] as String?;
+        notifyListeners();
+        break;
+      case 'hook_progress':
+        // Hook is still running — keep indicator active
+        break;
+      case 'hook_response':
+        _activeHookName = null;
+        notifyListeners();
         break;
       case 'local_command_output':
         final cmdContent = msg['content'] as String? ?? '';
@@ -1655,6 +1689,118 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _promptSuggestions = [suggestion];
           notifyListeners();
         }
+        break;
+      case 'session_lifecycle':
+        final lcEvent = msg['event'] as String? ?? '';
+        final lcModel = msg['model'] as String?;
+        if (lcEvent == 'start' && lcModel != null && lcModel.isNotEmpty) {
+          _sessionModel = lcModel;
+        }
+        // Show as a subtle system notification in chat
+        final lcSource = msg['source'] as String? ?? '';
+        final lcReason = msg['reason'] as String? ?? '';
+        String lcText;
+        if (lcEvent == 'start') {
+          lcText = 'Session started${lcModel != null && lcModel.isNotEmpty ? ' ($lcModel)' : ''}';
+        } else {
+          lcText = 'Session ended${lcReason.isNotEmpty ? ' ($lcReason)' : ''}';
+        }
+        _messages.add(ChatMessage(
+          id: 'lifecycle_${DateTime.now().microsecondsSinceEpoch}',
+          sender: MessageSender.system,
+          type: MessageType.taskNotification,
+          timestamp: DateTime.now(),
+          textContent: lcText,
+          toolName: lcEvent == 'start' ? 'session_start' : 'session_end',
+        ));
+        notifyListeners();
+        break;
+      case 'task_completed_hook':
+        final hookTaskId = msg['taskId'] as String? ?? '';
+        final hookTeammate = msg['teammateName'] as String? ?? '';
+        final hookSubject = msg['subject'] as String? ?? '';
+        // Try to match to a tracked subagent by taskId or teammateName
+        bool matched = false;
+        if (hookTaskId.isNotEmpty && _subagentTasks.containsKey(hookTaskId)) {
+          _subagentTasks[hookTaskId]!['status'] = 'completed';
+          matched = true;
+        }
+        // If not matched by taskId, try matching by teammate name in description
+        if (!matched && hookTeammate.isNotEmpty) {
+          for (final entry in _subagentTasks.entries) {
+            if (entry.value['status'] == 'running' &&
+                (entry.value['description'] as String? ?? '').contains(hookTeammate)) {
+              entry.value['status'] = 'completed';
+              matched = true;
+              break;
+            }
+          }
+        }
+        // Show a notification if we have a subject
+        if (hookSubject.isNotEmpty) {
+          _messages.add(ChatMessage(
+            id: 'task_hook_${DateTime.now().microsecondsSinceEpoch}',
+            sender: MessageSender.system,
+            type: MessageType.taskNotification,
+            timestamp: DateTime.now(),
+            textContent: hookSubject,
+            toolName: 'completed',
+          ));
+        }
+        notifyListeners();
+        break;
+      case 'session_state_changed':
+        final sessionState = msg['state'] as String? ?? 'idle';
+        _requiresAction = sessionState == 'requires_action';
+        // Use SDK state as authoritative source for running status
+        if (sessionState == 'running') {
+          _isProcessing = true;
+          _processingSetAt = null; // server confirmed
+        } else if (sessionState == 'idle') {
+          _isProcessing = false;
+          _processingSetAt = null;
+          _currentStreamingMessage = null;
+        }
+        // requires_action keeps _isProcessing true (still mid-query)
+        notifyListeners();
+        break;
+      case 'cwd_changed':
+        final newCwd = msg['newCwd'] as String? ?? '';
+        if (newCwd.isNotEmpty) {
+          _activeSessionCwd = newCwd;
+          // Update the session in the session list too
+          final idx = _sessions.indexWhere((s) => s.id == _activeSessionId);
+          if (idx >= 0) {
+            final old = _sessions[idx];
+            _sessions[idx] = Session(
+              id: old.id, title: old.title, cwd: newCwd,
+              createdAt: old.createdAt, lastActive: old.lastActive,
+              messagePreview: old.messagePreview, running: old.running,
+              serverId: old.serverId, serverName: old.serverName,
+              serverColor: old.serverColor,
+            );
+          }
+          notifyListeners();
+        }
+        break;
+      case 'context_usage':
+        _contextUsage = Map<String, dynamic>.from(msg);
+        notifyListeners();
+        break;
+      case 'task_created_hook':
+        final createdTaskId = msg['taskId'] as String? ?? '';
+        final createdSubject = msg['subject'] as String? ?? '';
+        final createdTeammate = msg['teammateName'] as String? ?? '';
+        if (createdTaskId.isNotEmpty) {
+          _subagentTasks[createdTaskId] = {
+            'description': createdSubject,
+            'prompt': '',
+            'subagentType': createdTeammate,
+            'status': 'running',
+            'toolUseId': createdTaskId,
+          };
+        }
+        notifyListeners();
         break;
       case 'injection_ack':
         // Server confirmed the injected message was processed by the SDK
@@ -1696,6 +1842,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (msg['compacting'] == true) {
             _isCompacting = true;
           }
+        }
+        // Restore permission mode (e.g., plan mode) on session resume
+        final resumePermMode = msg['permissionMode'] as String?;
+        if (resumePermMode != null) {
+          _permissionMode = resumePermMode;
         }
         // Restore spinner on the active tool call after session resume
         if (_isProcessing) {
@@ -1774,6 +1925,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ?.map((e) => e.toString())
             .toSet() ?? <String>{};
         _backgroundTasks.removeWhere((id, _) => !serverTaskIds.contains(id));
+        // Desktop CLI active status — track full set for session list badges
+        final desktopCliSessions = (msg['desktopCliSessions'] as List?)
+            ?.map((e) => e.toString())
+            .toSet();
+        _desktopCliSessionIds = desktopCliSessions ?? {};
+        _desktopCliActive = _desktopCliSessionIds.isNotEmpty &&
+            _activeSessionId != null &&
+            _desktopCliSessionIds.contains(_activeSessionId);
+        // Update session model from heartbeat
+        final sessionModels = msg['sessionModels'] as Map<String, dynamic>?;
+        if (sessionModels != null && _activeSessionId != null) {
+          final model = sessionModels[_activeSessionId] as String?;
+          if (model != null) _sessionModel = model;
+        }
         notifyListeners();
         break;
       case 'error':
@@ -1794,6 +1959,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           type: MessageType.claudeAuth,
           timestamp: DateTime.now(),
           textContent: msg['url'] as String? ?? '',
+          authRequestId: serverId,
         ));
         _isProcessing = false;
         notifyListeners();
@@ -1905,6 +2071,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'mcp_status':
         _handleMcpStatus(msg);
         break;
+      case 'elicitation_url':
+        _handleElicitationUrl(msg);
+        break;
+      case 'monitor_started':
+        _handleMonitorStarted(msg);
+        break;
+      case 'monitor_output':
+        _handleMonitorOutput(msg);
+        break;
       case 'files_persisted':
         // Log but don't surface to user — file persistence is server-internal
         break;
@@ -1913,6 +2088,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'rewind_result':
         _handleRewindResult(msg);
+        break;
+      case 'rewind_conversation_result':
+        _handleRewindConversationResult(msg);
+        break;
+      case 'branch_result':
+        _handleBranchResult(msg);
         break;
       case 'user_message_uuid':
         _handleUserMessageUuid(msg);
@@ -1970,6 +2151,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timestamp: DateTime.now(),
       textContent: message,
       toolName: success ? 'outlook_auth_success' : 'outlook_auth_failure',
+    ));
+    notifyListeners();
+  }
+
+  void _handleElicitationUrl(Map<String, dynamic> msg) {
+    _currentStreamingMessage = null;
+    final questionId = msg['questionId'] as String? ?? '';
+    final mcpServerName = msg['mcpServerName'] as String? ?? 'MCP Server';
+    final message = msg['message'] as String? ?? '';
+    final url = msg['url'] as String? ?? '';
+    if (questionId.isEmpty || url.isEmpty) return;
+
+    _messages.add(ChatMessage.elicitationUrl(
+      questionId: questionId,
+      mcpServerName: mcpServerName,
+      message: message,
+      url: url,
     ));
     notifyListeners();
   }
@@ -2119,7 +2317,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _closeThinkingMessage();
     _processingSetAt = null; // server confirmed processing
 
-    final tool = msg['tool'] ?? 'Unknown';
+    final rawTool = msg['tool'] ?? 'Unknown';
+    final tool = (rawTool as String).replaceFirst('mcp__app__', '');
     final input = Map<String, dynamic>.from((msg['input'] as Map<String, dynamic>?) ?? {});
 
     // Enrich TaskOutput with the original task's description
@@ -2579,6 +2778,61 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  void _handleMonitorStarted(Map<String, dynamic> msg) {
+    final taskId = msg['taskId'] as String? ?? '';
+    final description = msg['description'] as String? ?? 'Monitored process';
+    final monitoring = msg['monitoring'] as bool? ?? false;
+
+    if (monitoring) {
+      // Add or update in background tasks
+      _backgroundTasks[taskId] = {
+        ..._backgroundTasks[taskId] ?? {},
+        'status': 'running',
+        'summary': description,
+        'isMonitor': true,
+      };
+    } else {
+      // Monitoring stopped — remove from background tasks
+      _backgroundTasks.remove(taskId);
+    }
+    notifyListeners();
+  }
+
+  void _handleMonitorOutput(Map<String, dynamic> msg) {
+    final taskId = msg['taskId'] as String? ?? '';
+    final content = msg['content'] as String? ?? '';
+    if (content.isEmpty) return;
+
+    // Find existing monitor output card for this taskId and append, or create new one
+    final desc = _backgroundTasks[taskId]?['summary'] as String? ?? 'Monitor';
+    ChatMessage? existing;
+    for (int i = _messages.length - 1; i >= 0; i--) {
+      final m = _messages[i];
+      if (m.type == MessageType.monitorOutput && m.toolUseId == taskId) {
+        existing = m;
+        break;
+      }
+    }
+
+    if (existing != null) {
+      // Append new output to existing card
+      existing.toolOutput = (existing.toolOutput ?? '') + '\n' + content;
+      existing.textContent = desc;
+    } else {
+      // Create a new monitor output card
+      _messages.add(ChatMessage(
+        id: 'monitor_${taskId}_${DateTime.now().microsecondsSinceEpoch}',
+        sender: MessageSender.system,
+        type: MessageType.monitorOutput,
+        timestamp: DateTime.now(),
+        textContent: desc,
+        toolUseId: taskId,
+        toolOutput: content,
+      ));
+    }
+    notifyListeners();
+  }
+
   void _handleToolSummary(Map<String, dynamic> msg) {
     _currentStreamingMessage = null;
     _closeThinkingMessage();
@@ -2697,6 +2951,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  void setPermissionMode(String mode) {
+    _ws.sendSetPermissionMode(mode);
+    _permissionMode = mode;
+    notifyListeners();
+  }
+
   void requestMcpStatus() {
     _ws.sendMcpStatus();
   }
@@ -2711,6 +2971,80 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void rewindToMessage(String uuid) {
     _ws.sendRewind(uuid);
+  }
+
+  void rewindConversation(String uuid, {bool rewindFiles = true}) {
+    _ws.sendRewindConversation(uuid, rewindFiles: rewindFiles);
+  }
+
+  void branchFromMessage(String uuid) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || sessionId.isEmpty) return;
+    _ws.sendBranchFromMessage(sessionId, uuid);
+  }
+
+  void _handleRewindConversationResult(Map<String, dynamic> msg) {
+    final success = msg['success'] == true;
+    final dryRun = msg['dryRun'] == true;
+    final error = msg['error'] as String?;
+    final messagesRemoved = (msg['messagesRemoved'] as num?)?.toInt() ?? 0;
+
+    if (dryRun) return; // dry-run previews are not shown as messages
+
+    if (success) {
+      // Truncate local messages at the rewind point
+      final uuid = msg['userMessageUuid'] as String?;
+      if (uuid != null) {
+        final idx = _messages.indexWhere((m) => m.uuid == uuid);
+        if (idx >= 0) {
+          _messages.removeRange(idx + 1, _messages.length);
+        }
+      }
+      _isProcessing = false;
+      _currentStreamingMessage = null;
+      _messages.add(ChatMessage(
+        id: 'rewind_conv_${DateTime.now().microsecondsSinceEpoch}',
+        sender: MessageSender.system,
+        type: MessageType.taskNotification,
+        timestamp: DateTime.now(),
+        textContent: 'Conversation rewound ($messagesRemoved messages removed)',
+        toolName: 'success',
+      ));
+    } else {
+      _messages.add(ChatMessage(
+        id: 'rewind_conv_${DateTime.now().microsecondsSinceEpoch}',
+        sender: MessageSender.system,
+        type: MessageType.taskNotification,
+        timestamp: DateTime.now(),
+        textContent: 'Conversation rewind failed: ${error ?? 'unknown error'}',
+        toolName: 'failed',
+      ));
+    }
+    notifyListeners();
+  }
+
+  void _handleBranchResult(Map<String, dynamic> msg) {
+    final success = msg['success'] == true;
+    final newSessionId = msg['newSessionId'] as String?;
+    final error = msg['error'] as String?;
+
+    if (success && newSessionId != null && newSessionId.isNotEmpty) {
+      _activeSessionId = newSessionId;
+      _isProcessing = false;
+      _currentStreamingMessage = null;
+      notifyListeners();
+      requestSessionList();
+    } else {
+      _messages.add(ChatMessage(
+        id: 'branch_${DateTime.now().microsecondsSinceEpoch}',
+        sender: MessageSender.system,
+        type: MessageType.taskNotification,
+        timestamp: DateTime.now(),
+        textContent: 'Branch failed: ${error ?? 'unknown error'}',
+        toolName: 'failed',
+      ));
+      notifyListeners();
+    }
   }
 
   void _handleUserMessageUuid(Map<String, dynamic> msg) {
@@ -2755,6 +3089,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _todos = rawTodos
           .map((t) => Map<String, dynamic>.from(t as Map))
           .toList();
+    }
+
+    // Restore prompt suggestion tied to this session
+    final suggestion = msg['promptSuggestion'] as String?;
+    if (suggestion != null && suggestion.isNotEmpty) {
+      _promptSuggestions = [suggestion];
     }
 
     final loaded = <ChatMessage>[];
@@ -2823,11 +3163,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ));
           }
 
+          // Strip monitor injection messages — these are displayed as MonitorCards via monitor_output
+          if (userText.startsWith('[Monitor: ')) break;
+
           // Strip system XML tags from user messages (e.g. /exit command output)
           userText = userText.replaceAll(_systemReminderRegex, '').trim();
 
           if (userText.trim().isNotEmpty) {
-            loaded.add(ChatMessage.userText(userText));
+            final userMsg = ChatMessage.userText(userText);
+            // Restore uuid directly from history entry (for rewind support)
+            userMsg.uuid = entry['uuid'] as String?;
+            loaded.add(userMsg);
           }
           break;
         case 'assistant':
@@ -2847,6 +3193,36 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final trigger = compactMatch.group(2) ?? 'auto';
               loaded.add(ChatMessage.compactBoundary(trigger: trigger, preTokens: preTokens));
               break;
+            }
+            // Detect session lifecycle markers from history
+            final lifecycleMatch = RegExp(r'^\[session_lifecycle:(start|end):([^\]]+)\]$').firstMatch(content);
+            if (lifecycleMatch != null) {
+              final lcEvent = lifecycleMatch.group(1)!;
+              final lcDetail = lifecycleMatch.group(2)!;
+              String lcText;
+              if (lcEvent == 'start') {
+                // Detail format: "source:model" or just "source"
+                final parts = lcDetail.split(':');
+                final model = parts.length > 1 ? parts.sublist(1).join(':') : null;
+                lcText = 'Session started${model != null && model.isNotEmpty ? ' ($model)' : ''}';
+              } else {
+                lcText = 'Session ended${lcDetail.isNotEmpty ? ' ($lcDetail)' : ''}';
+              }
+              loaded.add(ChatMessage(
+                id: 'lifecycle_hist_${DateTime.now().microsecondsSinceEpoch}_$offset',
+                sender: MessageSender.system,
+                type: MessageType.taskNotification,
+                timestamp: DateTime.now(),
+                textContent: lcText,
+                toolName: lcEvent == 'start' ? 'session_start' : 'session_end',
+              ));
+              break;
+            }
+            // Detect CWD change markers from history — update session CWD silently
+            final cwdMatch = RegExp(r'^\[cwd_changed:(.+)\]$').firstMatch(content);
+            if (cwdMatch != null) {
+              _activeSessionCwd = cwdMatch.group(1);
+              break; // Don't render a chat message for CWD changes
             }
             // Detect task status notifications from history
             final taskMatch = RegExp(r'^\[Task (\w+)\] (.*)$').firstMatch(content);
@@ -3013,7 +3389,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
         case 'tool_call':
-          final toolName = entry['toolName'] as String? ?? 'Tool';
+          final toolName = (entry['toolName'] as String? ?? 'Tool').replaceFirst('mcp__app__', '');
           final toolInput = (entry['toolInput'] as Map<String, dynamic>?) ?? {};
           final toolCallMsg = ChatMessage.toolCall(
             tool: toolName,
@@ -3099,6 +3475,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           qMsg.answered = answered;
           loaded.add(qMsg);
           break;
+        case 'elicitation_url':
+          final elicitQId = entry['questionId'] as String? ?? '';
+          final elicitServer = entry['mcpServerName'] as String? ?? 'MCP Server';
+          final elicitMessage = entry['content'] as String? ?? '';
+          final elicitUrl = entry['url'] as String? ?? '';
+          final elicitAnswered = entry['answered'] as bool? ?? false;
+          if (elicitQId.isNotEmpty && elicitUrl.isNotEmpty) {
+            final eMsg = ChatMessage.elicitationUrl(
+              questionId: elicitQId,
+              mcpServerName: elicitServer,
+              message: elicitMessage,
+              url: elicitUrl,
+            );
+            eMsg.answered = elicitAnswered;
+            loaded.add(eMsg);
+          }
+          break;
       }
     }
 
@@ -3115,7 +3508,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (isAppend) {
       // Append missed messages (e.g., from server downtime recovery)
-      _messages = [..._messages, ...loaded];
+      // Deduplicate: skip user messages whose text already exists in recent messages
+      final deduped = <ChatMessage>[];
+      for (final msg in loaded) {
+        if (msg.sender == MessageSender.user && msg.type == MessageType.text) {
+          final isDupe = _messages.reversed.take(20).any(
+            (m) => m.sender == MessageSender.user && m.type == MessageType.text
+                && m.textContent == msg.textContent,
+          );
+          if (isDupe) continue;
+        }
+        deduped.add(msg);
+      }
+      _messages = [..._messages, ...deduped];
     } else if (isPrepend) {
       // Prepend older messages before existing ones
       _messages = [...loaded, ..._messages];
@@ -3361,12 +3766,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void submitAuthCode(String code) {
-    _connMgr.send({
+  void submitAuthCode(String code, {String? serverId}) {
+    final msg = {
       'type': 'auth_code',
       'code': code,
       'sessionId': _activeSessionId,
-    });
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
   }
 
   void answerQuestion(String questionId, Map<String, String> answers) {
@@ -3428,6 +3838,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _subagentTasks.clear();
     _backgroundTasks.clear();
     _pendingPrepends = [];
+    _promptSuggestions = [];
+    _desktopCliActive = false;
+    _contextUsage = null;
+    _requiresAction = false;
     _pendingImageLoads.clear();
     _clearAttachment();
     _clearRawState();
@@ -3486,6 +3900,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _mcpServers = [];
     _subagentTasks.clear();
     _backgroundTasks.clear();
+    _promptSuggestions = [];
+    _desktopCliActive = false;
+    _contextUsage = null;
+    _requiresAction = false;
     _pendingImageLoads.clear();
     _clearAttachment();
     _clearRawState();
@@ -3632,7 +4050,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Force server to pull updates, compile, and restart.
   Future<Map<String, dynamic>> requestForceUpdate({String? serverId}) async {
     _pendingForceUpdate = Completer<Map<String, dynamic>>();
-    final msg = {'type': 'force_update'};
+    final msg = {'type': 'force_update', 'forceRestart': true};
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
     } else {
@@ -3654,6 +4072,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isProcessing = false;
     _isCompacting = false;
     _currentStreamingMessage = null;
+    _promptSuggestions = [];
+    _desktopCliActive = false;
+    _contextUsage = null;
+    _requiresAction = false;
 
     final msg = {
       'type': 'resume_session',

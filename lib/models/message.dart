@@ -1,6 +1,6 @@
 enum MessageSender { user, assistant, system }
 
-enum MessageType { text, toolCall, toolResult, question, result, error, taskNotification, compactBoundary, outlookAuth, ibsAuth, claudeAuth, toolSummary, thinking }
+enum MessageType { text, toolCall, toolResult, question, result, error, taskNotification, compactBoundary, outlookAuth, ibsAuth, claudeAuth, toolSummary, thinking, elicitationUrl, monitorOutput }
 
 class ChatMessage {
   final String id;
@@ -203,6 +203,24 @@ class ChatMessage {
       type: MessageType.ibsAuth,
       timestamp: DateTime.now(),
       authRequestId: authRequestId,
+    );
+  }
+
+  factory ChatMessage.elicitationUrl({
+    required String questionId,
+    required String mcpServerName,
+    required String message,
+    required String url,
+  }) {
+    return ChatMessage(
+      id: 'elicit_$questionId',
+      sender: MessageSender.system,
+      type: MessageType.elicitationUrl,
+      timestamp: DateTime.now(),
+      questionId: questionId,
+      textContent: message,
+      toolName: mcpServerName,
+      toolOutput: url,
     );
   }
 

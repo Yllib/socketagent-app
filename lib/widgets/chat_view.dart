@@ -17,6 +17,8 @@ import 'claude_auth_card.dart';
 import 'raw_event_card.dart';
 import 'subagent_card.dart';
 import 'thinking_card.dart';
+import 'elicitation_card.dart';
+import 'monitor_card.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -29,7 +31,8 @@ class ChatView extends StatefulWidget {
   final VoidCallback? onLoadMore;
   final void Function(String taskId)? onStopTask;
   final VoidCallback? onDismissTodos;
-  final void Function(String uuid)? onRewind;
+  final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
+  final void Function(String uuid)? onBranch;
   final bool rawMode;
   final List<SdkItem> rawItems;
   // For SubAgentCard: tracked subagent tasks and full message list for child lookup
@@ -48,7 +51,8 @@ class ChatView extends StatefulWidget {
     this.onLoadMore,
     this.onStopTask,
     this.onDismissTodos,
-    this.onRewind,
+    this.onRewindConversation,
+    this.onBranch,
     this.rawMode = false,
     this.rawItems = const [],
     this.subagentTasks = const {},
@@ -289,7 +293,11 @@ class ChatViewState extends State<ChatView> {
   Widget _buildMessageContent(ChatMessage msg) {
     switch (msg.type) {
       case MessageType.text:
-        return MessageBubble(message: msg, onRewind: widget.onRewind);
+        return MessageBubble(
+          message: msg,
+          onRewindConversation: widget.onRewindConversation,
+          onBranch: widget.onBranch,
+        );
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') {
           return SpeakCard(message: msg);
@@ -362,6 +370,13 @@ class ChatViewState extends State<ChatView> {
         return _buildToolSummary(msg);
       case MessageType.thinking:
         return ThinkingCard(message: msg);
+      case MessageType.elicitationUrl:
+        return ElicitationCard(
+          message: msg,
+          onAnswer: widget.onAnswer,
+        );
+      case MessageType.monitorOutput:
+        return MonitorCard(message: msg);
     }
   }
 

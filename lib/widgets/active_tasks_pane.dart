@@ -43,12 +43,13 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
   List<_TaskEntry> get _entries {
     final entries = <_TaskEntry>[];
 
-    // Background bash tasks
+    // Background bash tasks and monitor tasks
     for (final e in widget.backgroundTasks.entries) {
       final originToolUseId = e.value['originToolUseId'] as String?;
-      // Find the tool card's streamed output
+      final isMonitor = e.value['isMonitor'] == true;
+      // Find the tool card's streamed output (bash tasks only)
       String? output;
-      if (originToolUseId != null) {
+      if (!isMonitor && originToolUseId != null) {
         for (final m in widget.messages.reversed) {
           if (m.type == MessageType.toolCall && m.toolUseId == originToolUseId) {
             output = m.toolOutput;
@@ -56,9 +57,18 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           }
         }
       }
+      // For monitor tasks, find accumulated monitor output from chat
+      if (isMonitor) {
+        for (final m in widget.messages.reversed) {
+          if (m.type == MessageType.monitorOutput && m.toolUseId == e.key) {
+            output = m.toolOutput;
+            break;
+          }
+        }
+      }
       entries.add(_TaskEntry(
         id: e.key,
-        kind: 'bash',
+        kind: isMonitor ? 'monitor' : 'bash',
         description: e.value['summary'] as String? ?? 'Background task',
         status: e.value['status'] as String? ?? 'running',
         scrollToolUseId: originToolUseId ?? e.key,
@@ -222,7 +232,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
     final isCompleted = entry.status == 'completed';
     final hasContent = entry.kind == 'subagent'
         ? true  // subagents always expandable (prompt + children + result)
-        : (entry.bashOutput?.isNotEmpty ?? false);
+        : (entry.bashOutput?.isNotEmpty ?? false) || entry.kind == 'monitor';
 
     // Auto-expand completed subagents that have results (only once, respect user collapse)
     if (isCompleted && entry.resultOutput != null && entry.resultOutput!.isNotEmpty
@@ -271,11 +281,15 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   Icon(Icons.check_circle, size: 13, color: Colors.green.shade400)
                 else
                   Icon(
-                    entry.kind == 'subagent'
-                        ? Icons.account_tree
-                        : Icons.terminal,
+                    entry.kind == 'monitor'
+                        ? Icons.monitor_heart_outlined
+                        : entry.kind == 'subagent'
+                            ? Icons.account_tree
+                            : Icons.terminal,
                     size: 13,
-                    color: Colors.blue.shade300,
+                    color: entry.kind == 'monitor'
+                        ? const Color(0xFF89B4FA)
+                        : Colors.blue.shade300,
                   ),
                 const SizedBox(width: 6),
                 // Subagent type badge
