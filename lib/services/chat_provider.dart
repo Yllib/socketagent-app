@@ -2460,10 +2460,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// Handle streaming bash output — append to the most recent running tool card
+  /// Handle streaming bash output — append to the targeted or most recent running tool card
   void _handleToolStderr(Map<String, dynamic> msg) {
     final content = msg['content'] as String? ?? '';
     if (content.isEmpty) return;
+    final targetToolUseId = msg['toolUseId'] as String?;
+
+    // If toolUseId specified, route directly to that card (background tasks)
+    if (targetToolUseId != null && targetToolUseId.isNotEmpty) {
+      for (int i = _messages.length - 1; i >= 0; i--) {
+        final m = _messages[i];
+        if (m.type == MessageType.toolCall && m.toolUseId == targetToolUseId) {
+          m.toolOutput = (m.toolOutput ?? '') + content;
+          m.toolStreaming = true;
+          notifyListeners();
+          return;
+        }
+      }
+    }
 
     // Find the most recent tool_call that is still streaming (no tool_result yet)
     for (int i = _messages.length - 1; i >= 0; i--) {
@@ -2763,7 +2777,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Add a notification card to chat log
     final notifId = 'task_notif_${DateTime.now().microsecondsSinceEpoch}';
-    _messages.add(ChatMessage(
+    final notifMsg = ChatMessage(
       id: notifId,
       sender: MessageSender.system,
       type: MessageType.taskNotification,
@@ -2772,7 +2786,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       toolName: status,
       toolOutput: outputFile,
       toolUseId: taskId,
-    ));
+    );
+    // Link to original bash card so completion card can show its content
+    notifMsg.parentToolUseId = originToolUseId;
+    _messages.add(notifMsg);
     notifyListeners();
   }
 

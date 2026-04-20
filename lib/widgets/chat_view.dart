@@ -459,6 +459,17 @@ class ChatViewState extends State<ChatView> {
       return _buildTodoUpdateCard(msg);
     }
 
+    // Background bash completion — render as a ToolOutputBlock mirroring the original card
+    if ((isSuccess || isFailed) && msg.parentToolUseId != null) {
+      final original = widget.allMessages.cast<ChatMessage?>().firstWhere(
+        (m) => m!.type == MessageType.toolCall && m.toolUseId == msg.parentToolUseId,
+        orElse: () => null,
+      );
+      if (original != null && original.toolOutput != null) {
+        return ToolOutputBlock(message: original, greenTheme: true);
+      }
+    }
+
     final IconData icon;
     final Color color;
     final Color bgColor;

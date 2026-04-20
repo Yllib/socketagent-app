@@ -9,8 +9,9 @@ import 'scroll_passthrough.dart';
 
 class ToolOutputBlock extends StatefulWidget {
   final ChatMessage message;
+  final bool greenTheme;
 
-  const ToolOutputBlock({super.key, required this.message});
+  const ToolOutputBlock({super.key, required this.message, this.greenTheme = false});
 
   @override
   State<ToolOutputBlock> createState() => _ToolOutputBlockState();
@@ -124,9 +125,11 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final editDiff = _editDiff;
 
     final colorful = context.select<ChatProvider, bool>((p) => p.colorfulCards);
-    final accentColor = colorful
-        ? _toolAccentColor(rawToolName)
-        : const Color(0xFF89B4FA);
+    final accentColor = widget.greenTheme
+        ? const Color(0xFFA6E3A1)
+        : colorful
+            ? _toolAccentColor(rawToolName)
+            : const Color(0xFF89B4FA);
 
     // Always expandable if there's content to show
     final writeContent = _isWriteTool ? (widget.message.toolInput?['content'] as String?) : null;
