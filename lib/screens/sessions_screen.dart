@@ -8,6 +8,7 @@ import '../widgets/folder_browser_screen.dart';
 import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
+import 'settings/about_screen.dart';
 
 class SessionsTab extends StatefulWidget {
   const SessionsTab({super.key});
@@ -599,33 +600,34 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                   )
                 : null,
           ),
-          body: provider.sessions.isEmpty
-              ? _buildEmptyState(context)
-              : Column(
-                  children: [
-                    if (pinned.isNotEmpty)
-                      _buildPinnedSection(context, provider, pinned),
-                    Expanded(
-                      child: multiServer && _tabController != null
-                          ? TabBarView(
-                              controller: _tabController,
-                              children: [
-                                // "All" tab
-                                _buildFilteredSessionList(context, provider, unpinned),
-                                // Per-server tabs
-                                ...configs.map((c) {
-                                  final serverSessions = unpinned
-                                      .where((s) => s.serverId == c.id)
-                                      .toList();
-                                  return _buildFilteredSessionList(
-                                      context, provider, serverSessions);
-                                }),
-                              ],
-                            )
-                          : _buildFilteredSessionList(context, provider, unpinned),
-                    ),
-                  ],
+          body: Column(
+            children: [
+              _buildUpdateBanner(context),
+              if (provider.sessions.isEmpty)
+                Expanded(child: _buildEmptyState(context))
+              else ...[
+                if (pinned.isNotEmpty)
+                  _buildPinnedSection(context, provider, pinned),
+                Expanded(
+                  child: multiServer && _tabController != null
+                      ? TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildFilteredSessionList(context, provider, unpinned),
+                            ...configs.map((c) {
+                              final serverSessions = unpinned
+                                  .where((s) => s.serverId == c.id)
+                                  .toList();
+                              return _buildFilteredSessionList(
+                                  context, provider, serverSessions);
+                            }),
+                          ],
+                        )
+                      : _buildFilteredSessionList(context, provider, unpinned),
                 ),
+              ],
+            ],
+          ),
           floatingActionButton: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -671,6 +673,68 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
           ),
         );
       },
+    );
+  }
+
+  Widget _buildUpdateBanner(BuildContext context) {
+    final shell = context.findAncestorStateOfType<MainShellScreenState>();
+    if (shell == null || !shell.updateService.updateAvailable || shell.updateBannerDismissed) {
+      return const SizedBox.shrink();
+    }
+    final info = shell.updateService.updateInfo!;
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            Theme.of(context).colorScheme.primary.withAlpha(40),
+            Theme.of(context).colorScheme.primary.withAlpha(20),
+          ],
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.primary.withAlpha(80),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            Icon(Icons.system_update, size: 20, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Update available: v${info.currentVersion} \u2192 v${info.latestVersion}',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+            TextButton(
+              onPressed: shell.dismissUpdateBanner,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Later', style: TextStyle(fontSize: 12)),
+            ),
+            const SizedBox(width: 4),
+            FilledButton(
+              onPressed: () {
+                shell.dismissUpdateBanner();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const AboutScreen()),
+                );
+              },
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: const Text('Update', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

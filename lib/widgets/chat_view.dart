@@ -568,6 +568,29 @@ class ChatViewState extends State<ChatView> {
   }
 
   Widget _buildToolSummary(ChatMessage msg) {
+    // Check if this summary is for a subagent — if so, render a full completion card
+    final precedingIds = msg.precedingToolUseIds ?? [];
+    for (final toolUseId in precedingIds) {
+      if (widget.subagentTasks.containsKey(toolUseId)) {
+        // Find the original tool_call message
+        final original = widget.allMessages.firstWhere(
+          (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
+          orElse: () => msg,
+        );
+        if (original != msg) {
+          final children = widget.allMessages
+              .where((m) => m.parentToolUseId == toolUseId)
+              .toList();
+          return SubAgentCard(
+            message: original,
+            childMessages: children,
+            isRunning: false,
+            greenTheme: true,
+          );
+        }
+      }
+    }
+
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

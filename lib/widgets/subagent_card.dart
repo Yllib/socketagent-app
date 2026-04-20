@@ -13,6 +13,7 @@ class SubAgentCard extends StatefulWidget {
   final List<ChatMessage> childMessages;
   final bool isRunning;
   final GlobalKey? scrollKey;
+  final bool greenTheme; // completion card styling
 
   const SubAgentCard({
     super.key,
@@ -20,6 +21,7 @@ class SubAgentCard extends StatefulWidget {
     required this.childMessages,
     required this.isRunning,
     this.scrollKey,
+    this.greenTheme = false,
   });
 
   @override
@@ -57,7 +59,9 @@ class _SubAgentCardState extends State<SubAgentCard> {
     final hasChildren = widget.childMessages.isNotEmpty;
     final hasPrompt = _prompt.isNotEmpty;
     final hasResult = _resultOutput.isNotEmpty;
-    final hasExpandableContent = hasChildren || hasPrompt || hasResult;
+    final hasExpandableContent = hasChildren || hasPrompt;
+    final green = widget.greenTheme;
+    final accentColor = green ? const Color(0xFFA6E3A1) : const Color(0xFF89B4FA);
 
     return Container(
       key: widget.scrollKey,
@@ -67,8 +71,10 @@ class _SubAgentCardState extends State<SubAgentCard> {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: widget.isRunning
-              ? const Color(0xFF89B4FA).withAlpha(100)
-              : const Color(0xFF313244),
+              ? accentColor.withAlpha(100)
+              : green
+                  ? const Color(0xFFA6E3A1).withAlpha(60)
+                  : const Color(0xFF313244),
           width: 1,
         ),
       ),
@@ -85,18 +91,18 @@ class _SubAgentCardState extends State<SubAgentCard> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.account_tree,
+                  Icon(
+                    green ? Icons.check_circle : Icons.account_tree,
                     size: 16,
-                    color: Color(0xFF89B4FA),
+                    color: accentColor,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'Sub Agent',
+                    green ? 'Completed' : 'Sub Agent',
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFF89B4FA),
+                      color: accentColor,
                     ),
                   ),
                   if (_agentType.isNotEmpty) ...[
@@ -166,7 +172,22 @@ class _SubAgentCardState extends State<SubAgentCard> {
               ),
             ),
           ),
-          // Expanded content
+          // Response section (always visible when completed with result)
+          if (isDone && hasResult)
+            Container(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Text(
+                _resultOutput,
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 10,
+                  color: const Color(0xFFCDD6F4),
+                  height: 1.4,
+                ),
+                maxLines: 6,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          // Expanded content (prompt + child messages)
           if (_expanded && hasExpandableContent) ...[
             Container(
               decoration: const BoxDecoration(
@@ -180,13 +201,6 @@ class _SubAgentCardState extends State<SubAgentCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Result
-                      if (hasResult)
-                        _buildSection(
-                          label: 'RESULT',
-                          labelColor: const Color(0xFFA6E3A1),
-                          content: _resultOutput,
-                        ),
                       // Prompt
                       if (hasPrompt)
                         _buildSection(

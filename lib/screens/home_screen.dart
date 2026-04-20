@@ -196,18 +196,15 @@ class HomeScreenState extends State<HomeScreen> {
             );
           }
         }
-        final isPlan = provider.isPlanMode;
+        final permMode = provider.permissionMode ?? 'bypassPermissions';
+        final isPlan = permMode == 'plan';
+        final permTheme = _permissionModeTheme(permMode);
         return Theme(
-          data: isPlan
+          data: permTheme != null
             ? Theme.of(context).copyWith(
-                scaffoldBackgroundColor: const Color(0xFF0D2818),
                 appBarTheme: AppBarTheme(
-                  backgroundColor: const Color(0xFF1A4D2E),
-                  foregroundColor: const Color(0xFFB8E6C8),
-                ),
-                colorScheme: ColorScheme.fromSeed(
-                  seedColor: const Color(0xFF2E7D4F),
-                  brightness: Brightness.dark,
+                  backgroundColor: permTheme.barColor,
+                  foregroundColor: permTheme.textColor,
                 ),
               )
             : Theme.of(context),
@@ -237,7 +234,7 @@ class HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w600,
-                      color: isPlan ? const Color(0xFFB8E6C8) : null,
+                      color: permTheme?.textColor,
                     ),
                   ),
                   if (provider.activeSessionCwd != null)
@@ -248,10 +245,41 @@ class HomeScreenState extends State<HomeScreen> {
                           : provider.activeSessionCwd!,
                       style: TextStyle(
                         fontSize: 11,
-                        color: Theme.of(context)
-                            .colorScheme
-                            .onSurface
+                        color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
                             .withAlpha(178),
+                      ),
+                    ),
+                  if (provider.activeSessionId != null)
+                    GestureDetector(
+                      onTap: () => _showPermissionModePicker(provider),
+                      child: Padding(
+                        padding: const EdgeInsets.only(top: 2),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              _permissionModeIcon(permMode),
+                              size: 11,
+                              color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
+                                  .withAlpha(178),
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              _permissionModeLabel(permMode),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
+                                    .withAlpha(178),
+                              ),
+                            ),
+                            Icon(
+                              Icons.arrow_drop_down,
+                              size: 14,
+                              color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
+                                  .withAlpha(128),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                 ],
@@ -280,7 +308,8 @@ class HomeScreenState extends State<HomeScreen> {
                   onLoadMore: provider.loadMoreHistory,
                   onStopTask: provider.stopTask,
                   onDismissTodos: provider.dismissTodos,
-                  onRewind: provider.rewindToMessage,
+                  onRewindConversation: provider.rewindConversation,
+                  onBranch: provider.branchFromMessage,
                   rawMode: provider.rawMode,
                   rawItems: provider.rawItems,
                   subagentTasks: provider.subagentTasks,
@@ -293,6 +322,8 @@ class HomeScreenState extends State<HomeScreen> {
                 _buildRateLimitBanner(provider),
               if (provider.isRetrying)
                 _buildRetryingBanner(),
+              if (provider.activeHookName != null)
+                _buildHookBanner(provider.activeHookName!),
               if (provider.activePaneTasks.isNotEmpty)
                 ActiveTasksPane(
                   backgroundTasks: provider.backgroundTasks,
@@ -483,6 +514,86 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  static const _permModes = [
+    ('bypassPermissions', 'Auto', 'Auto-approve everything', Icons.speed),
+    ('auto', 'Smart Auto', 'AI classifier approves safe actions', Icons.smart_toy),
+    ('acceptEdits', 'Auto-Edit', 'Auto-approve edits, ask for commands', Icons.edit),
+    ('default', 'Ask', 'Ask before risky actions', Icons.shield_outlined),
+    ('plan', 'Plan', 'Plan only, no execution', Icons.edit_note),
+  ];
+
+  _PermTheme? _permissionModeTheme(String mode) {
+    switch (mode) {
+      case 'plan':
+        return const _PermTheme(Color(0xFF1A4D2E), Color(0xFFB8E6C8));
+      case 'auto':
+        return const _PermTheme(Color(0xFF1A3D4D), Color(0xFFA0D5E6));
+      case 'acceptEdits':
+        return const _PermTheme(Color(0xFF4D3D1A), Color(0xFFE6D5A0));
+      case 'default':
+        return const _PermTheme(Color(0xFF4D2A1A), Color(0xFFE6C0A0));
+      default:
+        return null; // bypassPermissions — default theme
+    }
+  }
+
+  IconData _permissionModeIcon(String mode) {
+    for (final m in _permModes) {
+      if (m.$1 == mode) return m.$4;
+    }
+    return Icons.speed;
+  }
+
+  String _permissionModeLabel(String mode) {
+    for (final m in _permModes) {
+      if (m.$1 == mode) return m.$2;
+    }
+    return 'Auto';
+  }
+
+  void _showPermissionModePicker(ChatProvider provider) {
+    final mode = provider.permissionMode ?? 'bypassPermissions';
+    final RenderBox button = context.findRenderObject() as RenderBox;
+
+    showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(0, kToolbarHeight + MediaQuery.of(context).padding.top, button.size.width, 0),
+      items: [
+        for (final entry in _permModes)
+          PopupMenuItem(
+            value: entry.$1,
+            child: Row(
+              children: [
+                if (entry.$1 == mode)
+                  Icon(Icons.check, size: 16,
+                      color: Theme.of(context).colorScheme.primary)
+                else
+                  const SizedBox(width: 16),
+                const SizedBox(width: 8),
+                Icon(entry.$4, size: 16),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(entry.$2),
+                      Text(entry.$3, style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                      )),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    ).then((value) {
+      if (value != null) provider.setPermissionMode(value);
+    });
+  }
+
   Widget _buildThinkingChip(ChatProvider provider) {
     final thinkingType = provider.thinking['type'] as String? ?? 'adaptive';
     IconData icon;
@@ -643,201 +754,225 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   void _showContextDialog(Map<String, dynamic> usage) {
+    final provider = context.read<ChatProvider>();
+    final ctx = provider.contextUsage;
     final inputTokens = (usage['inputTokens'] as num?)?.toInt() ?? 0;
     final outputTokens = (usage['outputTokens'] as num?)?.toInt() ?? 0;
     final cacheRead = (usage['cacheReadTokens'] as num?)?.toInt() ?? 0;
     final cacheCreate = (usage['cacheCreateTokens'] as num?)?.toInt() ?? 0;
-    final contextWindow = (usage['contextWindow'] as num?)?.toInt() ?? 0;
     final numTurns = (usage['numTurns'] as num?)?.toInt();
     final stopReason = usage['stopReason'] as String?;
     final resultSubtype = usage['resultSubtype'] as String?;
 
-    final totalContext = inputTokens + cacheRead + cacheCreate;
-    final fillRatio = contextWindow > 0 ? totalContext / contextWindow : 0.0;
-    final freeTokens = contextWindow > totalContext ? contextWindow - totalContext : 0;
+    // Use SDK context usage if available, fall back to basic usage data
+    final totalTokens = (ctx?['totalTokens'] as num?)?.toInt() ??
+        (inputTokens + cacheRead + cacheCreate);
+    final maxTokens = (ctx?['maxTokens'] as num?)?.toInt() ??
+        (usage['contextWindow'] as num?)?.toInt() ?? 0;
+    final fillRatio = maxTokens > 0 ? totalTokens / maxTokens : 0.0;
+    final freeTokens = maxTokens > totalTokens ? maxTokens - totalTokens : 0;
+    final model = ctx?['model'] as String?;
 
-    // Segment data for the stacked bar
+    // Build segments from SDK categories if available, else basic breakdown
     final segments = <_BarSegment>[];
-    if (cacheRead > 0) {
-      segments.add(_BarSegment('Cached', cacheRead, const Color(0xFF89B4FA)));
-    }
-    if (cacheCreate > 0) {
-      segments.add(_BarSegment('New cache', cacheCreate, const Color(0xFFA6E3A1)));
-    }
-    if (inputTokens > 0) {
-      segments.add(_BarSegment('Uncached', inputTokens, const Color(0xFFF9E2AF)));
+    final categories = ctx?['categories'] as List?;
+    if (categories != null && categories.isNotEmpty) {
+      for (final cat in categories) {
+        final name = cat['name'] as String? ?? '';
+        final tokens = (cat['tokens'] as num?)?.toInt() ?? 0;
+        final colorHex = cat['color'] as String? ?? '#888888';
+        if (tokens <= 0) continue;
+        // Parse hex color
+        final colorVal = int.tryParse(colorHex.replaceFirst('#', 'FF'), radix: 16) ?? 0xFF888888;
+        segments.add(_BarSegment(name, tokens, Color(colorVal)));
+      }
+    } else {
+      if (cacheRead > 0) segments.add(_BarSegment('Cached', cacheRead, const Color(0xFF89B4FA)));
+      if (cacheCreate > 0) segments.add(_BarSegment('New cache', cacheCreate, const Color(0xFFA6E3A1)));
+      if (inputTokens > 0) segments.add(_BarSegment('Uncached', inputTokens, const Color(0xFFF9E2AF)));
     }
     if (freeTokens > 0) {
       segments.add(_BarSegment('Free', freeTokens, Colors.transparent));
     }
 
+    // Message breakdown from SDK
+    final msgBreakdown = ctx?['messageBreakdown'] as Map<String, dynamic>?;
+    final autoCompactThreshold = (ctx?['autoCompactThreshold'] as num?)?.toInt();
+    final isAutoCompact = ctx?['isAutoCompactEnabled'] == true;
+
     final theme = Theme.of(context);
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (dlgCtx) => AlertDialog(
         title: Row(
           children: [
             Icon(Icons.donut_small, size: 20, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            const Text('Context Window', style: TextStyle(fontSize: 16)),
+            Expanded(child: Text(
+              model != null ? 'Context ($model)' : 'Context Window',
+              style: const TextStyle(fontSize: 16),
+              overflow: TextOverflow.ellipsis,
+            )),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Fill percentage headline
-            Text(
-              contextWindow > 0
-                  ? '${(fillRatio * 100).toStringAsFixed(0)}% used'
-                  : 'No context data',
-              style: TextStyle(
-                fontSize: 24,
-                fontWeight: FontWeight.w600,
-                color: fillRatio > 0.8
-                    ? Colors.red.shade300
-                    : fillRatio > 0.5
-                        ? Colors.orange.shade300
-                        : theme.colorScheme.onSurface,
-              ),
-            ),
-            if (contextWindow > 0) ...[
-              const SizedBox(height: 4),
-              Text(
-                '${_formatTokenCount(totalContext)} / ${_formatTokenCount(contextWindow)} tokens',
-                style: TextStyle(
-                  fontSize: 13,
-                  color: theme.colorScheme.onSurface.withAlpha(178),
-                ),
-              ),
-            ],
-            const SizedBox(height: 16),
-            // Stacked context bar
-            if (contextWindow > 0)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: SizedBox(
-                  height: 24,
-                  child: Row(
-                    children: segments.map((seg) {
-                      final ratio = seg.tokens / contextWindow;
-                      if (ratio <= 0) return const SizedBox.shrink();
-                      return Expanded(
-                        flex: (ratio * 1000).round().clamp(1, 1000),
-                        child: Container(
-                          color: seg.color == Colors.transparent
-                              ? theme.colorScheme.surfaceContainerHighest
-                              : seg.color,
-                        ),
-                      );
-                    }).toList(),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Fill percentage headline
+                Text(
+                  maxTokens > 0
+                      ? '${(fillRatio * 100).toStringAsFixed(0)}% used'
+                      : 'No context data',
+                  style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.w600,
+                    color: fillRatio > 0.8
+                        ? Colors.red.shade300
+                        : fillRatio > 0.5
+                            ? Colors.orange.shade300
+                            : theme.colorScheme.onSurface,
                   ),
                 ),
-              ),
-            const SizedBox(height: 16),
-            // Legend rows
-            ...segments.where((s) => s.color != Colors.transparent).map((seg) =>
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 12, height: 12,
-                      decoration: BoxDecoration(
-                        color: seg.color,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(seg.label, style: const TextStyle(fontSize: 13)),
-                    ),
-                    Text(
-                      _formatTokenCount(seg.tokens),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: theme.colorScheme.onSurface.withAlpha(178),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // Output tokens (separate — not part of context input)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(
-                children: [
-                  Container(
-                    width: 12, height: 12,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFCBA6F7),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  const Expanded(
-                    child: Text('Output', style: TextStyle(fontSize: 13)),
-                  ),
+                if (maxTokens > 0) ...[
+                  const SizedBox(height: 4),
                   Text(
-                    _formatTokenCount(outputTokens),
+                    '${_formatTokenCount(totalTokens)} / ${_formatTokenCount(maxTokens)} tokens',
                     style: TextStyle(
                       fontSize: 13,
-                      fontWeight: FontWeight.w500,
                       color: theme.colorScheme.onSurface.withAlpha(178),
                     ),
                   ),
                 ],
-              ),
-            ),
-            // Free space
-            if (freeTokens > 0)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 3),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 12, height: 12,
-                      decoration: BoxDecoration(
-                        color: theme.colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(2),
-                        border: Border.all(
-                          color: theme.colorScheme.outlineVariant,
-                          width: 1,
-                        ),
+                const SizedBox(height: 16),
+                // Stacked context bar
+                if (maxTokens > 0)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: SizedBox(
+                      height: 24,
+                      child: Row(
+                        children: segments.map((seg) {
+                          final ratio = seg.tokens / maxTokens;
+                          if (ratio <= 0) return const SizedBox.shrink();
+                          return Expanded(
+                            flex: (ratio * 1000).round().clamp(1, 1000),
+                            child: Container(
+                              color: seg.color == Colors.transparent
+                                  ? theme.colorScheme.surfaceContainerHighest
+                                  : seg.color,
+                            ),
+                          );
+                        }).toList(),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    const Expanded(
-                      child: Text('Free', style: TextStyle(fontSize: 13)),
-                    ),
-                    Text(
-                      _formatTokenCount(freeTokens),
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: theme.colorScheme.onSurface.withAlpha(178),
-                      ),
-                    ),
-                  ],
+                  ),
+                // Auto-compact threshold indicator
+                if (isAutoCompact && autoCompactThreshold != null && maxTokens > 0) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Auto-compact at ${(autoCompactThreshold / maxTokens * 100).toStringAsFixed(0)}%',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withAlpha(128)),
+                  ),
+                ],
+                const SizedBox(height: 12),
+                // Category legend
+                ...segments.where((s) => s.color != Colors.transparent).map((seg) =>
+                  _contextLegendRow(seg.label, seg.tokens, seg.color, theme),
                 ),
-              ),
-            const Divider(height: 24),
-            // Metadata
-            if (numTurns != null)
-              _contextDetailRow('Turns', '$numTurns', theme),
-            if (stopReason != null)
-              _contextDetailRow('Stop reason', stopReason, theme),
-            if (resultSubtype != null && resultSubtype.startsWith('error_'))
-              _contextDetailRow('Result', resultSubtype.replaceAll('_', ' '), theme),
-          ],
+                // Output tokens
+                _contextLegendRow('Output', outputTokens, const Color(0xFFCBA6F7), theme),
+                // Free space
+                if (freeTokens > 0)
+                  _contextLegendRow('Free', freeTokens, null, theme),
+
+                // Message breakdown (from SDK detailed context)
+                if (msgBreakdown != null) ...[
+                  const Divider(height: 24),
+                  Text('Message Breakdown', style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface.withAlpha(200),
+                  )),
+                  const SizedBox(height: 8),
+                  if ((msgBreakdown['userMessageTokens'] as num?)?.toInt() != null)
+                    _contextDetailRow('User messages', _formatTokenCount((msgBreakdown['userMessageTokens'] as num).toInt()), theme),
+                  if ((msgBreakdown['assistantMessageTokens'] as num?)?.toInt() != null)
+                    _contextDetailRow('Assistant messages', _formatTokenCount((msgBreakdown['assistantMessageTokens'] as num).toInt()), theme),
+                  if ((msgBreakdown['toolCallTokens'] as num?)?.toInt() != null)
+                    _contextDetailRow('Tool calls', _formatTokenCount((msgBreakdown['toolCallTokens'] as num).toInt()), theme),
+                  if ((msgBreakdown['toolResultTokens'] as num?)?.toInt() != null)
+                    _contextDetailRow('Tool results', _formatTokenCount((msgBreakdown['toolResultTokens'] as num).toInt()), theme),
+                  if ((msgBreakdown['attachmentTokens'] as num?)?.toInt() != null && (msgBreakdown['attachmentTokens'] as num).toInt() > 0)
+                    _contextDetailRow('Attachments', _formatTokenCount((msgBreakdown['attachmentTokens'] as num).toInt()), theme),
+                ],
+
+                // MCP tools
+                if (ctx?['mcpTools'] != null && (ctx!['mcpTools'] as List).isNotEmpty) ...[
+                  const Divider(height: 24),
+                  Text('MCP Tools', style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600,
+                    color: theme.colorScheme.onSurface.withAlpha(200),
+                  )),
+                  const SizedBox(height: 8),
+                  ...(ctx['mcpTools'] as List).where((t) => ((t['tokens'] as num?)?.toInt() ?? 0) > 0).map((tool) =>
+                    _contextDetailRow(
+                      '${tool['serverName']}: ${tool['name']}',
+                      _formatTokenCount((tool['tokens'] as num).toInt()),
+                      theme,
+                    ),
+                  ),
+                ],
+
+                const Divider(height: 24),
+                // Metadata
+                if (numTurns != null)
+                  _contextDetailRow('Turns', '$numTurns', theme),
+                if (stopReason != null)
+                  _contextDetailRow('Stop reason', stopReason, theme),
+                if (resultSubtype != null && resultSubtype.startsWith('error_'))
+                  _contextDetailRow('Result', resultSubtype.replaceAll('_', ' '), theme),
+              ],
+            ),
+          ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
+            onPressed: () => Navigator.pop(dlgCtx),
             child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _contextLegendRow(String label, int tokens, Color? color, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          Container(
+            width: 12, height: 12,
+            decoration: BoxDecoration(
+              color: color ?? theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(2),
+              border: color == null ? Border.all(
+                color: theme.colorScheme.outlineVariant, width: 1,
+              ) : null,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
+          Text(
+            _formatTokenCount(tokens),
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurface.withAlpha(178),
+            ),
           ),
         ],
       ),
@@ -1146,6 +1281,36 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildHookBanner(String hookName) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Theme.of(context).colorScheme.tertiaryContainer,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: Theme.of(context).colorScheme.onTertiaryContainer,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Running hook: $hookName',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: Theme.of(context).colorScheme.onTertiaryContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildCommandPicker(ChatProvider provider, ThemeData theme) {
     final commands = provider.supportedCommands ?? [];
     final filtered = _commandFilter.isEmpty
@@ -1323,50 +1488,65 @@ class HomeScreenState extends State<HomeScreen> {
             children: [
               if (provider.pushToTalk && MediaQuery.of(context).viewInsets.bottom > 0)
                 // Inline PTT button when keyboard is showing
-                Listener(
-                  onPointerDown: (_) {
-                    if (!provider.isListening) {
-                      provider.toggleListening(existingText: _textController.text);
-                    }
-                  },
-                  onPointerUp: (_) {
-                    if (provider.isListening) {
-                      provider.toggleListening();
-                    }
-                  },
-                  child: Container(
-                    width: 40,
-                    height: 40,
-                    margin: const EdgeInsets.only(right: 4),
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: provider.isListening
-                          ? Colors.red
-                          : theme.colorScheme.primaryContainer,
-                    ),
-                    child: Icon(
-                      provider.isListening ? Icons.mic : Icons.mic_none,
-                      size: 20,
-                      color: provider.isListening
-                          ? Colors.white
-                          : theme.colorScheme.onPrimaryContainer,
+                SizedBox(
+                  height: 48,
+                  child: Center(
+                    child: Listener(
+                      onPointerDown: (_) {
+                        if (!provider.isListening) {
+                          provider.toggleListening(existingText: _textController.text);
+                        }
+                      },
+                      onPointerUp: (_) {
+                        if (provider.isListening) {
+                          provider.toggleListening();
+                        }
+                      },
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        margin: const EdgeInsets.only(right: 4),
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: provider.isListening
+                              ? Colors.red
+                              : theme.colorScheme.primaryContainer,
+                        ),
+                        child: Icon(
+                          provider.isListening ? Icons.mic : Icons.mic_none,
+                          size: 20,
+                          color: provider.isListening
+                              ? Colors.white
+                              : theme.colorScheme.onPrimaryContainer,
+                        ),
+                      ),
                     ),
                   ),
                 )
               else if (!provider.pushToTalk)
-                VoiceButton(
-                  isListening: provider.isListening,
-                  onPressed: () => provider.toggleListening(existingText: _textController.text),
+                SizedBox(
+                  height: 48,
+                  child: Center(
+                    child: VoiceButton(
+                      isListening: provider.isListening,
+                      onPressed: () => provider.toggleListening(existingText: _textController.text),
+                    ),
+                  ),
                 ),
-              IconButton(
-                icon: Icon(
-                  Icons.attach_file,
-                  color: theme.colorScheme.onSurface.withAlpha(178),
-                  size: 20,
+              SizedBox(
+                height: 48,
+                child: Center(
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.attach_file,
+                      color: theme.colorScheme.onSurface.withAlpha(178),
+                      size: 22,
+                    ),
+                    onPressed: () => provider.pickFile(),
+                    padding: const EdgeInsets.all(8),
+                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                  ),
                 ),
-                onPressed: () => provider.pickFile(),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
               ),
               Expanded(
                 child: TextField(
@@ -1385,7 +1565,7 @@ class HomeScreenState extends State<HomeScreen> {
                     ),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 16,
-                      vertical: 10,
+                      vertical: 14,
                     ),
                     isDense: true,
                   ),
@@ -1397,35 +1577,54 @@ class HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 4),
               if (provider.isProcessing) ...[
                 // Send with priority: tap = next, long-press = popup menu
-                GestureDetector(
-                  onTap: () => _sendMessage(provider, priority: 'next'),
-                  onLongPressStart: (details) {
-                    _showPriorityMenu(context, details.globalPosition, provider, theme);
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Icon(
-                      Icons.send,
-                      color: theme.colorScheme.secondary,
+                SizedBox(
+                  height: 48,
+                  child: Center(
+                    child: GestureDetector(
+                      onTap: () => _sendMessage(provider, priority: 'next'),
+                      onLongPressStart: (details) {
+                        _showPriorityMenu(context, details.globalPosition, provider, theme);
+                      },
+                      child: Container(
+                        width: 40,
+                        height: 40,
+                        alignment: Alignment.center,
+                        child: Icon(
+                          Icons.send,
+                          color: theme.colorScheme.secondary,
+                        ),
+                      ),
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: Icon(
-                    Icons.stop_circle,
-                    color: theme.colorScheme.error,
+                SizedBox(
+                  height: 48,
+                  child: Center(
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.stop_circle,
+                        color: theme.colorScheme.error,
+                      ),
+                      onPressed: () => provider.abortQuery(),
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                    ),
                   ),
-                  onPressed: () => provider.abortQuery(),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
                 ),
               ] else
-                IconButton(
-                  icon: Icon(
-                    Icons.send,
-                    color: theme.colorScheme.primary,
+                SizedBox(
+                  height: 48,
+                  child: Center(
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.send,
+                        color: theme.colorScheme.primary,
+                      ),
+                      onPressed: () => _sendMessage(provider),
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                    ),
                   ),
-                  onPressed: () => _sendMessage(provider),
                 ),
             ],
           ),
@@ -1433,4 +1632,10 @@ class HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+}
+
+class _PermTheme {
+  final Color barColor;
+  final Color textColor;
+  const _PermTheme(this.barColor, this.textColor);
 }

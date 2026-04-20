@@ -112,8 +112,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ChatMessage? _currentStreamingMessage;
   ChatMessage? _currentThinkingMessage;
   String? _lastServerStartedAt;  // detect server restarts
-  bool _desktopCliActive = false;  // desktop CLI actively using this session
-  Set<String> _desktopCliSessionIds = {};  // all sessions with active desktop CLI
   Map<String, dynamic>? _contextUsage;  // detailed context breakdown from SDK
   // SDK session info
   String? _sessionModel;
@@ -144,6 +142,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<ServerConfig> _serverConfigs = [];
   // Per-server session lists, merged into _sessions
   final Map<String, List<Session>> _perServerSessions = {};
+  // Per-server installed plugin names (from status_sync)
+  final Map<String, List<String>> _serverPlugins = {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -340,8 +340,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   double? get rateLimitUtilization => _rateLimitUtilization;
   bool get isRetrying => _isRetrying;
   String? get activeHookName => _activeHookName;
-  bool get desktopCliActive => _desktopCliActive;
-  bool isDesktopCliActiveForSession(String sessionId) => _desktopCliSessionIds.contains(sessionId);
+  List<String> serverPlugins(String serverId) => _serverPlugins[serverId] ?? [];
   Map<String, dynamic>? get contextUsage => _contextUsage;
   List<String> get promptSuggestions => _promptSuggestions;
   List<dynamic>? get supportedCommands => _supportedCommands;
@@ -1882,7 +1881,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         break;
       case 'status_sync':
-        // Only process status_sync from the active server
+        // Capture per-server plugin list from ALL servers (needed for server settings)
+        if (serverId != null) {
+          final pluginsList = msg['plugins'] as List?;
+          if (pluginsList != null) {
+            _serverPlugins[serverId] = pluginsList.map((e) => e.toString()).toList();
+          }
+        }
+        // Only process remaining status_sync fields from the active server
         if (serverId != null && serverId != _connMgr.activeServerId) break;
         // Check if THIS session is running, not just any session
         final runningSessions = (msg['runningSessions'] as List?)
@@ -1925,14 +1931,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ?.map((e) => e.toString())
             .toSet() ?? <String>{};
         _backgroundTasks.removeWhere((id, _) => !serverTaskIds.contains(id));
-        // Desktop CLI active status — track full set for session list badges
-        final desktopCliSessions = (msg['desktopCliSessions'] as List?)
-            ?.map((e) => e.toString())
-            .toSet();
-        _desktopCliSessionIds = desktopCliSessions ?? {};
-        _desktopCliActive = _desktopCliSessionIds.isNotEmpty &&
-            _activeSessionId != null &&
-            _desktopCliSessionIds.contains(_activeSessionId);
         // Update session model from heartbeat
         final sessionModels = msg['sessionModels'] as Map<String, dynamic>?;
         if (sessionModels != null && _activeSessionId != null) {
@@ -3178,6 +3176,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'assistant':
           if (content.isNotEmpty) {
+            // Detect tool summary from history
+            if (entry['toolSummary'] == true) {
+              final precedingIds = (entry['precedingToolUseIds'] as List?)
+                  ?.map((e) => e.toString())
+                  .toList() ?? [];
+              loaded.add(ChatMessage.toolSummary(
+                summary: content,
+                precedingToolUseIds: precedingIds,
+                uuid: entry['uuid'] as String?,
+              ));
+              break;
+            }
             // Detect thinking blocks from history
             if (entry['thinking'] == true) {
               final m = ChatMessage.thinking();
@@ -3867,7 +3877,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _backgroundTasks.clear();
     _pendingPrepends = [];
     _promptSuggestions = [];
-    _desktopCliActive = false;
     _contextUsage = null;
     _requiresAction = false;
     _pendingImageLoads.clear();
@@ -3929,7 +3938,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _subagentTasks.clear();
     _backgroundTasks.clear();
     _promptSuggestions = [];
-    _desktopCliActive = false;
     _contextUsage = null;
     _requiresAction = false;
     _pendingImageLoads.clear();
@@ -4101,7 +4109,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isCompacting = false;
     _currentStreamingMessage = null;
     _promptSuggestions = [];
-    _desktopCliActive = false;
     _contextUsage = null;
     _requiresAction = false;
 
