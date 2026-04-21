@@ -3393,14 +3393,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'notification':
           if (content.isNotEmpty) {
             final status = entry['status'] as String? ?? 'info';
-            loaded.add(ChatMessage(
+            final originToolUseId = entry['originToolUseId'] as String?;
+            final notifMsg = ChatMessage(
               id: 'notif_${DateTime.now().microsecondsSinceEpoch}_$offset',
               sender: MessageSender.system,
               type: MessageType.taskNotification,
               timestamp: DateTime.now(),
               textContent: content,
               toolName: status,
-            ));
+            );
+            notifMsg.parentToolUseId = originToolUseId;
+            loaded.add(notifMsg);
           }
           break;
         case 'monitor':
