@@ -5,6 +5,7 @@ import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
 import '../widgets/folder_browser_screen.dart';
+import 'archive_screen.dart';
 import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
@@ -50,7 +51,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
 
   Future<void> _openSession(BuildContext context, {String? sessionId, String? cwd, String? serverId, bool sdkSession = false}) async {
     if (!await _requireSubscription()) return;
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     final provider = context.read<ChatProvider>();
 
@@ -61,7 +62,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     } else {
       if (serverId == null && provider.serverConfigs.length > 1) {
         final picked = await _pickServer(context, provider);
-        if (picked == null || !mounted) return;
+        if (picked == null || !context.mounted) return;
         serverId = picked;
       }
       provider.createNewSession(cwd: cwd, serverId: serverId);
@@ -123,7 +124,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
   Future<void> _validateAndOpen(BuildContext context, String path, {String? serverId}) async {
     final provider = context.read<ChatProvider>();
     final exists = await provider.checkCwd(path, serverId: serverId);
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     if (exists) {
       _openSession(context, cwd: path, serverId: serverId);
@@ -148,9 +149,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       ),
     );
 
-    if (create == true && mounted) {
+    if (create == true && context.mounted) {
       final created = await provider.createCwd(path, serverId: serverId);
-      if (!mounted) return;
+      if (!context.mounted) return;
       if (created) {
         _openSession(context, cwd: path, serverId: serverId);
       } else {
@@ -586,6 +587,13 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
           appBar: AppBar(
             title: const Text('Sessions'),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.inventory_2_outlined),
+                tooltip: 'Archived Sessions',
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const ArchiveScreen()),
+                ),
+              ),
               _buildConnectionIndicator(provider),
             ],
             bottom: multiServer && _tabController != null
@@ -926,9 +934,20 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 },
               ),
               ListTile(
+                leading: Icon(Icons.archive, color: Colors.orange.shade300),
+                title: Text('Archive Session',
+                    style: TextStyle(color: Colors.orange.shade300)),
+                subtitle: const Text('Remove from list, keep history'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _confirmArchiveSession(context, session);
+                },
+              ),
+              ListTile(
                 leading: Icon(Icons.delete, color: Colors.red.shade300),
                 title: Text('Delete Session',
                     style: TextStyle(color: Colors.red.shade300)),
+                subtitle: const Text('Permanent — no archive'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _confirmDeleteSession(context, session);
@@ -1146,6 +1165,33 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     );
   }
 
+  Future<bool> _confirmArchiveSession(BuildContext context, Session session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Archive Session'),
+        content: Text(
+          'Archive "${session.title}"? Removes it from the list and stores history in the archive. You can restore it from the Archive screen.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade700),
+            onPressed: () {
+              Navigator.pop(ctx, true);
+              context.read<ChatProvider>().archiveSession(session.id);
+            },
+            child: const Text('Archive'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
+  }
+
   Future<bool> _confirmDeleteSession(BuildContext context, Session session) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1173,8 +1219,8 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     return confirmed ?? false;
   }
 
-  void _confirmClearContext(BuildContext context, Session session) {
-    showDialog(
+  Future<void> _confirmClearContext(BuildContext context, Session session) async {
+    await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Clear Context'),
@@ -1204,7 +1250,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
 
   Future<void> _forkSession(BuildContext context, Session session) async {
     if (!await _requireSubscription()) return;
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     final provider = context.read<ChatProvider>();
     provider.forkSession(session.id);
@@ -1244,14 +1290,26 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
 
     return Dismissible(
       key: Key(session.id),
-      direction: DismissDirection.endToStart,
+      direction: DismissDirection.horizontal,
       background: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.only(left: 20),
+        color: Colors.blue.shade700,
+        child: const Icon(Icons.cleaning_services, color: Colors.white),
+      ),
+      secondaryBackground: Container(
         alignment: Alignment.centerRight,
         padding: const EdgeInsets.only(right: 20),
-        color: Colors.red,
-        child: const Icon(Icons.delete, color: Colors.white),
+        color: Colors.orange.shade700,
+        child: const Icon(Icons.archive, color: Colors.white),
       ),
-      confirmDismiss: (_) => _confirmDeleteSession(context, session),
+      confirmDismiss: (dir) async {
+        if (dir == DismissDirection.endToStart) {
+          return _confirmArchiveSession(context, session);
+        }
+        await _confirmClearContext(context, session);
+        return false;
+      },
       child: InkWell(
         onTap: () => _openSession(context, sessionId: session.id),
         onLongPress: () => _showSessionContextMenu(context, session),

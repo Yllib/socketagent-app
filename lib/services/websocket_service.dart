@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'crypto_service.dart';
 
@@ -123,7 +124,7 @@ class WebSocketService {
     if (_mode == ConnectionMode.relay) {
       // Subscription gate
       if (raw['type'] == 'subscription_required') {
-        print('[Relay] Subscription required');
+        debugPrint('[Relay] Subscription required');
         _messageController.add(raw);
         // Don't reconnect — user needs to subscribe first
         _reconnectTimer?.cancel();
@@ -139,12 +140,12 @@ class WebSocketService {
 
       // Relay control messages
       if (raw['type'] == 'peer_connected') {
-        print('[Relay] Peer connected — sending key exchange');
+        debugPrint('[Relay] Peer connected — sending key exchange');
         _sendKeyExchange();
         return;
       }
       if (raw['type'] == 'peer_disconnected') {
-        print('[Relay] Peer disconnected');
+        debugPrint('[Relay] Peer disconnected');
         _encryptionReady = false;
         _setStatus(ConnectionStatus.error);
         _scheduleReconnect();
@@ -154,25 +155,25 @@ class WebSocketService {
       // Encrypted message from server
       if (raw.containsKey('n') && raw.containsKey('c')) {
         if (_cryptoService == null || !_cryptoService!.isReady) {
-          print('[Relay] Encrypted msg received but crypto not ready');
+          debugPrint('[Relay] Encrypted msg received but crypto not ready');
           return;
         }
         try {
           final plaintext = _cryptoService!.decrypt(raw);
           final msg = jsonDecode(plaintext) as Map<String, dynamic>;
-          print('[Relay] Decrypted message: ${msg['type']}');
+          debugPrint('[Relay] Decrypted message: ${msg['type']}');
 
           // Check for key exchange ack
           if (msg['type'] == 'key_exchange_ack') {
             _encryptionReady = true;
             _setStatus(ConnectionStatus.connected);
-            print('[Relay] Key exchange complete — encryption ready');
+            debugPrint('[Relay] Key exchange complete — encryption ready');
             return;
           }
 
           _messageController.add(msg);
         } catch (e) {
-          print('[Relay] Decryption failed: $e');
+          debugPrint('[Relay] Decryption failed: $e');
         }
         return;
       }
@@ -233,13 +234,14 @@ class WebSocketService {
     // In relay mode but encryption not ready — drop message (shouldn't happen in normal flow)
   }
 
-  void sendPrompt(String text, {String? sessionId, String? priority, String? messageId}) {
+  void sendPrompt(String text, {String? sessionId, String? priority, String? messageId, String? cwd}) {
     send({
       'type': 'prompt',
       'text': text,
       if (sessionId != null) 'sessionId': sessionId,
       if (priority != null) 'priority': priority,
       if (messageId != null) 'messageId': messageId,
+      if (cwd != null) 'cwd': cwd,
     });
   }
 
@@ -281,6 +283,29 @@ class WebSocketService {
       'type': 'clear_context',
       'sessionId': sessionId,
     });
+  }
+
+  void sendArchiveSession(String sessionId) {
+    send({
+      'type': 'archive_session',
+      'sessionId': sessionId,
+    });
+  }
+
+  void sendListArchives() {
+    send({'type': 'list_archives'});
+  }
+
+  void sendGetArchiveHistory(String sid, String ts) {
+    send({'type': 'get_archive_history', 'sid': sid, 'ts': ts});
+  }
+
+  void sendRestoreArchive(String sid, String ts) {
+    send({'type': 'restore_archive', 'sid': sid, 'ts': ts});
+  }
+
+  void sendDeleteArchive(String sid, String ts) {
+    send({'type': 'delete_archive', 'sid': sid, 'ts': ts});
   }
 
   void sendAbort({String? sessionId}) {

@@ -4273,6 +4273,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  void archiveSession(String sessionId) {
+    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+    _sessions.removeWhere((s) => s.id == sessionId);
+    if (session != null && session.serverId.isNotEmpty) {
+      _perServerSessions[session.serverId]?.removeWhere((s) => s.id == sessionId);
+      _connMgr.sendToServer(session.serverId, {
+        'type': 'archive_session',
+        'sessionId': sessionId,
+      });
+    } else {
+      _ws.sendArchiveSession(sessionId);
+    }
+    notifyListeners();
+  }
+
   void renameSession(String sessionId, String title) {
     // Optimistically update local state
     final idx = _sessions.indexWhere((s) => s.id == sessionId);
