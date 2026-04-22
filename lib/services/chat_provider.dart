@@ -1,19 +1,17 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
-import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
+import '../models/archive_entry.dart';
 import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import 'websocket_service.dart';
 import 'connection_manager.dart';
-import 'speech_service.dart';
 import 'sherpa_speech_service.dart';
 import 'asr_model_manager.dart';
 import 'tts_service.dart';
@@ -35,7 +33,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final WebSocketService _fallbackWs = WebSocketService();
   final AsrModelManager _asrModelManager = AsrModelManager();
   late final SherpaSpeechService _speech = SherpaSpeechService(_asrModelManager);
-  final SpeechService _legacySpeech = SpeechService(); // fallback
   final TtsService _tts = TtsService();
   final SystemTtsEngine _systemEngine = SystemTtsEngine();
   final KokoroServerEngine _kokoroServerEngine = KokoroServerEngine();
@@ -52,6 +49,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Session> _sessions = [];
   List<Map<String, dynamic>> _todos = [];
   List<Map<String, dynamic>> _scheduledTasks = [];
+  List<ArchiveEntry> _archives = [];
+  Completer<List<ArchiveEntry>>? _archivesCompleter;
+  final Map<String, Completer<List<dynamic>>> _archiveHistoryCompleters = {};
+  final StreamController<String> _archiveFeedback = StreamController.broadcast();
   Map<String, dynamic>? _lastUsage;
   // All file maps keyed on fileId (hash of path+mtime+size from server)
   final Map<String, String> _receivedFiles = {};    // fileId → local path
@@ -71,7 +72,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Pinned sessions
   Set<String> _pinnedSessionIds = {};
   // Persistent recent CWDs per server (serverId → ordered list, most recent first)
-  Map<String, List<String>> _recentCwds = {};
+  final Map<String, List<String>> _recentCwds = {};
   String? _viewingSessionId; // set by HomeScreen when user is on that screen
   bool _appInForeground = true;
   // Per-session input drafts (sessionId → unsent text)
@@ -96,7 +97,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final List<Map<String, String>> _pendingImageLoads = []; // {toolUseId, filePath}
   bool _isLoadingHistory = false;
   bool _isLoadingMore = false;
-  int _historyTotal = 0;
   int _historyOffset = 0;  // index of oldest loaded entry (0 = all loaded)
   bool _ttsEnabled = false;
   String _effort = 'high';
@@ -173,6 +173,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Session> get sessions => _sessions;
   List<Map<String, dynamic>> get todos => _todos;
   List<Map<String, dynamic>> get scheduledTasks => _scheduledTasks;
+  List<ArchiveEntry> get archives => _archives;
+  Stream<String> get archiveFeedback => _archiveFeedback.stream;
   Map<String, dynamic>? get lastUsage => _lastUsage;
   String? get activeSessionId => _activeSessionId;
   String? get activeSessionCwd => _activeSessionCwd;
@@ -789,7 +791,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _setupListeners() {
     _statusSub = _connMgr.statusStream.listen((update) {
       // Update overall connection status — connected if ANY server is connected
-      final wasConnected = _connectionStatus == ConnectionStatus.connected;
       if (_connMgr.anyConnected) {
         _connectionStatus = ConnectionStatus.connected;
       } else {
@@ -1696,7 +1697,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _sessionModel = lcModel;
         }
         // Show as a subtle system notification in chat
-        final lcSource = msg['source'] as String? ?? '';
         final lcReason = msg['reason'] as String? ?? '';
         String lcText;
         if (lcEvent == 'start') {
@@ -1973,6 +1973,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           toolName: success ? 'success' : 'failed',
         ));
         notifyListeners();
+        break;
+      case 'archive_list':
+        _archives = (msg['archives'] as List? ?? [])
+            .map((a) => ArchiveEntry.fromJson(Map<String, dynamic>.from(a as Map)))
+            .toList();
+        _archivesCompleter?.complete(_archives);
+        _archivesCompleter = null;
+        notifyListeners();
+        break;
+      case 'archive_history':
+        final sid = msg['sid'] as String? ?? '';
+        final ts = msg['ts'] as String? ?? '';
+        final messages = (msg['messages'] as List? ?? []).cast<dynamic>();
+        _archiveHistoryCompleters.remove('${sid}_$ts')?.complete(messages);
+        break;
+      case 'archive_restored':
+        _archiveFeedback.add('Restored "${(msg['session'] as Map?)?['title'] ?? 'session'}"');
+        requestSessionList();
+        _ws.sendListArchives();
+        break;
+      case 'archive_restore_failed':
+        _archiveFeedback.add('Restore failed: ${msg['reason'] ?? 'unknown error'}');
+        _ws.sendListArchives();
+        break;
+      case 'archive_deleted':
+        _archiveFeedback.add('Archive deleted');
         break;
       case 'context_cleared':
         final clearedId = msg['sessionId'] as String?;
@@ -3093,7 +3119,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleSessionHistory(Map<String, dynamic> msg) {
     final rawMessages = msg['messages'] as List? ?? [];
-    final total = (msg['total'] as num?)?.toInt() ?? rawMessages.length;
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
     final isAppend = msg['append'] == true;
     final isPrepend = _isLoadingMore && _messages.isNotEmpty;
@@ -3561,7 +3586,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    _historyTotal = total;
     _historyOffset = offset;
 
     if (isAppend) {
@@ -3734,7 +3758,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _clearPrepends();
     }
 
-    _ws.sendPrompt(prompt, sessionId: _activeSessionId, priority: priority, messageId: userMsg.id);
+    _ws.sendPrompt(
+      prompt,
+      sessionId: _activeSessionId,
+      priority: priority,
+      messageId: userMsg.id,
+      cwd: _activeSessionId == null ? _activeSessionCwd : null,
+    );
     notifyListeners();
   }
 
@@ -3743,12 +3773,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (result != null && result.files.single.path != null) {
       _pendingAttachmentPath = result.files.single.path!;
       _pendingAttachmentName = result.files.single.name;
-      _uploadedServerPath = null;
       notifyListeners();
     }
   }
-
-  String? _uploadedServerPath;
 
   void removeAttachment() {
     _pendingAttachmentPath = null;
@@ -3887,7 +3914,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _processingSetAt = null;
     _isCompacting = false;
     _permissionMode = null;
-    _historyTotal = 0;
     _historyOffset = 0;
     _isLoadingMore = false;
     _sessionModel = null;
@@ -3949,7 +3975,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _permissionMode = null;
     _isCompacting = false;
     _isLoadingHistory = true;
-    _historyTotal = 0;
     _historyOffset = 0;
     _isLoadingMore = false;
     _sessionModel = null;
@@ -4298,6 +4323,44 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _lastUsage = null;
     }
     notifyListeners();
+  }
+
+  Future<List<ArchiveEntry>> fetchArchives() {
+    _archivesCompleter ??= Completer<List<ArchiveEntry>>();
+    _ws.sendListArchives();
+    return _archivesCompleter!.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _archivesCompleter = null;
+        return _archives;
+      },
+    );
+  }
+
+  Future<List<dynamic>> fetchArchiveHistory(String sid, String ts) {
+    final key = '${sid}_$ts';
+    final existing = _archiveHistoryCompleters[key];
+    if (existing != null) return existing.future;
+    final completer = Completer<List<dynamic>>();
+    _archiveHistoryCompleters[key] = completer;
+    _ws.sendGetArchiveHistory(sid, ts);
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _archiveHistoryCompleters.remove(key);
+        return <dynamic>[];
+      },
+    );
+  }
+
+  void restoreArchive(String sid, String ts) {
+    _ws.sendRestoreArchive(sid, ts);
+  }
+
+  void deleteArchive(String sid, String ts) {
+    _archives.removeWhere((a) => a.sid == sid && a.ts == ts);
+    notifyListeners();
+    _ws.sendDeleteArchive(sid, ts);
   }
 
   void setTtsEnabled(bool enabled) {
