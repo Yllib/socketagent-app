@@ -4105,8 +4105,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// capability message hasn't arrived yet (older servers won't send it at
   /// all, so legacy claude-only behavior is the safe default).
   List<String> backendsForServer(String? serverId) {
-    if (serverId == null) return const ['claude'];
-    return _serverBackends[serverId] ?? const ['claude'];
+    final effectiveServerId = serverId
+        ?? _connMgr.activeServerId
+        ?? _serverConfigs.firstOrNull?.id;
+    if (effectiveServerId == null) return const ['claude'];
+    return _serverBackends[effectiveServerId] ?? const ['claude'];
   }
 
   String? get activeSessionBackend => _activeSessionBackend;
