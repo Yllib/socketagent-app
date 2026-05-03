@@ -26,7 +26,7 @@ class _ClaudeAuthCardState extends State<ClaudeAuthCard> {
   void _submit() {
     final code = _controller.text.trim();
     if (code.isEmpty) return;
-    context.read<ChatProvider>().submitAuthCode(code);
+    context.read<ChatProvider>().submitAuthCode(code, serverId: widget.message.authRequestId);
     setState(() => _submitted = true);
   }
 

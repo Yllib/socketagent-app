@@ -66,6 +66,7 @@ class FileCard extends StatelessWidget {
     final hasServerFile = fileId != null && provider.getServerFilePath(fileId) != null;
     final progress = fileId != null ? provider.getDownloadProgress(fileId) : null;
 
+    final toolOutput = message.toolOutput?.trim() ?? '';
     String subtitle;
     if (hasFile) {
       final savedName = localPath.split('/').last;
@@ -74,6 +75,8 @@ class FileCard extends StatelessWidget {
       subtitle = 'Downloading... ${(progress * 100).toInt()}%';
     } else if (isDownloading) {
       subtitle = 'Downloading...';
+    } else if (toolOutput.isNotEmpty) {
+      subtitle = toolOutput;
     } else if (hasServerFile) {
       subtitle = 'Tap download to save';
     } else {

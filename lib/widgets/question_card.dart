@@ -199,14 +199,22 @@ class _QuestionCardState extends State<QuestionCard> {
           ),
         const SizedBox(height: 8),
         if (!isAnswered) ...[
-          Wrap(
-            spacing: 8,
-            runSpacing: 6,
-            children: [
-              for (final opt in question.options)
-                _buildOptionChip(key, opt, question.multiSelect),
-            ],
-          ),
+          if (question.options.any((o) => o.preview != null && o.preview!.isNotEmpty))
+            Column(
+              children: [
+                for (final opt in question.options)
+                  _buildOptionChip(key, opt, question.multiSelect),
+              ],
+            )
+          else
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final opt in question.options)
+                  _buildOptionChip(key, opt, question.multiSelect),
+              ],
+            ),
           if (!isPlanReview)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -235,6 +243,11 @@ class _QuestionCardState extends State<QuestionCard> {
   ) {
     final selected = _selectedOptions[questionKey]?.contains(option.label) ?? false;
 
+    // If option has a preview, render a richer card with markdown preview
+    if (option.preview != null && option.preview!.isNotEmpty) {
+      return _buildPreviewOption(questionKey, option, multiSelect, selected);
+    }
+
     return FilterChip(
       label: Text(option.label),
       tooltip: option.description,
@@ -252,6 +265,106 @@ class _QuestionCardState extends State<QuestionCard> {
           }
         });
       },
+    );
+  }
+
+  Widget _buildPreviewOption(
+    String questionKey,
+    QuestionOption option,
+    bool multiSelect,
+    bool selected,
+  ) {
+    final theme = Theme.of(context);
+
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          if (multiSelect) {
+            if (selected) {
+              _selectedOptions[questionKey]!.remove(option.label);
+            } else {
+              _selectedOptions[questionKey]!.add(option.label);
+            }
+          } else {
+            _selectedOptions[questionKey] = selected ? {} : {option.label};
+          }
+        });
+      },
+      child: Container(
+        width: double.infinity,
+        margin: const EdgeInsets.only(bottom: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? theme.colorScheme.primaryContainer
+              : theme.colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? theme.colorScheme.primary
+                : theme.colorScheme.outlineVariant,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: Row(
+                children: [
+                  if (selected)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: Icon(Icons.check_circle, size: 16, color: theme.colorScheme.primary),
+                    ),
+                  Expanded(
+                    child: Text(
+                      option.label,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: selected
+                            ? theme.colorScheme.onPrimaryContainer
+                            : theme.colorScheme.onSurface,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (option.description != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+                child: Text(
+                  option.description!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            Container(
+              margin: const EdgeInsets.fromLTRB(8, 0, 8, 8),
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surface,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: MarkdownBody(
+                data: option.preview!,
+                styleSheet: MarkdownStyleSheet(
+                  p: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface),
+                  code: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.primary,
+                    backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

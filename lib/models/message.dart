@@ -41,6 +41,10 @@ class ChatMessage {
   bool isPending;
   String? injectionPriority;
 
+  // For attachment messages: 0.0..1.0 while uploading, null when not uploading.
+  double? uploadProgress;
+  String? uploadFileName;
+
   // SDK hierarchy fields
   String? parentToolUseId;
   String? uuid;
@@ -83,6 +87,8 @@ class ChatMessage {
     this.toolImageFilePath,
     this.isPending = false,
     this.injectionPriority,
+    this.uploadProgress,
+    this.uploadFileName,
   });
 
   factory ChatMessage.userText(String text) {

@@ -50,6 +50,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
   /// Track which plugins are being toggled.
   final Set<String> _toggling = {};
 
+  /// Marketplaces grouped by server ID.
+  final Map<String, List<Map<String, dynamic>>> _marketplacesByServer = {};
+  /// Track pending marketplace operations (serverId:name or serverId:__adding__).
+  final Set<String> _mpPending = {};
+
   @override
   void initState() {
     super.initState();
@@ -127,6 +132,34 @@ class _SkillsScreenState extends State<SkillsScreen> {
         );
         setState(() {});
       }
+    } else if (sm.data['type'] == 'marketplaces_list') {
+      final mps = (sm.data['marketplaces'] as List? ?? [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      if (mounted) setState(() => _marketplacesByServer[sm.serverId] = mps);
+    } else if (sm.data['type'] != null &&
+               (sm.data['type'] as String).startsWith('marketplaces_') &&
+               (sm.data['type'] as String).endsWith('_result')) {
+      // Clear any pending state for this server
+      _mpPending.removeWhere((k) => k.startsWith('${sm.serverId}:'));
+      if (sm.data['ok'] == true) {
+        final mps = (sm.data['marketplaces'] as List? ?? [])
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+        if (mounted) {
+          setState(() => _marketplacesByServer[sm.serverId] = mps);
+          // Refresh plugins list since marketplaces changed
+          _connMgr.sendToServer(sm.serverId, {'type': 'plugins_list'});
+        }
+      } else if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(sm.data['error'] as String? ?? 'Marketplace action failed'),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+        setState(() {});
+      }
     }
   }
 
@@ -145,6 +178,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       _serverErrors.clear();
       _byServer.clear();
       _pluginsByServer.clear();
+      _marketplacesByServer.clear();
     });
 
     final configs = _connMgr.configs;
@@ -154,6 +188,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       if (status == ConnectionStatus.connected) {
         _connMgr.sendToServer(config.id, {'type': 'skills_list'});
         _connMgr.sendToServer(config.id, {'type': 'plugins_list'});
+        _connMgr.sendToServer(config.id, {'type': 'marketplaces_list'});
         anySent = true;
       }
     }
@@ -396,18 +431,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
   List<Widget> _buildSections() {
     final sections = <Widget>[];
-
-    // Flatten all skills from all servers
-    final allSkills = _byServer.values.expand((v) => v).toList();
-
-    // Collect all servers that have responded
-    final respondedServers = <ServerConfig>{};
-    for (final skills in _byServer.values) {
-      if (skills.isNotEmpty) respondedServers.add(skills.first.server);
-    }
+    final theme = Theme.of(context);
+    final allConfigs = _connMgr.configs;
 
     // Show server errors
-    final allConfigs = _connMgr.configs;
     for (final entry in _serverErrors.entries) {
       final config = allConfigs.where((c) => c.id == entry.key).firstOrNull;
       final name = config?.name ?? entry.key;
@@ -427,7 +454,6 @@ class _SkillsScreenState extends State<SkillsScreen> {
             _connMgr.statusOf(c.id) == ConnectionStatus.connected &&
             !respondedIds.contains(c.id))
         .toList();
-
     if (nonResponding.isNotEmpty) {
       final names = nonResponding.map((c) => c.name).join(', ');
       sections.add(Padding(
@@ -439,11 +465,14 @@ class _SkillsScreenState extends State<SkillsScreen> {
       ));
     }
 
-    // Deduplicate: group by scope + pluginName + skillName
-    // Keep track of which servers have each skill
+    // ── Prepare data ──
+
+    // Group skills by scope
+    final allSkills = _byServer.values.expand((v) => v).toList();
     final groupedUser = <String, List<_ServerSkill>>{};
     final groupedProject = <String, List<_ServerSkill>>{};
-    final groupedPlugin = <String, Map<String, List<_ServerSkill>>>{};
+    // Plugin skills keyed by pluginName -> skillName -> instances
+    final groupedPluginSkills = <String, Map<String, List<_ServerSkill>>>{};
 
     for (final s in allSkills) {
       if (s.scope == 'user') {
@@ -452,68 +481,36 @@ class _SkillsScreenState extends State<SkillsScreen> {
         groupedProject.putIfAbsent(s.name, () => []).add(s);
       } else if (s.scope == 'plugin') {
         final plugin = s.pluginName ?? 'other';
-        groupedPlugin.putIfAbsent(plugin, () => {});
-        groupedPlugin[plugin]!.putIfAbsent(s.name, () => []).add(s);
+        groupedPluginSkills.putIfAbsent(plugin, () => {});
+        groupedPluginSkills[plugin]!.putIfAbsent(s.name, () => []).add(s);
       }
     }
 
-    if (groupedUser.isNotEmpty) {
-      // Deduplicated: take first instance of each, track all servers
-      final deduped = groupedUser.values.map((list) => list.first).toList();
-      final servers = groupedUser.values
-          .expand((list) => list.map((s) => s.server))
-          .toSet();
-      sections.add(_buildGroup(
-        key: 'user',
-        title: 'User Commands',
-        icon: Icons.person_outline,
-        color: Colors.blue,
-        items: deduped,
-        servers: servers.toList(),
-      ));
-    }
-
-    if (groupedProject.isNotEmpty) {
-      final deduped = groupedProject.values.map((list) => list.first).toList();
-      final servers = groupedProject.values
-          .expand((list) => list.map((s) => s.server))
-          .toSet();
-      sections.add(_buildGroup(
-        key: 'project',
-        title: 'Project Commands',
-        icon: Icons.folder_outlined,
-        color: Colors.green,
-        items: deduped,
-        servers: servers.toList(),
-      ));
-    }
-
-    // Build a lookup from plugin name -> list of (serverId, pluginData) across all servers
-    final mpByName = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
+    // Build plugin lookup: pluginName -> [(serverId, pluginData)]
+    final pluginByName = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
     for (final entry in _pluginsByServer.entries) {
       for (final p in entry.value) {
         final name = p['name'] as String? ?? '';
         if (name.isNotEmpty) {
-          mpByName.putIfAbsent(name, () => []).add(MapEntry(entry.key, p));
+          pluginByName.putIfAbsent(name, () => []).add(MapEntry(entry.key, p));
         }
       }
     }
 
-    // Fill in missing servers — every connected server that responded to plugins_list
-    // should appear on every plugin, even if that server didn't return it
+    // Fill in missing servers on every plugin
     final respondedServerIds = _pluginsByServer.keys.toSet();
-    for (final pluginName in mpByName.keys.toList()) {
-      final entries = mpByName[pluginName]!;
+    for (final pluginName in pluginByName.keys.toList()) {
+      final entries = pluginByName[pluginName]!;
       final existingServerIds = entries.map((e) => e.key).toSet();
       final first = entries.first.value;
       for (final serverId in respondedServerIds) {
         if (!existingServerIds.contains(serverId)) {
-          // Stub entry for server that doesn't have this plugin
           entries.add(MapEntry(serverId, <String, dynamic>{
             'id': first['id'] ?? '$pluginName@unknown',
             'name': pluginName,
             'description': first['description'] ?? '',
             'category': first['category'] ?? '',
+            'marketplace': first['marketplace'] ?? '',
             'installed': false,
             'enabled': false,
             'readme': '',
@@ -523,113 +520,261 @@ class _SkillsScreenState extends State<SkillsScreen> {
       }
     }
 
-    // Plugin groups by plugin name (from skills scan), with marketplace toggle
-    final shownPluginNames = <String>{};
-    for (final pe in groupedPlugin.entries) {
-      final deduped = pe.value.values.map((list) => list.first).toList();
-      final servers = pe.value.values
-          .expand((list) => list.map((s) => s.server))
-          .toSet();
-      shownPluginNames.add(pe.key);
-      sections.add(_buildGroup(
-        key: 'plugin_${pe.key}',
-        title: pe.key,
-        icon: Icons.extension_outlined,
-        color: Colors.orange,
-        items: deduped,
-        servers: servers.toList(),
-        pluginServerEntries: mpByName[pe.key],
-      ));
+    // Group plugins by marketplace name
+    final pluginsByMarketplace = <String, List<String>>{};
+    for (final entry in pluginByName.entries) {
+      final mp = entry.value.first.value['marketplace'] as String? ?? '';
+      pluginsByMarketplace.putIfAbsent(mp, () => []).add(entry.key);
     }
 
-    // Group remaining marketplace plugins by category
-    final byCategory = <String, List<String>>{};
-    for (final name in mpByName.keys) {
-      if (shownPluginNames.contains(name)) continue;
-      shownPluginNames.add(name);
-      final entries = mpByName[name]!;
-      final category = entries.first.value['category'] as String? ?? '';
-      byCategory.putIfAbsent(category, () => []).add(name);
+    // Build marketplace info lookup
+    final mpInfoByName = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
+    for (final entry in _marketplacesByServer.entries) {
+      for (final mp in entry.value) {
+        final name = mp['name'] as String? ?? '';
+        if (name.isNotEmpty) {
+          mpInfoByName.putIfAbsent(name, () => []).add(MapEntry(entry.key, mp));
+        }
+      }
     }
 
-    // Render each category as an expandable group containing plugin toggle rows
-    final sortedCategories = byCategory.keys.toList()..sort();
-    for (final category in sortedCategories) {
-      final pluginNames = byCategory[category]!;
-      final categoryTitle = category.isEmpty ? 'Uncategorized' : category
-          .split('-').map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}').join(' ');
-      final isExpanded = _expanded.contains('cat_$category');
+    // ── Local section (user + project skills) ──
+    if (groupedUser.isNotEmpty || groupedProject.isNotEmpty) {
+      final localChildren = <Widget>[];
 
+      // User commands
+      for (final entry in groupedUser.entries) {
+        localChildren.add(_buildSkillRow(entry.value.first));
+      }
+      // Project commands
+      for (final entry in groupedProject.entries) {
+        localChildren.add(_buildSkillRow(entry.value.first));
+      }
+
+      final isExpanded = _expanded.contains('local');
       sections.add(ExpansionTile(
-        key: PageStorageKey('cat_$category'),
+        key: const PageStorageKey('local'),
         initiallyExpanded: isExpanded,
         onExpansionChanged: (expanded) {
           setState(() {
-            if (expanded) _expanded.add('cat_$category');
-            else _expanded.remove('cat_$category');
+            if (expanded) _expanded.add('local');
+            else _expanded.remove('local');
           });
         },
         tilePadding: const EdgeInsets.symmetric(horizontal: 16),
         childrenPadding: EdgeInsets.zero,
         dense: true,
         visualDensity: VisualDensity.compact,
-        leading: Icon(Icons.category_outlined, size: 18,
-            color: Colors.purple.withAlpha(180)),
+        leading: Icon(Icons.home_outlined, size: 18, color: Colors.blue.withAlpha(180)),
         title: Row(
           children: [
-            Flexible(
-              child: Text(
-                categoryTitle,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: Theme.of(context).colorScheme.onSurface.withAlpha(220),
-                ),
-              ),
-            ),
+            Text('Local', style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurface.withAlpha(220),
+            )),
             const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
-              decoration: BoxDecoration(
-                color: Colors.purple.withAlpha(25),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '${pluginNames.length}',
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: Colors.purple,
-                  fontWeight: FontWeight.w600,
-                ),
+            _buildCountBadge(groupedUser.length + groupedProject.length, Colors.blue),
+          ],
+        ),
+        children: localChildren,
+      ));
+    }
+
+    // ── Marketplace sections ──
+    // Collect all known marketplace names (from marketplace info + plugin data)
+    final allMpNames = <String>{...mpInfoByName.keys, ...pluginsByMarketplace.keys};
+    allMpNames.remove(''); // exclude plugins with no marketplace
+
+    final sortedMpNames = allMpNames.toList()..sort();
+    for (final mpName in sortedMpNames) {
+      final mpInfo = mpInfoByName[mpName];
+      final description = mpInfo?.first.value['description'] as String? ?? '';
+      final owner = mpInfo?.first.value['owner'] as String? ?? '';
+      final mpPluginNames = pluginsByMarketplace[mpName] ?? [];
+
+      final isExpanded = _expanded.contains('mp_$mpName');
+      final children = <Widget>[];
+
+      for (final pluginName in mpPluginNames) {
+        final pluginEntries = pluginByName[pluginName]!;
+        final pluginSkills = groupedPluginSkills[pluginName];
+
+        if (pluginSkills != null && pluginSkills.isNotEmpty) {
+          // Installed plugin with skills — show as expandable group
+          final deduped = pluginSkills.values.map((list) => list.first).toList();
+          children.add(_buildGroup(
+            key: 'plugin_${mpName}_$pluginName',
+            title: pluginName,
+            icon: Icons.extension_outlined,
+            color: Colors.orange,
+            items: deduped,
+            pluginServerEntries: pluginEntries,
+          ));
+        } else {
+          // No skills yet — show as a toggle row
+          children.add(_buildPluginToggleRow(pluginEntries));
+        }
+      }
+
+      sections.add(ExpansionTile(
+        key: PageStorageKey('mp_$mpName'),
+        initiallyExpanded: isExpanded,
+        onExpansionChanged: (expanded) {
+          setState(() {
+            if (expanded) _expanded.add('mp_$mpName');
+            else _expanded.remove('mp_$mpName');
+          });
+        },
+        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+        childrenPadding: EdgeInsets.zero,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: Icon(Icons.store_outlined, size: 18, color: Colors.teal.withAlpha(180)),
+        subtitle: [
+          if (owner.isNotEmpty) 'by $owner',
+          if (description.isNotEmpty) description,
+        ].isNotEmpty
+            ? Text(
+                [if (owner.isNotEmpty) 'by $owner', if (description.isNotEmpty) description].join(' · '),
+                maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withAlpha(100)),
+              )
+            : null,
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildCountBadge(mpPluginNames.length, Colors.teal),
+            if (mpInfo != null) SizedBox(
+              width: 28, height: 32,
+              child: PopupMenuButton<String>(
+                padding: EdgeInsets.zero, iconSize: 16,
+                icon: Icon(Icons.more_vert, size: 16, color: theme.colorScheme.onSurface.withAlpha(100)),
+                onSelected: (action) => _marketplaceAction(mpName, action, mpInfo),
+                itemBuilder: (ctx) => [
+                  const PopupMenuItem(value: 'update', height: 36, child: Text('Update', style: TextStyle(fontSize: 13))),
+                  const PopupMenuItem(value: 'remove', height: 36, child: Text('Remove', style: TextStyle(fontSize: 13, color: Colors.red))),
+                ],
               ),
             ),
           ],
         ),
-        children: pluginNames.map((name) =>
-            _buildPluginToggleRow(mpByName[name]!)).toList(),
+        title: Text(mpName, overflow: TextOverflow.ellipsis, style: TextStyle(
+          fontSize: 13, fontWeight: FontWeight.w500,
+          color: theme.colorScheme.onSurface.withAlpha(220),
+        )),
+        children: children,
       ));
     }
+
+    // ── Add Marketplace button ──
+    sections.add(Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: OutlinedButton.icon(
+        onPressed: _showAddMarketplaceDialog,
+        icon: const Icon(Icons.add, size: 16),
+        label: const Text('Add Marketplace', style: TextStyle(fontSize: 13)),
+        style: OutlinedButton.styleFrom(
+          visualDensity: VisualDensity.compact,
+          side: BorderSide(color: Colors.teal.withAlpha(80)),
+        ),
+      ),
+    ));
 
     return sections;
   }
 
-  Widget _buildServerBadge(ServerConfig server) {
-    final theme = Theme.of(context);
-    final c = server.colorValue != null
-        ? Color(server.colorValue!)
-        : theme.colorScheme.primary;
+  Widget _buildCountBadge(int count, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
       decoration: BoxDecoration(
-        color: c.withAlpha(20),
-        borderRadius: BorderRadius.circular(5),
+        color: color.withAlpha(25),
+        borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        server.name,
-        style: TextStyle(fontSize: 8, fontWeight: FontWeight.w500, color: c.withAlpha(200)),
+        '$count',
+        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600),
       ),
     );
+  }
+
+  void _showAddMarketplaceDialog() {
+    final controller = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Add Marketplace'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            hintText: 'https://github.com/user/marketplace.git',
+            labelText: 'Git URL',
+          ),
+          onSubmitted: (_) {
+            Navigator.pop(ctx);
+            _addMarketplace(controller.text.trim());
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _addMarketplace(controller.text.trim());
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _addMarketplace(String url) {
+    if (url.isEmpty) return;
+    // Send to all connected servers
+    final configs = _connMgr.configs;
+    for (final config in configs) {
+      if (_connMgr.statusOf(config.id) == ConnectionStatus.connected) {
+        setState(() => _mpPending.add('${config.id}:__adding__'));
+        _connMgr.sendToServer(config.id, {'type': 'marketplaces_add', 'url': url});
+      }
+    }
+  }
+
+  void _marketplaceAction(String name, String action, List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
+    if (action == 'remove') {
+      showDialog(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Remove Marketplace?'),
+          content: Text('Remove "$name" from all servers?\nPlugins from this marketplace will no longer appear.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                for (final entry in serverEntries) {
+                  setState(() => _mpPending.add('${entry.key}:$name'));
+                  _connMgr.sendToServer(entry.key, {'type': 'marketplaces_remove', 'name': name});
+                }
+              },
+              child: const Text('Remove', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      );
+    } else if (action == 'update') {
+      for (final entry in serverEntries) {
+        setState(() => _mpPending.add('${entry.key}:$name'));
+        _connMgr.sendToServer(entry.key, {'type': 'marketplaces_update', 'name': name});
+      }
+    }
   }
 
   Widget _buildGroup({
@@ -638,7 +783,6 @@ class _SkillsScreenState extends State<SkillsScreen> {
     required IconData icon,
     required Color color,
     required List<_ServerSkill> items,
-    List<ServerConfig> servers = const [],
     List<MapEntry<String, Map<String, dynamic>>>? pluginServerEntries,
   }) {
     final theme = Theme.of(context);
@@ -653,69 +797,31 @@ class _SkillsScreenState extends State<SkillsScreen> {
       initiallyExpanded: isExpanded,
       onExpansionChanged: (expanded) {
         setState(() {
-          if (expanded) {
-            _expanded.add(key);
-          } else {
-            _expanded.remove(key);
-          }
+          if (expanded) _expanded.add(key);
+          else _expanded.remove(key);
         });
       },
-      tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-      childrenPadding: EdgeInsets.zero,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 20),
+      childrenPadding: const EdgeInsets.only(left: 16),
       dense: true,
       visualDensity: VisualDensity.compact,
-      leading: Icon(icon, size: 18, color: color.withAlpha(180)),
+      leading: Icon(icon, size: 16, color: color.withAlpha(180)),
       subtitle: pluginDescription.isNotEmpty
-          ? Text(
-              pluginDescription,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                color: theme.colorScheme.onSurface.withAlpha(100),
-              ),
-            )
+          ? Text(pluginDescription, maxLines: 2, overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withAlpha(100)))
           : null,
-      trailing: hasPlugin
-          ? _buildPluginActions(pluginServerEntries!)
-          : null,
+      trailing: hasPlugin ? _buildPluginActions(pluginServerEntries!) : null,
       title: Row(
         children: [
           Flexible(
-            child: Text(
-              title,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w500,
-                color: theme.colorScheme.onSurface.withAlpha(220),
-              ),
-            ),
+            child: Text(title, overflow: TextOverflow.ellipsis, style: TextStyle(
+              fontSize: 13, fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurface.withAlpha(220),
+            )),
           ),
           if (items.isNotEmpty) ...[
             const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 0),
-              decoration: BoxDecoration(
-                color: color.withAlpha(25),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '${items.length}',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: color,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-          if (!hasPlugin) ...[
-            const SizedBox(width: 6),
-            ...servers.map((s) => Padding(
-                  padding: const EdgeInsets.only(right: 3),
-                  child: _buildServerBadge(s),
-                )),
+            _buildCountBadge(items.length, color),
           ],
         ],
       ),
@@ -911,14 +1017,20 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }
 
   /// Inline action widget for a single server's plugin state.
-  Widget _buildSingleServerAction(String serverId, String pluginId, bool installed, bool enabled) {
+  /// [onAction] is called after triggering an action so the caller can rebuild.
+  Widget _buildSingleServerAction(String serverId, String pluginId, bool installed, bool enabled, {VoidCallback? onAction}) {
     final isToggling = _toggling.contains('$serverId:$pluginId');
+
+    void act(String action) {
+      _pluginAction(serverId, pluginId, action);
+      onAction?.call();
+    }
 
     if (!installed) {
       return SizedBox(
         height: 32,
         child: TextButton(
-          onPressed: isToggling ? null : () => _pluginAction(serverId, pluginId, 'install'),
+          onPressed: isToggling ? null : () => act('install'),
           style: TextButton.styleFrom(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             minimumSize: Size.zero,
@@ -941,7 +1053,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
               value: enabled,
               onChanged: isToggling
                   ? null
-                  : (val) => _pluginAction(serverId, pluginId, val ? 'enable' : 'disable'),
+                  : (val) => act(val ? 'enable' : 'disable'),
             ),
           ),
         ),
@@ -954,7 +1066,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             icon: Icon(Icons.more_vert, size: 14,
                 color: Theme.of(context).colorScheme.onSurface.withAlpha(100)),
             onSelected: (action) {
-              if (action == 'uninstall') _pluginAction(serverId, pluginId, 'uninstall');
+              if (action == 'uninstall') act('uninstall');
             },
             itemBuilder: (ctx) => [
               const PopupMenuItem(
@@ -1002,51 +1114,94 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }
 
   /// Bottom sheet showing per-server plugin state with action buttons.
+  /// Uses StatefulBuilder + stream subscription so the sheet updates live
+  /// when install/enable/disable results arrive.
   void _showPluginServerPicker(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
     final pluginName = serverEntries.first.value['name'] as String? ?? '';
+
+    // Subscribe to message stream so the sheet rebuilds on plugin results.
+    StateSetter? setSheetState;
+    final sub = _connMgr.messages.listen((sm) {
+      final type = sm.data['type'] as String?;
+      if (type != null && type.startsWith('plugins_') && type.endsWith('_result')) {
+        setSheetState?.call(() {});
+      }
+    });
+
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(pluginName,
-                  style: Theme.of(ctx).textTheme.titleSmall),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, sheetSetState) {
+          setSheetState = sheetSetState;
+
+          // Rebuild entries from current _pluginsByServer state each time.
+          // Include stub "not installed" entries for servers that responded
+          // but don't have this plugin, so all servers appear in the sheet.
+          final currentEntries = <MapEntry<String, Map<String, dynamic>>>[];
+          final seenServerIds = <String>{};
+          final firstData = serverEntries.first.value;
+          for (final entry in _pluginsByServer.entries) {
+            seenServerIds.add(entry.key);
+            final match = entry.value.where((p) => p['name'] == pluginName).firstOrNull;
+            currentEntries.add(MapEntry(entry.key, match ?? <String, dynamic>{
+              'id': firstData['id'] ?? '$pluginName@unknown',
+              'name': pluginName,
+              'description': firstData['description'] ?? '',
+              'category': firstData['category'] ?? '',
+              'installed': false,
+              'enabled': false,
+            }));
+          }
+          final entries = currentEntries.isNotEmpty ? currentEntries : serverEntries;
+
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(pluginName,
+                      style: Theme.of(ctx).textTheme.titleSmall),
+                ),
+                ...entries.map((entry) {
+                  final serverId = entry.key;
+                  final pluginId = entry.value['id'] as String? ?? '';
+                  final installed = entry.value['installed'] as bool? ?? false;
+                  final enabled = entry.value['enabled'] as bool? ?? false;
+                  final config = _connMgr.configs.where((c) => c.id == serverId).firstOrNull;
+                  if (config == null) return const SizedBox.shrink();
+
+                  final serverColor = config.colorValue != null
+                      ? Color(config.colorValue!)
+                      : Theme.of(ctx).colorScheme.primary;
+
+                  String statusText;
+                  if (_toggling.contains('$serverId:$pluginId')) {
+                    statusText = 'Updating...';
+                  } else if (!installed) {
+                    statusText = 'Not installed';
+                  } else if (enabled) {
+                    statusText = 'Installed, enabled';
+                  } else {
+                    statusText = 'Installed, disabled';
+                  }
+
+                  return ListTile(
+                    leading: Icon(Icons.dns, color: serverColor),
+                    title: Text(config.name),
+                    subtitle: Text(statusText, style: const TextStyle(fontSize: 12)),
+                    trailing: _buildSingleServerAction(
+                      serverId, pluginId, installed, enabled,
+                      onAction: () => sheetSetState(() {}),
+                    ),
+                  );
+                }),
+                const SizedBox(height: 8),
+              ],
             ),
-            ...serverEntries.map((entry) {
-              final serverId = entry.key;
-              final pluginId = entry.value['id'] as String? ?? '';
-              final installed = entry.value['installed'] as bool? ?? false;
-              final enabled = entry.value['enabled'] as bool? ?? false;
-              final config = _connMgr.configs.where((c) => c.id == serverId).firstOrNull;
-              if (config == null) return const SizedBox.shrink();
-
-              final serverColor = config.colorValue != null
-                  ? Color(config.colorValue!)
-                  : Theme.of(ctx).colorScheme.primary;
-
-              String statusText;
-              if (!installed) {
-                statusText = 'Not installed';
-              } else if (enabled) {
-                statusText = 'Installed, enabled';
-              } else {
-                statusText = 'Installed, disabled';
-              }
-
-              return ListTile(
-                leading: Icon(Icons.dns, color: serverColor),
-                title: Text(config.name),
-                subtitle: Text(statusText, style: const TextStyle(fontSize: 12)),
-                trailing: _buildSingleServerAction(serverId, pluginId, installed, enabled),
-              );
-            }),
-            const SizedBox(height: 8),
-          ],
-        ),
+          );
+        },
       ),
-    );
+    ).whenComplete(() => sub.cancel());
   }
 }

@@ -119,8 +119,11 @@ class HomeScreenState extends State<HomeScreen> {
 
   void _sendMessage(ChatProvider provider, {String? priority}) {
     var text = _textController.text.trim();
-    // If empty and there's a prompt suggestion, send the suggestion
-    if (text.isEmpty && provider.promptSuggestions.isNotEmpty) {
+    // If empty and there's a prompt suggestion, send the suggestion — but
+    // only when there's no attachment, otherwise sending a file with no
+    // typed text would silently bring along the suggestion the user never
+    // asked to send.
+    if (text.isEmpty && !provider.hasAttachment && provider.promptSuggestions.isNotEmpty) {
       text = provider.promptSuggestions.first;
       provider.clearPromptSuggestions();
     }

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import 'crypto_service.dart';
 
@@ -26,6 +27,15 @@ class WebSocketService {
   String _subscriberToken = '';
   CryptoService? _cryptoService;
   bool _encryptionReady = false;
+
+  // Wire-format flag — flips to true once the server replies to our
+  // client_capabilities announcement. Until then we keep the legacy
+  // text-JSON envelope so older servers don't choke.
+  bool _serverSupportsBinary = false;
+
+  // Binary plaintext markers (also defined server-side).
+  static const int _binMarkerJson = 0x4A;          // 'J'
+  static const int _binMarkerUploadChunk = 0x42;   // 'B'
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
@@ -78,7 +88,15 @@ class WebSocketService {
         uri = Uri.parse('ws://$_host:$_port?token=${Uri.encodeComponent(_token)}');
       }
 
-      _channel = WebSocketChannel.connect(uri);
+      // Use the IOWebSocketChannel.connect factory so it builds the underlying
+      // dart:io WebSocket the same way the abstract WebSocketChannel.connect
+      // does (and binary frame plumbing works correctly), plus we get
+      // pingInterval for free. Without pingInterval, a silently-broken socket
+      // would just hang forever instead of firing onDone.
+      _channel = IOWebSocketChannel.connect(
+        uri,
+        pingInterval: const Duration(seconds: 20),
+      );
 
       _channelSubscription = _channel!.stream.listen(
         (data) {
@@ -87,8 +105,12 @@ class WebSocketService {
             _setStatus(ConnectionStatus.connected);
           }
           try {
-            final raw = jsonDecode(data as String) as Map<String, dynamic>;
-            _handleIncoming(raw);
+            if (data is String) {
+              final raw = jsonDecode(data) as Map<String, dynamic>;
+              _handleIncoming(raw);
+            } else if (data is List<int>) {
+              _handleIncomingBinary(Uint8List.fromList(data));
+            }
           } catch (_) {}
         },
         onError: (error) {
@@ -99,6 +121,7 @@ class WebSocketService {
         onDone: () {
           if (gen != _connectionGeneration) return;
           _encryptionReady = false;
+          _serverSupportsBinary = false;
           _setStatus(ConnectionStatus.disconnected);
           _scheduleReconnect();
         },
@@ -111,6 +134,9 @@ class WebSocketService {
           if (_status == ConnectionStatus.connecting) {
             _setStatus(ConnectionStatus.connected);
           }
+          // Probe for binary support. New server replies with server_capabilities;
+          // old server ignores the unknown type and we stay on legacy.
+          send({'type': 'client_capabilities', 'binaryEnvelope': true});
         });
       }
     } catch (e) {
@@ -162,16 +188,7 @@ class WebSocketService {
           final plaintext = _cryptoService!.decrypt(raw);
           final msg = jsonDecode(plaintext) as Map<String, dynamic>;
           debugPrint('[Relay] Decrypted message: ${msg['type']}');
-
-          // Check for key exchange ack
-          if (msg['type'] == 'key_exchange_ack') {
-            _encryptionReady = true;
-            _setStatus(ConnectionStatus.connected);
-            debugPrint('[Relay] Key exchange complete — encryption ready');
-            return;
-          }
-
-          _messageController.add(msg);
+          _routeDecryptedMessage(msg);
         } catch (e) {
           debugPrint('[Relay] Decryption failed: $e');
         }
@@ -180,9 +197,7 @@ class WebSocketService {
 
       // Plaintext messages in relay mode (only during key exchange)
       if (raw['type'] == 'key_exchange_ack') {
-        _encryptionReady = true;
-
-        _setStatus(ConnectionStatus.connected);
+        _onEncryptionEstablished();
         return;
       }
 
@@ -190,8 +205,62 @@ class WebSocketService {
       return;
     }
 
-    // Direct mode — pass through
+    // Direct mode — pass through (and intercept the capability ack)
+    if (raw['type'] == 'server_capabilities') {
+      _serverSupportsBinary = (raw['binaryEnvelope'] == true);
+      return;
+    }
     _messageController.add(raw);
+  }
+
+  /// Handle a binary WebSocket frame.
+  ///   - In relay mode the frame is `[24-byte nonce | ciphertext]` and we
+  ///     decrypt before parsing.
+  ///   - In direct mode it's `[1 marker | payload]` plain.
+  void _handleIncomingBinary(Uint8List bytes) {
+    if (_mode == ConnectionMode.relay) {
+      if (_cryptoService == null || !_cryptoService!.isReady) return;
+      try {
+        final plaintext = _cryptoService!.decryptBinary(bytes);
+        if (plaintext.isEmpty) return;
+        final marker = plaintext[0];
+        if (marker == _binMarkerJson) {
+          final json = utf8.decode(plaintext.sublist(1));
+          final msg = jsonDecode(json) as Map<String, dynamic>;
+          _routeDecryptedMessage(msg);
+        }
+        // We don't expect upload chunks coming back from the server today.
+      } catch (e) {
+        debugPrint('[Relay] Binary decryption failed: $e');
+      }
+      return;
+    }
+    // Direct mode: server doesn't currently push binary frames. Ignore.
+  }
+
+  /// Common post-decrypt routing: surfaces the message to listeners and
+  /// transparently absorbs the wire-format handshake messages.
+  void _routeDecryptedMessage(Map<String, dynamic> msg) {
+    final t = msg['type'];
+    if (t == 'key_exchange_ack') {
+      _onEncryptionEstablished();
+      return;
+    }
+    if (t == 'server_capabilities') {
+      _serverSupportsBinary = (msg['binaryEnvelope'] == true);
+      debugPrint('[Relay] Server supports binary envelope: $_serverSupportsBinary');
+      return;
+    }
+    _messageController.add(msg);
+  }
+
+  void _onEncryptionEstablished() {
+    _encryptionReady = true;
+    _setStatus(ConnectionStatus.connected);
+    debugPrint('[Relay] Key exchange complete — encryption ready');
+    // Announce that we can speak the binary wire format. Older servers will
+    // ignore this message and we'll stay on the legacy JSON envelope.
+    send({'type': 'client_capabilities', 'binaryEnvelope': true});
   }
 
   /// Send our public key to the server for NaCl key exchange
@@ -224,14 +293,62 @@ class WebSocketService {
     if (_channel == null) return;
 
     if (_mode == ConnectionMode.relay && _encryptionReady && _cryptoService != null) {
-      // Encrypt before sending
       final plaintext = jsonEncode(message);
-      final envelope = _cryptoService!.encrypt(plaintext);
-      _channel!.sink.add(jsonEncode(envelope));
+      if (_serverSupportsBinary) {
+        // Binary envelope: 1-byte JSON marker + UTF-8 JSON.
+        final jsonBytes = utf8.encode(plaintext);
+        final payload = Uint8List(jsonBytes.length + 1);
+        payload[0] = _binMarkerJson;
+        payload.setRange(1, payload.length, jsonBytes);
+        final envelope = _cryptoService!.encryptBinary(payload);
+        _channel!.sink.add(envelope);
+      } else {
+        // Legacy text-JSON envelope.
+        final envelope = _cryptoService!.encrypt(plaintext);
+        _channel!.sink.add(jsonEncode(envelope));
+      }
     } else if (_mode == ConnectionMode.direct) {
       _channel!.sink.add(jsonEncode(message));
     }
-    // In relay mode but encryption not ready — drop message (shouldn't happen in normal flow)
+  }
+
+  /// Whether the server has confirmed it understands the binary wire format.
+  /// Callers (e.g. the upload path) check this to decide between binary and
+  /// legacy base64 chunks.
+  bool get serverSupportsBinary => _serverSupportsBinary;
+
+  /// Send a binary upload chunk. Builds the standard
+  /// `[0x42][1 idLen][idBytes][4 chunkIdx BE][bytes]` plaintext payload and
+  /// either ships it as a raw binary frame (direct) or wraps it in a binary
+  /// envelope (relay).
+  void sendUploadChunkBinary({
+    required String uploadId,
+    required int chunkIndex,
+    required Uint8List bytes,
+  }) {
+    if (_channel == null) return;
+    final idBytes = utf8.encode(uploadId);
+    if (idBytes.length > 255) {
+      throw StateError('uploadId too long for binary frame');
+    }
+    final payload = Uint8List(2 + idBytes.length + 4 + bytes.length);
+    payload[0] = _binMarkerUploadChunk;
+    payload[1] = idBytes.length;
+    payload.setRange(2, 2 + idBytes.length, idBytes);
+    final off = 2 + idBytes.length;
+    payload[off]     = (chunkIndex >> 24) & 0xFF;
+    payload[off + 1] = (chunkIndex >> 16) & 0xFF;
+    payload[off + 2] = (chunkIndex >> 8) & 0xFF;
+    payload[off + 3] = chunkIndex & 0xFF;
+    payload.setRange(off + 4, payload.length, bytes);
+
+    if (_mode == ConnectionMode.relay) {
+      if (!_encryptionReady || _cryptoService == null) return;
+      final envelope = _cryptoService!.encryptBinary(payload);
+      _channel!.sink.add(envelope);
+    } else {
+      _channel!.sink.add(payload);
+    }
   }
 
   void sendPrompt(String text, {String? sessionId, String? priority, String? messageId, String? cwd}) {

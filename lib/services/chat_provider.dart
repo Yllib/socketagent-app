@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:http/http.dart' as http;
@@ -129,6 +130,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   double? _uploadProgress;
   String? _pendingUploadId;
   Completer<String>? _uploadCompleter;
+  // Per-upload state used to drive UI progress, gate the chunk send-loop on
+  // server acks (backpressure), and detect stalled uploads.
+  final Map<String, _UploadState> _uploadStates = {};
 
   // Settings
   String _serverHost = '';
@@ -2049,7 +2053,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _uploadCompleter?.complete(serverPath);
           _uploadCompleter = null;
         }
+        if (uploadId != null) {
+          _uploadStates.remove(uploadId)?.dispose();
+        }
         break;
+      case 'upload_progress': {
+        final uploadId = msg['uploadId'] as String?;
+        final received = (msg['bytesReceived'] as num?)?.toInt() ?? 0;
+        final total = (msg['totalBytes'] as num?)?.toInt() ?? 0;
+        final receivedChunks = (msg['receivedChunks'] as num?)?.toInt() ?? 0;
+        if (uploadId == null || total <= 0) break;
+        final state = _uploadStates[uploadId];
+        if (state != null) {
+          debugPrint('[Upload] ack: chunks=$receivedChunks bytes=$received/$total');
+          state.target.uploadProgress = (received / total).clamp(0.0, 1.0);
+          state.noteAck(receivedChunks);
+          notifyListeners();
+        }
+        break;
+      }
       case 'compact_boundary':
         _currentStreamingMessage = null;
         final trigger = msg['trigger'] as String? ?? 'auto';
@@ -3709,15 +3731,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> sendPrompt(String text, {String? priority}) async {
     if (text.trim().isEmpty && _pendingAttachmentPath == null) return;
 
+    // Snapshot attachment fields up front so we can clear the input chip
+    // immediately while we still have the path to actually upload from.
+    final attachPath = _pendingAttachmentPath;
+    final attachName = _pendingAttachmentName;
+    final hasAttachmentForSend = attachPath != null;
+
     // Show the user's message immediately (original text only)
     final displayText = text.trim().isEmpty
-        ? '📎 ${_pendingAttachmentName ?? "file"}'
+        ? '📎 ${attachName ?? "file"}'
         : text;
     final userMsg = ChatMessage.userText(displayText);
-    // Mark as pending if injecting with non-immediate priority
+    // Mark as pending if injecting with non-immediate priority OR if we're
+    // about to spend time uploading. The bubble renders pending state with
+    // reduced opacity + a progress indicator while the file streams up.
     if (priority != null && _isProcessing) {
       userMsg.isPending = true;
       userMsg.injectionPriority = priority;
+    }
+    if (hasAttachmentForSend) {
+      userMsg.isPending = true;
+      userMsg.uploadProgress = 0.0;
+      userMsg.uploadFileName = attachName;
     }
     _messages.add(userMsg);
     // Don't null _currentStreamingMessage here — if Claude is mid-stream,
@@ -3727,29 +3762,54 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isProcessing = true;
     _processingSetAt = DateTime.now();
     _promptSuggestions = [];
-    notifyListeners();
 
-    String prompt = text;
-
-    // Upload attachment first if present
-    if (_pendingAttachmentPath != null) {
-      try {
-        final serverPath = await _uploadFile();
-        prompt = '[Attached file: $serverPath]\n$prompt';
-      } catch (e) {
-        _messages.add(ChatMessage.error('Upload failed: $e'));
-        _uploadProgress = null;
-        _pendingUploadId = null;
-        _pendingAttachmentPath = null;
-        _pendingAttachmentName = null;
-        _isProcessing = false;
-        notifyListeners();
-        return;
-      }
+    // Drop the input-area chip now — the file is committed to this bubble.
+    // Progress now lives on the bubble itself.
+    if (hasAttachmentForSend) {
       _pendingAttachmentPath = null;
       _pendingAttachmentName = null;
       _uploadProgress = null;
       _pendingUploadId = null;
+    }
+    notifyListeners();
+
+    String prompt = text;
+
+    if (hasAttachmentForSend) {
+      try {
+        final serverPath = await _uploadFromPath(
+          path: attachPath,
+          name: attachName ?? 'file',
+          progressTarget: userMsg,
+        );
+        prompt = '[Attached file: $serverPath]\n$prompt';
+        // Inline an "Uploaded: filename" card just above the user bubble so
+        // the chat shows the file inline (matching what history-restore
+        // produces from the saved `[Attached file: ...]` prefix).
+        final fileName = serverPath.split('/').last;
+        final uploadCard = ChatMessage(
+          id: 'upload_${DateTime.now().microsecondsSinceEpoch}',
+          sender: MessageSender.system,
+          type: MessageType.taskNotification,
+          timestamp: DateTime.now(),
+          textContent: 'Uploaded: $fileName',
+          toolName: 'uploaded',
+        );
+        final idx = _messages.indexOf(userMsg);
+        if (idx >= 0) {
+          _messages.insert(idx, uploadCard);
+        } else {
+          _messages.add(uploadCard);
+        }
+      } catch (e) {
+        userMsg.isPending = false;
+        userMsg.uploadProgress = null;
+        _messages.add(ChatMessage.error('Upload failed: $e'));
+        _isProcessing = false;
+        notifyListeners();
+        return;
+      }
+      userMsg.uploadProgress = null;
     }
 
     if (_pendingPrepends.isNotEmpty) {
@@ -3765,6 +3825,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       messageId: userMsg.id,
       cwd: _activeSessionId == null ? _activeSessionCwd : null,
     );
+
+    // Upload + dispatch done — bubble is officially "sent" now (unless it's
+    // queued behind a running query, in which case keep the pending state).
+    if (hasAttachmentForSend && userMsg.injectionPriority == null) {
+      userMsg.isPending = false;
+    }
     notifyListeners();
   }
 
@@ -3785,42 +3851,84 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<String> _uploadFile() async {
-    final file = File(_pendingAttachmentPath!);
+  Future<String> _uploadFromPath({
+    required String path,
+    required String name,
+    required ChatMessage progressTarget,
+  }) async {
+    final file = File(path);
     final bytes = await file.readAsBytes();
-    const chunkSize = 512 * 1024;
+    final binary = _ws.serverSupportsBinary;
+    // 1MB binary chunks: small enough to not blow up the OS TCP buffer on
+    // cellular, big enough that NaCl/JSON overhead per chunk stays a small
+    // fraction. 512KB on the legacy base64 path keeps the relay's 16MB
+    // payload limit comfortably out of reach.
+    final chunkSize = binary ? 1 * 1024 * 1024 : 512 * 1024;
     final totalChunks = (bytes.length / chunkSize).ceil().clamp(1, double.infinity).toInt();
     final uploadId = DateTime.now().microsecondsSinceEpoch.toString();
     _pendingUploadId = uploadId;
-    _uploadProgress = 0.0;
-    _uploadCompleter = Completer<String>();
+    final completer = Completer<String>();
+    _uploadCompleter = completer;
+
+    // No client-side backpressure: fire-and-forget chunks like the original
+    // working test that did 130 MB in ~1s on LAN. The stall timer below still
+    // catches the case where the server stops emitting progress events.
+    final state = _UploadState(
+      target: progressTarget,
+      onStall: () {
+        if (!completer.isCompleted) {
+          completer.completeError(
+              Exception('Upload stalled — no progress from server for 30s'));
+        }
+      },
+    );
+    if (binary) {
+      _uploadStates[uploadId] = state;
+      state.start();
+    }
 
     _ws.send({
       'type': 'upload_start',
       'uploadId': uploadId,
-      'fileName': _pendingAttachmentName ?? file.uri.pathSegments.last,
+      'fileName': name,
       'fileSize': bytes.length,
       'totalChunks': totalChunks,
+      'chunkSize': chunkSize,
     });
 
+    debugPrint('[Upload] start id=$uploadId chunks=$totalChunks size=${bytes.length} binary=$binary');
     for (var i = 0; i < totalChunks; i++) {
+      if (i % 10 == 0 || i == totalChunks - 1) {
+        debugPrint('[Upload] sending chunk $i/$totalChunks');
+      }
+
       final start = i * chunkSize;
       final end = (start + chunkSize).clamp(0, bytes.length);
-      final chunk = bytes.sublist(start, end);
-      _ws.send({
-        'type': 'upload_chunk',
-        'uploadId': uploadId,
-        'chunkIndex': i,
-        'data': base64Encode(chunk),
-      });
-      _uploadProgress = (i + 1) / totalChunks;
-      notifyListeners();
+      final chunk = Uint8List.fromList(bytes.sublist(start, end));
+      if (binary) {
+        _ws.sendUploadChunkBinary(
+          uploadId: uploadId,
+          chunkIndex: i,
+          bytes: chunk,
+        );
+      } else {
+        _ws.send({
+          'type': 'upload_chunk',
+          'uploadId': uploadId,
+          'chunkIndex': i,
+          'data': base64Encode(chunk),
+        });
+        // Legacy fallback: drive spinner from chunk-loop iteration so it's
+        // not stuck at 0 when the server isn't emitting progress events.
+        progressTarget.uploadProgress = (i + 1) / totalChunks;
+        notifyListeners();
+      }
     }
 
-    return _uploadCompleter!.future.timeout(
-      const Duration(seconds: 30),
-      onTimeout: () => throw Exception('Upload timed out'),
-    );
+    // No wall-clock timeout — completion is gated by server `upload_complete`
+    // (success) or the stall detector inside `state` (failure after 30s
+    // without a progress event).
+    return completer.future;
   }
 
   void abortQuery() {
@@ -5106,5 +5214,64 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _tts.dispose();
     _subscriptionRequiredController.close();
     super.dispose();
+  }
+}
+
+/// Per-upload runtime state. Tracks how many chunks the server has confirmed
+/// receiving (used as a backpressure ack signal in the upload loop) and runs a
+/// stall timer that fires the supplied callback if no progress event arrives
+/// for 60s.
+class _UploadState {
+  _UploadState({required this.target, required this.onStall});
+
+  final ChatMessage target;
+  final void Function() onStall;
+
+  int chunksAcked = 0;
+  Completer<void>? _ackWaiter;
+  Timer? _stallTimer;
+
+  static const _stallTimeout = Duration(seconds: 30);
+
+  bool _stalled = false;
+  bool get stalled => _stalled;
+
+  void start() => _resetStall();
+
+  void noteAck(int receivedChunks) {
+    chunksAcked = receivedChunks;
+    _wakeWaiter();
+    _resetStall();
+  }
+
+  Future<void> waitForAck() {
+    if (_stalled) return Future.value();
+    _ackWaiter ??= Completer<void>();
+    return _ackWaiter!.future;
+  }
+
+  void _resetStall() {
+    _stallTimer?.cancel();
+    _stallTimer = Timer(_stallTimeout, _fireStall);
+  }
+
+  void _fireStall() {
+    _stalled = true;
+    onStall();
+    // Critical: also wake any pending waitForAck so the upload loop unblocks
+    // and observes the stalled completer instead of sitting forever.
+    _wakeWaiter();
+  }
+
+  void _wakeWaiter() {
+    final waiter = _ackWaiter;
+    _ackWaiter = null;
+    if (waiter != null && !waiter.isCompleted) waiter.complete();
+  }
+
+  void dispose() {
+    _stallTimer?.cancel();
+    _stallTimer = null;
+    _wakeWaiter();
   }
 }

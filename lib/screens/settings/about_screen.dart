@@ -82,43 +82,6 @@ class _AboutScreenState extends State<AboutScreen> {
           _buildUpdateCard(theme),
           const SizedBox(height: 24),
 
-          // Samsung AI Button Setup
-          Text(
-            'Samsung AI Button Setup',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.primary,
-              letterSpacing: 0.5,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Text(
-                    'To use with Samsung AI button:',
-                    style: TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                  SizedBox(height: 8),
-                  Text('1. Open Settings > Advanced features > Side key'),
-                  Text('2. Set "Press and hold" to "Digital assistant"'),
-                  Text('3. Tap "Digital assistant app"'),
-                  Text('4. Select "SocketClaude"'),
-                  SizedBox(height: 8),
-                  Text(
-                    'Now pressing and holding the side key will launch this app.',
-                    style: TextStyle(fontStyle: FontStyle.italic),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 24),
-
           // Config Transfer
           Text(
             'Config Transfer',

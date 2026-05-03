@@ -43,7 +43,8 @@ class UpdateService extends ChangeNotifier {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
 
-      final response = await http.get(Uri.parse(_versionUrl))
+      final cacheBust = DateTime.now().millisecondsSinceEpoch;
+      final response = await http.get(Uri.parse('$_versionUrl?t=$cacheBust'))
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
@@ -55,6 +56,8 @@ class UpdateService extends ChangeNotifier {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final latestVersion = data['version'] as String? ?? currentVersion;
       final downloadUrl = data['url'] as String? ?? '';
+
+      debugPrint('[Update] current=$currentVersion latest=$latestVersion newer=${_isNewer(latestVersion, currentVersion)}');
 
       _updateInfo = UpdateInfo(
         latestVersion: latestVersion,

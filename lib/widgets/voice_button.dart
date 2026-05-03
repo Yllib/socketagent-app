@@ -66,6 +66,8 @@ class _VoiceButtonState extends State<VoiceButton>
             ),
             onPressed: widget.onPressed,
             tooltip: widget.isListening ? 'Stop listening' : 'Start voice input',
+            padding: const EdgeInsets.all(8),
+            constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),
         );
       },

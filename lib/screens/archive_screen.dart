@@ -1,0 +1,554 @@
+import 'dart:async';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../models/archive_entry.dart';
+import '../services/chat_provider.dart';
+
+class ArchiveScreen extends StatefulWidget {
+  const ArchiveScreen({super.key});
+
+  @override
+  State<ArchiveScreen> createState() => _ArchiveScreenState();
+}
+
+enum _ArchiveSort { newestFirst, oldestFirst, titleAZ, mostMessages }
+
+const List<String> _monthNames = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+];
+
+String _formatRelative(String iso) {
+  try {
+    final dt = DateTime.parse(iso).toLocal();
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inSeconds < 45) return 'just now';
+    if (diff.inMinutes < 1) return '${diff.inSeconds}s ago';
+    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
+    if (diff.inDays < 1) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+    if (dt.year == now.year) {
+      return '${_monthNames[dt.month - 1]} ${dt.day}';
+    }
+    return '${_monthNames[dt.month - 1]} ${dt.day}, ${dt.year}';
+  } catch (_) {
+    return iso;
+  }
+}
+
+String _formatAbsolute(String iso) {
+  try {
+    final dt = DateTime.parse(iso).toLocal();
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final mm = dt.minute.toString().padLeft(2, '0');
+    return '${_monthNames[dt.month - 1]} ${dt.day}, ${dt.year} at $hh:$mm';
+  } catch (_) {
+    return iso;
+  }
+}
+
+class _ArchiveScreenState extends State<ArchiveScreen> {
+  bool _loading = true;
+  StreamSubscription<String>? _feedbackSub;
+  _ArchiveSort _sort = _ArchiveSort.newestFirst;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+    _feedbackSub = context.read<ChatProvider>().archiveFeedback.listen((msg) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    });
+  }
+
+  @override
+  void dispose() {
+    _feedbackSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    setState(() => _loading = true);
+    await context.read<ChatProvider>().fetchArchives();
+    if (mounted) setState(() => _loading = false);
+  }
+
+  String _displayCwd(String cwd) {
+    final homePattern = RegExp(r'^/home/[^/]+/');
+    final homeExact = RegExp(r'^/home/[^/]+$');
+    if (homePattern.hasMatch(cwd)) return '~/${cwd.replaceFirst(homePattern, '')}';
+    if (homeExact.hasMatch(cwd)) return '~';
+    return cwd;
+  }
+
+  List<ArchiveEntry> _sortedArchives(List<ArchiveEntry> xs) {
+    final list = [...xs];
+    switch (_sort) {
+      case _ArchiveSort.newestFirst:
+        list.sort((a, b) => b.clearedAt.compareTo(a.clearedAt));
+        break;
+      case _ArchiveSort.oldestFirst:
+        list.sort((a, b) => a.clearedAt.compareTo(b.clearedAt));
+        break;
+      case _ArchiveSort.titleAZ:
+        list.sort((a, b) {
+          final at = a.title.trim().toLowerCase();
+          final bt = b.title.trim().toLowerCase();
+          if (at.isEmpty && bt.isNotEmpty) return 1;
+          if (bt.isEmpty && at.isNotEmpty) return -1;
+          return at.compareTo(bt);
+        });
+        break;
+      case _ArchiveSort.mostMessages:
+        list.sort((a, b) => b.messageCount.compareTo(a.messageCount));
+        break;
+    }
+    return list;
+  }
+
+  String _sortLabel(_ArchiveSort s) {
+    switch (s) {
+      case _ArchiveSort.newestFirst:
+        return 'Newest first';
+      case _ArchiveSort.oldestFirst:
+        return 'Oldest first';
+      case _ArchiveSort.titleAZ:
+        return 'Title (A–Z)';
+      case _ArchiveSort.mostMessages:
+        return 'Most messages';
+    }
+  }
+
+  IconData _sortIcon(_ArchiveSort s) {
+    switch (s) {
+      case _ArchiveSort.newestFirst:
+        return Icons.arrow_downward;
+      case _ArchiveSort.oldestFirst:
+        return Icons.arrow_upward;
+      case _ArchiveSort.titleAZ:
+        return Icons.sort_by_alpha;
+      case _ArchiveSort.mostMessages:
+        return Icons.format_list_numbered;
+    }
+  }
+
+  Future<void> _confirmDelete(ArchiveEntry entry) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Archive'),
+        content: Text(
+          'Permanently delete "${entry.title}" and its history. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      context.read<ChatProvider>().deleteArchive(entry.sid, entry.ts);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Archived Sessions'),
+        actions: [
+          PopupMenuButton<_ArchiveSort>(
+            icon: const Icon(Icons.sort),
+            tooltip: 'Sort: ${_sortLabel(_sort)}',
+            onSelected: (v) => setState(() => _sort = v),
+            itemBuilder: (_) => _ArchiveSort.values.map((s) {
+              final selected = s == _sort;
+              return PopupMenuItem<_ArchiveSort>(
+                value: s,
+                child: Row(
+                  children: [
+                    Icon(
+                      _sortIcon(s),
+                      size: 18,
+                      color: selected ? theme.colorScheme.primary : null,
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      _sortLabel(s),
+                      style: TextStyle(
+                        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                        color: selected ? theme.colorScheme.primary : null,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refresh',
+            onPressed: _refresh,
+          ),
+        ],
+      ),
+      body: Consumer<ChatProvider>(
+        builder: (context, provider, _) {
+          if (_loading && provider.archives.isEmpty) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (provider.archives.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(32),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.inventory_2_outlined, size: 64,
+                        color: theme.colorScheme.onSurface.withAlpha(90)),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No archived sessions',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: theme.colorScheme.onSurface.withAlpha(140),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Clearing a session\'s context archives its history here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onSurface.withAlpha(110),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
+          final archives = _sortedArchives(provider.archives);
+          return RefreshIndicator(
+            onRefresh: _refresh,
+            child: ListView.separated(
+              itemCount: archives.length,
+              separatorBuilder: (_, __) => Divider(
+                height: 1,
+                color: theme.colorScheme.outline.withAlpha(40),
+              ),
+              itemBuilder: (context, idx) {
+                final e = archives[idx];
+                return Dismissible(
+                  key: Key('archive_${e.sid}_${e.ts}'),
+                  direction: DismissDirection.endToStart,
+                  background: Container(
+                    alignment: Alignment.centerRight,
+                    padding: const EdgeInsets.only(right: 20),
+                    color: Colors.red,
+                    child: const Icon(Icons.delete, color: Colors.white),
+                  ),
+                  confirmDismiss: (_) async {
+                    await _confirmDelete(e);
+                    return false;
+                  },
+                  child: ListTile(
+                    leading: Icon(
+                      e.hasJsonl ? Icons.restore : Icons.description_outlined,
+                      color: theme.colorScheme.primary.withAlpha(180),
+                    ),
+                    title: Text(
+                      e.title.isNotEmpty ? e.title : 'Untitled',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (e.cwd.isNotEmpty)
+                          Text(
+                            _displayCwd(e.cwd),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        Tooltip(
+                          message: _formatAbsolute(e.clearedAt),
+                          child: Text(
+                            'Cleared ${_formatRelative(e.clearedAt)} · ${e.messageCount} msg${e.messageCount == 1 ? '' : 's'}',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurface.withAlpha(130),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => ArchiveDetailScreen(entry: e),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class ArchiveDetailScreen extends StatefulWidget {
+  final ArchiveEntry entry;
+  const ArchiveDetailScreen({super.key, required this.entry});
+
+  @override
+  State<ArchiveDetailScreen> createState() => _ArchiveDetailScreenState();
+}
+
+class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
+  List<dynamic>? _messages;
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    final messages = await context
+        .read<ChatProvider>()
+        .fetchArchiveHistory(widget.entry.sid, widget.entry.ts);
+    if (!mounted) return;
+    setState(() {
+      _messages = messages;
+      _loading = false;
+    });
+  }
+
+  Future<void> _confirmRestore() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restore Session'),
+        content: Text(
+          'Put back "${widget.entry.title}" and its history. '
+          'Claude will resume with full prior context.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      context.read<ChatProvider>().restoreArchive(widget.entry.sid, widget.entry.ts);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _confirmDelete() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Archive'),
+        content: Text(
+          'Permanently delete "${widget.entry.title}" and its history. This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      context.read<ChatProvider>().deleteArchive(widget.entry.sid, widget.entry.ts);
+      if (!mounted) return;
+      Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.entry.title.isNotEmpty ? widget.entry.title : 'Archived Session',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.restore),
+            tooltip: 'Restore',
+            onPressed: _confirmRestore,
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Delete',
+            onPressed: _confirmDelete,
+          ),
+        ],
+      ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                Container(
+                  width: double.infinity,
+                  color: theme.colorScheme.surfaceContainerHigh,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      if (widget.entry.cwd.isNotEmpty)
+                        Text('cwd: ${widget.entry.cwd}',
+                            style: const TextStyle(fontSize: 12)),
+                      Text(
+                        '${widget.entry.messageCount} messages · cleared ${_formatAbsolute(widget.entry.clearedAt)}',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.onSurface.withAlpha(140),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: _messages == null || _messages!.isEmpty
+                      ? const Center(child: Text('No messages in this archive'))
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: _messages!.length,
+                          itemBuilder: (_, idx) {
+                            return _ArchiveMessageTile(
+                              entry: Map<String, dynamic>.from(_messages![idx] as Map),
+                            );
+                          },
+                        ),
+                ),
+              ],
+            ),
+    );
+  }
+}
+
+class _ArchiveMessageTile extends StatelessWidget {
+  final Map<String, dynamic> entry;
+  const _ArchiveMessageTile({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final role = entry['role'] as String? ?? '';
+    final content = entry['content'] as String? ?? '';
+    final toolName = entry['toolName'] as String?;
+    final toolInput = entry['toolInput'];
+    final toolOutput = entry['toolOutput'] as String?;
+
+    Color color;
+    String label;
+    IconData icon;
+    switch (role) {
+      case 'user':
+        color = theme.colorScheme.primary.withAlpha(40);
+        label = 'You';
+        icon = Icons.person_outline;
+        break;
+      case 'assistant':
+        color = theme.colorScheme.surface;
+        label = 'Claude';
+        icon = Icons.smart_toy_outlined;
+        break;
+      case 'tool_call':
+        color = theme.colorScheme.tertiary.withAlpha(28);
+        label = toolName ?? 'tool_call';
+        icon = Icons.build_outlined;
+        break;
+      case 'tool_result':
+        color = theme.colorScheme.surfaceContainerLow;
+        label = 'tool_result';
+        icon = Icons.output;
+        break;
+      case 'tool_image':
+        color = theme.colorScheme.surfaceContainerLow;
+        label = 'tool_image';
+        icon = Icons.image_outlined;
+        break;
+      default:
+        color = theme.colorScheme.surfaceContainerLow;
+        label = role;
+        icon = Icons.circle_outlined;
+    }
+
+    final body = role == 'tool_call'
+        ? (toolInput == null ? '' : toolInput.toString())
+        : role == 'tool_result'
+            ? (toolOutput ?? content)
+            : content;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outline.withAlpha(40)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 14, color: theme.colorScheme.onSurface.withAlpha(160)),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: theme.colorScheme.onSurface.withAlpha(180),
+                ),
+              ),
+            ],
+          ),
+          if (body.trim().isNotEmpty) ...[
+            const SizedBox(height: 6),
+            SelectableText(
+              body.length > 2000 ? '${body.substring(0, 2000)}…' : body,
+              style: const TextStyle(fontSize: 13, height: 1.35),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}

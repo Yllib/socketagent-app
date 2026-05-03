@@ -51,13 +51,19 @@ class AppLauncher extends StatefulWidget {
   State<AppLauncher> createState() => _AppLauncherState();
 }
 
-class _AppLauncherState extends State<AppLauncher> {
+class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStateMixin {
   static const _channel = MethodChannel('com.claudeassistant.app/intent');
   bool _checked = false;
+  bool _splashDone = false;
+  late final AnimationController _fadeController;
 
   @override
   void initState() {
     super.initState();
+    _fadeController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 400),
+    );
     _setupAssistListener();
     _checkLaunchIntent();
   }
@@ -103,6 +109,40 @@ class _AppLauncherState extends State<AppLauncher> {
     }
 
     setState(() => _checked = true);
+
+    // Wait for connection + session list before dismissing splash
+    _waitForReady(provider);
+  }
+
+  void _waitForReady(ChatProvider provider) {
+    // Minimum splash time so it doesn't flash
+    final minSplash = Future.delayed(const Duration(milliseconds: 800));
+
+    late VoidCallback listener;
+    Timer? timeout;
+
+    listener = () {
+      if (provider.connMgr.anyConnected || provider.sessions.isNotEmpty) {
+        provider.removeListener(listener);
+        timeout?.cancel();
+        minSplash.then((_) => _dismissSplash());
+      }
+    };
+
+    provider.addListener(listener);
+
+    // Don't wait forever — dismiss after 3s regardless
+    timeout = Timer(const Duration(seconds: 3), () {
+      provider.removeListener(listener);
+      _dismissSplash();
+    });
+  }
+
+  void _dismissSplash() {
+    if (!mounted || _splashDone) return;
+    _fadeController.forward().then((_) {
+      if (mounted) setState(() => _splashDone = true);
+    });
   }
 
   /// Open the most recent session, or create a new one if none exist.
@@ -148,13 +188,66 @@ class _AppLauncherState extends State<AppLauncher> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    if (!_checked) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
+  void dispose() {
+    _fadeController.dispose();
+    super.dispose();
+  }
 
-    return const MainShellScreen();
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        // Main app content (renders behind splash)
+        if (_checked) const MainShellScreen(),
+
+        // Splash overlay — fades out once ready
+        if (!_splashDone)
+          FadeTransition(
+            opacity: Tween<double>(begin: 1.0, end: 0.0).animate(
+              CurvedAnimation(parent: _fadeController, curve: Curves.easeOut),
+            ),
+            child: _buildSplash(),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSplash() {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // App icon
+            ClipRRect(
+              borderRadius: BorderRadius.circular(24),
+              child: Image.asset(
+                'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png',
+                width: 96,
+                height: 96,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'SocketClaude',
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+            const SizedBox(height: 32),
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Theme.of(context).colorScheme.primary.withAlpha(150),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

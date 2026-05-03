@@ -94,6 +94,32 @@ class CryptoService {
     return utf8.decode(decrypted);
   }
 
+  /// Encrypt arbitrary bytes into a packed binary envelope: `[24-byte nonce | ciphertext]`.
+  /// Sent as a WebSocket binary frame — no JSON wrapping, no base64 inflation.
+  Uint8List encryptBinary(Uint8List plaintext) {
+    if (_box == null) throw StateError('Encryption not initialized');
+    final encrypted = _box!.encrypt(plaintext);
+    final nonce = Uint8List.fromList(encrypted.nonce.asTypedList);
+    final cipher = Uint8List.fromList(encrypted.cipherText.asTypedList);
+    final out = Uint8List(nonce.length + cipher.length);
+    out.setRange(0, nonce.length, nonce);
+    out.setRange(nonce.length, nonce.length + cipher.length, cipher);
+    return out;
+  }
+
+  /// Decrypt a packed binary envelope produced by [encryptBinary].
+  Uint8List decryptBinary(Uint8List envelope) {
+    if (_box == null) throw StateError('Decryption not initialized');
+    const nonceLen = 24;
+    if (envelope.length < nonceLen) {
+      throw StateError('Binary envelope too short');
+    }
+    final nonce = envelope.sublist(0, nonceLen);
+    final cipher = envelope.sublist(nonceLen);
+    final decrypted = _box!.decrypt(ByteList(cipher), nonce: nonce);
+    return Uint8List.fromList(decrypted);
+  }
+
   /// Clear all keys and state
   Future<void> clear() async {
     _secretKey = null;
