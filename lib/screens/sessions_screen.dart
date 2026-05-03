@@ -49,7 +49,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     return true;
   }
 
-  Future<void> _openSession(BuildContext context, {String? sessionId, String? cwd, String? serverId, bool sdkSession = false}) async {
+  Future<void> _openSession(BuildContext context, {String? sessionId, String? cwd, String? serverId, String? backend, bool sdkSession = false}) async {
     if (!await _requireSubscription()) return;
     if (!context.mounted) return;
 
@@ -60,27 +60,29 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     } else if (sessionId != null) {
       provider.resumeSession(sessionId);
     } else {
-      // Decide whether the user needs a sheet at all. Skip it when there's
-      // exactly one server AND that server only supports one backend (the
-      // common claude-only case — no UX regression from before).
-      final needsServerPick = serverId == null && provider.serverConfigs.length > 1;
-      final initialServer = serverId ?? provider.serverConfigs.firstOrNull?.id;
-      final initialBackends = provider.backendsForServer(initialServer);
-      final needsBackendPick = needsServerPick || initialBackends.length > 1;
-
-      String? backend;
-      if (needsBackendPick) {
-        final result = await _pickServerAndBackend(
-          context, provider,
-          presetServerId: serverId,
-        );
-        if (result == null || !context.mounted) return;
-        serverId = result.serverId;
-        backend = result.backend;
-      } else if (initialBackends.isNotEmpty) {
-        backend = initialBackends.first;
+      // The CWD picker now collects server + backend + cwd in one sheet,
+      // so backend usually arrives already chosen. Only show the fallback
+      // picker if backend is unset AND the upstream caller didn't pick
+      // (e.g., a code path that bypasses the CWD picker).
+      String? effectiveBackend = backend;
+      if (effectiveBackend == null) {
+        final needsServerPick = serverId == null && provider.serverConfigs.length > 1;
+        final initialServer = serverId ?? provider.serverConfigs.firstOrNull?.id;
+        final initialBackends = provider.backendsForServer(initialServer);
+        final needsBackendPick = needsServerPick || initialBackends.length > 1;
+        if (needsBackendPick) {
+          final result = await _pickServerAndBackend(
+            context, provider,
+            presetServerId: serverId,
+          );
+          if (result == null || !context.mounted) return;
+          serverId = result.serverId;
+          effectiveBackend = result.backend;
+        } else if (initialBackends.isNotEmpty) {
+          effectiveBackend = initialBackends.first;
+        }
       }
-      provider.createNewSession(cwd: cwd, serverId: serverId, backend: backend);
+      provider.createNewSession(cwd: cwd, serverId: serverId, backend: effectiveBackend);
     }
 
     Navigator.of(context).push(
@@ -225,13 +227,13 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       ? 'OpenAI Codex CLI — billed via your ChatGPT subscription'
       : 'Anthropic Claude Agent SDK — billed via your Claude subscription';
 
-  Future<void> _validateAndOpen(BuildContext context, String path, {String? serverId}) async {
+  Future<void> _validateAndOpen(BuildContext context, String path, {String? serverId, String? backend}) async {
     final provider = context.read<ChatProvider>();
     final exists = await provider.checkCwd(path, serverId: serverId);
     if (!context.mounted) return;
 
     if (exists) {
-      _openSession(context, cwd: path, serverId: serverId);
+      _openSession(context, cwd: path, serverId: serverId, backend: backend);
       return;
     }
 
@@ -257,7 +259,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       final created = await provider.createCwd(path, serverId: serverId);
       if (!context.mounted) return;
       if (created) {
-        _openSession(context, cwd: path, serverId: serverId);
+        _openSession(context, cwd: path, serverId: serverId, backend: backend);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to create $path')),
@@ -281,6 +283,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     List<Map<String, dynamic>> sdkSessions = [];
     bool loadingSdkSessions = false;
     bool initialFetchDone = false;
+    // Default backend = first supported by the chosen server (claude if
+    // capabilities haven't arrived yet). Snaps back to a valid choice when
+    // the user switches servers below.
+    String selectedBackend = provider.backendsForServer(selectedServerId).firstOrNull ?? 'claude';
 
     showModalBottomSheet(
       context: context,
@@ -354,7 +360,14 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                           }).toList(),
                           selected: {if (selectedServerId != null) selectedServerId!},
                           onSelectionChanged: (v) {
-                            setSheetState(() => selectedServerId = v.first);
+                            setSheetState(() {
+                              selectedServerId = v.first;
+                              // Snap backend to a valid choice for the new server.
+                              final supported = provider.backendsForServer(selectedServerId);
+                              if (!supported.contains(selectedBackend) && supported.isNotEmpty) {
+                                selectedBackend = supported.first;
+                              }
+                            });
                           },
                           style: ButtonStyle(
                             visualDensity: VisualDensity.compact,
@@ -364,6 +377,38 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                       ),
                     ),
                     const SizedBox(height: 8),
+                  ],
+                  // Backend selector — only visible when the chosen server
+                  // supports more than one. claude-only servers stay clean.
+                  if (provider.backendsForServer(selectedServerId).length > 1) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<String>(
+                          segments: provider.backendsForServer(selectedServerId).map((b) {
+                            return ButtonSegment(
+                              value: b,
+                              label: Text(_backendLabel(b),
+                                style: const TextStyle(fontSize: 12),
+                                overflow: TextOverflow.ellipsis),
+                              icon: Icon(
+                                b == 'codex' ? Icons.code : Icons.psychology_alt,
+                                size: 14,
+                              ),
+                            );
+                          }).toList(),
+                          selected: {selectedBackend},
+                          onSelectionChanged: (v) {
+                            setSheetState(() => selectedBackend = v.first);
+                          },
+                          style: ButtonStyle(
+                            visualDensity: VisualDensity.compact,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                      ),
+                    ),
                   ],
                   const Divider(height: 1),
                   if (recentCwds.isNotEmpty) ...[
@@ -461,7 +506,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                               final path = val.trim();
                               if (path.isNotEmpty) {
                                 Navigator.pop(ctx);
-                                _validateAndOpen(context, path, serverId: selectedServerId);
+                                _validateAndOpen(context, path, serverId: selectedServerId, backend: selectedBackend);
                               }
                             },
                           ),
@@ -740,53 +785,34 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               ],
             ],
           ),
-          floatingActionButton: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Material(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(20),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(20),
-                    onTap: () => _showCwdPicker(context),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.folder_open, size: 16,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant),
-                          const SizedBox(width: 6),
-                          Text(
-                            'Choose directory...',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(context).colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
+          // Single entry point for new sessions: the CWD picker. The picker
+          // also includes backend selection when the chosen server supports
+          // both Claude and Codex, so it's a one-sheet flow.
+          floatingActionButton: Material(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(20),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () => _showCwdPicker(context),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.folder_open, size: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Choose directory...',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
-                  ),
+                  ],
                 ),
               ),
-              GestureDetector(
-                // Long-press kept for parity (used to be the only way to
-                // reach the CWD picker). Tap now goes through the same
-                // picker so the user always gets a chance to choose where
-                // the session should run, instead of silently landing in
-                // DEFAULT_CWD.
-                onLongPress: () => _showCwdPicker(context),
-                child: FloatingActionButton.extended(
-                  onPressed: () => _showCwdPicker(context),
-                  icon: const Icon(Icons.add),
-                  label: const Text('New Session'),
-                ),
-              ),
-            ],
+            ),
           ),
         );
       },
