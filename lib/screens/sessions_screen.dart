@@ -60,12 +60,27 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     } else if (sessionId != null) {
       provider.resumeSession(sessionId);
     } else {
-      if (serverId == null && provider.serverConfigs.length > 1) {
-        final picked = await _pickServer(context, provider);
-        if (picked == null || !context.mounted) return;
-        serverId = picked;
+      // Decide whether the user needs a sheet at all. Skip it when there's
+      // exactly one server AND that server only supports one backend (the
+      // common claude-only case — no UX regression from before).
+      final needsServerPick = serverId == null && provider.serverConfigs.length > 1;
+      final initialServer = serverId ?? provider.serverConfigs.firstOrNull?.id;
+      final initialBackends = provider.backendsForServer(initialServer);
+      final needsBackendPick = needsServerPick || initialBackends.length > 1;
+
+      String? backend;
+      if (needsBackendPick) {
+        final result = await _pickServerAndBackend(
+          context, provider,
+          presetServerId: serverId,
+        );
+        if (result == null || !context.mounted) return;
+        serverId = result.serverId;
+        backend = result.backend;
+      } else if (initialBackends.isNotEmpty) {
+        backend = initialBackends.first;
       }
-      provider.createNewSession(cwd: cwd, serverId: serverId);
+      provider.createNewSession(cwd: cwd, serverId: serverId, backend: backend);
     }
 
     Navigator.of(context).push(
@@ -120,6 +135,139 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       },
     );
   }
+
+  /// Combined server + backend picker. Server section is hidden when there's
+  /// only one server. Backend section is hidden when the chosen server only
+  /// supports one backend (so claude-only servers feel exactly like before).
+  Future<({String? serverId, String backend})?> _pickServerAndBackend(
+    BuildContext context,
+    ChatProvider provider, {
+    String? presetServerId,
+  }) async {
+    final connectedServers = provider.serverConfigs
+        .where((c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected)
+        .toList();
+    String? selectedServer = presetServerId
+        ?? (connectedServers.isNotEmpty
+            ? connectedServers.first.id
+            : provider.serverConfigs.firstOrNull?.id);
+    String selectedBackend = provider.backendsForServer(selectedServer).firstOrNull ?? 'claude';
+
+    return showModalBottomSheet<({String? serverId, String backend})>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setState) {
+          final supported = provider.backendsForServer(selectedServer);
+          // Snap back to a valid choice if the user just changed servers.
+          if (!supported.contains(selectedBackend)) {
+            selectedBackend = supported.first;
+          }
+          final showServers = provider.serverConfigs.length > 1;
+          final showBackends = supported.length > 1;
+
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                  child: Text(
+                    'New Session',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                const Divider(height: 1),
+                if (showServers) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      'Server',
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ),
+                  ...provider.serverConfigs.map((config) {
+                    final status = provider.connMgr.statusOf(config.id);
+                    final isConnected = status == ConnectionStatus.connected;
+                    return RadioListTile<String>(
+                      value: config.id,
+                      groupValue: selectedServer,
+                      onChanged: isConnected
+                          ? (v) => setState(() => selectedServer = v)
+                          : null,
+                      title: Text(config.name),
+                      subtitle: Text(
+                        config.useRelay ? 'Relay' : '${config.host}:${config.port}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                        ),
+                      ),
+                      secondary: Icon(
+                        isConnected ? Icons.cloud_done : Icons.cloud_off,
+                        color: isConnected ? Colors.green : Colors.grey,
+                      ),
+                      dense: true,
+                    );
+                  }),
+                  const Divider(height: 1),
+                ],
+                if (showBackends) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      'Backend',
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ),
+                  ...supported.map((b) => RadioListTile<String>(
+                        value: b,
+                        groupValue: selectedBackend,
+                        onChanged: (v) => setState(() => selectedBackend = v ?? b),
+                        title: Text(_backendLabel(b)),
+                        subtitle: Text(_backendSubtitle(b),
+                            style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.onSurface.withAlpha(128))),
+                        dense: true,
+                      )),
+                  const Divider(height: 1),
+                ],
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: selectedServer == null
+                            ? null
+                            : () => Navigator.pop(ctx, (
+                                  serverId: selectedServer,
+                                  backend: selectedBackend,
+                                )),
+                        child: const Text('Create'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          );
+        });
+      },
+    );
+  }
+
+  String _backendLabel(String b) => b == 'codex' ? 'Codex (ChatGPT)' : 'Claude';
+  String _backendSubtitle(String b) => b == 'codex'
+      ? 'OpenAI Codex CLI — billed via your ChatGPT subscription'
+      : 'Anthropic Claude Agent SDK — billed via your Claude subscription';
 
   Future<void> _validateAndOpen(BuildContext context, String path, {String? serverId}) async {
     final provider = context.read<ChatProvider>();
@@ -1410,6 +1558,28 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                                 color: session.serverColor != null
                                     ? Colors.white
                                     : theme.colorScheme.onPrimaryContainer,
+                              ),
+                            ),
+                          ),
+                        ],
+                        // Codex sessions get a small badge so the user can
+                        // tell them apart from claude in the list. Claude is
+                        // implicit (no badge) since most sessions are claude.
+                        if (session.backend == 'codex') ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: theme.colorScheme.tertiaryContainer.withAlpha(170),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              'CODEX',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                letterSpacing: 0.5,
+                                color: theme.colorScheme.onTertiaryContainer,
                               ),
                             ),
                           ),

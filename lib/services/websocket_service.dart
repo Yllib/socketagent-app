@@ -205,10 +205,11 @@ class WebSocketService {
       return;
     }
 
-    // Direct mode — pass through (and intercept the capability ack)
+    // Direct mode — pass through. We also peek at server_capabilities to
+    // capture the binary-envelope flag (purely internal), then forward the
+    // message so listeners can read fields like `backends`.
     if (raw['type'] == 'server_capabilities') {
       _serverSupportsBinary = (raw['binaryEnvelope'] == true);
-      return;
     }
     _messageController.add(raw);
   }
@@ -249,7 +250,7 @@ class WebSocketService {
     if (t == 'server_capabilities') {
       _serverSupportsBinary = (msg['binaryEnvelope'] == true);
       debugPrint('[Relay] Server supports binary envelope: $_serverSupportsBinary');
-      return;
+      // Fall through so listeners can read other fields (e.g., `backends`).
     }
     _messageController.add(msg);
   }

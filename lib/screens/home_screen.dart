@@ -231,7 +231,11 @@ class HomeScreenState extends State<HomeScreen> {
                     () {
                       final title = provider.activeSessionTitle;
                       final hasTitle = title != null && title.isNotEmpty && title != 'Untitled';
-                      final suffix = isPlan ? ' [PLAN]' : provider.rawMode ? ' [RAW]' : '';
+                      final flags = <String>[];
+                      if (provider.activeSessionBackend == 'codex') flags.add('CODEX');
+                      if (isPlan) flags.add('PLAN');
+                      if (provider.rawMode) flags.add('RAW');
+                      final suffix = flags.isEmpty ? '' : ' [${flags.join('·')}]';
                       return (hasTitle ? title : 'SocketClaude') + suffix;
                     }(),
                     style: TextStyle(

@@ -74,6 +74,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Set<String> _pinnedSessionIds = {};
   // Persistent recent CWDs per server (serverId → ordered list, most recent first)
   final Map<String, List<String>> _recentCwds = {};
+  // Backends each server can drive (serverId → ['claude','codex'] or just
+  // ['claude']). Populated from the server_capabilities message; UI consults
+  // this to gate the codex option in the new-session sheet.
+  final Map<String, List<String>> _serverBackends = {};
+  // Backend driving the currently active session ('claude' | 'codex' | null).
+  // Surfaced by the chat header so the user knows what they're talking to.
+  String? _activeSessionBackend;
   String? _viewingSessionId; // set by HomeScreen when user is on that screen
   bool _appInForeground = true;
   // Per-session input drafts (sessionId → unsent text)
@@ -1445,7 +1452,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'session_list', 'status_sync', 'subscription_required',
       'directory_listing', 'cwd_check', 'sdk_session_list',
       'active_subagents', 'version_info', 'update_result',
-      'recent_cwds',
+      'recent_cwds', 'server_capabilities',
     };
 
     // Route: only process non-global messages from the active server
@@ -1508,6 +1515,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'session_list':
         _handleSessionList(msg, serverId);
         break;
+      case 'server_capabilities': {
+        final raw = msg['backends'];
+        final backends = (raw is List)
+            ? raw.whereType<String>().toList()
+            : <String>['claude'];
+        if (serverId != null) {
+          _serverBackends[serverId] = backends;
+          notifyListeners();
+        }
+        break;
+      }
       case 'usage_restore':
         if (msg['usage'] != null) {
           _lastUsage = Map<String, dynamic>.from(msg['usage'] as Map);
@@ -3136,6 +3154,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _activeSessionCwd = msg['cwd'] as String?;
     _activeSessionTitle = msg['title'] as String?;
+    // Server echoes the backend on the second session_created (the one with
+    // the real id). Capture it so the chat header label is right immediately.
+    final backend = msg['backend'] as String?;
+    if (backend != null) _activeSessionBackend = backend;
     notifyListeners();
   }
 
@@ -4011,11 +4033,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _rawThrottle = null;
   }
 
-  void createNewSession({String? cwd, String? serverId}) {
+  void createNewSession({String? cwd, String? serverId, String? backend}) {
     _messages = [];
     _todos = [];
     _lastUsage = null;
     _activeSessionId = null;
+    _activeSessionBackend = backend;
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
     _isProcessing = false;
@@ -4061,6 +4084,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final msg = <String, dynamic>{
       'type': 'new_session',
       if (effectiveCwd != null) 'cwd': effectiveCwd,
+      if (backend != null) 'backend': backend,
     };
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
@@ -4069,6 +4093,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     notifyListeners();
   }
+
+  /// Backends the given server can drive. Defaults to ['claude'] when the
+  /// capability message hasn't arrived yet (older servers won't send it at
+  /// all, so legacy claude-only behavior is the safe default).
+  List<String> backendsForServer(String? serverId) {
+    if (serverId == null) return const ['claude'];
+    return _serverBackends[serverId] ?? const ['claude'];
+  }
+
+  String? get activeSessionBackend => _activeSessionBackend;
 
   void resumeSession(String sessionId) {
     _messages = [];
@@ -4104,6 +4138,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (session != null) {
       _activeSessionTitle = session.title;
       _activeSessionCwd = session.cwd;
+      _activeSessionBackend = session.backend;
+    } else {
+      _activeSessionBackend = null;  // legacy session without backend tag
     }
     if (session != null && session.serverId.isNotEmpty) {
       _connMgr.activeServerId = session.serverId;
