@@ -90,52 +90,6 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     );
   }
 
-  Future<String?> _pickServer(BuildContext context, ChatProvider provider) async {
-    return showModalBottomSheet<String>(
-      context: context,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                child: Text(
-                  'Select Server',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-              ),
-              const Divider(height: 1),
-              ...provider.serverConfigs.map((config) {
-                final status = provider.connMgr.statusOf(config.id);
-                final isConnected = status == ConnectionStatus.connected;
-                return ListTile(
-                  leading: Icon(
-                    isConnected ? Icons.cloud_done : Icons.cloud_off,
-                    color: isConnected ? Colors.green : Colors.grey,
-                    size: 22,
-                  ),
-                  title: Text(config.name),
-                  subtitle: Text(
-                    config.useRelay ? 'Relay' : '${config.host}:${config.port}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                    ),
-                  ),
-                  enabled: isConnected,
-                  onTap: () => Navigator.pop(ctx, config.id),
-                );
-              }),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
   /// Combined server + backend picker. Server section is hidden when there's
   /// only one server. Backend section is hidden when the chosen server only
   /// supports one backend (so claude-only servers feel exactly like before).
@@ -163,7 +117,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
           if (!supported.contains(selectedBackend)) {
             selectedBackend = supported.first;
           }
-          final showServers = provider.serverConfigs.length > 1;
+          // Hide the server radio when a server was preselected upstream
+          // (e.g., in the CWD picker) — re-asking would be confusing.
+          final showServers = provider.serverConfigs.length > 1 && presetServerId == null;
           final showBackends = supported.length > 1;
 
           return SafeArea(
@@ -818,9 +774,14 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 ),
               ),
               GestureDetector(
+                // Long-press kept for parity (used to be the only way to
+                // reach the CWD picker). Tap now goes through the same
+                // picker so the user always gets a chance to choose where
+                // the session should run, instead of silently landing in
+                // DEFAULT_CWD.
                 onLongPress: () => _showCwdPicker(context),
                 child: FloatingActionButton.extended(
-                  onPressed: () => _openSession(context),
+                  onPressed: () => _showCwdPicker(context),
                   icon: const Icon(Icons.add),
                   label: const Text('New Session'),
                 ),
