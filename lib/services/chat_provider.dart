@@ -1917,9 +1917,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ?.map((e) => e.toString())
             .toSet();
         bool serverSaysRunning;
-        if (runningSessions != null && _activeSessionId != null) {
-          serverSaysRunning = runningSessions.contains(_activeSessionId);
+        if (runningSessions != null) {
+          // Modern server sends a per-session list. Our session is running
+          // iff it's in the list. If we don't have a session id yet (e.g.,
+          // brand-new codex session before thread.started fires), it can't
+          // be in the list, so we are NOT running — falling back to the
+          // global msg['running'] would wrongly inherit another session's
+          // running state and trip the "queued:next" UI on the first send.
+          serverSaysRunning = _activeSessionId != null && runningSessions.contains(_activeSessionId);
         } else {
+          // Pre-runningSessions servers: best effort with the global flag.
           serverSaysRunning = msg['running'] == true;
         }
         // Don't let status_sync clear processing during the grace period after
