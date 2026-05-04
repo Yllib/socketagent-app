@@ -1555,6 +1555,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _tts.speak(text);
           }
         }
+        if (text.isNotEmpty) {
+          final messageSessionId = msg['sessionId'] as String? ?? '';
+          final belongsToActiveSession = messageSessionId.isEmpty ||
+              _activeSessionId == null ||
+              messageSessionId == _activeSessionId;
+          if (belongsToActiveSession) {
+            final hasVisibleCard = _messages.any((m) =>
+                m.type == MessageType.toolCall &&
+                m.toolName == 'Speak' &&
+                m.toolInput?['text'] == text);
+            if (!hasVisibleCard) {
+              _messages.add(ChatMessage.toolCall(
+                tool: 'Speak',
+                input: {'text': text},
+                toolUseId: 'speak_${DateTime.now().microsecondsSinceEpoch}',
+              ));
+              notifyListeners();
+            }
+          }
+        }
         break;
       case 'tts_audio':
         final audioData = msg['audioData'] as String? ?? '';
