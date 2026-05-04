@@ -4984,6 +4984,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serverFileNames[fileId] = fileName;
       _filePathToId[filePath] = fileId;
       debugPrint('[File] Available for download: $fileName (id=$fileId, path=$filePath)');
+      final hasVisibleCard = _messages.any((m) =>
+          m.type == MessageType.toolCall &&
+          m.toolName == 'SendFile' &&
+          m.toolInput?['file_path'] == filePath);
+      if (!hasVisibleCard) {
+        _messages.add(ChatMessage.toolCall(
+          tool: 'SendFile',
+          input: {'file_path': filePath},
+          toolUseId: 'file_$fileId',
+        ));
+      }
       notifyListeners();
     }
   }
