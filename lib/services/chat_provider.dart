@@ -4984,6 +4984,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serverFileNames[fileId] = fileName;
       _filePathToId[filePath] = fileId;
       debugPrint('[File] Available for download: $fileName (id=$fileId, path=$filePath)');
+      final messageSessionId = msg['sessionId'] as String? ?? '';
+      final belongsToActiveSession = messageSessionId.isEmpty ||
+          _activeSessionId == null ||
+          messageSessionId == _activeSessionId;
+      if (!belongsToActiveSession) {
+        notifyListeners();
+        return;
+      }
       final hasVisibleCard = _messages.any((m) =>
           m.type == MessageType.toolCall &&
           m.toolName == 'SendFile' &&
