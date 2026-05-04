@@ -3680,7 +3680,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _isLoadingMore = false;
     } else {
       // Initial load — replace
-      _messages = loaded;
+      final localOnlyCards = _messages.where((m) {
+        if (m.type != MessageType.toolCall || m.toolUseId == null) return false;
+        final isLocalOnly = m.toolUseId!.startsWith('file_') || m.toolUseId!.startsWith('speak_');
+        if (!isLocalOnly) return false;
+        return !loaded.any((l) =>
+            l.type == MessageType.toolCall &&
+            l.toolName == m.toolName &&
+            l.toolInput.toString() == m.toolInput.toString());
+      }).toList();
+      _messages = [...loaded, ...localOnlyCards];
       _backgroundTasks.clear();
       _subagentTasks.clear();
       _isLoadingHistory = false;
