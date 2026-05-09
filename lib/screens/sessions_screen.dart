@@ -268,6 +268,12 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     }
   }
 
+  /// Resume-prominent picker: a tall bottom sheet where past sessions in the
+  /// chosen folder dominate the available space. Server + backend live as
+  /// compact chips at the top (only visible when there's a real choice to
+  /// make), recent paths collapse into a horizontal chip strip, and "Start
+  /// new session here" is a single FilledButton CTA — so the user can either
+  /// pick from past sessions or create a new one with one tap each.
   void _showCwdPicker(BuildContext context) {
     final provider = context.read<ChatProvider>();
     final hasMultipleServers = provider.serverConfigs.length > 1;
@@ -277,26 +283,33 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
           .where((c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected)
           .toList();
       selectedServerId = connected.isNotEmpty ? connected.first.id : provider.serverConfigs.first.id;
+    } else if (provider.serverConfigs.isNotEmpty) {
+      selectedServerId = provider.serverConfigs.first.id;
     }
 
     final controller = TextEditingController(text: provider.defaultCwd);
     List<Map<String, dynamic>> sdkSessions = [];
     bool loadingSdkSessions = false;
     bool initialFetchDone = false;
-    // Default backend = first supported by the chosen server (claude if
-    // capabilities haven't arrived yet). Snaps back to a valid choice when
-    // the user switches servers below.
+    Timer? fetchDebounce;
     String selectedBackend = provider.backendsForServer(selectedServerId).firstOrNull ?? 'claude';
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
             final recentCwds = provider.getRecentCwds(serverId: selectedServerId);
+            final supportedBackends = provider.backendsForServer(selectedServerId);
+            final showBackendChip = supportedBackends.length > 1;
 
             void fetchSdkSessions() {
+              fetchDebounce?.cancel();
               final path = controller.text.trim();
               if (path.isEmpty) {
                 setSheetState(() {
@@ -306,13 +319,15 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 return;
               }
               setSheetState(() => loadingSdkSessions = true);
-              provider.requestSdkSessions(path, serverId: selectedServerId).then((sessions) {
-                if (ctx.mounted) {
-                  setSheetState(() {
-                    sdkSessions = sessions;
-                    loadingSdkSessions = false;
-                  });
-                }
+              fetchDebounce = Timer(const Duration(milliseconds: 250), () {
+                provider.requestSdkSessions(path, serverId: selectedServerId).then((sessions) {
+                  if (ctx.mounted) {
+                    setSheetState(() {
+                      sdkSessions = sessions;
+                      loadingSdkSessions = false;
+                    });
+                  }
+                });
               });
             }
 
@@ -321,327 +336,408 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               WidgetsBinding.instance.addPostFrameCallback((_) => fetchSdkSessions());
             }
 
+            // Compact tappable chip used for server + backend selection.
+            Widget miniChip({
+              required IconData icon,
+              Color? iconColor,
+              required String label,
+              required VoidCallback onTap,
+            }) {
+              return InkWell(
+                borderRadius: BorderRadius.circular(20),
+                onTap: onTap,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.outlineVariant,
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(icon, size: 14, color: iconColor),
+                      const SizedBox(width: 6),
+                      Text(label, style: const TextStyle(fontSize: 12)),
+                      const SizedBox(width: 2),
+                      Icon(
+                        Icons.arrow_drop_down,
+                        size: 16,
+                        color: Theme.of(context).colorScheme.onSurface.withAlpha(140),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            // Build server chip (only when there's a choice to make).
+            Widget? serverChipWidget;
+            if (hasMultipleServers && selectedServerId != null) {
+              final config = provider.serverConfigs.firstWhere((c) => c.id == selectedServerId);
+              final isConnected = provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
+              serverChipWidget = PopupMenuButton<String>(
+                initialValue: selectedServerId,
+                tooltip: 'Switch server',
+                position: PopupMenuPosition.under,
+                onSelected: (id) {
+                  setSheetState(() {
+                    selectedServerId = id;
+                    final supported = provider.backendsForServer(id);
+                    if (!supported.contains(selectedBackend) && supported.isNotEmpty) {
+                      selectedBackend = supported.first;
+                    }
+                  });
+                  fetchSdkSessions();
+                },
+                itemBuilder: (_) => provider.serverConfigs.map((c) {
+                  final connected = provider.connMgr.statusOf(c.id) == ConnectionStatus.connected;
+                  return PopupMenuItem(
+                    value: c.id,
+                    enabled: connected,
+                    child: Row(children: [
+                      Icon(
+                        connected ? Icons.cloud_done : Icons.cloud_off,
+                        size: 16,
+                        color: connected ? Colors.green : Colors.grey,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(c.name),
+                    ]),
+                  );
+                }).toList(),
+                child: AbsorbPointer(
+                  child: miniChip(
+                    icon: isConnected ? Icons.cloud_done : Icons.cloud_off,
+                    iconColor: isConnected ? Colors.green : Colors.grey,
+                    label: config.name,
+                    onTap: () {},
+                  ),
+                ),
+              );
+            }
+
+            // Build backend chip (only when the chosen server supports more
+            // than one backend — claude-only servers stay clean).
+            Widget? backendChipWidget;
+            if (showBackendChip) {
+              backendChipWidget = PopupMenuButton<String>(
+                initialValue: selectedBackend,
+                tooltip: 'Switch backend',
+                position: PopupMenuPosition.under,
+                onSelected: (b) => setSheetState(() => selectedBackend = b),
+                itemBuilder: (_) => supportedBackends.map((b) => PopupMenuItem(
+                  value: b,
+                  child: Row(children: [
+                    Icon(
+                      b == 'codex' ? Icons.code : Icons.psychology_alt,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(_backendLabel(b)),
+                  ]),
+                )).toList(),
+                child: AbsorbPointer(
+                  child: miniChip(
+                    icon: selectedBackend == 'codex' ? Icons.code : Icons.psychology_alt,
+                    label: _backendLabel(selectedBackend),
+                    onTap: () {},
+                  ),
+                ),
+              );
+            }
+
+            void startNewSession() {
+              final path = controller.text.trim();
+              if (path.isEmpty) return;
+              Navigator.pop(ctx);
+              _validateAndOpen(
+                context, path,
+                serverId: selectedServerId,
+                backend: selectedBackend,
+              );
+            }
+
             return Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                    child: Text(
-                      'Working Directory',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                  ),
-                  if (hasMultipleServers) ...[
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: SegmentedButton<String>(
-                          segments: provider.serverConfigs.map((config) {
-                            final isConnected = provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
-                            return ButtonSegment(
-                              value: config.id,
-                              label: Text(
-                                config.name,
-                                style: const TextStyle(fontSize: 12),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              icon: Icon(
-                                isConnected ? Icons.cloud_done : Icons.cloud_off,
-                                size: 14,
-                                color: isConnected ? Colors.green : Colors.grey,
-                              ),
-                            );
-                          }).toList(),
-                          selected: {if (selectedServerId != null) selectedServerId!},
-                          onSelectionChanged: (v) {
-                            setSheetState(() {
-                              selectedServerId = v.first;
-                              // Snap backend to a valid choice for the new server.
-                              final supported = provider.backendsForServer(selectedServerId);
-                              if (!supported.contains(selectedBackend) && supported.isNotEmpty) {
-                                selectedBackend = supported.first;
-                              }
-                            });
-                          },
-                          style: ButtonStyle(
-                            visualDensity: VisualDensity.compact,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
+              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              child: SizedBox(
+                height: MediaQuery.of(ctx).size.height * 0.85,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Drag handle
+                    Center(
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 8),
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                          borderRadius: BorderRadius.circular(2),
                         ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                  ],
-                  // Backend selector — only visible when the chosen server
-                  // supports more than one. claude-only servers stay clean.
-                  if (provider.backendsForServer(selectedServerId).length > 1) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                      child: SizedBox(
-                        width: double.infinity,
-                        child: SegmentedButton<String>(
-                          segments: provider.backendsForServer(selectedServerId).map((b) {
-                            return ButtonSegment(
-                              value: b,
-                              label: Text(_backendLabel(b),
-                                style: const TextStyle(fontSize: 12),
-                                overflow: TextOverflow.ellipsis),
-                              icon: Icon(
-                                b == 'codex' ? Icons.code : Icons.psychology_alt,
-                                size: 14,
-                              ),
-                            );
-                          }).toList(),
-                          selected: {selectedBackend},
-                          onSelectionChanged: (v) {
-                            setSheetState(() => selectedBackend = v.first);
-                          },
-                          style: ButtonStyle(
-                            visualDensity: VisualDensity.compact,
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
+                    // Compact server + backend chips, only when there's a real choice.
+                    if (serverChipWidget != null || backendChipWidget != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            if (serverChipWidget != null) serverChipWidget,
+                            if (backendChipWidget != null) backendChipWidget,
+                          ],
                         ),
                       ),
-                    ),
-                  ],
-                  const Divider(height: 1),
-                  if (recentCwds.isNotEmpty) ...[
+                    // Path field + browse icon button.
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Text(
-                        'Recent',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                        ),
-                      ),
-                    ),
-                    ...recentCwds.map((cwd) => ListTile(
-                      dense: true,
-                      leading: Icon(Icons.folder_outlined, size: 20,
-                        color: Theme.of(context).colorScheme.primary),
-                      title: Text(cwd, style: const TextStyle(fontSize: 14)),
-                      trailing: IconButton(
-                        icon: Icon(Icons.close, size: 18,
-                          color: Theme.of(context).colorScheme.onSurface.withAlpha(100)),
-                        onPressed: () {
-                          provider.removeRecentCwd(cwd, serverId: selectedServerId);
-                          setSheetState(() {});
-                        },
-                      ),
-                      onTap: () {
-                        controller.text = cwd;
-                        controller.selection = TextSelection.fromPosition(
-                          TextPosition(offset: cwd.length),
-                        );
-                        fetchSdkSessions();
-                      },
-                    )),
-                    const Divider(height: 1),
-                  ],
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () async {
-                          final picked = await _showFolderBrowser(
-                            context, provider,
-                            serverId: selectedServerId,
-                          );
-                          if (picked != null && ctx.mounted) {
-                            controller.text = picked;
-                            controller.selection = TextSelection.fromPosition(
-                              TextPosition(offset: picked.length),
-                            );
-                            fetchSdkSessions();
-                          }
-                        },
-                        icon: const Icon(Icons.folder_open, size: 18),
-                        label: const Text('Browse Server'),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-                    child: Text(
-                      'Or type a path',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                      ),
-                    ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: controller,
-                            decoration: InputDecoration(
-                              hintText: '/path/to/project',
-                              filled: true,
-                              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: BorderSide.none,
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: controller,
+                              decoration: InputDecoration(
+                                hintText: '/path/to/project',
+                                prefixIcon: const Icon(Icons.folder_open, size: 18),
+                                filled: true,
+                                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                  borderSide: BorderSide.none,
+                                ),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10,
+                                ),
+                                isDense: true,
                               ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 12, vertical: 10,
-                              ),
-                              isDense: true,
+                              style: const TextStyle(fontSize: 14),
+                              textInputAction: TextInputAction.search,
+                              onChanged: (_) => fetchSdkSessions(),
+                              onSubmitted: (_) => fetchSdkSessions(),
                             ),
-                            style: const TextStyle(fontSize: 14),
-                            onSubmitted: (val) {
-                              final path = val.trim();
-                              if (path.isNotEmpty) {
-                                Navigator.pop(ctx);
-                                _validateAndOpen(context, path, serverId: selectedServerId, backend: selectedBackend);
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.account_tree_outlined),
+                            tooltip: 'Browse server filesystem',
+                            onPressed: () async {
+                              final picked = await _showFolderBrowser(
+                                context, provider,
+                                serverId: selectedServerId,
+                              );
+                              if (picked != null && ctx.mounted) {
+                                controller.text = picked;
+                                controller.selection = TextSelection.fromPosition(
+                                  TextPosition(offset: picked.length),
+                                );
+                                fetchSdkSessions();
                               }
                             },
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        IconButton(
-                          icon: Icon(Icons.arrow_forward,
-                            color: Theme.of(context).colorScheme.primary),
-                          onPressed: () {
-                            final path = controller.text.trim();
-                            if (path.isNotEmpty) {
-                              Navigator.pop(ctx);
-                              _validateAndOpen(context, path, serverId: selectedServerId);
-                            }
+                        ],
+                      ),
+                    ),
+                    // Recent CWDs as a single horizontal chip strip.
+                    if (recentCwds.isNotEmpty)
+                      SizedBox(
+                        height: 40,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          itemCount: recentCwds.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 6),
+                          itemBuilder: (_, i) {
+                            final cwd = recentCwds[i];
+                            // Show the trailing path component for compactness;
+                            // the full path is in the tooltip and the field itself
+                            // when tapped.
+                            final shortLabel = cwd.split('/').where((s) => s.isNotEmpty).lastOrNull ?? cwd;
+                            return InputChip(
+                              label: Text(shortLabel, style: const TextStyle(fontSize: 12)),
+                              tooltip: cwd,
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              onPressed: () {
+                                controller.text = cwd;
+                                controller.selection = TextSelection.fromPosition(
+                                  TextPosition(offset: cwd.length),
+                                );
+                                fetchSdkSessions();
+                              },
+                              onDeleted: () {
+                                provider.removeRecentCwd(cwd, serverId: selectedServerId);
+                                setSheetState(() {});
+                              },
+                              deleteIconColor: Theme.of(context).colorScheme.onSurface.withAlpha(120),
+                            );
                           },
                         ),
-                      ],
-                    ),
-                  ),
-                  if (loadingSdkSessions)
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 16),
-                      child: Center(child: SizedBox(
-                        width: 20, height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )),
-                    )
-                  else if (sdkSessions.isNotEmpty) ...[
-                    const Divider(height: 1),
+                      ),
+                    // Single primary CTA — "start new session here".
                     Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Text(
-                        'Resume existing session',
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: FilledButton.icon(
+                          onPressed: controller.text.trim().isEmpty ? null : startNewSession,
+                          icon: const Icon(Icons.add, size: 18),
+                          label: Text(
+                            showBackendChip
+                                ? 'Start new ${_backendLabel(selectedBackend)} session'
+                                : 'Start new session here',
+                          ),
                         ),
                       ),
                     ),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 200),
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        padding: const EdgeInsets.only(bottom: 8),
-                        itemCount: sdkSessions.length,
-                        itemBuilder: (_, index) {
-                          final session = sdkSessions[index];
-                          final preview = session['firstMessage'] as String? ?? '';
-                          final sessionBackend = session['backend'] as String?;
-                          final lastActive = DateTime.tryParse(
-                            session['lastActive'] as String? ?? '',
-                          ) ?? DateTime.now();
-                          final timeDiff = DateTime.now().difference(lastActive);
-                          String timeAgo;
-                          if (timeDiff.inMinutes < 1) {
-                            timeAgo = 'just now';
-                          } else if (timeDiff.inHours < 1) {
-                            timeAgo = '${timeDiff.inMinutes}m ago';
-                          } else if (timeDiff.inDays < 1) {
-                            timeAgo = '${timeDiff.inHours}h ago';
-                          } else {
-                            timeAgo = '${timeDiff.inDays}d ago';
-                          }
-                          return ListTile(
-                            dense: true,
-                            leading: Icon(Icons.history, size: 20,
-                              color: Theme.of(context).colorScheme.secondary),
-                            title: Text(
-                              preview,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 13),
+                    const Divider(height: 1),
+                    // Past sessions header with count.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Past sessions in this folder',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                              color: Theme.of(context).colorScheme.onSurface.withAlpha(140),
                             ),
-                            subtitle: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  timeAgo,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                                  ),
-                                ),
-                                // Codex sessions get a small badge so the user
-                                // can tell them apart from claude in this list;
-                                // claude is implicit (no badge), matching the
-                                // main session list rendering.
-                                if (sessionBackend == 'codex') ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                    decoration: BoxDecoration(
-                                      color: Theme.of(context).colorScheme.tertiaryContainer.withAlpha(170),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
+                          ),
+                          const Spacer(),
+                          if (!loadingSdkSessions && sdkSessions.isNotEmpty)
+                            Text(
+                              '${sdkSessions.length}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.onSurface.withAlpha(100),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    // Past sessions list — fills the remaining space.
+                    Expanded(
+                      child: loadingSdkSessions
+                          ? const Center(
+                              child: SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          : sdkSessions.isEmpty
+                              ? Center(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
                                     child: Text(
-                                      'CODEX',
+                                      controller.text.trim().isEmpty
+                                          ? 'Type or pick a path to see past sessions'
+                                          : 'No past sessions in this folder',
+                                      textAlign: TextAlign.center,
                                       style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: 0.5,
-                                        color: Theme.of(context).colorScheme.onTertiaryContainer,
+                                        fontSize: 12,
+                                        color: Theme.of(context).colorScheme.onSurface.withAlpha(120),
                                       ),
                                     ),
                                   ),
-                                ],
-                              ],
-                            ),
-                            onTap: () {
-                              Navigator.pop(ctx);
-                              final isTracked = session['tracked'] == true;
-                              _openSession(
-                                context,
-                                sessionId: session['sessionId'] as String,
-                                cwd: controller.text.trim(),
-                                serverId: selectedServerId,
-                                sdkSession: !isTracked,
-                                backend: sessionBackend,
-                              );
-                            },
-                          );
-                        },
-                      ),
+                                )
+                              : ListView.builder(
+                                  padding: const EdgeInsets.only(bottom: 16),
+                                  itemCount: sdkSessions.length,
+                                  itemBuilder: (_, index) {
+                                    final session = sdkSessions[index];
+                                    final preview = session['firstMessage'] as String? ?? '';
+                                    final sessionBackend = session['backend'] as String?;
+                                    final lastActive = DateTime.tryParse(
+                                      session['lastActive'] as String? ?? '',
+                                    ) ?? DateTime.now();
+                                    final timeDiff = DateTime.now().difference(lastActive);
+                                    String timeAgo;
+                                    if (timeDiff.inMinutes < 1) {
+                                      timeAgo = 'just now';
+                                    } else if (timeDiff.inHours < 1) {
+                                      timeAgo = '${timeDiff.inMinutes}m ago';
+                                    } else if (timeDiff.inDays < 1) {
+                                      timeAgo = '${timeDiff.inHours}h ago';
+                                    } else {
+                                      timeAgo = '${timeDiff.inDays}d ago';
+                                    }
+                                    return ListTile(
+                                      dense: true,
+                                      leading: Icon(
+                                        Icons.history,
+                                        size: 20,
+                                        color: Theme.of(context).colorScheme.secondary,
+                                      ),
+                                      title: Text(
+                                        preview,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontSize: 13),
+                                      ),
+                                      subtitle: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            timeAgo,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                            ),
+                                          ),
+                                          if (sessionBackend == 'codex') ...[
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                              decoration: BoxDecoration(
+                                                color: Theme.of(context).colorScheme.tertiaryContainer.withAlpha(170),
+                                                borderRadius: BorderRadius.circular(4),
+                                              ),
+                                              child: Text(
+                                                'CODEX',
+                                                style: TextStyle(
+                                                  fontSize: 10,
+                                                  fontWeight: FontWeight.w600,
+                                                  letterSpacing: 0.5,
+                                                  color: Theme.of(context).colorScheme.onTertiaryContainer,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ],
+                                      ),
+                                      onTap: () {
+                                        Navigator.pop(ctx);
+                                        final isTracked = session['tracked'] == true;
+                                        _openSession(
+                                          context,
+                                          sessionId: session['sessionId'] as String,
+                                          cwd: controller.text.trim(),
+                                          serverId: selectedServerId,
+                                          sdkSession: !isTracked,
+                                          backend: sessionBackend,
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
                     ),
-                  ] else ...[
-                    const SizedBox(height: 8),
                   ],
-                ],
+                ),
               ),
             );
           },
         );
       },
-    ).then((_) => controller.dispose());
+    ).then((_) {
+      fetchDebounce?.cancel();
+      controller.dispose();
+    });
   }
 
   Future<String?> _showFolderBrowser(BuildContext context, ChatProvider provider, {String? serverId}) async {
