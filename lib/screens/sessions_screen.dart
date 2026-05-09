@@ -56,7 +56,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     final provider = context.read<ChatProvider>();
 
     if (sdkSession && sessionId != null && cwd != null) {
-      provider.resumeSdkSession(sessionId, cwd, serverId: serverId);
+      provider.resumeSdkSession(sessionId, cwd, serverId: serverId, backend: backend);
     } else if (sessionId != null) {
       provider.resumeSession(sessionId);
     } else {
@@ -556,6 +556,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                         itemBuilder: (_, index) {
                           final session = sdkSessions[index];
                           final preview = session['firstMessage'] as String? ?? '';
+                          final sessionBackend = session['backend'] as String?;
                           final lastActive = DateTime.tryParse(
                             session['lastActive'] as String? ?? '',
                           ) ?? DateTime.now();
@@ -580,12 +581,40 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(fontSize: 13),
                             ),
-                            subtitle: Text(
-                              timeAgo,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                              ),
+                            subtitle: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  timeAgo,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                  ),
+                                ),
+                                // Codex sessions get a small badge so the user
+                                // can tell them apart from claude in this list;
+                                // claude is implicit (no badge), matching the
+                                // main session list rendering.
+                                if (sessionBackend == 'codex') ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: Theme.of(context).colorScheme.tertiaryContainer.withAlpha(170),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      'CODEX',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.5,
+                                        color: Theme.of(context).colorScheme.onTertiaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                             onTap: () {
                               Navigator.pop(ctx);
@@ -596,6 +625,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                                 cwd: controller.text.trim(),
                                 serverId: selectedServerId,
                                 sdkSession: !isTracked,
+                                backend: sessionBackend,
                               );
                             },
                           );

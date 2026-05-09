@@ -4328,7 +4328,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Resume an SDK-only session (not yet in SocketClaude store).
-  void resumeSdkSession(String sessionId, String cwd, {String? serverId}) {
+  void resumeSdkSession(String sessionId, String cwd, {String? serverId, String? backend}) {
     _messages = [];
     _todos = [];
     _lastUsage = null;
@@ -4340,11 +4340,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _promptSuggestions = [];
     _contextUsage = null;
     _requiresAction = false;
+    // Track the backend immediately so chat-header [CODEX] flag is right
+    // before session_created comes back; falls through to whatever the
+    // server confirms on the SessionInfo write-through.
+    _activeSessionBackend = backend;
 
     final msg = {
       'type': 'resume_session',
       'sessionId': sessionId,
       'cwd': cwd,
+      if (backend != null) 'backend': backend,
     };
     if (serverId != null) {
       _connMgr.activeServerId = serverId;
