@@ -102,6 +102,19 @@ class ChatViewState extends State<ChatView> {
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
 
+    // Resync _userScrolledUp from the current scroll position. _onScroll
+    // only fires when the user actively scrolls — if content grew below
+    // the viewport without the user touching anything (e.g., they expanded
+    // an inline image card, pushing maxScrollExtent down by ~300px with no
+    // accompanying scroll event), the flag would stay stale at `false`
+    // and the next state update would auto-scroll past where they're
+    // looking, landing them right back on the card. Symptom: "I can never
+    // scroll away from the expanded image."
+    if (_scrollController.hasClients && !_isAutoScrolling) {
+      final pos = _scrollController.position;
+      _userScrolledUp = pos.maxScrollExtent - pos.pixels > 150;
+    }
+
     // History just finished loading — jump to bottom unconditionally
     if (oldWidget.isLoadingHistory && !widget.isLoadingHistory) {
       _lastKnownMessageCount = widget.messages.length;
