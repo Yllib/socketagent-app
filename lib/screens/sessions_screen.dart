@@ -79,7 +79,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
           serverId = result.serverId;
           effectiveBackend = result.backend;
         } else if (initialBackends.isNotEmpty) {
-          effectiveBackend = initialBackends.first;
+          effectiveBackend = provider.preferredBackendForServer(initialServer);
         }
       }
       provider.createNewSession(cwd: cwd, serverId: serverId, backend: effectiveBackend);
@@ -107,7 +107,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
         ?? (connectedServers.isNotEmpty
             ? connectedServers.first.id
             : provider.serverConfigs.firstOrNull?.id);
-    String selectedBackend = provider.backendsForServer(selectedServer).firstOrNull ?? 'claude';
+    String selectedBackend = provider.preferredBackendForServer(selectedServer);
 
     return showModalBottomSheet<({String? serverId, String backend})>(
       context: context,
@@ -117,7 +117,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
           final supported = provider.backendsForServer(selectedServer);
           // Snap back to a valid choice if the user just changed servers.
           if (!supported.contains(selectedBackend)) {
-            selectedBackend = supported.first;
+            selectedBackend = provider.preferredBackendForServer(selectedServer);
           }
           // Hide the server radio when a server was preselected upstream
           // (e.g., in the CWD picker) — re-asking would be confusing.
@@ -292,7 +292,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     bool loadingSdkSessions = false;
     bool initialFetchDone = false;
     Timer? fetchDebounce;
-    String selectedBackend = provider.backendsForServer(selectedServerId).firstOrNull ?? 'claude';
+    String selectedBackend = provider.preferredBackendForServer(selectedServerId);
 
     showModalBottomSheet(
       context: context,
@@ -388,7 +388,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                     selectedServerId = id;
                     final supported = provider.backendsForServer(id);
                     if (!supported.contains(selectedBackend) && supported.isNotEmpty) {
-                      selectedBackend = supported.first;
+                      selectedBackend = provider.preferredBackendForServer(id);
                     }
                   });
                   fetchSdkSessions();
@@ -1675,9 +1675,8 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                             ),
                           ),
                         ],
-                        // Codex sessions get a small badge so the user can
-                        // tell them apart from claude in the list. Claude is
-                        // implicit (no badge) since most sessions are claude.
+                        // Codex sessions get a small badge so mixed backend
+                        // lists are easy to scan.
                         if (session.backend == 'codex') ...[
                           const SizedBox(width: 6),
                           Container(

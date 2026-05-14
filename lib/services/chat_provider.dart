@@ -4074,7 +4074,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _todos = [];
     _lastUsage = null;
     _activeSessionId = null;
-    _activeSessionBackend = backend;
+    final effectiveBackend = backend ?? preferredBackendForServer(serverId);
+    _activeSessionBackend = effectiveBackend;
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
     _isProcessing = false;
@@ -4120,7 +4121,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final msg = <String, dynamic>{
       'type': 'new_session',
       if (effectiveCwd != null) 'cwd': effectiveCwd,
-      if (backend != null) 'backend': backend,
+      'backend': effectiveBackend,
     };
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
@@ -4130,7 +4131,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Backends the given server can drive. Defaults to ['claude'] when the
+  /// Backends the given server can drive, ordered by UI preference. Defaults to ['claude'] when the
   /// capability message hasn't arrived yet (older servers won't send it at
   /// all, so legacy claude-only behavior is the safe default).
   List<String> backendsForServer(String? serverId) {
@@ -4138,7 +4139,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ?? _connMgr.activeServerId
         ?? _serverConfigs.firstOrNull?.id;
     if (effectiveServerId == null) return const ['claude'];
-    return _serverBackends[effectiveServerId] ?? const ['claude'];
+    final raw = _serverBackends[effectiveServerId] ?? const ['claude'];
+    if (!raw.contains('codex')) return raw;
+    return ['codex', ...raw.where((b) => b != 'codex')];
+  }
+
+  String preferredBackendForServer(String? serverId) {
+    final backends = backendsForServer(serverId);
+    return backends.firstOrNull ?? 'claude';
   }
 
   String? get activeSessionBackend => _activeSessionBackend;
