@@ -22,6 +22,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
 
   bool get _isBash => widget.message.toolName == 'Bash';
   bool get _isEditTool => widget.message.toolName == 'Edit';
+  bool get _isApplyPatchTool => widget.message.toolName == 'ApplyPatch';
   bool get _isWriteTool => widget.message.toolName == 'Write';
   bool get _isTaskOutput => widget.message.toolName == 'TaskOutput';
   bool get _hasImage => widget.message.toolImageData != null && widget.message.toolImageData!.isNotEmpty;
@@ -123,6 +124,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final isStreaming = widget.message.toolStreaming;
     final elapsed = widget.message.toolElapsedSeconds;
     final editDiff = _editDiff;
+    final patchDiff = _isApplyPatchTool && hasOutput ? output : null;
 
     final colorful = context.select<ChatProvider, bool>((p) => p.colorfulCards);
     final accentColor = widget.greenTheme
@@ -133,7 +135,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
 
     // Always expandable if there's content to show
     final writeContent = _isWriteTool ? (widget.message.toolInput?['content'] as String?) : null;
-    final hasExpandableContent = _isBash || _isWriteTool || hasOutput || editDiff != null || _hasImage;
+    final hasExpandableContent = _isBash || _isWriteTool || hasOutput || editDiff != null || patchDiff != null || _hasImage;
     final isBg = widget.message.isBackgrounded;
 
     return Container(
@@ -307,6 +309,22 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                 ),
               ),
             ),
+          // Unified diff view for Codex ApplyPatch/file_change output
+          if (_isApplyPatchTool && patchDiff != null && _expanded)
+            Container(
+              constraints: const BoxConstraints(maxHeight: 300),
+              decoration: const BoxDecoration(
+                border: Border(
+                  top: BorderSide(color: Color(0xFF313244), width: 1),
+                ),
+              ),
+              child: ScrollPassthrough(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(12),
+                  child: _buildDiffView(patchDiff),
+                ),
+              ),
+            ),
           // Write: show file content when expanded
           if (_isWriteTool && writeContent != null && _expanded)
             _buildWriteContent(writeContent),
@@ -314,7 +332,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           if (_isTaskOutput && hasOutput && _expanded)
             _buildTaskOutputContent(),
           // Regular output (for non-Bash, non-Edit, non-TaskOutput, non-Write tools)
-          if (!_isBash && !_isEditTool && !_isWriteTool && !_isTaskOutput && hasOutput && _expanded)
+          if (!_isBash && !_isEditTool && !_isApplyPatchTool && !_isWriteTool && !_isTaskOutput && hasOutput && _expanded)
             _buildOutputContainer(output),
           // Inline image (visible when expanded)
           if (_hasImage && _expanded)
@@ -576,13 +594,13 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       children: lines.map((line) {
         Color textColor;
         Color? bgColor;
-        if (line.startsWith('---') || line.startsWith('+++')) {
+        if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('@@')) {
           textColor = const Color(0xFFA6ADC8);
           bgColor = null;
-        } else if (line.startsWith('- ')) {
+        } else if (line.startsWith('-')) {
           textColor = const Color(0xFFF38BA8); // red
           bgColor = const Color(0xFFF38BA8).withAlpha(20);
-        } else if (line.startsWith('+ ')) {
+        } else if (line.startsWith('+')) {
           textColor = const Color(0xFFA6E3A1); // green
           bgColor = const Color(0xFFA6E3A1).withAlpha(20);
         } else {

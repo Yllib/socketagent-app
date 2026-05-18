@@ -1463,6 +1463,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
+    // Visible chat state is single-session. If a long-running session emits
+    // messages after the user has opened another session, do not append those
+    // events to the current chat; they will be restored from that session's
+    // persisted history when the user opens it again.
+    final messageSessionId = msg['sessionId'] as String?;
+    if (!globalTypes.contains(type) &&
+        messageSessionId != null &&
+        messageSessionId.isNotEmpty) {
+      if (_activeSessionId == null) {
+        if (type != 'session_created') return;
+      } else if (messageSessionId != _activeSessionId) {
+        return;
+      }
+    }
+
     // Capture SDK events for raw debug mode (coalesced)
     if (type == 'sdk_event') {
       _processRawEvent(msg);
