@@ -5,7 +5,6 @@ import '../main.dart' show assistVoiceTrigger;
 import '../services/chat_provider.dart';
 import '../services/tts_engine.dart';
 import '../services/kokoro_server_engine.dart';
-import '../services/tts_service.dart';
 import '../services/websocket_service.dart';
 import '../widgets/chat_view.dart';
 import '../widgets/active_tasks_pane.dart';
@@ -317,6 +316,16 @@ class HomeScreenState extends State<HomeScreen> {
                   onDismissTodos: provider.dismissTodos,
                   onRewindConversation: provider.rewindConversation,
                   onBranch: provider.branchFromMessage,
+                  onRetractQueuedMessage: (messageId) {
+                    final text = provider.retractQueuedMessage(messageId);
+                    if (text == null) return;
+                    _textController.text = text;
+                    _textController.selection = TextSelection.fromPosition(
+                      TextPosition(offset: text.length),
+                    );
+                    provider.saveDraft(text.trim());
+                    _focusNode.requestFocus();
+                  },
                   rawMode: provider.rawMode,
                   rawItems: provider.rawItems,
                   subagentTasks: provider.subagentTasks,

@@ -363,6 +363,13 @@ class WebSocketService {
     });
   }
 
+  void sendRetractQueuedPrompt(String messageId) {
+    send({
+      'type': 'retract_queued_prompt',
+      'messageId': messageId,
+    });
+  }
+
   void sendAnswer(String questionId, Map<String, String> answers) {
     send({
       'type': 'answer',

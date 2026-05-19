@@ -7,6 +7,15 @@ import '../models/message.dart';
 import '../services/chat_provider.dart';
 import 'scroll_passthrough.dart';
 
+class _DiffStats {
+  final int added;
+  final int removed;
+
+  const _DiffStats({required this.added, required this.removed});
+
+  bool get hasChanges => added > 0 || removed > 0;
+}
+
 class ToolOutputBlock extends StatefulWidget {
   final ChatMessage message;
   final bool greenTheme;
@@ -125,6 +134,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final elapsed = widget.message.toolElapsedSeconds;
     final editDiff = _editDiff;
     final patchDiff = _isApplyPatchTool && hasOutput ? output : null;
+    final patchStats = patchDiff == null ? null : _diffStats(patchDiff);
 
     final colorful = context.select<ChatProvider, bool>((p) => p.colorfulCards);
     final accentColor = widget.greenTheme
@@ -235,6 +245,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                       color: Color(0xFFA6E3A1),
                     ),
                     const SizedBox(width: 4),
+                  ],
+                  if (_isApplyPatchTool && patchStats != null && !_expanded) ...[
+                    _buildDiffStatBadges(patchStats),
+                    const SizedBox(width: 6),
                   ],
                   if (hasExpandableContent && gotResult && !isStreaming)
                     Icon(
@@ -621,6 +635,46 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           ),
         );
       }).toList(),
+    );
+  }
+
+  _DiffStats? _diffStats(String diff) {
+    var added = 0;
+    var removed = 0;
+    for (final line in diff.split('\n')) {
+      if (line.startsWith('+++') || line.startsWith('---')) continue;
+      if (line.startsWith('+')) added++;
+      if (line.startsWith('-')) removed++;
+    }
+    final stats = _DiffStats(added: added, removed: removed);
+    return stats.hasChanges ? stats : null;
+  }
+
+  Widget _buildDiffStatBadges(_DiffStats stats) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (stats.added > 0)
+          Text(
+            '+${stats.added}',
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: const Color(0xFFA6E3A1),
+            ),
+          ),
+        if (stats.added > 0 && stats.removed > 0)
+          const SizedBox(width: 5),
+        if (stats.removed > 0)
+          Text(
+            '-${stats.removed}',
+            style: GoogleFonts.jetBrainsMono(
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+              color: const Color(0xFFF38BA8),
+            ),
+          ),
+      ],
     );
   }
 

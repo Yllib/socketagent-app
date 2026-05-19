@@ -2698,11 +2698,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isCompacting = false;
     _isRateLimited = false;
     _isRetrying = false;
-    // Promote any remaining pending messages
+    // Upload-only pending bubbles can settle on result. Queued injection
+    // bubbles wait for injection_ack so they can still be pulled back before
+    // the server actually starts that queued turn.
     for (final m in _messages) {
-      if (m.isPending) {
+      if (m.isPending && m.injectionPriority == null) {
         m.isPending = false;
-        m.injectionPriority = null;
       }
     }
     // Use the last assistant text message as notification body
@@ -3905,6 +3906,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       userMsg.isPending = false;
     }
     notifyListeners();
+  }
+
+  String? retractQueuedMessage(String messageId) {
+    final idx = _messages.indexWhere((m) =>
+        m.id == messageId &&
+        m.sender == MessageSender.user &&
+        m.isPending &&
+        m.injectionPriority != null);
+    if (idx < 0) return null;
+
+    final text = _messages[idx].textContent;
+    _messages.removeAt(idx);
+    _ws.sendRetractQueuedPrompt(messageId);
+    notifyListeners();
+    return text;
   }
 
   Future<void> pickFile() async {

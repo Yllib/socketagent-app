@@ -8,12 +8,14 @@ class MessageBubble extends StatelessWidget {
   final ChatMessage message;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
+  final void Function(String messageId)? onRetractPending;
 
   const MessageBubble({
     super.key,
     required this.message,
     this.onRewindConversation,
     this.onBranch,
+    this.onRetractPending,
   });
 
   @override
@@ -178,18 +180,36 @@ class MessageBubble extends StatelessWidget {
             Positioned(
               bottom: 2,
               right: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.secondaryContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  'queued: $priorityLabel',
-                  style: TextStyle(
-                    fontSize: 9,
-                    color: theme.colorScheme.onSecondaryContainer,
-                    fontWeight: FontWeight.w500,
+              child: GestureDetector(
+                onTap: onRetractPending == null
+                    ? null
+                    : () => onRetractPending!(message.id),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'queued: $priorityLabel',
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: theme.colorScheme.onSecondaryContainer,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (onRetractPending != null) ...[
+                        const SizedBox(width: 4),
+                        Icon(
+                          Icons.undo,
+                          size: 10,
+                          color: theme.colorScheme.onSecondaryContainer,
+                        ),
+                      ],
+                    ],
                   ),
                 ),
               ),

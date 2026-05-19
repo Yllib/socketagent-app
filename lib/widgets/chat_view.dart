@@ -33,6 +33,7 @@ class ChatView extends StatefulWidget {
   final VoidCallback? onDismissTodos;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
+  final void Function(String messageId)? onRetractQueuedMessage;
   final bool rawMode;
   final List<SdkItem> rawItems;
   // For SubAgentCard: tracked subagent tasks and full message list for child lookup
@@ -53,6 +54,7 @@ class ChatView extends StatefulWidget {
     this.onDismissTodos,
     this.onRewindConversation,
     this.onBranch,
+    this.onRetractQueuedMessage,
     this.rawMode = false,
     this.rawItems = const [],
     this.subagentTasks = const {},
@@ -310,6 +312,7 @@ class ChatViewState extends State<ChatView> {
           message: msg,
           onRewindConversation: widget.onRewindConversation,
           onBranch: widget.onBranch,
+          onRetractPending: widget.onRetractQueuedMessage,
         );
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') {
