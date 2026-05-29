@@ -4557,7 +4557,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void clearSessionContext(String sessionId) {
-    _ws.sendClearContext(sessionId);
+    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+    if (session != null && session.serverId.isNotEmpty) {
+      _connMgr.sendToServer(session.serverId, {
+        'type': 'clear_context',
+        'sessionId': sessionId,
+      });
+    } else {
+      _ws.sendClearContext(sessionId);
+    }
     // If this is the active session, clear local messages/todos
     if (_activeSessionId == sessionId) {
       _messages.clear();
