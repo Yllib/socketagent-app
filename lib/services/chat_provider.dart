@@ -441,11 +441,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Messages filtered for main chat: excludes subagent children
   List<ChatMessage> get filteredMessages {
-    return _messages.where((m) {
+    final visible = _messages.where((m) {
       if (m.parentToolUseId == null) return true;
       // Keep if parent is not a tracked subagent (could be other nesting)
       return !_subagentTasks.containsKey(m.parentToolUseId);
     }).toList();
+
+    // Pending injected prompts are a live queue affordance, not settled
+    // transcript position. Keep them visually pinned to the bottom until the
+    // server confirms the agent received them; then they fall back into the
+    // normal message order used by history.
+    final queued = visible
+        .where(
+          (m) =>
+              m.sender == MessageSender.user &&
+              m.isPending &&
+              m.injectionPriority != null,
+        )
+        .toList();
+    if (queued.isEmpty) return visible;
+
+    return [
+      ...visible.where((m) => !queued.contains(m)),
+      ...queued,
+    ];
   }
 
   /// Get child messages for a subagent by its toolUseId
