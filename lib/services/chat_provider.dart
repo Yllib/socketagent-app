@@ -50,6 +50,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Session> _sessions = [];
   List<Map<String, dynamic>> _todos = [];
   List<Map<String, dynamic>> _scheduledTasks = [];
+  final Map<String, List<Map<String, dynamic>>> _perServerScheduledTasks = {};
   List<ArchiveEntry> _archives = [];
   Completer<List<ArchiveEntry>>? _archivesCompleter;
   final Map<String, Completer<List<dynamic>>> _archiveHistoryCompleters = {};
@@ -2080,18 +2081,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _handleReminder(msg);
         break;
       case 'scheduled_task_list':
-        _scheduledTasks = (msg['tasks'] as List? ?? [])
-            .map((t) => Map<String, dynamic>.from(t as Map))
+        final tasks = (msg['tasks'] as List? ?? [])
+            .map((t) => Map<String, dynamic>.from(t as Map)
+              ..['_serverId'] = serverId ?? '')
             .toList();
+        if (serverId != null) {
+          _perServerScheduledTasks[serverId] = tasks;
+          _scheduledTasks = _perServerScheduledTasks.values
+              .expand((items) => items)
+              .toList();
+        } else {
+          _scheduledTasks = tasks;
+        }
         notifyListeners();
         break;
       case 'scheduled_task_update':
-        final task = Map<String, dynamic>.from(msg['task'] as Map);
-        final idx = _scheduledTasks.indexWhere((t) => t['id'] == task['id']);
-        if (idx >= 0) {
-          _scheduledTasks[idx] = task;
+        final task = Map<String, dynamic>.from(msg['task'] as Map)
+          ..['_serverId'] = serverId ?? '';
+        if (serverId != null) {
+          final serverTasks = _perServerScheduledTasks.putIfAbsent(serverId, () => []);
+          final idx = serverTasks.indexWhere((t) => t['id'] == task['id']);
+          if (idx >= 0) {
+            serverTasks[idx] = task;
+          } else {
+            serverTasks.add(task);
+          }
+          _scheduledTasks = _perServerScheduledTasks.values
+              .expand((items) => items)
+              .toList();
         } else {
-          _scheduledTasks.add(task);
+          final idx = _scheduledTasks.indexWhere((t) => t['id'] == task['id']);
+          if (idx >= 0) {
+            _scheduledTasks[idx] = task;
+          } else {
+            _scheduledTasks.add(task);
+          }
         }
         notifyListeners();
         break;
@@ -4408,10 +4432,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.sendToAll({'type': 'list_scheduled_tasks'});
   }
 
+  String? _serverIdForScheduledTask(String taskId) {
+    final task = _scheduledTasks.where((t) => t['id'] == taskId).firstOrNull;
+    final serverId = task?['_serverId'] as String?;
+    return serverId != null && serverId.isNotEmpty ? serverId : null;
+  }
+
   void scheduleTask({
     required String prompt,
     required String cwd,
     required String scheduledTime,
+    String? backend,
     String? recurrenceType,
     int? customIntervalMs,
     bool reuseSession = false,
@@ -4421,6 +4452,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'schedule_task',
       'prompt': prompt,
       'cwd': cwd,
+      'backend': backend ?? preferredBackendForServer(serverId),
       'scheduledTime': scheduledTime,
       'reuseSession': reuseSession,
     };
@@ -4442,6 +4474,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String taskId,
     String? prompt,
     String? cwd,
+    String? backend,
     String? scheduledTime,
     String? recurrenceType,
     int? customIntervalMs,
@@ -4453,6 +4486,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     };
     if (prompt != null) msg['prompt'] = prompt;
     if (cwd != null) msg['cwd'] = cwd;
+    if (backend != null) msg['backend'] = backend;
     if (scheduledTime != null) msg['scheduledTime'] = scheduledTime;
     if (reuseSession != null) msg['reuseSession'] = reuseSession;
     if (recurrenceType != null) {
@@ -4466,22 +4500,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         };
       }
     }
-    _connMgr.send(msg);
+    final serverId = _serverIdForScheduledTask(taskId);
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
   }
 
   void cancelScheduledTask(String taskId) {
-    _connMgr.send({
+    final msg = {
       'type': 'cancel_scheduled_task',
       'taskId': taskId,
-    });
+    };
+    final serverId = _serverIdForScheduledTask(taskId);
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
   }
 
   void deleteScheduledTask(String taskId) {
+    final serverId = _serverIdForScheduledTask(taskId);
     _scheduledTasks.removeWhere((t) => t['id'] == taskId);
-    _connMgr.send({
+    for (final tasks in _perServerScheduledTasks.values) {
+      tasks.removeWhere((t) => t['id'] == taskId);
+    }
+    final msg = {
       'type': 'delete_scheduled_task',
       'taskId': taskId,
-    });
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
     notifyListeners();
   }
 

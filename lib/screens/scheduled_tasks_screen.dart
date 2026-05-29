@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
-import '../models/server_config.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'home_screen.dart';
 
@@ -107,6 +106,20 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     }
   }
 
+  String _backendLabel(String backend) {
+    switch (backend) {
+      case 'codex':
+        return 'Codex';
+      case 'claude':
+      default:
+        return 'Claude';
+    }
+  }
+
+  IconData _backendIcon(String backend) {
+    return backend == 'codex' ? Icons.terminal : Icons.auto_awesome;
+  }
+
   String _shortenCwd(String cwd) {
     final homePattern = RegExp(r'^/home/[^/]+/');
     if (homePattern.hasMatch(cwd)) {
@@ -162,6 +175,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
           .toList();
       selectedServerId = connected.isNotEmpty ? connected.first.id : configs.first.id;
     }
+    String selectedBackend = provider.preferredBackendForServer(selectedServerId);
 
     showModalBottomSheet(
       context: context,
@@ -170,6 +184,10 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
             final recentCwds = _getRecentCwds(provider, serverId: selectedServerId);
+            final backends = provider.backendsForServer(selectedServerId);
+            if (!backends.contains(selectedBackend)) {
+              selectedBackend = backends.first;
+            }
 
             return Padding(
               padding: EdgeInsets.only(
@@ -195,7 +213,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                         controller: promptController,
                         decoration: const InputDecoration(
                           labelText: 'Prompt',
-                          hintText: 'What should Claude do?',
+                          hintText: 'What should the agent do?',
                           border: OutlineInputBorder(),
                           prefixIcon: Icon(Icons.chat_outlined),
                         ),
@@ -231,7 +249,37 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             }).toList(),
                             selected: {if (selectedServerId != null) selectedServerId!},
                             onSelectionChanged: (v) {
-                              setSheetState(() => selectedServerId = v.first);
+                              setSheetState(() {
+                                selectedServerId = v.first;
+                                selectedBackend = provider.preferredBackendForServer(selectedServerId);
+                              });
+                            },
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.compact,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+
+                    if (backends.length > 1) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: SegmentedButton<String>(
+                            segments: backends.map((backend) {
+                              return ButtonSegment(
+                                value: backend,
+                                label: Text(_backendLabel(backend)),
+                                icon: Icon(_backendIcon(backend), size: 16),
+                              );
+                            }).toList(),
+                            selected: {selectedBackend},
+                            onSelectionChanged: (v) {
+                              setSheetState(() => selectedBackend = v.first);
                             },
                             style: const ButtonStyle(
                               visualDensity: VisualDensity.compact,
@@ -497,6 +545,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             provider.scheduleTask(
                               prompt: prompt,
                               cwd: cwd,
+                              backend: selectedBackend,
                               scheduledTime: selectedDate.toUtc().toIso8601String(),
                               recurrenceType: recurrenceType != 'once' ? recurrenceType : null,
                               customIntervalMs: recurrenceType == 'custom' ? (customHours * 3600000 + customMinutes * 60000) : null,
@@ -607,6 +656,8 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     final existingRecurrence = task['recurrence'] as Map<String, dynamic>?;
     String recurrenceType = existingRecurrence?['type'] as String? ?? 'once';
     bool reuseSession = task['reuseSession'] as bool? ?? false;
+    String selectedBackend = task['backend'] as String? ?? 'claude';
+    final taskServerId = task['_serverId'] as String?;
 
     // Parse custom interval
     final existingIntervalMs = existingRecurrence?['intervalMs'] as int? ?? 1800000;
@@ -622,6 +673,12 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
             final recentCwds = _getRecentCwds(provider);
+            final availableBackends = provider.backendsForServer(
+              taskServerId != null && taskServerId.isNotEmpty ? taskServerId : null,
+            );
+            final backends = availableBackends.contains(selectedBackend)
+                ? availableBackends
+                : [selectedBackend, ...availableBackends.where((b) => b != selectedBackend)];
 
             return Padding(
               padding: EdgeInsets.only(
@@ -647,7 +704,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                         controller: promptController,
                         decoration: const InputDecoration(
                           labelText: 'Prompt',
-                          hintText: 'What should Claude do?',
+                          hintText: 'What should the agent do?',
                           border: OutlineInputBorder(),
                           prefixIcon: Icon(Icons.chat_outlined),
                         ),
@@ -656,6 +713,33 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
+
+                    if (backends.length > 1) ...[
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: SizedBox(
+                          width: double.infinity,
+                          child: SegmentedButton<String>(
+                            segments: backends.map((backend) {
+                              return ButtonSegment(
+                                value: backend,
+                                label: Text(_backendLabel(backend)),
+                                icon: Icon(_backendIcon(backend), size: 16),
+                              );
+                            }).toList(),
+                            selected: {selectedBackend},
+                            onSelectionChanged: (v) {
+                              setSheetState(() => selectedBackend = v.first);
+                            },
+                            style: const ButtonStyle(
+                              visualDensity: VisualDensity.compact,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                    ],
 
                     const Divider(height: 1),
 
@@ -907,6 +991,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                               taskId: taskId,
                               prompt: prompt,
                               cwd: cwd,
+                              backend: selectedBackend,
                               scheduledTime: selectedDate.toUtc().toIso8601String(),
                               recurrenceType: recurrenceType,
                               customIntervalMs: recurrenceType == 'custom'
@@ -1059,7 +1144,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Tap + to schedule a task, or ask Claude\nto schedule one for you',
+                        'Tap + to schedule a task, or ask your agent\nto schedule one for you',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,
@@ -1084,6 +1169,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     final recurrence = task['recurrence'] as Map<String, dynamic>?;
                     final runCount = task['runCount'] as int? ?? 0;
                     final runs = (task['runs'] as List?) ?? [];
+                    final backend = task['backend'] as String? ?? 'claude';
                     final isRecurring = recurrence != null;
                     final isExpanded = _expandedTasks.contains(taskId);
 
@@ -1184,6 +1270,24 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                           ),
                                           const SizedBox(height: 2),
                                         ],
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              _backendIcon(backend),
+                                              size: 12,
+                                              color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Text(
+                                              _backendLabel(backend),
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 2),
                                         // CWD
                                         Row(
                                           children: [
