@@ -2641,13 +2641,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         .textContent
         .replaceAll(_systemReminderRegex, '');
 
-    // Trim leading/trailing whitespace from cleaned text
-    _currentStreamingMessage!.textContent = _currentStreamingMessage!
-        .textContent
-        .trim();
-
     // Only add to the message list once there's visible content
-    if (_currentStreamingMessage!.textContent.isNotEmpty &&
+    if (_currentStreamingMessage!.textContent.trim().isNotEmpty &&
         !_messages.contains(_currentStreamingMessage)) {
       _messages.add(_currentStreamingMessage!);
     }
