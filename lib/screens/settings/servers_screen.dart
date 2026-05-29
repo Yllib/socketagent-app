@@ -45,18 +45,30 @@ class _ServersScreenState extends State<ServersScreen> {
                 IconButton(
                   icon: const Icon(Icons.qr_code, size: 20),
                   tooltip: 'Export configs',
-                  onPressed: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const ConfigExportScreen())),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ConfigExportScreen(),
+                    ),
+                  ),
                 ),
               IconButton(
                 icon: const Icon(Icons.qr_code_scanner, size: 20),
                 tooltip: 'Import configs',
                 onPressed: () async {
-                  final imported = await Navigator.push<int>(context,
-                    MaterialPageRoute(builder: (_) => const ConfigImportScreen()));
+                  final imported = await Navigator.push<int>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ConfigImportScreen(),
+                    ),
+                  );
                   if (imported != null && imported > 0 && context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Imported $imported server${imported == 1 ? '' : 's'}')),
+                      SnackBar(
+                        content: Text(
+                          'Imported $imported server${imported == 1 ? '' : 's'}',
+                        ),
+                      ),
                     );
                   }
                 },
@@ -73,8 +85,11 @@ class _ServersScreenState extends State<ServersScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.dns_outlined, size: 64,
-                          color: Theme.of(context).colorScheme.outline),
+                      Icon(
+                        Icons.dns_outlined,
+                        size: 64,
+                        color: Theme.of(context).colorScheme.outline,
+                      ),
                       const SizedBox(height: 16),
                       Text(
                         'No servers configured',
@@ -88,7 +103,9 @@ class _ServersScreenState extends State<ServersScreen> {
                         'Tap "Add Server" to connect',
                         style: TextStyle(
                           fontSize: 14,
-                          color: Theme.of(context).colorScheme.outline.withAlpha(178),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.outline.withAlpha(178),
                         ),
                       ),
                     ],
@@ -105,23 +122,28 @@ class _ServersScreenState extends State<ServersScreen> {
                         isConnected
                             ? Icons.cloud_done
                             : isConnecting
-                                ? Icons.cloud_sync
-                                : Icons.cloud_off,
+                            ? Icons.cloud_sync
+                            : Icons.cloud_off,
                         color: isConnected
                             ? Colors.green
                             : isConnecting
-                                ? Colors.orange
-                                : Colors.grey,
+                            ? Colors.orange
+                            : Colors.grey,
                         size: 22,
                       ),
-                      title: Text(config.name, style: const TextStyle(fontSize: 14)),
+                      title: Text(
+                        config.name,
+                        style: const TextStyle(fontSize: 14),
+                      ),
                       subtitle: Text(
                         config.useRelay
                             ? 'Relay${config.isRelayPaired ? '' : ' (not paired)'}'
                             : '${config.host}:${config.port}',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(128),
                         ),
                       ),
                       trailing: Row(
@@ -129,21 +151,32 @@ class _ServersScreenState extends State<ServersScreen> {
                         children: [
                           IconButton(
                             icon: Icon(
-                              config.isRelayPaired ? Icons.link : Icons.qr_code_scanner,
+                              config.isRelayPaired
+                                  ? Icons.link
+                                  : Icons.qr_code_scanner,
                               size: 20,
                               color: config.isRelayPaired ? Colors.green : null,
                             ),
-                            tooltip: config.isRelayPaired ? 'Re-pair relay' : 'Pair relay',
-                            onPressed: () => _pairServerRelay(context, provider, config),
+                            tooltip: config.isRelayPaired
+                                ? 'Re-pair relay'
+                                : 'Pair relay',
+                            onPressed: () =>
+                                _pairServerRelay(context, provider, config),
                           ),
                           IconButton(
                             icon: const Icon(Icons.delete_outline, size: 20),
-                            onPressed: () => _confirmDeleteServer(context, provider, config),
+                            onPressed: () =>
+                                _confirmDeleteServer(context, provider, config),
                           ),
                         ],
                       ),
-                      onTap: () => _showServerDialog(context, provider, existing: config),
-                      onLongPress: () => _showServerMenu(context, provider, config),
+                      onTap: () => _showServerDialog(
+                        context,
+                        provider,
+                        existing: config,
+                      ),
+                      onLongPress: () =>
+                          _showServerMenu(context, provider, config),
                     );
                   }).toList(),
                 ),
@@ -152,16 +185,25 @@ class _ServersScreenState extends State<ServersScreen> {
     );
   }
 
-  void _showServerDialog(BuildContext context, ChatProvider provider, {ServerConfig? existing}) {
+  void _showServerDialog(
+    BuildContext context,
+    ChatProvider provider, {
+    ServerConfig? existing,
+  }) {
     final nameCtrl = TextEditingController(text: existing?.name ?? '');
     final cwdCtrl = TextEditingController(text: existing?.defaultCwd ?? '');
-    final sysPromptCtrl = TextEditingController(text: existing?.systemPrompt ?? '');
+    final sysPromptCtrl = TextEditingController(
+      text: existing?.systemPrompt ?? '',
+    );
     final hostCtrl = TextEditingController(text: existing?.host ?? '');
-    final portCtrl = TextEditingController(text: existing?.port.toString() ?? '8085');
+    final portCtrl = TextEditingController(
+      text: existing?.port.toString() ?? '8085',
+    );
     final tokenCtrl = TextEditingController(text: existing?.token ?? '');
     bool tokenVis = false;
     int? selectedColor = existing?.colorValue;
-    bool useRelay = existing?.useRelay ?? true; // Default to relay for new servers
+    bool useRelay =
+        existing?.useRelay ?? true; // Default to relay for new servers
     // For existing direct servers, auto-expand the advanced section
     bool advancedExpanded = existing != null && !existing.useRelay;
 
@@ -205,6 +247,71 @@ class _ServersScreenState extends State<ServersScreen> {
                     alignLabelWithHint: true,
                   ),
                 ),
+                if (existing != null &&
+                    provider.backendsForServer(existing.id).contains('codex') &&
+                    provider
+                        .codexDriversAvailableForServer(existing.id)
+                        .isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.developer_board, size: 20),
+                          SizedBox(width: 12),
+                          Text('Codex Runtime'),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        width: double.infinity,
+                        child: SegmentedButton<String>(
+                          showSelectedIcon: false,
+                          selected: {
+                            provider
+                                    .codexDriversAvailableForServer(existing.id)
+                                    .contains(
+                                      provider.codexDriverForServer(
+                                        existing.id,
+                                      ),
+                                    )
+                                ? provider.codexDriverForServer(existing.id)
+                                : provider
+                                      .codexDriversAvailableForServer(
+                                        existing.id,
+                                      )
+                                      .first,
+                          },
+                          segments: provider
+                              .codexDriversAvailableForServer(existing.id)
+                              .map(
+                                (driver) => ButtonSegment<String>(
+                                  value: driver,
+                                  label: Text(
+                                    driver == 'app-server'
+                                        ? 'App Server'
+                                        : 'Exec',
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onSelectionChanged:
+                              provider.connMgr.statusOf(existing.id) ==
+                                  ConnectionStatus.connected
+                              ? (values) {
+                                  provider.setCodexDriverForServer(
+                                    existing.id,
+                                    values.first,
+                                  );
+                                  setDialogState(() {});
+                                }
+                              : null,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 12),
                 // Badge color picker
                 Column(
@@ -221,30 +328,48 @@ class _ServersScreenState extends State<ServersScreen> {
                     Wrap(
                       spacing: 6,
                       runSpacing: 6,
-                      children: [
-                        null,
-                        0xFF5C6BC0, 0xFF42A5F5, 0xFF26A69A, 0xFF66BB6A,
-                        0xFFFF7043, 0xFFAB47BC, 0xFFEF5350, 0xFFFFA726,
-                      ].map((c) => GestureDetector(
-                        onTap: () => setDialogState(() => selectedColor = c),
-                        child: Container(
-                          width: 28,
-                          height: 28,
-                          decoration: BoxDecoration(
-                            color: c != null ? Color(c) : null,
-                            border: Border.all(
-                              color: selectedColor == c
-                                  ? Theme.of(context).colorScheme.primary
-                                  : Colors.grey.withAlpha(80),
-                              width: selectedColor == c ? 2.5 : 1,
-                            ),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: c == null
-                              ? Icon(Icons.block, size: 16, color: Colors.grey.withAlpha(120))
-                              : null,
-                        ),
-                      )).toList(),
+                      children:
+                          [
+                                null,
+                                0xFF5C6BC0,
+                                0xFF42A5F5,
+                                0xFF26A69A,
+                                0xFF66BB6A,
+                                0xFFFF7043,
+                                0xFFAB47BC,
+                                0xFFEF5350,
+                                0xFFFFA726,
+                              ]
+                              .map(
+                                (c) => GestureDetector(
+                                  onTap: () =>
+                                      setDialogState(() => selectedColor = c),
+                                  child: Container(
+                                    width: 28,
+                                    height: 28,
+                                    decoration: BoxDecoration(
+                                      color: c != null ? Color(c) : null,
+                                      border: Border.all(
+                                        color: selectedColor == c
+                                            ? Theme.of(
+                                                context,
+                                              ).colorScheme.primary
+                                            : Colors.grey.withAlpha(80),
+                                        width: selectedColor == c ? 2.5 : 1,
+                                      ),
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: c == null
+                                        ? Icon(
+                                            Icons.block,
+                                            size: 16,
+                                            color: Colors.grey.withAlpha(120),
+                                          )
+                                        : null,
+                                  ),
+                                ),
+                              )
+                              .toList(),
                     ),
                   ],
                 ),
@@ -256,7 +381,9 @@ class _ServersScreenState extends State<ServersScreen> {
                       'This server is paired via relay.',
                       style: TextStyle(
                         fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(160),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(160),
                       ),
                     )
                   else if (existing == null)
@@ -264,14 +391,18 @@ class _ServersScreenState extends State<ServersScreen> {
                       'After adding, scan the QR code shown on the server to pair.',
                       style: TextStyle(
                         fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(160),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(160),
                       ),
                     ),
                 ],
                 // Advanced: Direct connection (collapsed by default)
                 const SizedBox(height: 8),
                 Theme(
-                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  data: Theme.of(
+                    context,
+                  ).copyWith(dividerColor: Colors.transparent),
                   child: ExpansionTile(
                     initiallyExpanded: advancedExpanded,
                     tilePadding: EdgeInsets.zero,
@@ -279,14 +410,18 @@ class _ServersScreenState extends State<ServersScreen> {
                       'Advanced: Direct connection',
                       style: TextStyle(
                         fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(140),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(140),
                       ),
                     ),
                     subtitle: Text(
                       'For manual port forwarding',
                       style: TextStyle(
                         fontSize: 11,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(100),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(100),
                       ),
                     ),
                     onExpansionChanged: (expanded) {
@@ -327,8 +462,13 @@ class _ServersScreenState extends State<ServersScreen> {
                           border: const OutlineInputBorder(),
                           prefixIcon: const Icon(Icons.key),
                           suffixIcon: IconButton(
-                            icon: Icon(tokenVis ? Icons.visibility_off : Icons.visibility),
-                            onPressed: () => setDialogState(() => tokenVis = !tokenVis),
+                            icon: Icon(
+                              tokenVis
+                                  ? Icons.visibility_off
+                                  : Icons.visibility,
+                            ),
+                            onPressed: () =>
+                                setDialogState(() => tokenVis = !tokenVis),
                           ),
                         ),
                       ),
@@ -344,7 +484,12 @@ class _ServersScreenState extends State<ServersScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton.icon(
-              icon: Icon(useRelay && !(existing?.isRelayPaired ?? false) ? Icons.qr_code_scanner : null, size: 16),
+              icon: Icon(
+                useRelay && !(existing?.isRelayPaired ?? false)
+                    ? Icons.qr_code_scanner
+                    : null,
+                size: 16,
+              ),
               onPressed: () {
                 final name = nameCtrl.text.trim();
                 if (!useRelay) {
@@ -360,7 +505,8 @@ class _ServersScreenState extends State<ServersScreen> {
                     port: port,
                     token: token,
                     useRelay: false,
-                    sortOrder: existing?.sortOrder ?? provider.serverConfigs.length,
+                    sortOrder:
+                        existing?.sortOrder ?? provider.serverConfigs.length,
                     defaultCwd: cwdCtrl.text.trim(),
                     colorValue: selectedColor,
                     systemPrompt: sysPromptCtrl.text.trim(),
@@ -375,7 +521,9 @@ class _ServersScreenState extends State<ServersScreen> {
                 } else {
                   if (name.isEmpty) {
                     ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(content: Text('Enter a name for the server')),
+                      const SnackBar(
+                        content: Text('Enter a name for the server'),
+                      ),
                     );
                     return;
                   }
@@ -386,7 +534,8 @@ class _ServersScreenState extends State<ServersScreen> {
                     port: existing?.port ?? 8085,
                     token: existing?.token ?? '',
                     useRelay: true,
-                    sortOrder: existing?.sortOrder ?? provider.serverConfigs.length,
+                    sortOrder:
+                        existing?.sortOrder ?? provider.serverConfigs.length,
                     relayUrl: existing?.relayUrl ?? '',
                     pairingToken: existing?.pairingToken ?? '',
                     serverPubkey: existing?.serverPubkey ?? '',
@@ -411,10 +560,12 @@ class _ServersScreenState extends State<ServersScreen> {
               },
               label: Text(
                 existing != null
-                    ? (useRelay && !existing.isRelayPaired ? 'Save & Pair' : 'Save')
+                    ? (useRelay && !existing.isRelayPaired
+                          ? 'Save & Pair'
+                          : 'Save')
                     : useRelay
-                        ? 'Add & Pair'
-                        : 'Add',
+                    ? 'Add & Pair'
+                    : 'Add',
               ),
             ),
           ],
@@ -423,11 +574,16 @@ class _ServersScreenState extends State<ServersScreen> {
     );
   }
 
-  Future<void> _pairServerRelay(BuildContext context, ChatProvider provider, ServerConfig config) async {
+  Future<void> _pairServerRelay(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) async {
     final result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PairScreen(
-          cryptoService: provider.connMgr.getCrypto(config.id) ?? provider.crypto,
+          cryptoService:
+              provider.connMgr.getCrypto(config.id) ?? provider.crypto,
           serverId: config.id,
         ),
       ),
@@ -443,8 +599,13 @@ class _ServersScreenState extends State<ServersScreen> {
     }
   }
 
-  void _showServerMenu(BuildContext context, ChatProvider provider, ServerConfig config) {
-    final isConnected = provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
+  void _showServerMenu(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) {
+    final isConnected =
+        provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
     final plugins = provider.serverPlugins(config.id);
     final hasOutlookAuth = plugins.contains('outlook-auth');
 
@@ -456,7 +617,13 @@ class _ServersScreenState extends State<ServersScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text(config.name, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              child: Text(
+                config.name,
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
             ),
             if (isConnected)
               ListTile(
@@ -471,16 +638,83 @@ class _ServersScreenState extends State<ServersScreen> {
               ListTile(
                 leading: const Icon(Icons.mail_lock),
                 title: const Text('Outlook Sign-In'),
-                subtitle: const Text('Refresh email tokens', style: TextStyle(fontSize: 12)),
+                subtitle: const Text(
+                  'Refresh email tokens',
+                  style: TextStyle(fontSize: 12),
+                ),
                 onTap: () {
                   Navigator.pop(ctx);
                   _startOutlookAuth(context, provider, config);
                 },
               ),
+            Consumer<ChatProvider>(
+              builder: (context, currentProvider, _) {
+                final backends = currentProvider.backendsForServer(config.id);
+                final drivers = currentProvider.codexDriversAvailableForServer(
+                  config.id,
+                );
+                if (!backends.contains('codex') || drivers.isEmpty) {
+                  return const SizedBox.shrink();
+                }
+                final selected =
+                    drivers.contains(
+                      currentProvider.codexDriverForServer(config.id),
+                    )
+                    ? currentProvider.codexDriverForServer(config.id)
+                    : drivers.first;
+                final canChange = isConnected && drivers.length > 1;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.developer_board, size: 22),
+                      const SizedBox(width: 16),
+                      const Expanded(
+                        child: Text(
+                          'Codex Runtime',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                      ),
+                      SegmentedButton<String>(
+                        showSelectedIcon: false,
+                        selected: {selected},
+                        segments: drivers
+                            .map(
+                              (driver) => ButtonSegment<String>(
+                                value: driver,
+                                label: Text(
+                                  driver == 'app-server'
+                                      ? 'App Server'
+                                      : 'Exec',
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onSelectionChanged: canChange
+                            ? (values) {
+                                final next = values.first;
+                                currentProvider.setCodexDriverForServer(
+                                  config.id,
+                                  next,
+                                );
+                              }
+                            : null,
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
             if (!isConnected)
               const ListTile(
                 leading: Icon(Icons.cloud_off, color: Colors.grey),
-                title: Text('Not connected', style: TextStyle(color: Colors.grey)),
+                title: Text(
+                  'Not connected',
+                  style: TextStyle(color: Colors.grey),
+                ),
               ),
             ListTile(
               leading: const Icon(Icons.edit),
@@ -505,7 +739,11 @@ class _ServersScreenState extends State<ServersScreen> {
     );
   }
 
-  Future<void> _startOutlookAuth(BuildContext context, ChatProvider provider, ServerConfig config) async {
+  Future<void> _startOutlookAuth(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) async {
     final result = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(builder: (_) => const OutlookAuthScreen()),
     );
@@ -513,7 +751,8 @@ class _ServersScreenState extends State<ServersScreen> {
     if (result == null || !mounted) return;
 
     // Generate an authRequestId and send tokens as an answer to this specific server
-    final authRequestId = 'outlook_auth_${DateTime.now().millisecondsSinceEpoch}_manual';
+    final authRequestId =
+        'outlook_auth_${DateTime.now().millisecondsSinceEpoch}_manual';
     provider.connMgr.sendToServer(config.id, {
       'type': 'answer',
       'questionId': authRequestId,
@@ -530,7 +769,11 @@ class _ServersScreenState extends State<ServersScreen> {
     }
   }
 
-  void _showVersionCheck(BuildContext context, ChatProvider provider, ServerConfig config) async {
+  void _showVersionCheck(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) async {
     // Show loading dialog
     showDialog(
       context: context,
@@ -583,32 +826,56 @@ class _ServersScreenState extends State<ServersScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (local != null) ...[
-              Text('Current:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(
+                'Current:',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
               const SizedBox(height: 4),
-              Text('${(local['hash'] as String?)?.substring(0, 7) ?? '?'}  ${local['message'] ?? ''}',
-                style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
-              Text(local['date']?.toString() ?? '',
-                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withAlpha(128))),
+              Text(
+                '${(local['hash'] as String?)?.substring(0, 7) ?? '?'}  ${local['message'] ?? ''}',
+                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+              ),
+              Text(
+                local['date']?.toString() ?? '',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                ),
+              ),
             ],
             if (remote != null && updateAvailable) ...[
               const SizedBox(height: 12),
-              Text('Available:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(
+                'Available:',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
               const SizedBox(height: 4),
-              Text('${(remote['hash'] as String?)?.substring(0, 7) ?? '?'}  ${remote['message'] ?? ''}',
-                style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
-              Text(remote['date']?.toString() ?? '',
-                style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurface.withAlpha(128))),
+              Text(
+                '${(remote['hash'] as String?)?.substring(0, 7) ?? '?'}  ${remote['message'] ?? ''}',
+                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+              ),
+              Text(
+                remote['date']?.toString() ?? '',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                ),
+              ),
               if (commitsBehind > 0)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
-                  child: Text('$commitsBehind commit${commitsBehind == 1 ? '' : 's'} behind',
-                    style: TextStyle(fontSize: 12, color: Colors.orange)),
+                  child: Text(
+                    '$commitsBehind commit${commitsBehind == 1 ? '' : 's'} behind',
+                    style: TextStyle(fontSize: 12, color: Colors.orange),
+                  ),
                 ),
             ],
             if (fetchError != null) ...[
               const SizedBox(height: 8),
-              Text('Fetch error: $fetchError',
-                style: const TextStyle(fontSize: 11, color: Colors.red)),
+              Text(
+                'Fetch error: $fetchError',
+                style: const TextStyle(fontSize: 11, color: Colors.red),
+              ),
             ],
           ],
         ),
@@ -631,7 +898,11 @@ class _ServersScreenState extends State<ServersScreen> {
     );
   }
 
-  void _forceUpdate(BuildContext context, ChatProvider provider, ServerConfig config) async {
+  void _forceUpdate(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) async {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -652,7 +923,10 @@ class _ServersScreenState extends State<ServersScreen> {
     Navigator.pop(context); // dismiss loading
 
     final success = result['success'] == true;
-    final message = result['message'] as String? ?? result['error'] as String? ?? 'Unknown result';
+    final message =
+        result['message'] as String? ??
+        result['error'] as String? ??
+        'Unknown result';
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -662,12 +936,18 @@ class _ServersScreenState extends State<ServersScreen> {
     );
   }
 
-  void _confirmDeleteServer(BuildContext context, ChatProvider provider, ServerConfig config) {
+  void _confirmDeleteServer(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Server?'),
-        content: Text('Remove "${config.name}" and all its sessions from the list?'),
+        content: Text(
+          'Remove "${config.name}" and all its sessions from the list?',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),

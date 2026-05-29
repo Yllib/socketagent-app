@@ -14,8 +14,18 @@ class ArchiveScreen extends StatefulWidget {
 enum _ArchiveSort { newestFirst, oldestFirst, titleAZ, mostMessages }
 
 const List<String> _monthNames = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  'Jan',
+  'Feb',
+  'Mar',
+  'Apr',
+  'May',
+  'Jun',
+  'Jul',
+  'Aug',
+  'Sep',
+  'Oct',
+  'Nov',
+  'Dec',
 ];
 
 String _formatRelative(String iso) {
@@ -78,9 +88,18 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   String _displayCwd(String cwd) {
     final homePattern = RegExp(r'^/home/[^/]+/');
     final homeExact = RegExp(r'^/home/[^/]+$');
-    if (homePattern.hasMatch(cwd)) return '~/${cwd.replaceFirst(homePattern, '')}';
+    if (homePattern.hasMatch(cwd))
+      return '~/${cwd.replaceFirst(homePattern, '')}';
     if (homeExact.hasMatch(cwd)) return '~';
     return cwd;
+  }
+
+  String _backendLabel(String? backend) {
+    return backend == 'codex' ? 'Codex' : 'Claude';
+  }
+
+  IconData _backendIcon(String? backend) {
+    return backend == 'codex' ? Icons.terminal : Icons.auto_awesome;
   }
 
   List<ArchiveEntry> _sortedArchives(List<ArchiveEntry> xs) {
@@ -156,7 +175,11 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
       ),
     );
     if (confirmed == true && mounted) {
-      context.read<ChatProvider>().deleteArchive(entry.sid, entry.ts);
+      context.read<ChatProvider>().deleteArchive(
+        entry.sid,
+        entry.ts,
+        serverId: entry.serverId.isNotEmpty ? entry.serverId : null,
+      );
     }
   }
 
@@ -186,7 +209,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                     Text(
                       _sortLabel(s),
                       style: TextStyle(
-                        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.normal,
                         color: selected ? theme.colorScheme.primary : null,
                       ),
                     ),
@@ -214,8 +239,11 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Icon(Icons.inventory_2_outlined, size: 64,
-                        color: theme.colorScheme.onSurface.withAlpha(90)),
+                    Icon(
+                      Icons.inventory_2_outlined,
+                      size: 64,
+                      color: theme.colorScheme.onSurface.withAlpha(90),
+                    ),
                     const SizedBox(height: 16),
                     Text(
                       'No archived sessions',
@@ -250,7 +278,7 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
               itemBuilder: (context, idx) {
                 final e = archives[idx];
                 return Dismissible(
-                  key: Key('archive_${e.sid}_${e.ts}'),
+                  key: Key('archive_${e.serverId}_${e.sid}_${e.ts}'),
                   direction: DismissDirection.endToStart,
                   background: Container(
                     alignment: Alignment.centerRight,
@@ -264,7 +292,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                   },
                   child: ListTile(
                     leading: Icon(
-                      e.hasJsonl ? Icons.restore : Icons.description_outlined,
+                      e.hasJsonl
+                          ? _backendIcon(e.backend)
+                          : Icons.description_outlined,
                       color: theme.colorScheme.primary.withAlpha(180),
                     ),
                     title: Text(
@@ -282,6 +312,54 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 12),
                           ),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 2,
+                          children: [
+                            Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _backendIcon(e.backend),
+                                  size: 12,
+                                  color: theme.colorScheme.onSurface.withAlpha(
+                                    130,
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _backendLabel(e.backend),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurface
+                                        .withAlpha(130),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            if (e.serverName.isNotEmpty)
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.dns_outlined,
+                                    size: 12,
+                                    color: theme.colorScheme.onSurface
+                                        .withAlpha(130),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    e.serverName,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme.colorScheme.onSurface
+                                          .withAlpha(130),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
                         Tooltip(
                           message: _formatAbsolute(e.clearedAt),
                           child: Text(
@@ -329,9 +407,11 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
   }
 
   Future<void> _load() async {
-    final messages = await context
-        .read<ChatProvider>()
-        .fetchArchiveHistory(widget.entry.sid, widget.entry.ts);
+    final messages = await context.read<ChatProvider>().fetchArchiveHistory(
+      widget.entry.sid,
+      widget.entry.ts,
+      serverId: widget.entry.serverId.isNotEmpty ? widget.entry.serverId : null,
+    );
     if (!mounted) return;
     setState(() {
       _messages = messages;
@@ -346,7 +426,7 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
         title: const Text('Restore Session'),
         content: Text(
           'Put back "${widget.entry.title}" and its history. '
-          'Claude will resume with full prior context.',
+          '${widget.entry.backend == 'codex' ? 'Codex' : 'Claude'} will resume with full prior context.',
         ),
         actions: [
           TextButton(
@@ -361,7 +441,13 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
       ),
     );
     if (confirmed == true && mounted) {
-      context.read<ChatProvider>().restoreArchive(widget.entry.sid, widget.entry.ts);
+      context.read<ChatProvider>().restoreArchive(
+        widget.entry.sid,
+        widget.entry.ts,
+        serverId: widget.entry.serverId.isNotEmpty
+            ? widget.entry.serverId
+            : null,
+      );
       if (!mounted) return;
       Navigator.of(context).pop();
     }
@@ -389,7 +475,13 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
       ),
     );
     if (confirmed == true && mounted) {
-      context.read<ChatProvider>().deleteArchive(widget.entry.sid, widget.entry.ts);
+      context.read<ChatProvider>().deleteArchive(
+        widget.entry.sid,
+        widget.entry.ts,
+        serverId: widget.entry.serverId.isNotEmpty
+            ? widget.entry.serverId
+            : null,
+      );
       if (!mounted) return;
       Navigator.of(context).pop();
     }
@@ -401,7 +493,9 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.entry.title.isNotEmpty ? widget.entry.title : 'Archived Session',
+          widget.entry.title.isNotEmpty
+              ? widget.entry.title
+              : 'Archived Session',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
@@ -425,15 +519,22 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
                 Container(
                   width: double.infinity,
                   color: theme.colorScheme.surfaceContainerHigh,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       if (widget.entry.cwd.isNotEmpty)
-                        Text('cwd: ${widget.entry.cwd}',
-                            style: const TextStyle(fontSize: 12)),
+                        Text(
+                          'cwd: ${widget.entry.cwd}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
                       Text(
-                        '${widget.entry.messageCount} messages · cleared ${_formatAbsolute(widget.entry.clearedAt)}',
+                        '${widget.entry.backend == 'codex' ? 'Codex' : 'Claude'}'
+                        '${widget.entry.serverName.isNotEmpty ? ' · ${widget.entry.serverName}' : ''}'
+                        ' · ${widget.entry.messageCount} messages · cleared ${_formatAbsolute(widget.entry.clearedAt)}',
                         style: TextStyle(
                           fontSize: 11,
                           color: theme.colorScheme.onSurface.withAlpha(140),
@@ -450,7 +551,10 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
                           itemCount: _messages!.length,
                           itemBuilder: (_, idx) {
                             return _ArchiveMessageTile(
-                              entry: Map<String, dynamic>.from(_messages![idx] as Map),
+                              entry: Map<String, dynamic>.from(
+                                _messages![idx] as Map,
+                              ),
+                              backend: widget.entry.backend,
                             );
                           },
                         ),
@@ -463,7 +567,8 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
 
 class _ArchiveMessageTile extends StatelessWidget {
   final Map<String, dynamic> entry;
-  const _ArchiveMessageTile({required this.entry});
+  final String? backend;
+  const _ArchiveMessageTile({required this.entry, this.backend});
 
   @override
   Widget build(BuildContext context) {
@@ -485,7 +590,7 @@ class _ArchiveMessageTile extends StatelessWidget {
         break;
       case 'assistant':
         color = theme.colorScheme.surface;
-        label = 'Claude';
+        label = backend == 'codex' ? 'Codex' : 'Claude';
         icon = Icons.smart_toy_outlined;
         break;
       case 'tool_call':
@@ -512,8 +617,8 @@ class _ArchiveMessageTile extends StatelessWidget {
     final body = role == 'tool_call'
         ? (toolInput == null ? '' : toolInput.toString())
         : role == 'tool_result'
-            ? (toolOutput ?? content)
-            : content;
+        ? (toolOutput ?? content)
+        : content;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -528,7 +633,11 @@ class _ArchiveMessageTile extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 14, color: theme.colorScheme.onSurface.withAlpha(160)),
+              Icon(
+                icon,
+                size: 14,
+                color: theme.colorScheme.onSurface.withAlpha(160),
+              ),
               const SizedBox(width: 6),
               Text(
                 label,
