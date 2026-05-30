@@ -26,6 +26,9 @@ import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
+  static const String _legacyCancelPrepend =
+      '[The user cancelled your previous action. Follow their instructions below.]';
+
   final ConnectionManager _connMgr = ConnectionManager();
 
   /// Backwards-compat getter — routes to active server's WebSocketService.
@@ -461,10 +464,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         .toList();
     if (queued.isEmpty) return visible;
 
-    return [
-      ...visible.where((m) => !queued.contains(m)),
-      ...queued,
-    ];
+    return [...visible.where((m) => !queued.contains(m)), ...queued];
   }
 
   /// Get child messages for a subagent by its toolUseId
@@ -4281,6 +4281,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       userMsg.uploadProgress = null;
     }
 
+    _dropLegacyCancelPrepends();
     if (_pendingPrepends.isNotEmpty) {
       final prefix = _pendingPrepends.join('\n');
       prompt = '$prefix\n$prompt';
@@ -4449,9 +4450,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         toolName: 'cancelled',
       ),
     );
-    _addPrepend(
-      '[The user cancelled your previous action. Follow their instructions below.]',
-    );
+    // Hard stop is handled by the server abort/interrupt path. Do not turn it
+    // into a hidden instruction that gets prepended to the next user message.
+    _dropLegacyCancelPrepends();
     notifyListeners();
   }
 
@@ -5355,6 +5356,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _savePrepends();
   }
 
+  bool _isLegacyCancelPrepend(String text) {
+    return text.trim().startsWith(_legacyCancelPrepend);
+  }
+
+  void _dropLegacyCancelPrepends() {
+    final before = _pendingPrepends.length;
+    _pendingPrepends.removeWhere(_isLegacyCancelPrepend);
+    if (_pendingPrepends.length != before) {
+      _savePrepends();
+    }
+  }
+
   void _savePrepends() {
     if (_activeSessionId == null) return;
     SharedPreferences.getInstance().then((prefs) {
@@ -5363,13 +5376,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _loadPrepends() {
-    if (_activeSessionId == null) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null) {
       _pendingPrepends = [];
       return;
     }
     SharedPreferences.getInstance().then((prefs) {
-      _pendingPrepends =
-          prefs.getStringList('prepends_$_activeSessionId') ?? [];
+      if (_activeSessionId != sessionId) return;
+      final loaded = prefs.getStringList('prepends_$sessionId') ?? [];
+      _pendingPrepends = loaded
+          .where((p) => !_isLegacyCancelPrepend(p))
+          .toList();
+      if (_pendingPrepends.length != loaded.length) {
+        if (_pendingPrepends.isEmpty) {
+          prefs.remove('prepends_$sessionId');
+        } else {
+          prefs.setStringList('prepends_$sessionId', _pendingPrepends);
+        }
+      }
     });
   }
 
