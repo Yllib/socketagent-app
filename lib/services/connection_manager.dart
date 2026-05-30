@@ -17,7 +17,7 @@ class ServerStatusUpdate {
   ServerStatusUpdate(this.serverId, this.status);
 }
 
-/// Manages simultaneous WebSocket connections to multiple SocketClaude servers.
+/// Manages simultaneous WebSocket connections to multiple SocketAgent servers.
 ///
 /// Each server gets its own [WebSocketService] and (if relay) its own
 /// [CryptoService] with that server's public key.

@@ -53,11 +53,11 @@ class _PairScreenState extends State<PairScreen> {
     });
 
     try {
-      // Format: SC|<token>|<pubkey>
+      // Format: SA|<token>|<pubkey>
       final parts = rawData.split('|');
       if (parts.length != 3 || parts[0] != 'SC') {
         setState(() {
-          _error = 'Invalid QR code — expected SC|token|pubkey format';
+          _error = 'Invalid QR code — expected SA|token|pubkey format';
           _processing = false;
         });
         return;
@@ -161,7 +161,7 @@ class _PairScreenState extends State<PairScreen> {
                         expands: true,
                         textAlignVertical: TextAlignVertical.top,
                         decoration: InputDecoration(
-                          hintText: 'SC|token|pubkey',
+                          hintText: 'SA|token|pubkey',
                           border: const OutlineInputBorder(),
                           suffixIcon: IconButton(
                             icon: const Icon(Icons.paste),

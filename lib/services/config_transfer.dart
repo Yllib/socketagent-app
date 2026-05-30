@@ -14,7 +14,7 @@ class ExportPayload {
 }
 
 class ConfigTransfer {
-  static const String prefix = 'SCX';
+  static const String prefix = 'SAX';
   static const int version = 1;
 
   // Short key mappings
@@ -82,7 +82,7 @@ class ConfigTransfer {
   static ExportPayload decode(String raw) {
     final parts = raw.split('|');
     if (parts.length != 3 || parts[0] != prefix) {
-      throw const FormatException('Invalid format: expected SCX|version|data');
+      throw const FormatException('Invalid format: expected SAX|version|data');
     }
     final ver = int.tryParse(parts[1]);
     if (ver == null || ver > version) {
@@ -107,7 +107,7 @@ class ConfigTransfer {
     );
   }
 
-  /// Check if a string is an SCX config export payload.
+  /// Check if a string is an SAX config export payload.
   static bool isExportPayload(String raw) {
     return raw.startsWith('$prefix|');
   }

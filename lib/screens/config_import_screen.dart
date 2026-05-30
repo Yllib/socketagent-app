@@ -37,7 +37,7 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
     try {
       if (!ConfigTransfer.isExportPayload(rawData)) {
         setState(() {
-          _error = 'Not a config export QR code.\nExpected SCX| format (not SC| pairing format).';
+          _error = 'Not a config export QR code.\nExpected SAX| format (not SA| pairing format).';
           _processing = false;
         });
         return;
@@ -187,7 +187,7 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
                         expands: true,
                         textAlignVertical: TextAlignVertical.top,
                         decoration: InputDecoration(
-                          hintText: 'SCX|1|...',
+                          hintText: 'SAX|1|...',
                           border: const OutlineInputBorder(),
                           suffixIcon: IconButton(
                             icon: const Icon(Icons.paste),

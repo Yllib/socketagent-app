@@ -1,4 +1,4 @@
-package com.claudeassistant.app
+package com.socketagent.app
 
 import android.content.Intent
 import android.webkit.CookieManager
@@ -7,7 +7,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity : FlutterActivity() {
-    private val CHANNEL = "com.claudeassistant.app/intent"
+    private val CHANNEL = "com.socketagent.app/intent"
     private var wasAssistIntent = false
     private var methodChannel: MethodChannel? = null
 

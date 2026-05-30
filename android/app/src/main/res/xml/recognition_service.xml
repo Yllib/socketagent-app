@@ -1,2 +1,2 @@
 <recognition-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:settingsActivity="com.claudeassistant.app.MainActivity" />
+    android:settingsActivity="com.socketagent.app.MainActivity" />

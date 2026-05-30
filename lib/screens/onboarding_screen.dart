@@ -2,16 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
-import '../services/crypto_service.dart';
 import 'pair_screen.dart';
 
 class OnboardingScreen extends StatelessWidget {
   const OnboardingScreen({super.key});
 
   static const _windowsCmd =
-      'powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/Yllib/socketclaude/master/install.ps1 | iex"';
+      'powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/Yllib/socketagent/master/install.ps1 | iex"';
   static const _linuxCmd =
-      'curl -fsSL https://raw.githubusercontent.com/Yllib/socketclaude/master/install.sh | bash';
+      'curl -fsSL https://raw.githubusercontent.com/Yllib/socketagent/master/install.sh | bash';
 
   @override
   Widget build(BuildContext context) {
@@ -31,14 +30,14 @@ class OnboardingScreen extends StatelessWidget {
               Icon(Icons.bolt, size: 56, color: primary),
               const SizedBox(height: 12),
               Text(
-                'SocketClaude',
+                'SocketAgent',
                 style: theme.textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 4),
               Text(
-                'Claude Code on your phone',
+                'Claude and Codex on your phone',
                 style: theme.textTheme.bodyLarge?.copyWith(color: muted),
               ),
               const SizedBox(height: 40),
@@ -61,12 +60,12 @@ class OnboardingScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     _CommandBlock(
-                      label: 'Linux / macOS',
+                      label: 'Linux',
                       command: _linuxCmd,
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'This installs Node.js, Claude Code, and the SocketClaude server. A QR code will appear when it\'s done.',
+                      'This installs Node.js, the selected agent CLI(s), and the SocketAgent server. A QR code will appear when it\'s done.',
                       style: TextStyle(fontSize: 12, color: muted),
                     ),
                   ],
@@ -104,7 +103,7 @@ class OnboardingScreen extends StatelessWidget {
                 number: '3',
                 title: 'You\'re in',
                 child: Text(
-                  'Once paired, your phone connects to your PC through an encrypted relay. Chat with Claude Code from anywhere.',
+                  'Once paired, your phone connects to your PC through an encrypted relay. Chat with Claude or Codex from anywhere.',
                   style: TextStyle(fontSize: 13, color: muted),
                 ),
               ),

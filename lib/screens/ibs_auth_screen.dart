@@ -20,7 +20,6 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
 
   bool _authenticated = false;
   bool _loading = true;
-  String _currentUrl = '';
 
   @override
   void initState() {
@@ -39,13 +38,11 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
       ..setNavigationDelegate(NavigationDelegate(
         onPageStarted: (url) {
           setState(() {
-            _currentUrl = url;
             _loading = true;
           });
         },
         onPageFinished: (url) {
           setState(() {
-            _currentUrl = url;
             _loading = false;
             // Detect successful auth: URL is back on ibs.johnsoncontrols.com
             if (url.contains('ibs.johnsoncontrols.com') &&
@@ -64,7 +61,7 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
       );
   }
 
-  static const _channel = MethodChannel('com.claudeassistant.app/intent');
+  static const _channel = MethodChannel('com.socketagent.app/intent');
 
   Future<void> _saveAndClose() async {
     final cookies = <Map<String, String>>[];

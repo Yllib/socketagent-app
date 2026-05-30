@@ -126,7 +126,7 @@ class _AboutScreenState extends State<AboutScreen> {
           const SizedBox(height: 24),
           Center(
             child: Text(
-              'SocketClaude $_currentVersion',
+              'SocketAgent $_currentVersion',
               style: TextStyle(fontSize: 12, color: muted),
             ),
           ),

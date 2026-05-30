@@ -15,7 +15,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
   bool _loading = false;
   String? _error;
   bool _showWebView = false;
-  String? _checkoutUrl;
   String? _checkoutSessionId;
   late WebViewController _webViewController;
 
@@ -80,7 +79,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
       return;
     }
 
-    _checkoutUrl = url;
     // Extract session ID from the checkout response
     _checkoutSessionId = result['sessionId'] as String?;
 
@@ -175,14 +173,14 @@ class _PaywallScreenState extends State<PaywallScreen> {
               ),
               const SizedBox(height: 16),
               Text(
-                'SocketClaude',
+                'SocketAgent',
                 style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 8),
               Text(
-                'Claude on your phone, anywhere.',
+                'Claude and Codex on your phone, anywhere.',
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                   color: Theme.of(context).colorScheme.onSurface.withAlpha(180),
                 ),

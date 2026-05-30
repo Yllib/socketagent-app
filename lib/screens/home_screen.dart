@@ -235,7 +235,7 @@ class HomeScreenState extends State<HomeScreen> {
                       if (isPlan) flags.add('PLAN');
                       if (provider.rawMode) flags.add('RAW');
                       final suffix = flags.isEmpty ? '' : ' [${flags.join('·')}]';
-                      return (hasTitle ? title : 'SocketClaude') + suffix;
+                      return (hasTitle ? title : 'SocketAgent') + suffix;
                     }(),
                     style: TextStyle(
                       fontSize: 16,

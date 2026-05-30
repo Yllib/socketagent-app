@@ -1,4 +1,4 @@
-package com.claudeassistant.app
+package com.socketagent.app
 
 import android.content.Intent
 import android.speech.RecognitionService

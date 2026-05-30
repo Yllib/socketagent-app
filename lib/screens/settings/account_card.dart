@@ -23,7 +23,7 @@ class AccountCard extends StatelessWidget {
             context,
             icon: Icons.waving_hand,
             iconColor: Theme.of(context).colorScheme.primary,
-            title: 'Welcome to SocketClaude',
+            title: 'Welcome to SocketAgent',
             subtitle: 'Add a server to get started',
             action: FilledButton.icon(
               onPressed: onNavigateToServers,

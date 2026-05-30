@@ -1,7 +1,7 @@
 <voice-interaction-service xmlns:android="http://schemas.android.com/apk/res/android"
-    android:sessionService="com.claudeassistant.app.AssistantSessionService"
-    android:recognitionService="com.claudeassistant.app.AssistantRecognitionService"
-    android:settingsActivity="com.claudeassistant.app.MainActivity"
+    android:sessionService="com.socketagent.app.AssistantSessionService"
+    android:recognitionService="com.socketagent.app.AssistantRecognitionService"
+    android:settingsActivity="com.socketagent.app.MainActivity"
     android:supportsAssist="true"
     android:supportsLaunchVoiceAssistFromKeyguard="true"
     android:supportsLocalInteraction="true" />

@@ -4845,7 +4845,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Resume an SDK-only session (not yet in SocketClaude store).
+  /// Resume an SDK-only session (not yet in SocketAgent store).
   void resumeSdkSession(
     String sessionId,
     String cwd, {

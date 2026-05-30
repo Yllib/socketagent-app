@@ -74,7 +74,7 @@ class _ConfigExportScreenState extends State<ConfigExportScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Open SocketClaude → Settings → Import',
+                'Open SocketAgent → Settings → Import',
                 textAlign: TextAlign.center,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurface.withAlpha(128),

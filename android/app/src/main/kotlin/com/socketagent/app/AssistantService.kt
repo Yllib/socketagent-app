@@ -1,4 +1,4 @@
-package com.claudeassistant.app
+package com.socketagent.app
 
 import android.service.voice.VoiceInteractionService
 

@@ -27,7 +27,7 @@ class ClaudeAssistantApp extends StatelessWidget {
     return ChangeNotifierProvider(
       create: (_) => ChatProvider(),
       child: MaterialApp(
-        title: 'SocketClaude',
+        title: 'SocketAgent',
         debugShowCheckedModeBanner: false,
         navigatorObservers: [routeObserver],
         theme: ThemeData(
@@ -52,7 +52,7 @@ class AppLauncher extends StatefulWidget {
 }
 
 class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStateMixin {
-  static const _channel = MethodChannel('com.claudeassistant.app/intent');
+  static const _channel = MethodChannel('com.socketagent.app/intent');
   bool _checked = false;
   bool _splashDone = false;
   late final AnimationController _fadeController;
@@ -229,7 +229,7 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
             ),
             const SizedBox(height: 20),
             Text(
-              'SocketClaude',
+              'SocketAgent',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w600,

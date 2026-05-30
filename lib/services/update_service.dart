@@ -5,7 +5,6 @@ import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class UpdateInfo {
   final String latestVersion;
@@ -23,7 +22,7 @@ class UpdateInfo {
 
 class UpdateService extends ChangeNotifier {
   static const _versionUrl =
-      'https://raw.githubusercontent.com/Yllib/socketclaude/master/app-version.json';
+      'https://raw.githubusercontent.com/Yllib/socketagent/master/app-version.json';
 
   UpdateInfo? _updateInfo;
   double? _downloadProgress;
@@ -89,7 +88,7 @@ class UpdateService extends ChangeNotifier {
       final updateDir = Directory('${cacheDir.path}/updates');
       if (!await updateDir.exists()) await updateDir.create(recursive: true);
 
-      final apkPath = '${updateDir.path}/socketclaude-${_updateInfo!.latestVersion}.apk';
+      final apkPath = '${updateDir.path}/socketagent-${_updateInfo!.latestVersion}.apk';
       final apkFile = File(apkPath);
 
       // Delete old APKs
