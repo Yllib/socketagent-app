@@ -1712,6 +1712,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'tool_image':
         _handleToolImage(msg);
         break;
+      case 'codex_plan':
+        _handleCodexPlan(msg);
+        break;
       case 'tool_progress':
         _handleToolProgress(msg);
         break;
@@ -2905,6 +2908,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _messages[idx].toolImageFilePath = filePath;
       notifyListeners();
     }
+  }
+
+  void _handleCodexPlan(Map<String, dynamic> msg) {
+    final turnId = msg['turnId'] as String? ?? '';
+    final explanation = msg['explanation'] as String? ?? '';
+    final rawSteps = msg['plan'] as List? ?? const [];
+    final steps = rawSteps
+        .whereType<Map>()
+        .map((step) => Map<String, dynamic>.from(step))
+        .toList();
+    if (steps.isEmpty && explanation.trim().isEmpty) return;
+
+    final planMessage = ChatMessage.codexPlan(
+      turnId: turnId,
+      explanation: explanation,
+      steps: steps,
+    );
+    final idx = _messages.lastIndexWhere(
+      (m) => m.type == MessageType.codexPlan && m.toolUseId == turnId,
+    );
+    if (idx >= 0) {
+      _messages[idx] = planMessage;
+    } else {
+      _messages.add(planMessage);
+    }
+    notifyListeners();
   }
 
   /// Handle tool progress (elapsed time while tool runs)

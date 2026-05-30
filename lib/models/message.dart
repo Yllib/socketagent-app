@@ -17,6 +17,7 @@ enum MessageType {
   elicitationUrl,
   monitorOutput,
   skillInvocation,
+  codexPlan,
 }
 
 class ChatMessage {
@@ -137,6 +138,22 @@ class ChatMessage {
         'description': description,
         'body': body,
       },
+    );
+  }
+
+  factory ChatMessage.codexPlan({
+    required String turnId,
+    required String explanation,
+    required List<Map<String, dynamic>> steps,
+  }) {
+    return ChatMessage(
+      id: 'codex_plan_${turnId.isNotEmpty ? turnId : DateTime.now().microsecondsSinceEpoch}',
+      sender: MessageSender.system,
+      type: MessageType.codexPlan,
+      timestamp: DateTime.now(),
+      textContent: explanation,
+      toolUseId: turnId,
+      toolInput: {'explanation': explanation, 'steps': steps},
     );
   }
 

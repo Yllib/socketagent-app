@@ -387,6 +387,8 @@ class ChatViewState extends State<ChatView> {
         return MonitorCard(message: msg);
       case MessageType.skillInvocation:
         return _buildSkillInvocationCard(msg);
+      case MessageType.codexPlan:
+        return _CodexPlanCard(msg: msg);
     }
   }
 
@@ -959,6 +961,134 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _CodexPlanCard extends StatefulWidget {
+  final ChatMessage msg;
+  const _CodexPlanCard({required this.msg});
+
+  @override
+  State<_CodexPlanCard> createState() => _CodexPlanCardState();
+}
+
+class _CodexPlanCardState extends State<_CodexPlanCard> {
+  bool _expanded = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final steps = (widget.msg.toolInput?['steps'] as List? ?? const [])
+        .whereType<Map>()
+        .map((s) => Map<String, dynamic>.from(s))
+        .toList();
+    final explanation =
+        (widget.msg.toolInput?['explanation'] as String? ??
+                widget.msg.textContent)
+            .trim();
+    final completed = steps.where((s) => s['status'] == 'completed').length;
+    final total = steps.length;
+    final color = theme.colorScheme.tertiary;
+
+    return GestureDetector(
+      onTap: () => setState(() => _expanded = !_expanded),
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: color.withAlpha(70)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.fact_check_outlined, size: 15, color: color),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    total > 0 ? 'Codex Plan ($completed/$total)' : 'Codex Plan',
+                    style: TextStyle(
+                      color: color,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Icon(
+                  _expanded ? Icons.expand_less : Icons.expand_more,
+                  size: 16,
+                  color: theme.colorScheme.outline,
+                ),
+              ],
+            ),
+            if (_expanded) ...[
+              if (explanation.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  explanation,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.3,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              if (steps.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                ...steps.map((step) => _buildStep(context, step)),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStep(BuildContext context, Map<String, dynamic> step) {
+    final theme = Theme.of(context);
+    final status = step['status'] as String? ?? 'pending';
+    final text = step['step'] as String? ?? '';
+    final IconData icon;
+    final Color color;
+    switch (status) {
+      case 'completed':
+        icon = Icons.check_circle;
+        color = Colors.green.shade300;
+        break;
+      case 'inProgress':
+        icon = Icons.play_circle_fill;
+        color = Colors.yellow.shade300;
+        break;
+      default:
+        icon = Icons.radio_button_unchecked;
+        color = theme.colorScheme.outline;
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(icon, size: 14, color: color),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface,
+                fontSize: 12,
+                height: 1.3,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
