@@ -2749,7 +2749,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_subagentTasks.containsKey(toolUseId)) {
         _subagentTasks[toolUseId]!['status'] = 'completed';
       }
-    } else {
+    } else if (output.trim().isNotEmpty) {
       _messages.add(
         ChatMessage.toolResult(toolUseId: toolUseId, output: output),
       );
@@ -3970,7 +3970,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
           if (idx >= 0) {
             loaded[idx].toolOutput = output;
-          } else {
+            loaded[idx].toolStreaming = false;
+          } else if (output.trim().isNotEmpty) {
             loaded.add(
               ChatMessage.toolResult(toolUseId: toolUseId, output: output),
             );
