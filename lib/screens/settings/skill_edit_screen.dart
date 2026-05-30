@@ -35,6 +35,7 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
   late final TextEditingController _bodyController;
   String _scope = 'user';
   String _format = 'command';
+  String _agent = 'claude';
   bool _saving = false;
   bool _isNew = true;
   bool _isPlugin = false;
@@ -50,16 +51,20 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
     final fm = (e?['frontmatter'] as Map?)?.cast<String, dynamic>() ?? {};
 
     _nameController = TextEditingController(text: e?['name'] as String? ?? '');
-    _descriptionController =
-        TextEditingController(text: fm['description'] as String? ?? '');
-    _allowedToolsController =
-        TextEditingController(text: fm['allowed-tools'] as String? ?? '');
-    _argumentHintController =
-        TextEditingController(text: fm['argument-hint'] as String? ?? '');
-    _bodyController =
-        TextEditingController(text: e?['body'] as String? ?? '');
+    _descriptionController = TextEditingController(
+      text: fm['description'] as String? ?? '',
+    );
+    _allowedToolsController = TextEditingController(
+      text: fm['allowed-tools'] as String? ?? '',
+    );
+    _argumentHintController = TextEditingController(
+      text: fm['argument-hint'] as String? ?? '',
+    );
+    _bodyController = TextEditingController(text: e?['body'] as String? ?? '');
     _scope = e?['scope'] as String? ?? 'user';
     _format = e?['format'] as String? ?? 'command';
+    _agent = e?['agent'] as String? ?? 'claude';
+    if (_agent == 'codex') _format = 'skill';
   }
 
   @override
@@ -79,9 +84,9 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
   Future<void> _save() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Name is required')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Name is required')));
       return;
     }
 
@@ -104,6 +109,7 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
         'name': name,
         'scope': _scope,
         'format': _format,
+        'agent': _agent,
         'frontmatter': fm,
         'body': _bodyController.text,
       };
@@ -119,9 +125,9 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -133,9 +139,11 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
       '${widget.baseUrl}/skills?token=${Uri.encodeComponent(widget.token)}',
     );
     final response = await http
-        .put(uri,
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode(payload))
+        .put(
+          uri,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode(payload),
+        )
         .timeout(const Duration(seconds: 10));
 
     if (response.statusCode == 200) {
@@ -160,7 +168,9 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
           completer.complete(sm.data['ok'] == true);
           if (sm.data['ok'] != true && mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('Failed: ${sm.data['error'] ?? 'unknown'}')),
+              SnackBar(
+                content: Text('Failed: ${sm.data['error'] ?? 'unknown'}'),
+              ),
             );
           }
         }
@@ -183,8 +193,8 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
     final title = _isPlugin
         ? 'View Skill'
         : _isNew
-            ? 'New Skill'
-            : 'Edit Skill';
+        ? 'New Skill'
+        : 'Edit Skill';
 
     return Scaffold(
       appBar: AppBar(
@@ -225,7 +235,33 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Scope & Format row
+            // Agent, Scope & Format controls
+            DropdownButtonFormField<String>(
+              initialValue: _agent,
+              decoration: const InputDecoration(
+                labelText: 'Agent',
+                border: OutlineInputBorder(),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
+              ),
+              items: const [
+                DropdownMenuItem(value: 'claude', child: Text('Claude')),
+                DropdownMenuItem(value: 'codex', child: Text('Codex')),
+              ],
+              onChanged: _isPlugin
+                  ? null
+                  : (val) {
+                      if (val == null) return;
+                      setState(() {
+                        _agent = val;
+                        if (_agent == 'codex') _format = 'skill';
+                      });
+                    },
+            ),
+            const SizedBox(height: 16),
+
             Row(
               children: [
                 Expanded(
@@ -234,15 +270,21 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                     decoration: const InputDecoration(
                       labelText: 'Scope',
                       border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
+                      ),
                     ),
                     items: [
                       const DropdownMenuItem(
-                          value: 'user', child: Text('User')),
+                        value: 'user',
+                        child: Text('User'),
+                      ),
                       if (widget.projectCwd != null)
                         const DropdownMenuItem(
-                            value: 'project', child: Text('Project')),
+                          value: 'project',
+                          child: Text('Project'),
+                        ),
                     ],
                     onChanged: _isPlugin
                         ? null
@@ -258,15 +300,19 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                     decoration: const InputDecoration(
                       labelText: 'Type',
                       border: OutlineInputBorder(),
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                      contentPadding: EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
+                      ),
                     ),
                     items: const [
                       DropdownMenuItem(
-                          value: 'command', child: Text('Command')),
+                        value: 'command',
+                        child: Text('Command'),
+                      ),
                       DropdownMenuItem(value: 'skill', child: Text('Skill')),
                     ],
-                    onChanged: _isPlugin
+                    onChanged: _isPlugin || _agent == 'codex'
                         ? null
                         : (val) {
                             if (val != null) setState(() => _format = val);
@@ -323,9 +369,11 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
             // Body/Instructions header
             Row(
               children: [
-                Icon(Icons.article_outlined,
-                    size: 18,
-                    color: theme.colorScheme.onSurface.withAlpha(150)),
+                Icon(
+                  Icons.article_outlined,
+                  size: 18,
+                  color: theme.colorScheme.onSurface.withAlpha(150),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   'Instructions',
@@ -345,13 +393,12 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
               readOnly: _isPlugin,
               maxLines: null,
               minLines: 10,
-              style: const TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 13,
-              ),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
               decoration: InputDecoration(
                 hintText: _format == 'command'
                     ? 'Instructions for Claude when this command is invoked...\n\nUse \$ARGUMENTS for user input.\nUse !`command` for bash execution.\nUse @filepath for file references.'
+                    : _agent == 'codex'
+                    ? 'Guidance for Codex — describe when and how to apply this skill...'
                     : 'Guidance for Claude — describe when and how to apply this skill...',
                 border: const OutlineInputBorder(),
                 alignLabelWithHint: true,
@@ -369,8 +416,11 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline,
-                        size: 18, color: Colors.orange.shade300),
+                    Icon(
+                      Icons.info_outline,
+                      size: 18,
+                      color: Colors.orange.shade300,
+                    ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(

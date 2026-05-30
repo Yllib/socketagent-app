@@ -13,16 +13,13 @@ class _ServerSkill {
   final ServerConfig server;
   final String? projectCwd;
 
-  _ServerSkill({
-    required this.skill,
-    required this.server,
-    this.projectCwd,
-  });
+  _ServerSkill({required this.skill, required this.server, this.projectCwd});
 
   String get name => skill['name'] as String? ?? '';
   String get description => skill['description'] as String? ?? '';
   String get scope => skill['scope'] as String? ?? '';
   String get format => skill['format'] as String? ?? 'command';
+  String get agent => skill['agent'] as String? ?? 'claude';
   String? get pluginName => skill['pluginName'] as String?;
   bool get isPlugin => scope == 'plugin';
 }
@@ -37,21 +34,25 @@ class SkillsScreen extends StatefulWidget {
 class _SkillsScreenState extends State<SkillsScreen> {
   /// Skills grouped by server ID.
   final Map<String, List<_ServerSkill>> _byServer = {};
+
   /// Errors returned by specific servers.
   final Map<String, String> _serverErrors = {};
   bool _loading = true;
   String? _error;
+
   /// Track which expansion tiles are open (by key string).
   final Set<String> _expanded = {};
   StreamSubscription<ServerMessage>? _msgSub;
 
   /// Marketplace plugins grouped by server ID.
   final Map<String, List<Map<String, dynamic>>> _pluginsByServer = {};
+
   /// Track which plugins are being toggled.
   final Set<String> _toggling = {};
 
   /// Marketplaces grouped by server ID.
   final Map<String, List<Map<String, dynamic>>> _marketplacesByServer = {};
+
   /// Track pending marketplace operations (serverId:name or serverId:__adding__).
   final Set<String> _mpPending = {};
 
@@ -76,16 +77,24 @@ class _SkillsScreenState extends State<SkillsScreen> {
       final serverId = sm.serverId;
       final config = _connMgr.configs.firstWhere(
         (c) => c.id == serverId,
-        orElse: () => ServerConfig(id: serverId, name: serverId, host: '', port: 0, token: ''),
+        orElse: () => ServerConfig(
+          id: serverId,
+          name: serverId,
+          host: '',
+          port: 0,
+          token: '',
+        ),
       );
       final serverError = sm.data['error'] as String?;
       final projectCwd = sm.data['projectCwd'] as String?;
       final skills = (sm.data['skills'] as List? ?? [])
-          .map((e) => _ServerSkill(
-                skill: Map<String, dynamic>.from(e as Map),
-                server: config,
-                projectCwd: projectCwd,
-              ))
+          .map(
+            (e) => _ServerSkill(
+              skill: Map<String, dynamic>.from(e as Map),
+              server: config,
+              projectCwd: projectCwd,
+            ),
+          )
           .toList();
 
       if (mounted) {
@@ -101,7 +110,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
         });
       }
     } else if (sm.data['type'] == 'skills_save_result' ||
-               sm.data['type'] == 'skills_delete_result') {
+        sm.data['type'] == 'skills_delete_result') {
       if (sm.data['ok'] == true) {
         // Refresh that server's skills
         _connMgr.sendToServer(sm.serverId, {'type': 'skills_list'});
@@ -114,8 +123,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
         setState(() => _pluginsByServer[sm.serverId] = plugins);
       }
     } else if (sm.data['type'] != null &&
-               (sm.data['type'] as String).startsWith('plugins_') &&
-               (sm.data['type'] as String).endsWith('_result')) {
+        (sm.data['type'] as String).startsWith('plugins_') &&
+        (sm.data['type'] as String).endsWith('_result')) {
       final pluginId = sm.data['pluginId'] as String?;
       if (pluginId != null) _toggling.remove('${sm.serverId}:$pluginId');
       if (sm.data['ok'] == true) {
@@ -138,8 +147,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
           .toList();
       if (mounted) setState(() => _marketplacesByServer[sm.serverId] = mps);
     } else if (sm.data['type'] != null &&
-               (sm.data['type'] as String).startsWith('marketplaces_') &&
-               (sm.data['type'] as String).endsWith('_result')) {
+        (sm.data['type'] as String).startsWith('marketplaces_') &&
+        (sm.data['type'] as String).endsWith('_result')) {
       // Clear any pending state for this server
       _mpPending.removeWhere((k) => k.startsWith('${sm.serverId}:'));
       if (sm.data['ok'] == true) {
@@ -154,7 +163,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
       } else if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(sm.data['error'] as String? ?? 'Marketplace action failed'),
+            content: Text(
+              sm.data['error'] as String? ?? 'Marketplace action failed',
+            ),
             backgroundColor: Colors.red.shade700,
           ),
         );
@@ -252,7 +263,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
   void _duplicateSkill(_ServerSkill ss) {
     final newName = '${ss.name}-copy';
     final fm = Map<String, dynamic>.from(
-        (ss.skill['frontmatter'] as Map?) ?? {});
+      (ss.skill['frontmatter'] as Map?) ?? {},
+    );
     fm['description'] = fm['description'] ?? '';
 
     _connMgr.sendToServer(ss.server.id, {
@@ -260,15 +272,13 @@ class _SkillsScreenState extends State<SkillsScreen> {
       'name': newName,
       'scope': 'user',
       'format': ss.format,
+      'agent': ss.agent,
       'frontmatter': fm,
       'body': ss.skill['body'] ?? '',
     });
   }
 
-  void _openEditor({
-    _ServerSkill? existing,
-    ServerConfig? targetServer,
-  }) async {
+  void _openEditor({_ServerSkill? existing, ServerConfig? targetServer}) async {
     final server = existing?.server ?? targetServer ?? _connMgr.configs.first;
     final projectCwd = existing?.projectCwd;
 
@@ -313,20 +323,24 @@ class _SkillsScreenState extends State<SkillsScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.all(16),
-              child: Text('Create on which server?',
-                  style: Theme.of(ctx).textTheme.titleSmall),
+              child: Text(
+                'Create on which server?',
+                style: Theme.of(ctx).textTheme.titleSmall,
+              ),
             ),
-            ...connected.map((s) => ListTile(
-                  leading: Icon(Icons.dns,
-                      color: s.colorValue != null
-                          ? Color(s.colorValue!)
-                          : null),
-                  title: Text(s.name),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _openEditor(targetServer: s);
-                  },
-                )),
+            ...connected.map(
+              (s) => ListTile(
+                leading: Icon(
+                  Icons.dns,
+                  color: s.colorValue != null ? Color(s.colorValue!) : null,
+                ),
+                title: Text(s.name),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _openEditor(targetServer: s);
+                },
+              ),
+            ),
             const SizedBox(height: 8),
           ],
         ),
@@ -356,38 +370,44 @@ class _SkillsScreenState extends State<SkillsScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.error_outline,
-                          size: 48,
-                          color: theme.colorScheme.error.withAlpha(180)),
-                      const SizedBox(height: 12),
-                      Text('Failed to load skills',
-                          style: TextStyle(
-                              color: theme.colorScheme.onSurface
-                                  .withAlpha(180))),
-                      const SizedBox(height: 4),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 32),
-                        child: Text(_error!,
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: theme.colorScheme.onSurface
-                                    .withAlpha(100)),
-                            textAlign: TextAlign.center),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton.icon(
-                        onPressed: _fetchAll,
-                        icon: const Icon(Icons.refresh, size: 18),
-                        label: const Text('Retry'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.error_outline,
+                    size: 48,
+                    color: theme.colorScheme.error.withAlpha(180),
                   ),
-                )
-              : _buildBody(),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Failed to load skills',
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface.withAlpha(180),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 32),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.onSurface.withAlpha(100),
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton.icon(
+                    onPressed: _fetchAll,
+                    icon: const Icon(Icons.refresh, size: 18),
+                    label: const Text('Retry'),
+                  ),
+                ],
+              ),
+            )
+          : _buildBody(),
     );
   }
 
@@ -400,20 +420,26 @@ class _SkillsScreenState extends State<SkillsScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.auto_fix_high,
-                size: 48,
-                color: theme.colorScheme.onSurface.withAlpha(80)),
+            Icon(
+              Icons.auto_fix_high,
+              size: 48,
+              color: theme.colorScheme.onSurface.withAlpha(80),
+            ),
             const SizedBox(height: 12),
-            Text('No skills or commands',
-                style: TextStyle(
-                    color: theme.colorScheme.onSurface.withAlpha(128))),
+            Text(
+              'No skills or commands',
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withAlpha(128),
+              ),
+            ),
             const SizedBox(height: 4),
             Text(
               'Tap + to create a slash command.',
               textAlign: TextAlign.center,
               style: TextStyle(
-                  fontSize: 12,
-                  color: theme.colorScheme.onSurface.withAlpha(100)),
+                fontSize: 12,
+                color: theme.colorScheme.onSurface.withAlpha(100),
+              ),
             ),
           ],
         ),
@@ -438,31 +464,37 @@ class _SkillsScreenState extends State<SkillsScreen> {
     for (final entry in _serverErrors.entries) {
       final config = allConfigs.where((c) => c.id == entry.key).firstOrNull;
       final name = config?.name ?? entry.key;
-      sections.add(Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Text(
-          '$name: ${entry.value}',
-          style: TextStyle(fontSize: 11, color: Colors.red.shade300),
+      sections.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Text(
+            '$name: ${entry.value}',
+            style: TextStyle(fontSize: 11, color: Colors.red.shade300),
+          ),
         ),
-      ));
+      );
     }
 
     // Check for non-responding servers
     final respondedIds = _byServer.keys.toSet();
     final nonResponding = allConfigs
-        .where((c) =>
-            _connMgr.statusOf(c.id) == ConnectionStatus.connected &&
-            !respondedIds.contains(c.id))
+        .where(
+          (c) =>
+              _connMgr.statusOf(c.id) == ConnectionStatus.connected &&
+              !respondedIds.contains(c.id),
+        )
         .toList();
     if (nonResponding.isNotEmpty) {
       final names = nonResponding.map((c) => c.name).join(', ');
-      sections.add(Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        child: Text(
-          'No response: $names',
-          style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
+      sections.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Text(
+            'No response: $names',
+            style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
+          ),
         ),
-      ));
+      );
     }
 
     // ── Prepare data ──
@@ -476,9 +508,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
     for (final s in allSkills) {
       if (s.scope == 'user') {
-        groupedUser.putIfAbsent(s.name, () => []).add(s);
+        groupedUser.putIfAbsent('${s.agent}:${s.name}', () => []).add(s);
       } else if (s.scope == 'project') {
-        groupedProject.putIfAbsent(s.name, () => []).add(s);
+        groupedProject.putIfAbsent('${s.agent}:${s.name}', () => []).add(s);
       } else if (s.scope == 'plugin') {
         final plugin = s.pluginName ?? 'other';
         groupedPluginSkills.putIfAbsent(plugin, () => {});
@@ -487,7 +519,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
     }
 
     // Build plugin lookup: pluginName -> [(serverId, pluginData)]
-    final pluginByName = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
+    final pluginByName =
+        <String, List<MapEntry<String, Map<String, dynamic>>>>{};
     for (final entry in _pluginsByServer.entries) {
       for (final p in entry.value) {
         final name = p['name'] as String? ?? '';
@@ -505,17 +538,19 @@ class _SkillsScreenState extends State<SkillsScreen> {
       final first = entries.first.value;
       for (final serverId in respondedServerIds) {
         if (!existingServerIds.contains(serverId)) {
-          entries.add(MapEntry(serverId, <String, dynamic>{
-            'id': first['id'] ?? '$pluginName@unknown',
-            'name': pluginName,
-            'description': first['description'] ?? '',
-            'category': first['category'] ?? '',
-            'marketplace': first['marketplace'] ?? '',
-            'installed': false,
-            'enabled': false,
-            'readme': '',
-            'homepage': first['homepage'] ?? '',
-          }));
+          entries.add(
+            MapEntry(serverId, <String, dynamic>{
+              'id': first['id'] ?? '$pluginName@unknown',
+              'name': pluginName,
+              'description': first['description'] ?? '',
+              'category': first['category'] ?? '',
+              'marketplace': first['marketplace'] ?? '',
+              'installed': false,
+              'enabled': false,
+              'readme': '',
+              'homepage': first['homepage'] ?? '',
+            }),
+          );
         }
       }
     }
@@ -528,7 +563,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
     }
 
     // Build marketplace info lookup
-    final mpInfoByName = <String, List<MapEntry<String, Map<String, dynamic>>>>{};
+    final mpInfoByName =
+        <String, List<MapEntry<String, Map<String, dynamic>>>>{};
     for (final entry in _marketplacesByServer.entries) {
       for (final mp in entry.value) {
         final name = mp['name'] as String? ?? '';
@@ -552,37 +588,56 @@ class _SkillsScreenState extends State<SkillsScreen> {
       }
 
       final isExpanded = _expanded.contains('local');
-      sections.add(ExpansionTile(
-        key: const PageStorageKey('local'),
-        initiallyExpanded: isExpanded,
-        onExpansionChanged: (expanded) {
-          setState(() {
-            if (expanded) _expanded.add('local');
-            else _expanded.remove('local');
-          });
-        },
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-        childrenPadding: EdgeInsets.zero,
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        leading: Icon(Icons.home_outlined, size: 18, color: Colors.blue.withAlpha(180)),
-        title: Row(
-          children: [
-            Text('Local', style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w500,
-              color: theme.colorScheme.onSurface.withAlpha(220),
-            )),
-            const SizedBox(width: 6),
-            _buildCountBadge(groupedUser.length + groupedProject.length, Colors.blue),
-          ],
+      sections.add(
+        ExpansionTile(
+          key: const PageStorageKey('local'),
+          initiallyExpanded: isExpanded,
+          onExpansionChanged: (expanded) {
+            setState(() {
+              if (expanded) {
+                _expanded.add('local');
+              } else {
+                _expanded.remove('local');
+              }
+            });
+          },
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          childrenPadding: EdgeInsets.zero,
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(
+            Icons.home_outlined,
+            size: 18,
+            color: Colors.blue.withAlpha(180),
+          ),
+          title: Row(
+            children: [
+              Text(
+                'Local',
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                  color: theme.colorScheme.onSurface.withAlpha(220),
+                ),
+              ),
+              const SizedBox(width: 6),
+              _buildCountBadge(
+                groupedUser.length + groupedProject.length,
+                Colors.blue,
+              ),
+            ],
+          ),
+          children: localChildren,
         ),
-        children: localChildren,
-      ));
+      );
     }
 
     // ── Marketplace sections ──
     // Collect all known marketplace names (from marketplace info + plugin data)
-    final allMpNames = <String>{...mpInfoByName.keys, ...pluginsByMarketplace.keys};
+    final allMpNames = <String>{
+      ...mpInfoByName.keys,
+      ...pluginsByMarketplace.keys,
+    };
     allMpNames.remove(''); // exclude plugins with no marketplace
 
     final sortedMpNames = allMpNames.toList()..sort();
@@ -601,84 +656,131 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
         if (pluginSkills != null && pluginSkills.isNotEmpty) {
           // Installed plugin with skills — show as expandable group
-          final deduped = pluginSkills.values.map((list) => list.first).toList();
-          children.add(_buildGroup(
-            key: 'plugin_${mpName}_$pluginName',
-            title: pluginName,
-            icon: Icons.extension_outlined,
-            color: Colors.orange,
-            items: deduped,
-            pluginServerEntries: pluginEntries,
-          ));
+          final deduped = pluginSkills.values
+              .map((list) => list.first)
+              .toList();
+          children.add(
+            _buildGroup(
+              key: 'plugin_${mpName}_$pluginName',
+              title: pluginName,
+              icon: Icons.extension_outlined,
+              color: Colors.orange,
+              items: deduped,
+              pluginServerEntries: pluginEntries,
+            ),
+          );
         } else {
           // No skills yet — show as a toggle row
           children.add(_buildPluginToggleRow(pluginEntries));
         }
       }
 
-      sections.add(ExpansionTile(
-        key: PageStorageKey('mp_$mpName'),
-        initiallyExpanded: isExpanded,
-        onExpansionChanged: (expanded) {
-          setState(() {
-            if (expanded) _expanded.add('mp_$mpName');
-            else _expanded.remove('mp_$mpName');
-          });
-        },
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-        childrenPadding: EdgeInsets.zero,
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        leading: Icon(Icons.store_outlined, size: 18, color: Colors.teal.withAlpha(180)),
-        subtitle: [
-          if (owner.isNotEmpty) 'by $owner',
-          if (description.isNotEmpty) description,
-        ].isNotEmpty
-            ? Text(
-                [if (owner.isNotEmpty) 'by $owner', if (description.isNotEmpty) description].join(' · '),
-                maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withAlpha(100)),
-              )
-            : null,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildCountBadge(mpPluginNames.length, Colors.teal),
-            if (mpInfo != null) SizedBox(
-              width: 28, height: 32,
-              child: PopupMenuButton<String>(
-                padding: EdgeInsets.zero, iconSize: 16,
-                icon: Icon(Icons.more_vert, size: 16, color: theme.colorScheme.onSurface.withAlpha(100)),
-                onSelected: (action) => _marketplaceAction(mpName, action, mpInfo),
-                itemBuilder: (ctx) => [
-                  const PopupMenuItem(value: 'update', height: 36, child: Text('Update', style: TextStyle(fontSize: 13))),
-                  const PopupMenuItem(value: 'remove', height: 36, child: Text('Remove', style: TextStyle(fontSize: 13, color: Colors.red))),
-                ],
-              ),
+      sections.add(
+        ExpansionTile(
+          key: PageStorageKey('mp_$mpName'),
+          initiallyExpanded: isExpanded,
+          onExpansionChanged: (expanded) {
+            setState(() {
+              if (expanded) {
+                _expanded.add('mp_$mpName');
+              } else {
+                _expanded.remove('mp_$mpName');
+              }
+            });
+          },
+          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+          childrenPadding: EdgeInsets.zero,
+          dense: true,
+          visualDensity: VisualDensity.compact,
+          leading: Icon(
+            Icons.store_outlined,
+            size: 18,
+            color: Colors.teal.withAlpha(180),
+          ),
+          subtitle:
+              [
+                if (owner.isNotEmpty) 'by $owner',
+                if (description.isNotEmpty) description,
+              ].isNotEmpty
+              ? Text(
+                  [
+                    if (owner.isNotEmpty) 'by $owner',
+                    if (description.isNotEmpty) description,
+                  ].join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: theme.colorScheme.onSurface.withAlpha(100),
+                  ),
+                )
+              : null,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildCountBadge(mpPluginNames.length, Colors.teal),
+              if (mpInfo != null)
+                SizedBox(
+                  width: 28,
+                  height: 32,
+                  child: PopupMenuButton<String>(
+                    padding: EdgeInsets.zero,
+                    iconSize: 16,
+                    icon: Icon(
+                      Icons.more_vert,
+                      size: 16,
+                      color: theme.colorScheme.onSurface.withAlpha(100),
+                    ),
+                    onSelected: (action) =>
+                        _marketplaceAction(mpName, action, mpInfo),
+                    itemBuilder: (ctx) => [
+                      const PopupMenuItem(
+                        value: 'update',
+                        height: 36,
+                        child: Text('Update', style: TextStyle(fontSize: 13)),
+                      ),
+                      const PopupMenuItem(
+                        value: 'remove',
+                        height: 36,
+                        child: Text(
+                          'Remove',
+                          style: TextStyle(fontSize: 13, color: Colors.red),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          title: Text(
+            mpName,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: theme.colorScheme.onSurface.withAlpha(220),
             ),
-          ],
+          ),
+          children: children,
         ),
-        title: Text(mpName, overflow: TextOverflow.ellipsis, style: TextStyle(
-          fontSize: 13, fontWeight: FontWeight.w500,
-          color: theme.colorScheme.onSurface.withAlpha(220),
-        )),
-        children: children,
-      ));
+      );
     }
 
     // ── Add Marketplace button ──
-    sections.add(Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: OutlinedButton.icon(
-        onPressed: _showAddMarketplaceDialog,
-        icon: const Icon(Icons.add, size: 16),
-        label: const Text('Add Marketplace', style: TextStyle(fontSize: 13)),
-        style: OutlinedButton.styleFrom(
-          visualDensity: VisualDensity.compact,
-          side: BorderSide(color: Colors.teal.withAlpha(80)),
+    sections.add(
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: OutlinedButton.icon(
+          onPressed: _showAddMarketplaceDialog,
+          icon: const Icon(Icons.add, size: 16),
+          label: const Text('Add Marketplace', style: TextStyle(fontSize: 13)),
+          style: OutlinedButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            side: BorderSide(color: Colors.teal.withAlpha(80)),
+          ),
         ),
       ),
-    ));
+    );
 
     return sections;
   }
@@ -692,7 +794,52 @@ class _SkillsScreenState extends State<SkillsScreen> {
       ),
       child: Text(
         '$count',
-        style: TextStyle(fontSize: 10, color: color, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontSize: 10,
+          color: color,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAgentBadge(String agent) {
+    final isCodex = agent == 'codex';
+    final color = isCodex ? Colors.green : Colors.deepPurple;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withAlpha(24),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withAlpha(70)),
+      ),
+      child: Text(
+        isCodex ? 'Codex' : 'Claude',
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.w600,
+          color: color.withAlpha(220),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScopeBadge(String scope) {
+    final color = scope == 'project' ? Colors.blueGrey : Colors.grey;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Text(
+        scope == 'project' ? 'Project' : 'User',
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.w600,
+          color: color.withAlpha(220),
+        ),
       ),
     );
   }
@@ -739,18 +886,27 @@ class _SkillsScreenState extends State<SkillsScreen> {
     for (final config in configs) {
       if (_connMgr.statusOf(config.id) == ConnectionStatus.connected) {
         setState(() => _mpPending.add('${config.id}:__adding__'));
-        _connMgr.sendToServer(config.id, {'type': 'marketplaces_add', 'url': url});
+        _connMgr.sendToServer(config.id, {
+          'type': 'marketplaces_add',
+          'url': url,
+        });
       }
     }
   }
 
-  void _marketplaceAction(String name, String action, List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
+  void _marketplaceAction(
+    String name,
+    String action,
+    List<MapEntry<String, Map<String, dynamic>>> serverEntries,
+  ) {
     if (action == 'remove') {
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Remove Marketplace?'),
-          content: Text('Remove "$name" from all servers?\nPlugins from this marketplace will no longer appear.'),
+          content: Text(
+            'Remove "$name" from all servers?\nPlugins from this marketplace will no longer appear.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
@@ -761,7 +917,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 Navigator.pop(ctx);
                 for (final entry in serverEntries) {
                   setState(() => _mpPending.add('${entry.key}:$name'));
-                  _connMgr.sendToServer(entry.key, {'type': 'marketplaces_remove', 'name': name});
+                  _connMgr.sendToServer(entry.key, {
+                    'type': 'marketplaces_remove',
+                    'name': name,
+                  });
                 }
               },
               child: const Text('Remove', style: TextStyle(color: Colors.red)),
@@ -772,7 +931,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
     } else if (action == 'update') {
       for (final entry in serverEntries) {
         setState(() => _mpPending.add('${entry.key}:$name'));
-        _connMgr.sendToServer(entry.key, {'type': 'marketplaces_update', 'name': name});
+        _connMgr.sendToServer(entry.key, {
+          'type': 'marketplaces_update',
+          'name': name,
+        });
       }
     }
   }
@@ -787,9 +949,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }) {
     final theme = Theme.of(context);
     final isExpanded = _expanded.contains(key);
-    final hasPlugin = pluginServerEntries != null && pluginServerEntries.isNotEmpty;
+    final hasPlugin =
+        pluginServerEntries != null && pluginServerEntries.isNotEmpty;
     final pluginDescription = hasPlugin
-        ? pluginServerEntries!.first.value['description'] as String? ?? ''
+        ? pluginServerEntries.first.value['description'] as String? ?? ''
         : '';
 
     return ExpansionTile(
@@ -797,8 +960,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
       initiallyExpanded: isExpanded,
       onExpansionChanged: (expanded) {
         setState(() {
-          if (expanded) _expanded.add(key);
-          else _expanded.remove(key);
+          if (expanded) {
+            _expanded.add(key);
+          } else {
+            _expanded.remove(key);
+          }
         });
       },
       tilePadding: const EdgeInsets.symmetric(horizontal: 20),
@@ -807,17 +973,29 @@ class _SkillsScreenState extends State<SkillsScreen> {
       visualDensity: VisualDensity.compact,
       leading: Icon(icon, size: 16, color: color.withAlpha(180)),
       subtitle: pluginDescription.isNotEmpty
-          ? Text(pluginDescription, maxLines: 2, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withAlpha(100)))
+          ? Text(
+              pluginDescription,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurface.withAlpha(100),
+              ),
+            )
           : null,
-      trailing: hasPlugin ? _buildPluginActions(pluginServerEntries!) : null,
+      trailing: hasPlugin ? _buildPluginActions(pluginServerEntries) : null,
       title: Row(
         children: [
           Flexible(
-            child: Text(title, overflow: TextOverflow.ellipsis, style: TextStyle(
-              fontSize: 13, fontWeight: FontWeight.w500,
-              color: theme.colorScheme.onSurface.withAlpha(220),
-            )),
+            child: Text(
+              title,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: theme.colorScheme.onSurface.withAlpha(220),
+              ),
+            ),
           ),
           if (items.isNotEmpty) ...[
             const SizedBox(width: 6),
@@ -858,6 +1036,14 @@ class _SkillsScreenState extends State<SkillsScreen> {
                       color: theme.colorScheme.onSurface,
                     ),
                   ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      _buildAgentBadge(ss.agent),
+                      const SizedBox(width: 4),
+                      _buildScopeBadge(ss.scope),
+                    ],
+                  ),
                   if (ss.description.isNotEmpty)
                     Text(
                       ss.description,
@@ -877,9 +1063,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
               child: PopupMenuButton<String>(
                 padding: EdgeInsets.zero,
                 iconSize: 16,
-                icon: Icon(Icons.more_vert,
-                    size: 16,
-                    color: theme.colorScheme.onSurface.withAlpha(100)),
+                icon: Icon(
+                  Icons.more_vert,
+                  size: 16,
+                  color: theme.colorScheme.onSurface.withAlpha(100),
+                ),
                 onSelected: (action) {
                   switch (action) {
                     case 'duplicate':
@@ -900,8 +1088,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
                     const PopupMenuItem(
                       value: 'delete',
                       height: 36,
-                      child: Text('Delete',
-                          style: TextStyle(fontSize: 13, color: Colors.red)),
+                      child: Text(
+                        'Delete',
+                        style: TextStyle(fontSize: 13, color: Colors.red),
+                      ),
                     ),
                 ],
               ),
@@ -920,9 +1110,17 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
     final config = _connMgr.configs.firstWhere(
       (c) => c.id == serverId,
-      orElse: () => ServerConfig(id: serverId, name: serverId, host: '', port: 0, token: ''),
+      orElse: () => ServerConfig(
+        id: serverId,
+        name: serverId,
+        host: '',
+        port: 0,
+        token: '',
+      ),
     );
-    final baseUrl = config.useRelay ? '' : 'http://${config.host}:${config.port}';
+    final baseUrl = config.useRelay
+        ? ''
+        : 'http://${config.host}:${config.port}';
 
     // Construct a fake skill entry so the editor opens in read-only plugin mode
     final fakeSkill = <String, dynamic>{
@@ -949,7 +1147,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
   /// Flat list tile for marketplace plugins — shows per-server status badges
   /// and routes actions through the server picker when multiple servers.
-  Widget _buildPluginToggleRow(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
+  Widget _buildPluginToggleRow(
+    List<MapEntry<String, Map<String, dynamic>>> serverEntries,
+  ) {
     final theme = Theme.of(context);
     final first = serverEntries.first.value;
     final name = first['name'] as String? ?? '';
@@ -961,8 +1161,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
         dense: true,
         visualDensity: VisualDensity.compact,
         onTap: () => _openPluginReadme(serverEntries.first.key, first),
-        leading: Icon(Icons.extension_outlined,
-            size: 18, color: Colors.orange.withAlpha(180)),
+        leading: Icon(
+          Icons.extension_outlined,
+          size: 18,
+          color: Colors.orange.withAlpha(180),
+        ),
         title: Row(
           children: [
             Flexible(
@@ -996,7 +1199,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
   /// Builds the trailing action widget for a marketplace plugin across servers.
   /// Always shows per-server badges with state. Tap opens server picker for actions.
-  Widget _buildPluginActions(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
+  Widget _buildPluginActions(
+    List<MapEntry<String, Map<String, dynamic>>> serverEntries,
+  ) {
     return GestureDetector(
       onTap: () => _showPluginServerPicker(serverEntries),
       child: Row(
@@ -1005,7 +1210,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
           final serverId = entry.key;
           final installed = entry.value['installed'] as bool? ?? false;
           final enabled = entry.value['enabled'] as bool? ?? false;
-          final config = _connMgr.configs.where((c) => c.id == serverId).firstOrNull;
+          final config = _connMgr.configs
+              .where((c) => c.id == serverId)
+              .firstOrNull;
           if (config == null) return const SizedBox.shrink();
           return Padding(
             padding: const EdgeInsets.only(left: 2),
@@ -1018,7 +1225,13 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
   /// Inline action widget for a single server's plugin state.
   /// [onAction] is called after triggering an action so the caller can rebuild.
-  Widget _buildSingleServerAction(String serverId, String pluginId, bool installed, bool enabled, {VoidCallback? onAction}) {
+  Widget _buildSingleServerAction(
+    String serverId,
+    String pluginId,
+    bool installed,
+    bool enabled, {
+    VoidCallback? onAction,
+  }) {
     final isToggling = _toggling.contains('$serverId:$pluginId');
 
     void act(String action) {
@@ -1037,7 +1250,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           ),
           child: isToggling
-              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              ? const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
               : const Text('Install', style: TextStyle(fontSize: 12)),
         ),
       );
@@ -1063,8 +1280,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
           child: PopupMenuButton<String>(
             padding: EdgeInsets.zero,
             iconSize: 14,
-            icon: Icon(Icons.more_vert, size: 14,
-                color: Theme.of(context).colorScheme.onSurface.withAlpha(100)),
+            icon: Icon(
+              Icons.more_vert,
+              size: 14,
+              color: Theme.of(context).colorScheme.onSurface.withAlpha(100),
+            ),
             onSelected: (action) {
               if (action == 'uninstall') act('uninstall');
             },
@@ -1072,7 +1292,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
               const PopupMenuItem(
                 value: 'uninstall',
                 height: 36,
-                child: Text('Uninstall', style: TextStyle(fontSize: 13, color: Colors.red)),
+                child: Text(
+                  'Uninstall',
+                  style: TextStyle(fontSize: 13, color: Colors.red),
+                ),
               ),
             ],
           ),
@@ -1082,7 +1305,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }
 
   /// Server badge with install/enable state coloring.
-  Widget _buildServerPluginBadge(ServerConfig server, bool installed, bool enabled) {
+  Widget _buildServerPluginBadge(
+    ServerConfig server,
+    bool installed,
+    bool enabled,
+  ) {
     final c = server.colorValue != null
         ? Color(server.colorValue!)
         : Theme.of(context).colorScheme.primary;
@@ -1094,7 +1321,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
       decoration: BoxDecoration(
         color: c.withAlpha(bgAlpha),
         borderRadius: BorderRadius.circular(5),
-        border: !installed ? Border.all(color: c.withAlpha(30), width: 0.5) : null,
+        border: !installed
+            ? Border.all(color: c.withAlpha(30), width: 0.5)
+            : null,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -1106,7 +1335,11 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ),
           Text(
             server.name,
-            style: TextStyle(fontSize: 8, fontWeight: FontWeight.w500, color: c.withAlpha(alpha)),
+            style: TextStyle(
+              fontSize: 8,
+              fontWeight: FontWeight.w500,
+              color: c.withAlpha(alpha),
+            ),
           ),
         ],
       ),
@@ -1116,14 +1349,18 @@ class _SkillsScreenState extends State<SkillsScreen> {
   /// Bottom sheet showing per-server plugin state with action buttons.
   /// Uses StatefulBuilder + stream subscription so the sheet updates live
   /// when install/enable/disable results arrive.
-  void _showPluginServerPicker(List<MapEntry<String, Map<String, dynamic>>> serverEntries) {
+  void _showPluginServerPicker(
+    List<MapEntry<String, Map<String, dynamic>>> serverEntries,
+  ) {
     final pluginName = serverEntries.first.value['name'] as String? ?? '';
 
     // Subscribe to message stream so the sheet rebuilds on plugin results.
     StateSetter? setSheetState;
     final sub = _connMgr.messages.listen((sm) {
       final type = sm.data['type'] as String?;
-      if (type != null && type.startsWith('plugins_') && type.endsWith('_result')) {
+      if (type != null &&
+          type.startsWith('plugins_') &&
+          type.endsWith('_result')) {
         setSheetState?.call(() {});
       }
     });
@@ -1142,17 +1379,27 @@ class _SkillsScreenState extends State<SkillsScreen> {
           final firstData = serverEntries.first.value;
           for (final entry in _pluginsByServer.entries) {
             seenServerIds.add(entry.key);
-            final match = entry.value.where((p) => p['name'] == pluginName).firstOrNull;
-            currentEntries.add(MapEntry(entry.key, match ?? <String, dynamic>{
-              'id': firstData['id'] ?? '$pluginName@unknown',
-              'name': pluginName,
-              'description': firstData['description'] ?? '',
-              'category': firstData['category'] ?? '',
-              'installed': false,
-              'enabled': false,
-            }));
+            final match = entry.value
+                .where((p) => p['name'] == pluginName)
+                .firstOrNull;
+            currentEntries.add(
+              MapEntry(
+                entry.key,
+                match ??
+                    <String, dynamic>{
+                      'id': firstData['id'] ?? '$pluginName@unknown',
+                      'name': pluginName,
+                      'description': firstData['description'] ?? '',
+                      'category': firstData['category'] ?? '',
+                      'installed': false,
+                      'enabled': false,
+                    },
+              ),
+            );
           }
-          final entries = currentEntries.isNotEmpty ? currentEntries : serverEntries;
+          final entries = currentEntries.isNotEmpty
+              ? currentEntries
+              : serverEntries;
 
           return SafeArea(
             child: Column(
@@ -1160,15 +1407,19 @@ class _SkillsScreenState extends State<SkillsScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Text(pluginName,
-                      style: Theme.of(ctx).textTheme.titleSmall),
+                  child: Text(
+                    pluginName,
+                    style: Theme.of(ctx).textTheme.titleSmall,
+                  ),
                 ),
                 ...entries.map((entry) {
                   final serverId = entry.key;
                   final pluginId = entry.value['id'] as String? ?? '';
                   final installed = entry.value['installed'] as bool? ?? false;
                   final enabled = entry.value['enabled'] as bool? ?? false;
-                  final config = _connMgr.configs.where((c) => c.id == serverId).firstOrNull;
+                  final config = _connMgr.configs
+                      .where((c) => c.id == serverId)
+                      .firstOrNull;
                   if (config == null) return const SizedBox.shrink();
 
                   final serverColor = config.colorValue != null
@@ -1189,9 +1440,15 @@ class _SkillsScreenState extends State<SkillsScreen> {
                   return ListTile(
                     leading: Icon(Icons.dns, color: serverColor),
                     title: Text(config.name),
-                    subtitle: Text(statusText, style: const TextStyle(fontSize: 12)),
+                    subtitle: Text(
+                      statusText,
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     trailing: _buildSingleServerAction(
-                      serverId, pluginId, installed, enabled,
+                      serverId,
+                      pluginId,
+                      installed,
+                      enabled,
                       onAction: () => sheetSetState(() {}),
                     ),
                   );
