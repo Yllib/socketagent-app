@@ -1,6 +1,23 @@
 enum MessageSender { user, assistant, system }
 
-enum MessageType { text, toolCall, toolResult, question, result, error, taskNotification, compactBoundary, outlookAuth, ibsAuth, claudeAuth, toolSummary, thinking, elicitationUrl, monitorOutput }
+enum MessageType {
+  text,
+  toolCall,
+  toolResult,
+  question,
+  result,
+  error,
+  taskNotification,
+  compactBoundary,
+  outlookAuth,
+  ibsAuth,
+  claudeAuth,
+  toolSummary,
+  thinking,
+  elicitationUrl,
+  monitorOutput,
+  skillInvocation,
+}
 
 class ChatMessage {
   final String id;
@@ -54,9 +71,9 @@ class ChatMessage {
   List<String>? precedingToolUseIds;
 
   // Inline image fields (for Read tool on image files)
-  String? toolImageData;       // base64 string
-  String? toolImageMimeType;   // "image/png", etc.
-  String? toolImageFilePath;   // server file path (for history reload)
+  String? toolImageData; // base64 string
+  String? toolImageMimeType; // "image/png", etc.
+  String? toolImageFilePath; // server file path (for history reload)
 
   ChatMessage({
     required this.id,
@@ -98,6 +115,28 @@ class ChatMessage {
       type: MessageType.text,
       timestamp: DateTime.now(),
       textContent: text,
+    );
+  }
+
+  factory ChatMessage.skillInvocation({
+    required String name,
+    required String args,
+    String description = '',
+    String body = '',
+  }) {
+    return ChatMessage(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      sender: MessageSender.user,
+      type: MessageType.skillInvocation,
+      timestamp: DateTime.now(),
+      textContent: args,
+      toolName: name,
+      toolInput: {
+        'name': name,
+        'args': args,
+        'description': description,
+        'body': body,
+      },
     );
   }
 
@@ -177,12 +216,15 @@ class ChatMessage {
     );
   }
 
-  factory ChatMessage.compactBoundary({required String trigger, required int preTokens}) {
+  factory ChatMessage.compactBoundary({
+    required String trigger,
+    required int preTokens,
+  }) {
     final tokenStr = preTokens >= 1000000
         ? '${(preTokens / 1000000).toStringAsFixed(1)}M'
         : preTokens >= 1000
-            ? '${(preTokens / 1000).toStringAsFixed(1)}k'
-            : preTokens.toString();
+        ? '${(preTokens / 1000).toStringAsFixed(1)}k'
+        : preTokens.toString();
     return ChatMessage(
       id: 'compact_${DateTime.now().microsecondsSinceEpoch}',
       sender: MessageSender.system,
@@ -276,7 +318,8 @@ class QuestionItem {
     return QuestionItem(
       question: json['question'] ?? '',
       header: json['header'],
-      options: (json['options'] as List?)
+      options:
+          (json['options'] as List?)
               ?.map((o) => QuestionOption.fromJson(o))
               .toList() ??
           [],
@@ -345,7 +388,11 @@ class Session {
     );
   }
 
-  Session withServer({required String serverId, required String serverName, int? serverColor}) {
+  Session withServer({
+    required String serverId,
+    required String serverName,
+    int? serverColor,
+  }) {
     return Session(
       id: id,
       title: title,

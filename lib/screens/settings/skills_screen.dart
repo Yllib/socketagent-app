@@ -434,7 +434,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Tap + to create a slash command.',
+              'Tap + to create a skill or command.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
@@ -497,25 +497,55 @@ class _SkillsScreenState extends State<SkillsScreen> {
       );
     }
 
-    // ── Prepare data ──
-
-    // Group skills by scope
     final allSkills = _byServer.values.expand((v) => v).toList();
-    final groupedUser = <String, List<_ServerSkill>>{};
-    final groupedProject = <String, List<_ServerSkill>>{};
-    // Plugin skills keyed by pluginName -> skillName -> instances
-    final groupedPluginSkills = <String, Map<String, List<_ServerSkill>>>{};
+    final codexSkills = <_ServerSkill>[];
+    final claudeLocalSkills = <_ServerSkill>[];
+    final groupedClaudePluginSkills =
+        <String, Map<String, List<_ServerSkill>>>{};
 
     for (final s in allSkills) {
-      if (s.scope == 'user') {
-        groupedUser.putIfAbsent('${s.agent}:${s.name}', () => []).add(s);
-      } else if (s.scope == 'project') {
-        groupedProject.putIfAbsent('${s.agent}:${s.name}', () => []).add(s);
+      if (s.agent == 'codex') {
+        codexSkills.add(s);
       } else if (s.scope == 'plugin') {
         final plugin = s.pluginName ?? 'other';
-        groupedPluginSkills.putIfAbsent(plugin, () => {});
-        groupedPluginSkills[plugin]!.putIfAbsent(s.name, () => []).add(s);
+        groupedClaudePluginSkills.putIfAbsent(plugin, () => {});
+        groupedClaudePluginSkills[plugin]!.putIfAbsent(s.name, () => []).add(s);
+      } else {
+        claudeLocalSkills.add(s);
       }
+    }
+
+    int skillSort(_ServerSkill a, _ServerSkill b) {
+      final scopeCmp = a.scope.compareTo(b.scope);
+      if (scopeCmp != 0) return scopeCmp;
+      return a.name.compareTo(b.name);
+    }
+
+    codexSkills.sort(skillSort);
+    claudeLocalSkills.sort(skillSort);
+
+    if (codexSkills.isNotEmpty) {
+      sections.add(
+        _buildGroup(
+          key: 'agent_codex_skills',
+          title: 'Codex Skills',
+          icon: Icons.terminal,
+          color: Colors.green,
+          items: codexSkills,
+        ),
+      );
+    }
+
+    if (claudeLocalSkills.isNotEmpty) {
+      sections.add(
+        _buildGroup(
+          key: 'agent_claude_local',
+          title: 'Claude Skills & Commands',
+          icon: Icons.auto_awesome,
+          color: Colors.deepPurple,
+          items: claudeLocalSkills,
+        ),
+      );
     }
 
     // Build plugin lookup: pluginName -> [(serverId, pluginData)]
@@ -574,65 +604,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       }
     }
 
-    // ── Local section (user + project skills) ──
-    if (groupedUser.isNotEmpty || groupedProject.isNotEmpty) {
-      final localChildren = <Widget>[];
-
-      // User commands
-      for (final entry in groupedUser.entries) {
-        localChildren.add(_buildSkillRow(entry.value.first));
-      }
-      // Project commands
-      for (final entry in groupedProject.entries) {
-        localChildren.add(_buildSkillRow(entry.value.first));
-      }
-
-      final isExpanded = _expanded.contains('local');
-      sections.add(
-        ExpansionTile(
-          key: const PageStorageKey('local'),
-          initiallyExpanded: isExpanded,
-          onExpansionChanged: (expanded) {
-            setState(() {
-              if (expanded) {
-                _expanded.add('local');
-              } else {
-                _expanded.remove('local');
-              }
-            });
-          },
-          tilePadding: const EdgeInsets.symmetric(horizontal: 16),
-          childrenPadding: EdgeInsets.zero,
-          dense: true,
-          visualDensity: VisualDensity.compact,
-          leading: Icon(
-            Icons.home_outlined,
-            size: 18,
-            color: Colors.blue.withAlpha(180),
-          ),
-          title: Row(
-            children: [
-              Text(
-                'Local',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: theme.colorScheme.onSurface.withAlpha(220),
-                ),
-              ),
-              const SizedBox(width: 6),
-              _buildCountBadge(
-                groupedUser.length + groupedProject.length,
-                Colors.blue,
-              ),
-            ],
-          ),
-          children: localChildren,
-        ),
-      );
-    }
-
-    // ── Marketplace sections ──
+    // ── Claude marketplace plugin sections ──
     // Collect all known marketplace names (from marketplace info + plugin data)
     final allMpNames = <String>{
       ...mpInfoByName.keys,
@@ -652,7 +624,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
       for (final pluginName in mpPluginNames) {
         final pluginEntries = pluginByName[pluginName]!;
-        final pluginSkills = groupedPluginSkills[pluginName];
+        final pluginSkills = groupedClaudePluginSkills[pluginName];
 
         if (pluginSkills != null && pluginSkills.isNotEmpty) {
           // Installed plugin with skills — show as expandable group
@@ -661,10 +633,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
               .toList();
           children.add(
             _buildGroup(
-              key: 'plugin_${mpName}_$pluginName',
+              key: 'claude_plugin_${mpName}_$pluginName',
               title: pluginName,
               icon: Icons.extension_outlined,
-              color: Colors.orange,
+              color: Colors.deepPurple,
               items: deduped,
               pluginServerEntries: pluginEntries,
             ),
@@ -695,7 +667,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
           leading: Icon(
             Icons.store_outlined,
             size: 18,
-            color: Colors.teal.withAlpha(180),
+            color: Colors.deepPurple.withAlpha(180),
           ),
           subtitle:
               [
@@ -718,7 +690,9 @@ class _SkillsScreenState extends State<SkillsScreen> {
           trailing: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildCountBadge(mpPluginNames.length, Colors.teal),
+              _buildAgentBadge('claude'),
+              const SizedBox(width: 6),
+              _buildCountBadge(mpPluginNames.length, Colors.deepPurple),
               if (mpInfo != null)
                 SizedBox(
                   width: 28,
@@ -753,7 +727,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ],
           ),
           title: Text(
-            mpName,
+            '$mpName Plugins',
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
               fontSize: 13,
@@ -766,17 +740,20 @@ class _SkillsScreenState extends State<SkillsScreen> {
       );
     }
 
-    // ── Add Marketplace button ──
+    // ── Add Claude marketplace button ──
     sections.add(
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: OutlinedButton.icon(
           onPressed: _showAddMarketplaceDialog,
           icon: const Icon(Icons.add, size: 16),
-          label: const Text('Add Marketplace', style: TextStyle(fontSize: 13)),
+          label: const Text(
+            'Add Claude Marketplace',
+            style: TextStyle(fontSize: 13),
+          ),
           style: OutlinedButton.styleFrom(
             visualDensity: VisualDensity.compact,
-            side: BorderSide(color: Colors.teal.withAlpha(80)),
+            side: BorderSide(color: Colors.deepPurple.withAlpha(80)),
           ),
         ),
       ),
@@ -825,7 +802,16 @@ class _SkillsScreenState extends State<SkillsScreen> {
   }
 
   Widget _buildScopeBadge(String scope) {
-    final color = scope == 'project' ? Colors.blueGrey : Colors.grey;
+    final color = switch (scope) {
+      'project' => Colors.blueGrey,
+      'plugin' => Colors.deepPurple,
+      _ => Colors.grey,
+    };
+    final label = switch (scope) {
+      'project' => 'Project',
+      'plugin' => 'Plugin',
+      _ => 'User',
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
@@ -834,7 +820,31 @@ class _SkillsScreenState extends State<SkillsScreen> {
         border: Border.all(color: color.withAlpha(60)),
       ),
       child: Text(
-        scope == 'project' ? 'Project' : 'User',
+        label,
+        style: TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.w600,
+          color: color.withAlpha(220),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSkillServerBadge(ServerConfig server) {
+    final color = server.colorValue != null
+        ? Color(server.colorValue!)
+        : Theme.of(context).colorScheme.outline;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withAlpha(60)),
+      ),
+      child: Text(
+        server.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
         style: TextStyle(
           fontSize: 9,
           fontWeight: FontWeight.w600,
@@ -849,7 +859,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Add Marketplace'),
+        title: const Text('Add Claude Marketplace'),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -999,6 +1009,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
           ),
           if (items.isNotEmpty) ...[
             const SizedBox(width: 6),
+            if (hasPlugin) ...[
+              _buildAgentBadge('claude'),
+              const SizedBox(width: 6),
+            ],
             _buildCountBadge(items.length, color),
           ],
         ],
@@ -1042,6 +1056,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
                       _buildAgentBadge(ss.agent),
                       const SizedBox(width: 4),
                       _buildScopeBadge(ss.scope),
+                      const SizedBox(width: 4),
+                      Flexible(child: _buildSkillServerBadge(ss.server)),
                     ],
                   ),
                   if (ss.description.isNotEmpty)
@@ -1129,6 +1145,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       'scope': 'plugin',
       'pluginName': name,
       'format': 'skill',
+      'agent': 'claude',
       'frontmatter': <String, dynamic>{'description': description},
       'body': readme,
     };
@@ -1179,6 +1196,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 ),
               ),
             ),
+            const SizedBox(width: 6),
+            _buildAgentBadge('claude'),
           ],
         ),
         subtitle: description.isNotEmpty

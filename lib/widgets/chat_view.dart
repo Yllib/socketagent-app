@@ -211,8 +211,12 @@ class ChatViewState extends State<ChatView> {
         _isAutoScrolling = true;
         _scrollController
             .animateTo(target, duration: duration, curve: Curves.easeOut)
-            .then((_) { _isAutoScrolling = false; })
-            .catchError((_) { _isAutoScrolling = false; });
+            .then((_) {
+              _isAutoScrolling = false;
+            })
+            .catchError((_) {
+              _isAutoScrolling = false;
+            });
       }
     });
   }
@@ -272,7 +276,8 @@ class ChatViewState extends State<ChatView> {
 
     return Column(
       children: [
-        if (widget.todos.isNotEmpty) TodoListCard(todos: widget.todos, onDismiss: widget.onDismissTodos),
+        if (widget.todos.isNotEmpty)
+          TodoListCard(todos: widget.todos, onDismiss: widget.onDismissTodos),
         Expanded(
           child: Listener(
             onPointerDown: (_) => _userTouching = true,
@@ -280,21 +285,21 @@ class ChatViewState extends State<ChatView> {
             onPointerCancel: (_) => _userTouching = false,
             child: ListView.builder(
               controller: _scrollController,
-            padding: const EdgeInsets.only(top: 8, bottom: 8),
-            itemCount: itemCount,
-            itemBuilder: (context, index) {
-              // "Load More" button at the top
-              if (hasLoadMore && index == 0) {
-                return _buildLoadMoreButton(context);
-              }
-              final msgIndex = index - loadMoreOffset;
-              if (msgIndex == widget.messages.length && widget.isProcessing) {
-                return _buildThinkingIndicator(context);
-              }
-              final msg = widget.messages[msgIndex];
-              return _buildMessageWidget(msg);
-            },
-          ),
+              padding: const EdgeInsets.only(top: 8, bottom: 8),
+              itemCount: itemCount,
+              itemBuilder: (context, index) {
+                // "Load More" button at the top
+                if (hasLoadMore && index == 0) {
+                  return _buildLoadMoreButton(context);
+                }
+                final msgIndex = index - loadMoreOffset;
+                if (msgIndex == widget.messages.length && widget.isProcessing) {
+                  return _buildThinkingIndicator(context);
+                }
+                final msg = widget.messages[msgIndex];
+                return _buildMessageWidget(msg);
+              },
+            ),
           ),
         ),
       ],
@@ -325,11 +330,13 @@ class ChatViewState extends State<ChatView> {
           return ReminderCard(message: msg);
         }
         // Task tool calls get a dedicated SubAgentCard
-        if ((msg.toolName == 'Task' || msg.toolName == 'Agent') && msg.toolUseId != null &&
+        if ((msg.toolName == 'Task' || msg.toolName == 'Agent') &&
+            msg.toolUseId != null &&
             widget.subagentTasks.containsKey(msg.toolUseId)) {
           final toolUseId = msg.toolUseId!;
           _taskKeys.putIfAbsent(toolUseId, () => GlobalKey());
-          final isRunning = widget.subagentTasks[toolUseId]?['status'] == 'running';
+          final isRunning =
+              widget.subagentTasks[toolUseId]?['status'] == 'running';
           final children = widget.allMessages
               .where((m) => m.parentToolUseId == toolUseId)
               .toList();
@@ -353,15 +360,9 @@ class ChatViewState extends State<ChatView> {
         return ToolOutputBlock(message: msg);
       case MessageType.question:
         if (msg.emailPreview != null) {
-          return EmailPreviewCard(
-            message: msg,
-            onAnswer: widget.onAnswer,
-          );
+          return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);
         }
-        return QuestionCard(
-          message: msg,
-          onAnswer: widget.onAnswer,
-        );
+        return QuestionCard(message: msg, onAnswer: widget.onAnswer);
       case MessageType.result:
         return MessageBubble(message: msg);
       case MessageType.error:
@@ -371,15 +372,9 @@ class ChatViewState extends State<ChatView> {
       case MessageType.compactBoundary:
         return _buildCompactBoundaryDivider(msg);
       case MessageType.outlookAuth:
-        return OutlookAuthCard(
-          message: msg,
-          onAnswer: widget.onAnswer,
-        );
+        return OutlookAuthCard(message: msg, onAnswer: widget.onAnswer);
       case MessageType.ibsAuth:
-        return IBSAuthCard(
-          message: msg,
-          onAnswer: widget.onAnswer,
-        );
+        return IBSAuthCard(message: msg, onAnswer: widget.onAnswer);
       case MessageType.claudeAuth:
         return ClaudeAuthCard(message: msg);
       case MessageType.toolSummary:
@@ -387,12 +382,11 @@ class ChatViewState extends State<ChatView> {
       case MessageType.thinking:
         return ThinkingCard(message: msg);
       case MessageType.elicitationUrl:
-        return ElicitationCard(
-          message: msg,
-          onAnswer: widget.onAnswer,
-        );
+        return ElicitationCard(message: msg, onAnswer: widget.onAnswer);
       case MessageType.monitorOutput:
         return MonitorCard(message: msg);
+      case MessageType.skillInvocation:
+        return _buildSkillInvocationCard(msg);
     }
   }
 
@@ -478,7 +472,9 @@ class ChatViewState extends State<ChatView> {
     // Background bash completion — render as a ToolOutputBlock mirroring the original card
     if ((isSuccess || isFailed) && msg.parentToolUseId != null) {
       final original = widget.allMessages.cast<ChatMessage?>().firstWhere(
-        (m) => m!.type == MessageType.toolCall && m.toolUseId == msg.parentToolUseId,
+        (m) =>
+            m!.type == MessageType.toolCall &&
+            m.toolUseId == msg.parentToolUseId,
         orElse: () => null,
       );
       if (original != null && original.toolOutput != null) {
@@ -531,13 +527,25 @@ class ChatViewState extends State<ChatView> {
             ),
           ),
           if (widget.onStopTask != null &&
-              !['completed', 'failed', 'stopped', 'cancelled', 'uploaded', 'success'].contains(status) &&
-              msg.toolUseId != null && msg.toolUseId!.isNotEmpty)
+              ![
+                'completed',
+                'failed',
+                'stopped',
+                'cancelled',
+                'uploaded',
+                'success',
+              ].contains(status) &&
+              msg.toolUseId != null &&
+              msg.toolUseId!.isNotEmpty)
             IconButton(
               onPressed: () {
                 widget.onStopTask!(msg.toolUseId!);
               },
-              icon: Icon(Icons.stop_circle_outlined, size: 18, color: Colors.red.shade300),
+              icon: Icon(
+                Icons.stop_circle_outlined,
+                size: 18,
+                color: Colors.red.shade300,
+              ),
               padding: const EdgeInsets.only(right: 8),
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
               splashRadius: 16,
@@ -590,6 +598,112 @@ class ChatViewState extends State<ChatView> {
           ),
           Expanded(child: Divider(color: color.withAlpha(80))),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSkillInvocationCard(ChatMessage msg) {
+    final theme = Theme.of(context);
+    final name = msg.toolName ?? msg.toolInput?['name'] as String? ?? '';
+    final args = (msg.toolInput?['args'] as String? ?? msg.textContent).trim();
+    final description = (msg.toolInput?['description'] as String? ?? '').trim();
+    final body = (msg.toolInput?['body'] as String? ?? '').trim();
+    final preview = body.isNotEmpty ? body : description;
+
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Opacity(
+        opacity: msg.isPending ? 0.5 : 1.0,
+        child: Container(
+          margin: const EdgeInsets.only(left: 48, right: 8, top: 4, bottom: 4),
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.primaryContainer,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(12),
+              topRight: Radius.circular(12),
+              bottomLeft: Radius.circular(12),
+              bottomRight: Radius.circular(4),
+            ),
+            border: Border.all(color: theme.colorScheme.primary.withAlpha(90)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.auto_fix_high,
+                    size: 16,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '/$name',
+                    style: TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primary.withAlpha(28),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      'Skill',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: theme.colorScheme.primary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              if (preview.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text(
+                  preview,
+                  maxLines: 5,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.3,
+                    color: theme.colorScheme.onPrimaryContainer.withAlpha(210),
+                  ),
+                ),
+              ],
+              if (args.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface.withAlpha(90),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    args,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: theme.colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -683,12 +797,14 @@ class ChatViewState extends State<ChatView> {
         children: [
           Padding(
             padding: const EdgeInsets.only(top: 2),
-            child: Icon(Icons.error_outline, size: 18, color: Colors.red.shade300),
+            child: Icon(
+              Icons.error_outline,
+              size: 18,
+              color: Colors.red.shade300,
+            ),
           ),
           const SizedBox(width: 8),
-          Expanded(
-            child: _buildErrorText(msg.textContent),
-          ),
+          Expanded(child: _buildErrorText(msg.textContent)),
         ],
       ),
     );
@@ -697,24 +813,34 @@ class ChatViewState extends State<ChatView> {
   Widget _buildErrorText(String text) {
     final urlPattern = RegExp(r'https?://\S+');
     final style = TextStyle(color: Colors.red.shade200, fontSize: 13);
-    final linkStyle = TextStyle(color: Colors.blue.shade300, fontSize: 13, decoration: TextDecoration.underline);
+    final linkStyle = TextStyle(
+      color: Colors.blue.shade300,
+      fontSize: 13,
+      decoration: TextDecoration.underline,
+    );
     final matches = urlPattern.allMatches(text).toList();
     if (matches.isEmpty) return Text(text, style: style);
 
     final spans = <TextSpan>[];
     int last = 0;
     for (final m in matches) {
-      if (m.start > last) spans.add(TextSpan(text: text.substring(last, m.start)));
+      if (m.start > last)
+        spans.add(TextSpan(text: text.substring(last, m.start)));
       final url = m.group(0)!;
-      spans.add(TextSpan(
-        text: 'Open login page',
-        style: linkStyle,
-        recognizer: TapGestureRecognizer()..onTap = () => launchUrl(Uri.parse(url)),
-      ));
+      spans.add(
+        TextSpan(
+          text: 'Open login page',
+          style: linkStyle,
+          recognizer: TapGestureRecognizer()
+            ..onTap = () => launchUrl(Uri.parse(url)),
+        ),
+      );
       last = m.end;
     }
     if (last < text.length) spans.add(TextSpan(text: text.substring(last)));
-    return RichText(text: TextSpan(style: style, children: spans));
+    return RichText(
+      text: TextSpan(style: style, children: spans),
+    );
   }
 }
 
@@ -731,7 +857,10 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
 
   @override
   Widget build(BuildContext context) {
-    final lines = widget.msg.textContent.split('\n').where((l) => l.isNotEmpty).toList();
+    final lines = widget.msg.textContent
+        .split('\n')
+        .where((l) => l.isNotEmpty)
+        .toList();
     const baseColor = Color(0xFF89B4FA);
 
     return GestureDetector(
@@ -793,7 +922,12 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
                   lineIcon = Icons.info_outline;
                 }
 
-                final hasPrefix = line.startsWith('\u2713 ') || line.startsWith('\u25b6 ') || line.startsWith('+ ') || line.startsWith('- ') || line.startsWith('\u25cb ');
+                final hasPrefix =
+                    line.startsWith('\u2713 ') ||
+                    line.startsWith('\u25b6 ') ||
+                    line.startsWith('+ ') ||
+                    line.startsWith('- ') ||
+                    line.startsWith('\u25cb ');
                 final text = hasPrefix ? line.substring(2) : line;
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 2),
@@ -811,7 +945,9 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
                           style: TextStyle(
                             color: lineColor,
                             fontSize: 12,
-                            decoration: line.startsWith('\u2713 ') ? TextDecoration.lineThrough : null,
+                            decoration: line.startsWith('\u2713 ')
+                                ? TextDecoration.lineThrough
+                                : null,
                             decorationColor: lineColor.withAlpha(120),
                           ),
                         ),

@@ -78,6 +78,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeSessionId;
   String? _activeSessionCwd;
   String? _activeSessionTitle;
+  final Map<String, List<Map<String, dynamic>>> _skillsByServer = {};
   // Per-session notification toggles
   Set<String> _notifMutedSessions = {};
   // Pinned sessions
@@ -374,6 +375,70 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<String> get promptSuggestions => _promptSuggestions;
   List<dynamic>? get supportedCommands => _supportedCommands;
   List<dynamic>? get supportedAgents => _supportedAgents;
+  String _cleanSlashName(String value) {
+    final trimmed = value.trim();
+    if (trimmed.length >= 2) {
+      final first = trimmed[0];
+      final last = trimmed[trimmed.length - 1];
+      if ((first == '"' && last == '"') || (first == "'" && last == "'")) {
+        return trimmed.substring(1, trimmed.length - 1);
+      }
+    }
+    return trimmed;
+  }
+
+  List<Map<String, dynamic>> get slashCommands {
+    if (_activeSessionBackend == 'codex') {
+      final serverId = _connMgr.activeServerId;
+      if (serverId == null) return const [];
+      final skills = _skillsByServer[serverId] ?? const [];
+      final commands = skills
+          .where(
+            (skill) =>
+                skill['agent'] == 'codex' &&
+                skill['format'] == 'skill' &&
+                (skill['name'] as String? ?? '').isNotEmpty,
+          )
+          .map((skill) {
+            final cleanName = _cleanSlashName(skill['name'] as String? ?? '');
+            return {
+              ...skill,
+              'name': cleanName,
+              'kind': 'skill',
+              'agent': 'codex',
+            };
+          })
+          .toList();
+      commands.sort(
+        (a, b) =>
+            (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? ''),
+      );
+      return commands;
+    }
+
+    final commands = _supportedCommands ?? const [];
+    return commands
+        .map((cmd) {
+          if (cmd is Map) {
+            final mapped = Map<String, dynamic>.from(cmd);
+            return {
+              ...mapped,
+              'name': _cleanSlashName((mapped['name'] ?? '').toString()),
+              'kind': 'command',
+              'agent': 'claude',
+            };
+          }
+          return {
+            'name': _cleanSlashName(cmd.toString()),
+            'description': '',
+            'kind': 'command',
+            'agent': 'claude',
+          };
+        })
+        .where((cmd) => (cmd['name'] as String? ?? '').isNotEmpty)
+        .toList();
+  }
+
   bool get taskPaneCollapsed => _taskPaneCollapsed;
   set taskPaneCollapsed(bool v) {
     _taskPaneCollapsed = v;
@@ -520,6 +585,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _loadSettings();
     _setupListeners();
+  }
+
+  @override
+  void notifyListeners() {
+    _keepPendingInjectedMessagesAtEnd();
+    super.notifyListeners();
+  }
+
+  void _keepPendingInjectedMessagesAtEnd() {
+    final pending = _messages
+        .where(
+          (m) =>
+              m.sender == MessageSender.user &&
+              m.isPending &&
+              m.injectionPriority != null,
+        )
+        .toList();
+    if (pending.isEmpty) return;
+
+    final pendingIds = pending.map((m) => m.id).toSet();
+    _messages.removeWhere((m) => pendingIds.contains(m.id));
+    _messages.addAll(pending);
   }
 
   @override
@@ -928,10 +1015,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(serverId, {'type': 'get_server_settings'});
       _connMgr.sendToServer(serverId, {'type': 'list_sessions'});
       _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
+      if (serverId == _connMgr.activeServerId) {
+        _connMgr.sendToServer(serverId, {'type': 'skills_list'});
+      }
     } else {
       requestServerSettings();
       requestSessionList();
       requestScheduledTasks();
+      requestActiveSkills();
     }
 
     // Resume active session only on the server that owns it
@@ -2044,9 +2135,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'supported_commands':
         _supportedCommands = msg['commands'] as List<dynamic>?;
+        notifyListeners();
         break;
       case 'supported_agents':
         _supportedAgents = msg['agents'] as List<dynamic>?;
+        notifyListeners();
+        break;
+      case 'skills_list':
+        if (serverId != null) {
+          _skillsByServer[serverId] = (msg['skills'] as List? ?? [])
+              .map((skill) => Map<String, dynamic>.from(skill as Map))
+              .toList();
+          notifyListeners();
+        }
         break;
       case 'permission_mode_changed':
         _permissionMode = msg['permissionMode'] as String?;
@@ -3480,7 +3581,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     for (int i = _messages.length - 1; i >= 0; i--) {
       final m = _messages[i];
       if (m.sender == MessageSender.user &&
-          m.type == MessageType.text &&
+          (m.type == MessageType.text ||
+              m.type == MessageType.skillInvocation) &&
           m.uuid == null) {
         m.uuid = uuid;
         notifyListeners();
@@ -3491,6 +3593,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void interruptQuery() {
     _ws.sendInterrupt();
+  }
+
+  ChatMessage _buildUserDisplayMessage(String text) {
+    final skillMessage = _buildSkillInvocationMessage(text);
+    return skillMessage ?? ChatMessage.userText(text);
+  }
+
+  ChatMessage? _buildSkillInvocationMessage(String text) {
+    if (_activeSessionBackend != 'codex') return null;
+    final match = RegExp(
+      r'''^/(?:"([^"]+)"|'([^']+)'|([^\s]+))(?:\s+([\s\S]*))?$''',
+    ).firstMatch(text.trim());
+    if (match == null) return null;
+
+    final rawName = match.group(1) ?? match.group(2) ?? match.group(3) ?? '';
+    final name = _cleanSlashName(rawName);
+    if (name.isEmpty) return null;
+    final args = (match.group(4) ?? '').trim();
+    final command = slashCommands.where((candidate) {
+      return _cleanSlashName((candidate['name'] ?? '').toString()) == name;
+    }).firstOrNull;
+
+    return ChatMessage.skillInvocation(
+      name: name,
+      args: args,
+      description: (command?['description'] ?? '').toString(),
+      body: (command?['body'] ?? '').toString(),
+    );
   }
 
   void _handleSessionCreated(Map<String, dynamic> msg) {
@@ -3505,6 +3635,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // the real id). Capture it so the chat header label is right immediately.
     final backend = msg['backend'] as String?;
     if (backend != null) _activeSessionBackend = backend;
+    if (_activeSessionBackend == 'codex') requestActiveSkills();
     notifyListeners();
   }
 
@@ -3611,7 +3742,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           userText = userText.replaceAll(_systemReminderRegex, '').trim();
 
           if (userText.trim().isNotEmpty) {
-            final userMsg = ChatMessage.userText(userText);
+            final userMsg = _buildUserDisplayMessage(userText);
             // Restore uuid directly from history entry (for rewind support)
             userMsg.uuid = entry['uuid'] as String?;
             loaded.add(userMsg);
@@ -4211,7 +4342,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final displayText = text.trim().isEmpty
         ? '📎 ${attachName ?? "file"}'
         : text;
-    final userMsg = ChatMessage.userText(displayText);
+    final userMsg = _buildUserDisplayMessage(displayText);
     // Mark as pending if injecting with non-immediate priority OR if we're
     // about to spend time uploading. The bubble renders pending state with
     // reduced opacity + a progress indicator while the file streams up.
@@ -4633,6 +4764,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void requestActiveSkills() {
+    final serverId = _connMgr.activeServerId;
+    if (serverId == null) return;
+    if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
+    _connMgr.sendToServer(serverId, {'type': 'skills_list'});
+  }
+
   void setCodexDriverForServer(String serverId, String driver) {
     if (driver != 'exec' && driver != 'app-server') return;
     _serverCodexDrivers[serverId] = driver;
@@ -4695,6 +4833,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Send per-session settings after resume
     _sendSessionSettings(sessionId);
+    if (_activeSessionBackend == 'codex') requestActiveSkills();
 
     notifyListeners();
   }
@@ -4880,6 +5019,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
+    if (_activeSessionBackend == 'codex') requestActiveSkills();
     notifyListeners();
   }
 

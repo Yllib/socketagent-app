@@ -81,6 +81,16 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
   bool get _useWebSocket =>
       widget.serverConfig != null && widget.serverConfig!.useRelay;
 
+  String get _nameHelperText {
+    final displayName = _nameController.text.isEmpty
+        ? 'name'
+        : _nameController.text;
+    if (_agent == 'codex') {
+      return 'Invoke as /$displayName in SocketAgent';
+    }
+    return 'Invoked as /$displayName';
+  }
+
   Future<void> _save() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
@@ -226,8 +236,7 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
               decoration: InputDecoration(
                 labelText: 'Name',
                 hintText: 'my-command',
-                helperText:
-                    'Invoked as /${_nameController.text.isEmpty ? "name" : _nameController.text}',
+                helperText: _nameHelperText,
                 border: const OutlineInputBorder(),
                 prefixIcon: const Icon(Icons.tag, size: 20),
               ),

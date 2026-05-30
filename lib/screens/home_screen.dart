@@ -54,9 +54,14 @@ class HomeScreenState extends State<HomeScreen> {
         provider.speech.onTextFieldChanged(_textController.text);
       }
       provider.saveDraft(_textController.text.trim());
-      // Show/hide slash command picker
+      // Show/hide slash command picker.
       final text = _textController.text;
-      final shouldShow = text.startsWith('/') && !text.contains(' ') && provider.supportedCommands != null;
+      final shouldShow = _isSlashCommandPrefix(text);
+      if (shouldShow &&
+          provider.activeSessionBackend == 'codex' &&
+          provider.slashCommands.isEmpty) {
+        provider.requestActiveSkills();
+      }
       final filter = shouldShow ? text.substring(1).toLowerCase() : '';
       if (shouldShow != _showCommandPicker || filter != _commandFilter) {
         setState(() {
@@ -116,13 +121,65 @@ class HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  bool _isSlashCommandPrefix(String text) {
+    if (!text.startsWith('/')) return false;
+    final query = text.substring(1);
+    return !query.contains(RegExp(r'\s'));
+  }
+
+  String _slashName(dynamic command) {
+    if (command is Map) return (command['name'] ?? '').toString();
+    return command.toString();
+  }
+
+  String _slashDescription(dynamic command) {
+    if (command is Map) {
+      return (command['description'] ?? '').toString();
+    }
+    return '';
+  }
+
+  String _slashArgumentHint(dynamic command) {
+    if (command is Map) {
+      return (command['argumentHint'] ?? command['argument-hint'] ?? '')
+          .toString();
+    }
+    return '';
+  }
+
+  String _slashKind(dynamic command) {
+    if (command is Map) return (command['kind'] ?? 'command').toString();
+    return 'command';
+  }
+
+  String _slashAgent(dynamic command) {
+    if (command is Map) return (command['agent'] ?? 'claude').toString();
+    return 'claude';
+  }
+
+  void _insertSlashCommand(dynamic command) {
+    final name = _slashName(command);
+    if (name.isEmpty) return;
+    _textController.text = '/$name ';
+    _textController.selection = TextSelection.fromPosition(
+      TextPosition(offset: _textController.text.length),
+    );
+    setState(() {
+      _showCommandPicker = false;
+      _commandFilter = '';
+    });
+    _focusNode.requestFocus();
+  }
+
   void _sendMessage(ChatProvider provider, {String? priority}) {
     var text = _textController.text.trim();
     // If empty and there's a prompt suggestion, send the suggestion — but
     // only when there's no attachment, otherwise sending a file with no
     // typed text would silently bring along the suggestion the user never
     // asked to send.
-    if (text.isEmpty && !provider.hasAttachment && provider.promptSuggestions.isNotEmpty) {
+    if (text.isEmpty &&
+        !provider.hasAttachment &&
+        provider.promptSuggestions.isNotEmpty) {
       text = provider.promptSuggestions.first;
       provider.clearPromptSuggestions();
     }
@@ -133,17 +190,34 @@ class HomeScreenState extends State<HomeScreen> {
     _focusNode.requestFocus();
   }
 
-  void _showPriorityMenu(BuildContext context, Offset position, ChatProvider provider, ThemeData theme) {
+  void _showPriorityMenu(
+    BuildContext context,
+    Offset position,
+    ChatProvider provider,
+    ThemeData theme,
+  ) {
     showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(position.dx - 150, position.dy - 160, position.dx, position.dy),
+      position: RelativeRect.fromLTRB(
+        position.dx - 150,
+        position.dy - 160,
+        position.dx,
+        position.dy,
+      ),
       items: [
         PopupMenuItem(
           value: 'now',
           child: ListTile(
-            leading: Icon(Icons.flash_on, color: theme.colorScheme.primary, size: 20),
+            leading: Icon(
+              Icons.flash_on,
+              color: theme.colorScheme.primary,
+              size: 20,
+            ),
             title: const Text('Now'),
-            subtitle: const Text('Interrupt current tool', style: TextStyle(fontSize: 11)),
+            subtitle: const Text(
+              'Interrupt current tool',
+              style: TextStyle(fontSize: 11),
+            ),
             dense: true,
             contentPadding: EdgeInsets.zero,
           ),
@@ -151,9 +225,16 @@ class HomeScreenState extends State<HomeScreen> {
         PopupMenuItem(
           value: 'next',
           child: ListTile(
-            leading: Icon(Icons.arrow_forward, color: theme.colorScheme.secondary, size: 20),
+            leading: Icon(
+              Icons.arrow_forward,
+              color: theme.colorScheme.secondary,
+              size: 20,
+            ),
             title: const Text('Next'),
-            subtitle: const Text('Between turns', style: TextStyle(fontSize: 11)),
+            subtitle: const Text(
+              'Between turns',
+              style: TextStyle(fontSize: 11),
+            ),
             dense: true,
             contentPadding: EdgeInsets.zero,
           ),
@@ -161,9 +242,16 @@ class HomeScreenState extends State<HomeScreen> {
         PopupMenuItem(
           value: 'later',
           child: ListTile(
-            leading: Icon(Icons.schedule, color: theme.colorScheme.tertiary, size: 20),
+            leading: Icon(
+              Icons.schedule,
+              color: theme.colorScheme.tertiary,
+              size: 20,
+            ),
             title: const Text('Later'),
-            subtitle: const Text('After current task', style: TextStyle(fontSize: 11)),
+            subtitle: const Text(
+              'After current task',
+              style: TextStyle(fontSize: 11),
+            ),
             dense: true,
             contentPadding: EdgeInsets.zero,
           ),
@@ -203,158 +291,177 @@ class HomeScreenState extends State<HomeScreen> {
         final permTheme = _permissionModeTheme(permMode);
         return Theme(
           data: permTheme != null
-            ? Theme.of(context).copyWith(
-                appBarTheme: AppBarTheme(
-                  backgroundColor: permTheme.barColor,
-                  foregroundColor: permTheme.textColor,
-                ),
-              )
-            : Theme.of(context),
+              ? Theme.of(context).copyWith(
+                  appBarTheme: AppBarTheme(
+                    backgroundColor: permTheme.barColor,
+                    foregroundColor: permTheme.textColor,
+                  ),
+                )
+              : Theme.of(context),
           child: Scaffold(
-          resizeToAvoidBottomInset: true,
-          appBar: AppBar(
-            title: GestureDetector(
-              onLongPress: () {
-                provider.toggleRawMode();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(provider.rawMode ? 'Raw mode ON' : 'Raw mode OFF'),
-                    duration: const Duration(seconds: 1),
-                  ),
-                );
-              },
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    () {
-                      final title = provider.activeSessionTitle;
-                      final hasTitle = title != null && title.isNotEmpty && title != 'Untitled';
-                      final flags = <String>[];
-                      if (provider.activeSessionBackend == 'codex') flags.add('CODEX');
-                      if (isPlan) flags.add('PLAN');
-                      if (provider.rawMode) flags.add('RAW');
-                      final suffix = flags.isEmpty ? '' : ' [${flags.join('·')}]';
-                      return (hasTitle ? title : 'SocketAgent') + suffix;
-                    }(),
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w600,
-                      color: permTheme?.textColor,
+            resizeToAvoidBottomInset: true,
+            appBar: AppBar(
+              title: GestureDetector(
+                onLongPress: () {
+                  provider.toggleRawMode();
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        provider.rawMode ? 'Raw mode ON' : 'Raw mode OFF',
+                      ),
+                      duration: const Duration(seconds: 1),
                     ),
-                  ),
-                  if (provider.activeSessionCwd != null)
+                  );
+                },
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
                     Text(
-                      provider.serverConfigs.length > 1 &&
-                              provider.connMgr.activeConfig != null
-                          ? '${provider.connMgr.activeConfig!.name} · ${provider.activeSessionCwd!}'
-                          : provider.activeSessionCwd!,
+                      () {
+                        final title = provider.activeSessionTitle;
+                        final hasTitle =
+                            title != null &&
+                            title.isNotEmpty &&
+                            title != 'Untitled';
+                        final flags = <String>[];
+                        if (provider.activeSessionBackend == 'codex')
+                          flags.add('CODEX');
+                        if (isPlan) flags.add('PLAN');
+                        if (provider.rawMode) flags.add('RAW');
+                        final suffix = flags.isEmpty
+                            ? ''
+                            : ' [${flags.join('·')}]';
+                        return (hasTitle ? title : 'SocketAgent') + suffix;
+                      }(),
                       style: TextStyle(
-                        fontSize: 11,
-                        color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
-                            .withAlpha(178),
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: permTheme?.textColor,
                       ),
                     ),
-                  if (provider.activeSessionId != null)
-                    GestureDetector(
-                      onTap: () => _showPermissionModePicker(provider),
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 2),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              _permissionModeIcon(permMode),
-                              size: 11,
-                              color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
+                    if (provider.activeSessionCwd != null)
+                      Text(
+                        provider.serverConfigs.length > 1 &&
+                                provider.connMgr.activeConfig != null
+                            ? '${provider.connMgr.activeConfig!.name} · ${provider.activeSessionCwd!}'
+                            : provider.activeSessionCwd!,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color:
+                              (permTheme?.textColor ??
+                                      Theme.of(context).colorScheme.onSurface)
                                   .withAlpha(178),
-                            ),
-                            const SizedBox(width: 4),
-                            Text(
-                              _permissionModeLabel(permMode),
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
-                                    .withAlpha(178),
-                              ),
-                            ),
-                            Icon(
-                              Icons.arrow_drop_down,
-                              size: 14,
-                              color: (permTheme?.textColor ?? Theme.of(context).colorScheme.onSurface)
-                                  .withAlpha(128),
-                            ),
-                          ],
                         ),
                       ),
-                    ),
-                ],
+                    if (provider.activeSessionId != null)
+                      GestureDetector(
+                        onTap: () => _showPermissionModePicker(provider),
+                        child: Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _permissionModeIcon(permMode),
+                                size: 11,
+                                color:
+                                    (permTheme?.textColor ??
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface)
+                                        .withAlpha(178),
+                              ),
+                              const SizedBox(width: 4),
+                              Text(
+                                _permissionModeLabel(permMode),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color:
+                                      (permTheme?.textColor ??
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface)
+                                          .withAlpha(178),
+                                ),
+                              ),
+                              Icon(
+                                Icons.arrow_drop_down,
+                                size: 14,
+                                color:
+                                    (permTheme?.textColor ??
+                                            Theme.of(
+                                              context,
+                                            ).colorScheme.onSurface)
+                                        .withAlpha(128),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
               ),
+              actions: [
+                if (provider.lastUsage != null)
+                  _buildUsageIndicator(provider.lastUsage!),
+                _buildConnectionIndicator(provider.connectionStatus),
+              ],
             ),
-            actions: [
-              if (provider.lastUsage != null)
-                _buildUsageIndicator(provider.lastUsage!),
-              _buildConnectionIndicator(provider.connectionStatus),
-            ],
-          ),
-          body: Column(
-            children: [
-              if (provider.activeSessionId != null)
-                _buildControlChips(provider),
-              Expanded(
-                child: ChatView(
-                  key: _chatViewKey,
-                  messages: provider.filteredMessages,
-                  isProcessing: provider.isProcessing,
-                  isLoadingHistory: provider.isLoadingHistory,
-                  isLoadingMore: provider.isLoadingMore,
-                  hasMoreHistory: provider.hasMoreHistory,
-                  todos: provider.todos,
-                  onAnswer: provider.answerQuestion,
-                  onLoadMore: provider.loadMoreHistory,
-                  onStopTask: provider.stopTask,
-                  onDismissTodos: provider.dismissTodos,
-                  onRewindConversation: provider.rewindConversation,
-                  onBranch: provider.branchFromMessage,
-                  onRetractQueuedMessage: (messageId) {
-                    final text = provider.retractQueuedMessage(messageId);
-                    if (text == null) return;
-                    _textController.text = text;
-                    _textController.selection = TextSelection.fromPosition(
-                      TextPosition(offset: text.length),
-                    );
-                    provider.saveDraft(text.trim());
-                    _focusNode.requestFocus();
-                  },
-                  rawMode: provider.rawMode,
-                  rawItems: provider.rawItems,
-                  subagentTasks: provider.subagentTasks,
-                  allMessages: provider.messages,
+            body: Column(
+              children: [
+                if (provider.activeSessionId != null)
+                  _buildControlChips(provider),
+                Expanded(
+                  child: ChatView(
+                    key: _chatViewKey,
+                    messages: provider.filteredMessages,
+                    isProcessing: provider.isProcessing,
+                    isLoadingHistory: provider.isLoadingHistory,
+                    isLoadingMore: provider.isLoadingMore,
+                    hasMoreHistory: provider.hasMoreHistory,
+                    todos: provider.todos,
+                    onAnswer: provider.answerQuestion,
+                    onLoadMore: provider.loadMoreHistory,
+                    onStopTask: provider.stopTask,
+                    onDismissTodos: provider.dismissTodos,
+                    onRewindConversation: provider.rewindConversation,
+                    onBranch: provider.branchFromMessage,
+                    onRetractQueuedMessage: (messageId) {
+                      final text = provider.retractQueuedMessage(messageId);
+                      if (text == null) return;
+                      _textController.text = text;
+                      _textController.selection = TextSelection.fromPosition(
+                        TextPosition(offset: text.length),
+                      );
+                      provider.saveDraft(text.trim());
+                      _focusNode.requestFocus();
+                    },
+                    rawMode: provider.rawMode,
+                    rawItems: provider.rawItems,
+                    subagentTasks: provider.subagentTasks,
+                    allMessages: provider.messages,
+                  ),
                 ),
-              ),
-              if (provider.isCompacting)
-                _buildCompactingBanner(),
-              if (provider.isRateLimited)
-                _buildRateLimitBanner(provider),
-              if (provider.isRetrying)
-                _buildRetryingBanner(),
-              if (provider.activeHookName != null)
-                _buildHookBanner(provider.activeHookName!),
-              if (provider.activePaneTasks.isNotEmpty)
-                ActiveTasksPane(
-                  backgroundTasks: provider.backgroundTasks,
-                  subagentTasks: provider.subagentTasks,
-                  messages: provider.messages,
-                  onStopTask: provider.stopTask,
-                  onScrollToTask: (toolUseId) {
-                    _chatViewKey.currentState?.scrollToTask(toolUseId);
-                  },
-                  onDismissSubagent: provider.dismissSubagent,
-                ),
-              _buildInputBar(provider),
-            ],
+                if (provider.isCompacting) _buildCompactingBanner(),
+                if (provider.isRateLimited) _buildRateLimitBanner(provider),
+                if (provider.isRetrying) _buildRetryingBanner(),
+                if (provider.activeHookName != null)
+                  _buildHookBanner(provider.activeHookName!),
+                if (provider.activePaneTasks.isNotEmpty)
+                  ActiveTasksPane(
+                    backgroundTasks: provider.backgroundTasks,
+                    subagentTasks: provider.subagentTasks,
+                    messages: provider.messages,
+                    onStopTask: provider.stopTask,
+                    onScrollToTask: (toolUseId) {
+                      _chatViewKey.currentState?.scrollToTask(toolUseId);
+                    },
+                    onDismissSubagent: provider.dismissSubagent,
+                  ),
+                _buildInputBar(provider),
+              ],
+            ),
           ),
-        ),
         );
       },
     );
@@ -396,9 +503,12 @@ class HomeScreenState extends State<HomeScreen> {
                 ],
                 if (provider.rawMode) ...[
                   const SizedBox(width: 6),
-                  _buildChipBody(Icons.code, 'RAW',
-                      iconColor: Colors.orange.shade300,
-                      labelColor: Colors.orange.shade300),
+                  _buildChipBody(
+                    Icons.code,
+                    'RAW',
+                    iconColor: Colors.orange.shade300,
+                    labelColor: Colors.orange.shade300,
+                  ),
                 ],
               ],
             ),
@@ -408,8 +518,13 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildChipBody(IconData icon, String label,
-      {Color? iconColor, Color? labelColor, bool active = false}) {
+  Widget _buildChipBody(
+    IconData icon,
+    String label, {
+    Color? iconColor,
+    Color? labelColor,
+    bool active = false,
+  }) {
     final theme = Theme.of(context);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
@@ -422,13 +537,19 @@ class HomeScreenState extends State<HomeScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14,
-              color: iconColor ?? theme.colorScheme.onSurfaceVariant),
+          Icon(
+            icon,
+            size: 14,
+            color: iconColor ?? theme.colorScheme.onSurfaceVariant,
+          ),
           const SizedBox(width: 4),
-          Text(label, style: TextStyle(
-            fontSize: 12,
-            color: labelColor ?? theme.colorScheme.onSurfaceVariant,
-          )),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: labelColor ?? theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
         ],
       ),
     );
@@ -454,8 +575,11 @@ class HomeScreenState extends State<HomeScreen> {
           child: Row(
             children: [
               if (isSelected)
-                Icon(Icons.check, size: 16,
-                    color: Theme.of(context).colorScheme.primary)
+                Icon(
+                  Icons.check,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.primary,
+                )
               else
                 const SizedBox(width: 16),
               const SizedBox(width: 8),
@@ -464,14 +588,24 @@ class HomeScreenState extends State<HomeScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(modelName, style: TextStyle(
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-                    )),
+                    Text(
+                      modelName,
+                      style: TextStyle(
+                        fontWeight: isSelected
+                            ? FontWeight.bold
+                            : FontWeight.normal,
+                      ),
+                    ),
                     if (description.isNotEmpty)
-                      Text(description, style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                      )),
+                      Text(
+                        description,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(128),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -502,7 +636,8 @@ class HomeScreenState extends State<HomeScreen> {
         icon = Icons.auto_awesome;
         color = Theme.of(context).colorScheme.primary;
     }
-    final label = provider.effort[0].toUpperCase() + provider.effort.substring(1);
+    final label =
+        provider.effort[0].toUpperCase() + provider.effort.substring(1);
 
     return PopupMenuButton<String>(
       onSelected: (value) => provider.setEffort(value),
@@ -517,8 +652,11 @@ class HomeScreenState extends State<HomeScreen> {
             child: Row(
               children: [
                 if (e == provider.effort)
-                  Icon(Icons.check, size: 16,
-                      color: Theme.of(context).colorScheme.primary)
+                  Icon(
+                    Icons.check,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
                 else
                   const SizedBox(width: 16),
                 const SizedBox(width: 8),
@@ -532,8 +670,18 @@ class HomeScreenState extends State<HomeScreen> {
 
   static const _permModes = [
     ('bypassPermissions', 'Auto', 'Auto-approve everything', Icons.speed),
-    ('auto', 'Smart Auto', 'AI classifier approves safe actions', Icons.smart_toy),
-    ('acceptEdits', 'Auto-Edit', 'Auto-approve edits, ask for commands', Icons.edit),
+    (
+      'auto',
+      'Smart Auto',
+      'AI classifier approves safe actions',
+      Icons.smart_toy,
+    ),
+    (
+      'acceptEdits',
+      'Auto-Edit',
+      'Auto-approve edits, ask for commands',
+      Icons.edit,
+    ),
     ('default', 'Ask', 'Ask before risky actions', Icons.shield_outlined),
     ('plan', 'Plan', 'Plan only, no execution', Icons.edit_note),
   ];
@@ -573,7 +721,12 @@ class HomeScreenState extends State<HomeScreen> {
 
     showMenu<String>(
       context: context,
-      position: RelativeRect.fromLTRB(0, kToolbarHeight + MediaQuery.of(context).padding.top, button.size.width, 0),
+      position: RelativeRect.fromLTRB(
+        0,
+        kToolbarHeight + MediaQuery.of(context).padding.top,
+        button.size.width,
+        0,
+      ),
       items: [
         for (final entry in _permModes)
           PopupMenuItem(
@@ -581,8 +734,11 @@ class HomeScreenState extends State<HomeScreen> {
             child: Row(
               children: [
                 if (entry.$1 == mode)
-                  Icon(Icons.check, size: 16,
-                      color: Theme.of(context).colorScheme.primary)
+                  Icon(
+                    Icons.check,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
                 else
                   const SizedBox(width: 16),
                 const SizedBox(width: 8),
@@ -594,10 +750,15 @@ class HomeScreenState extends State<HomeScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(entry.$2),
-                      Text(entry.$3, style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                      )),
+                      Text(
+                        entry.$3,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(128),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -642,21 +803,32 @@ class HomeScreenState extends State<HomeScreen> {
       itemBuilder: (context) {
         final options = <MapEntry<String, Map<String, dynamic>>>[
           MapEntry('Adaptive', {'type': 'adaptive'}),
-          MapEntry('Extended (10k)', {'type': 'enabled', 'budgetTokens': 10000}),
-          MapEntry('Extended (50k)', {'type': 'enabled', 'budgetTokens': 50000}),
+          MapEntry('Extended (10k)', {
+            'type': 'enabled',
+            'budgetTokens': 10000,
+          }),
+          MapEntry('Extended (50k)', {
+            'type': 'enabled',
+            'budgetTokens': 50000,
+          }),
           MapEntry('Disabled', {'type': 'disabled'}),
         ];
         return options.map((opt) {
-          final isSelected = opt.value['type'] == thinkingType &&
+          final isSelected =
+              opt.value['type'] == thinkingType &&
               (opt.value['type'] != 'enabled' ||
-                  opt.value['budgetTokens'] == provider.thinking['budgetTokens']);
+                  opt.value['budgetTokens'] ==
+                      provider.thinking['budgetTokens']);
           return PopupMenuItem(
             value: opt.value,
             child: Row(
               children: [
                 if (isSelected)
-                  Icon(Icons.check, size: 16,
-                      color: Theme.of(context).colorScheme.primary)
+                  Icon(
+                    Icons.check,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
                 else
                   const SizedBox(width: 16),
                 const SizedBox(width: 8),
@@ -684,9 +856,7 @@ class HomeScreenState extends State<HomeScreen> {
       child: _buildChipBody(
         enabled ? Icons.volume_up : Icons.volume_off,
         'TTS',
-        iconColor: enabled
-            ? Theme.of(context).colorScheme.primary
-            : null,
+        iconColor: enabled ? Theme.of(context).colorScheme.primary : null,
         active: enabled,
       ),
     );
@@ -695,13 +865,12 @@ class HomeScreenState extends State<HomeScreen> {
   Widget _buildNotificationChip(ChatProvider provider) {
     final enabled = provider.isNotifEnabled(provider.activeSessionId!);
     return GestureDetector(
-      onTap: () => provider.toggleSessionNotifications(provider.activeSessionId!),
+      onTap: () =>
+          provider.toggleSessionNotifications(provider.activeSessionId!),
       child: _buildChipBody(
         enabled ? Icons.notifications_active : Icons.notifications_off_outlined,
         enabled ? 'Notif' : 'Muted',
-        iconColor: enabled
-            ? Theme.of(context).colorScheme.primary
-            : null,
+        iconColor: enabled ? Theme.of(context).colorScheme.primary : null,
         active: enabled,
       ),
     );
@@ -727,8 +896,8 @@ class HomeScreenState extends State<HomeScreen> {
     final fillColor = fillRatio > 0.8
         ? Colors.red.shade300
         : fillRatio > 0.5
-            ? Colors.orange.shade300
-            : Theme.of(context).colorScheme.onSurface.withAlpha(178);
+        ? Colors.orange.shade300
+        : Theme.of(context).colorScheme.onSurface.withAlpha(178);
 
     return GestureDetector(
       onTap: () => _showContextDialog(usage),
@@ -748,16 +917,17 @@ class HomeScreenState extends State<HomeScreen> {
                 ' / ${_formatTokenCount(contextWindow)}',
                 style: TextStyle(
                   fontSize: 11,
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withAlpha(102),
+                  color: Theme.of(context).colorScheme.onSurface.withAlpha(102),
                 ),
               ),
             ],
             if (outputTokens > 0) ...[
               const SizedBox(width: 6),
-              Icon(Icons.arrow_upward, size: 10, color: const Color(0xFFCBA6F7)),
+              Icon(
+                Icons.arrow_upward,
+                size: 10,
+                color: const Color(0xFFCBA6F7),
+              ),
               Text(
                 _formatTokenCount(outputTokens),
                 style: const TextStyle(fontSize: 11, color: Color(0xFFCBA6F7)),
@@ -781,10 +951,13 @@ class HomeScreenState extends State<HomeScreen> {
     final resultSubtype = usage['resultSubtype'] as String?;
 
     // Use SDK context usage if available, fall back to basic usage data
-    final totalTokens = (ctx?['totalTokens'] as num?)?.toInt() ??
+    final totalTokens =
+        (ctx?['totalTokens'] as num?)?.toInt() ??
         (inputTokens + cacheRead + cacheCreate);
-    final maxTokens = (ctx?['maxTokens'] as num?)?.toInt() ??
-        (usage['contextWindow'] as num?)?.toInt() ?? 0;
+    final maxTokens =
+        (ctx?['maxTokens'] as num?)?.toInt() ??
+        (usage['contextWindow'] as num?)?.toInt() ??
+        0;
     final fillRatio = maxTokens > 0 ? totalTokens / maxTokens : 0.0;
     final freeTokens = maxTokens > totalTokens ? maxTokens - totalTokens : 0;
     final model = ctx?['model'] as String?;
@@ -799,13 +972,22 @@ class HomeScreenState extends State<HomeScreen> {
         final colorHex = cat['color'] as String? ?? '#888888';
         if (tokens <= 0) continue;
         // Parse hex color
-        final colorVal = int.tryParse(colorHex.replaceFirst('#', 'FF'), radix: 16) ?? 0xFF888888;
+        final colorVal =
+            int.tryParse(colorHex.replaceFirst('#', 'FF'), radix: 16) ??
+            0xFF888888;
         segments.add(_BarSegment(name, tokens, Color(colorVal)));
       }
     } else {
-      if (cacheRead > 0) segments.add(_BarSegment('Cached', cacheRead, const Color(0xFF89B4FA)));
-      if (cacheCreate > 0) segments.add(_BarSegment('New cache', cacheCreate, const Color(0xFFA6E3A1)));
-      if (inputTokens > 0) segments.add(_BarSegment('Uncached', inputTokens, const Color(0xFFF9E2AF)));
+      if (cacheRead > 0)
+        segments.add(_BarSegment('Cached', cacheRead, const Color(0xFF89B4FA)));
+      if (cacheCreate > 0)
+        segments.add(
+          _BarSegment('New cache', cacheCreate, const Color(0xFFA6E3A1)),
+        );
+      if (inputTokens > 0)
+        segments.add(
+          _BarSegment('Uncached', inputTokens, const Color(0xFFF9E2AF)),
+        );
     }
     if (freeTokens > 0) {
       segments.add(_BarSegment('Free', freeTokens, Colors.transparent));
@@ -813,7 +995,8 @@ class HomeScreenState extends State<HomeScreen> {
 
     // Message breakdown from SDK
     final msgBreakdown = ctx?['messageBreakdown'] as Map<String, dynamic>?;
-    final autoCompactThreshold = (ctx?['autoCompactThreshold'] as num?)?.toInt();
+    final autoCompactThreshold = (ctx?['autoCompactThreshold'] as num?)
+        ?.toInt();
     final isAutoCompact = ctx?['isAutoCompactEnabled'] == true;
 
     final theme = Theme.of(context);
@@ -825,11 +1008,13 @@ class HomeScreenState extends State<HomeScreen> {
           children: [
             Icon(Icons.donut_small, size: 20, color: theme.colorScheme.primary),
             const SizedBox(width: 8),
-            Expanded(child: Text(
-              model != null ? 'Context ($model)' : 'Context Window',
-              style: const TextStyle(fontSize: 16),
-              overflow: TextOverflow.ellipsis,
-            )),
+            Expanded(
+              child: Text(
+                model != null ? 'Context ($model)' : 'Context Window',
+                style: const TextStyle(fontSize: 16),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ],
         ),
         content: SizedBox(
@@ -850,8 +1035,8 @@ class HomeScreenState extends State<HomeScreen> {
                     color: fillRatio > 0.8
                         ? Colors.red.shade300
                         : fillRatio > 0.5
-                            ? Colors.orange.shade300
-                            : theme.colorScheme.onSurface,
+                        ? Colors.orange.shade300
+                        : theme.colorScheme.onSurface,
                   ),
                 ),
                 if (maxTokens > 0) ...[
@@ -888,20 +1073,37 @@ class HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 // Auto-compact threshold indicator
-                if (isAutoCompact && autoCompactThreshold != null && maxTokens > 0) ...[
+                if (isAutoCompact &&
+                    autoCompactThreshold != null &&
+                    maxTokens > 0) ...[
                   const SizedBox(height: 4),
                   Text(
                     'Auto-compact at ${(autoCompactThreshold / maxTokens * 100).toStringAsFixed(0)}%',
-                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withAlpha(128)),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: theme.colorScheme.onSurface.withAlpha(128),
+                    ),
                   ),
                 ],
                 const SizedBox(height: 12),
                 // Category legend
-                ...segments.where((s) => s.color != Colors.transparent).map((seg) =>
-                  _contextLegendRow(seg.label, seg.tokens, seg.color, theme),
-                ),
+                ...segments
+                    .where((s) => s.color != Colors.transparent)
+                    .map(
+                      (seg) => _contextLegendRow(
+                        seg.label,
+                        seg.tokens,
+                        seg.color,
+                        theme,
+                      ),
+                    ),
                 // Output tokens
-                _contextLegendRow('Output', outputTokens, const Color(0xFFCBA6F7), theme),
+                _contextLegendRow(
+                  'Output',
+                  outputTokens,
+                  const Color(0xFFCBA6F7),
+                  theme,
+                ),
                 // Free space
                 if (freeTokens > 0)
                   _contextLegendRow('Free', freeTokens, null, theme),
@@ -909,38 +1111,85 @@ class HomeScreenState extends State<HomeScreen> {
                 // Message breakdown (from SDK detailed context)
                 if (msgBreakdown != null) ...[
                   const Divider(height: 24),
-                  Text('Message Breakdown', style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface.withAlpha(200),
-                  )),
+                  Text(
+                    'Message Breakdown',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface.withAlpha(200),
+                    ),
+                  ),
                   const SizedBox(height: 8),
-                  if ((msgBreakdown['userMessageTokens'] as num?)?.toInt() != null)
-                    _contextDetailRow('User messages', _formatTokenCount((msgBreakdown['userMessageTokens'] as num).toInt()), theme),
-                  if ((msgBreakdown['assistantMessageTokens'] as num?)?.toInt() != null)
-                    _contextDetailRow('Assistant messages', _formatTokenCount((msgBreakdown['assistantMessageTokens'] as num).toInt()), theme),
+                  if ((msgBreakdown['userMessageTokens'] as num?)?.toInt() !=
+                      null)
+                    _contextDetailRow(
+                      'User messages',
+                      _formatTokenCount(
+                        (msgBreakdown['userMessageTokens'] as num).toInt(),
+                      ),
+                      theme,
+                    ),
+                  if ((msgBreakdown['assistantMessageTokens'] as num?)
+                          ?.toInt() !=
+                      null)
+                    _contextDetailRow(
+                      'Assistant messages',
+                      _formatTokenCount(
+                        (msgBreakdown['assistantMessageTokens'] as num).toInt(),
+                      ),
+                      theme,
+                    ),
                   if ((msgBreakdown['toolCallTokens'] as num?)?.toInt() != null)
-                    _contextDetailRow('Tool calls', _formatTokenCount((msgBreakdown['toolCallTokens'] as num).toInt()), theme),
-                  if ((msgBreakdown['toolResultTokens'] as num?)?.toInt() != null)
-                    _contextDetailRow('Tool results', _formatTokenCount((msgBreakdown['toolResultTokens'] as num).toInt()), theme),
-                  if ((msgBreakdown['attachmentTokens'] as num?)?.toInt() != null && (msgBreakdown['attachmentTokens'] as num).toInt() > 0)
-                    _contextDetailRow('Attachments', _formatTokenCount((msgBreakdown['attachmentTokens'] as num).toInt()), theme),
+                    _contextDetailRow(
+                      'Tool calls',
+                      _formatTokenCount(
+                        (msgBreakdown['toolCallTokens'] as num).toInt(),
+                      ),
+                      theme,
+                    ),
+                  if ((msgBreakdown['toolResultTokens'] as num?)?.toInt() !=
+                      null)
+                    _contextDetailRow(
+                      'Tool results',
+                      _formatTokenCount(
+                        (msgBreakdown['toolResultTokens'] as num).toInt(),
+                      ),
+                      theme,
+                    ),
+                  if ((msgBreakdown['attachmentTokens'] as num?)?.toInt() !=
+                          null &&
+                      (msgBreakdown['attachmentTokens'] as num).toInt() > 0)
+                    _contextDetailRow(
+                      'Attachments',
+                      _formatTokenCount(
+                        (msgBreakdown['attachmentTokens'] as num).toInt(),
+                      ),
+                      theme,
+                    ),
                 ],
 
                 // MCP tools
-                if (ctx?['mcpTools'] != null && (ctx!['mcpTools'] as List).isNotEmpty) ...[
+                if (ctx?['mcpTools'] != null &&
+                    (ctx!['mcpTools'] as List).isNotEmpty) ...[
                   const Divider(height: 24),
-                  Text('MCP Tools', style: TextStyle(
-                    fontSize: 13, fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface.withAlpha(200),
-                  )),
-                  const SizedBox(height: 8),
-                  ...(ctx['mcpTools'] as List).where((t) => ((t['tokens'] as num?)?.toInt() ?? 0) > 0).map((tool) =>
-                    _contextDetailRow(
-                      '${tool['serverName']}: ${tool['name']}',
-                      _formatTokenCount((tool['tokens'] as num).toInt()),
-                      theme,
+                  Text(
+                    'MCP Tools',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface.withAlpha(200),
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  ...(ctx['mcpTools'] as List)
+                      .where((t) => ((t['tokens'] as num?)?.toInt() ?? 0) > 0)
+                      .map(
+                        (tool) => _contextDetailRow(
+                          '${tool['serverName']}: ${tool['name']}',
+                          _formatTokenCount((tool['tokens'] as num).toInt()),
+                          theme,
+                        ),
+                      ),
                 ],
 
                 const Divider(height: 24),
@@ -950,7 +1199,11 @@ class HomeScreenState extends State<HomeScreen> {
                 if (stopReason != null)
                   _contextDetailRow('Stop reason', stopReason, theme),
                 if (resultSubtype != null && resultSubtype.startsWith('error_'))
-                  _contextDetailRow('Result', resultSubtype.replaceAll('_', ' '), theme),
+                  _contextDetailRow(
+                    'Result',
+                    resultSubtype.replaceAll('_', ' '),
+                    theme,
+                  ),
               ],
             ),
           ),
@@ -965,19 +1218,28 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _contextLegendRow(String label, int tokens, Color? color, ThemeData theme) {
+  Widget _contextLegendRow(
+    String label,
+    int tokens,
+    Color? color,
+    ThemeData theme,
+  ) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
           Container(
-            width: 12, height: 12,
+            width: 12,
+            height: 12,
             decoration: BoxDecoration(
               color: color ?? theme.colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(2),
-              border: color == null ? Border.all(
-                color: theme.colorScheme.outlineVariant, width: 1,
-              ) : null,
+              border: color == null
+                  ? Border.all(
+                      color: theme.colorScheme.outlineVariant,
+                      width: 1,
+                    )
+                  : null,
             ),
           ),
           const SizedBox(width: 8),
@@ -1008,10 +1270,7 @@ class HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const Spacer(),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 12),
-          ),
+          Text(value, style: const TextStyle(fontSize: 12)),
         ],
       ),
     );
@@ -1046,16 +1305,16 @@ class HomeScreenState extends State<HomeScreen> {
         child: Container(
           width: 10,
           height: 10,
-          decoration: BoxDecoration(
-            color: color,
-            shape: BoxShape.circle,
-          ),
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
         ),
       ),
     );
   }
 
-  Future<void> _showVoicePicker(BuildContext context, ChatProvider provider) async {
+  Future<void> _showVoicePicker(
+    BuildContext context,
+    ChatProvider provider,
+  ) async {
     // Ensure voices are loaded
     await provider.initTtsVoices();
     final voices = provider.ttsVoices;
@@ -1106,9 +1365,15 @@ class HomeScreenState extends State<HomeScreen> {
                                 : FontWeight.normal,
                           ),
                         ),
-                        subtitle: Text(voice.locale, style: const TextStyle(fontSize: 12)),
+                        subtitle: Text(
+                          voice.locale,
+                          style: const TextStyle(fontSize: 12),
+                        ),
                         trailing: isSelected
-                            ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary)
+                            ? Icon(
+                                Icons.check,
+                                color: Theme.of(context).colorScheme.primary,
+                              )
                             : null,
                         onTap: () {
                           provider.setTtsVoice(voice);
@@ -1127,7 +1392,9 @@ class HomeScreenState extends State<HomeScreen> {
                     'Long-press a voice to preview',
                     style: TextStyle(
                       fontSize: 12,
-                      color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withAlpha(128),
                     ),
                   ),
                 ),
@@ -1155,17 +1422,23 @@ class HomeScreenState extends State<HomeScreen> {
             ),
             const Divider(height: 1),
             ...kokoroVoices.map((voice) {
-              final isSelected = provider.selectedTtsEngineVoice?.id == voice.id;
+              final isSelected =
+                  provider.selectedTtsEngineVoice?.id == voice.id;
               return ListTile(
                 title: Text(
                   voice.name,
                   style: TextStyle(
                     fontSize: 14,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                    fontWeight: isSelected
+                        ? FontWeight.bold
+                        : FontWeight.normal,
                   ),
                 ),
                 trailing: isSelected
-                    ? Icon(Icons.check, color: Theme.of(context).colorScheme.primary)
+                    ? Icon(
+                        Icons.check,
+                        color: Theme.of(context).colorScheme.primary,
+                      )
                     : null,
                 onTap: () {
                   provider.setKokoroVoice(voice);
@@ -1252,7 +1525,11 @@ class HomeScreenState extends State<HomeScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.speed, size: 14, color: Theme.of(context).colorScheme.onErrorContainer),
+          Icon(
+            Icons.speed,
+            size: 14,
+            color: Theme.of(context).colorScheme.onErrorContainer,
+          ),
           const SizedBox(width: 8),
           Text(
             'Rate limited$pct',
@@ -1328,13 +1605,14 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildCommandPicker(ChatProvider provider, ThemeData theme) {
-    final commands = provider.supportedCommands ?? [];
+    final commands = provider.slashCommands;
     final filtered = _commandFilter.isEmpty
         ? commands
         : commands.where((c) {
-            final name = (c is Map ? c['name'] : c.toString()).toString().toLowerCase();
-            final desc = (c is Map ? c['description'] ?? '' : '').toString().toLowerCase();
-            return name.contains(_commandFilter) || desc.contains(_commandFilter);
+            final name = _slashName(c).toLowerCase();
+            final desc = _slashDescription(c).toLowerCase();
+            return name.contains(_commandFilter) ||
+                desc.contains(_commandFilter);
           }).toList();
 
     if (filtered.isEmpty) return const SizedBox.shrink();
@@ -1345,7 +1623,9 @@ class HomeScreenState extends State<HomeScreen> {
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: theme.colorScheme.outlineVariant.withAlpha(76)),
+        border: Border.all(
+          color: theme.colorScheme.outlineVariant.withAlpha(76),
+        ),
       ),
       child: ListView.builder(
         shrinkWrap: true,
@@ -1353,44 +1633,69 @@ class HomeScreenState extends State<HomeScreen> {
         itemCount: filtered.length,
         itemBuilder: (context, index) {
           final cmd = filtered[index];
-          final name = cmd is Map ? cmd['name'] ?? '' : cmd.toString();
-          final desc = cmd is Map ? cmd['description'] ?? '' : '';
-          final argHint = cmd is Map ? cmd['argumentHint'] ?? '' : '';
+          final name = _slashName(cmd);
+          final desc = _slashDescription(cmd);
+          final argHint = _slashArgumentHint(cmd);
+          final agent = _slashAgent(cmd);
+          final kind = _slashKind(cmd);
+          final badgeColor = agent == 'codex'
+              ? Colors.green
+              : theme.colorScheme.primary;
           return InkWell(
-            onTap: () {
-              _textController.text = '/$name ${argHint.isNotEmpty ? "" : ""}';
-              _textController.selection = TextSelection.fromPosition(
-                TextPosition(offset: _textController.text.length),
-              );
-              setState(() {
-                _showCommandPicker = false;
-                _commandFilter = '';
-              });
-            },
+            onTap: () => _insertSlashCommand(cmd),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Row(
                 children: [
-                  Text('/$name', style: TextStyle(
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
-                    color: theme.colorScheme.primary,
-                    fontFamily: 'monospace',
-                  )),
+                  Text(
+                    '/$name',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: theme.colorScheme.primary,
+                      fontFamily: 'monospace',
+                    ),
+                  ),
                   if (argHint.isNotEmpty) ...[
                     const SizedBox(width: 6),
-                    Text(argHint, style: TextStyle(
-                      fontSize: 11,
-                      color: theme.colorScheme.onSurface.withAlpha(128),
-                      fontStyle: FontStyle.italic,
-                    )),
+                    Text(
+                      argHint,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurface.withAlpha(128),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
                   ],
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(desc, style: TextStyle(
-                      fontSize: 11,
-                      color: theme.colorScheme.onSurface.withAlpha(178),
-                    ), overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      desc,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurface.withAlpha(178),
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: badgeColor.withAlpha(22),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text(
+                      agent == 'codex' ? 'Skill' : kind,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                        color: badgeColor.withAlpha(220),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1427,21 +1732,34 @@ class HomeScreenState extends State<HomeScreen> {
           // Attachment chip
           if (provider.hasAttachment)
             Container(
-              padding: const EdgeInsets.only(left: 12, right: 4, top: 2, bottom: 4),
+              padding: const EdgeInsets.only(
+                left: 12,
+                right: 4,
+                top: 2,
+                bottom: 4,
+              ),
               child: Row(
                 children: [
-                  Icon(Icons.attach_file, size: 14, color: theme.colorScheme.primary),
+                  Icon(
+                    Icons.attach_file,
+                    size: 14,
+                    color: theme.colorScheme.primary,
+                  ),
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
                       provider.pendingAttachmentName ?? 'File',
-                      style: TextStyle(fontSize: 12, color: theme.colorScheme.primary),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.primary,
+                      ),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   if (provider.uploadProgress != null)
                     SizedBox(
-                      width: 14, height: 14,
+                      width: 14,
+                      height: 14,
                       child: CircularProgressIndicator(
                         value: provider.uploadProgress,
                         strokeWidth: 2,
@@ -1451,25 +1769,31 @@ class HomeScreenState extends State<HomeScreen> {
                   else
                     GestureDetector(
                       onTap: () => provider.removeAttachment(),
-                      child: Icon(Icons.close, size: 16,
-                          color: theme.colorScheme.onSurface.withAlpha(128)),
+                      child: Icon(
+                        Icons.close,
+                        size: 16,
+                        color: theme.colorScheme.onSurface.withAlpha(128),
+                      ),
                     ),
                   const SizedBox(width: 8),
                 ],
               ),
             ),
           // Slash command picker
-          if (_showCommandPicker && provider.supportedCommands != null)
+          if (_showCommandPicker && provider.slashCommands.isNotEmpty)
             _buildCommandPicker(provider, theme),
           // Prompt suggestions shown as hint text (see TextField hintText below)
           // Input area
           // In PTT mode with keyboard hidden: large centered mic button above input row
-          if (provider.pushToTalk && MediaQuery.of(context).viewInsets.bottom == 0) ...[
+          if (provider.pushToTalk &&
+              MediaQuery.of(context).viewInsets.bottom == 0) ...[
             Center(
               child: Listener(
                 onPointerDown: (_) {
                   if (!provider.isListening) {
-                    provider.toggleListening(existingText: _textController.text);
+                    provider.toggleListening(
+                      existingText: _textController.text,
+                    );
                   }
                 },
                 onPointerUp: (_) {
@@ -1502,7 +1826,8 @@ class HomeScreenState extends State<HomeScreen> {
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              if (provider.pushToTalk && MediaQuery.of(context).viewInsets.bottom > 0)
+              if (provider.pushToTalk &&
+                  MediaQuery.of(context).viewInsets.bottom > 0)
                 // Inline PTT button when keyboard is showing
                 SizedBox(
                   height: 48,
@@ -1510,7 +1835,9 @@ class HomeScreenState extends State<HomeScreen> {
                     child: Listener(
                       onPointerDown: (_) {
                         if (!provider.isListening) {
-                          provider.toggleListening(existingText: _textController.text);
+                          provider.toggleListening(
+                            existingText: _textController.text,
+                          );
                         }
                       },
                       onPointerUp: (_) {
@@ -1545,7 +1872,9 @@ class HomeScreenState extends State<HomeScreen> {
                   child: Center(
                     child: VoiceButton(
                       isListening: provider.isListening,
-                      onPressed: () => provider.toggleListening(existingText: _textController.text),
+                      onPressed: () => provider.toggleListening(
+                        existingText: _textController.text,
+                      ),
                     ),
                   ),
                 ),
@@ -1560,7 +1889,10 @@ class HomeScreenState extends State<HomeScreen> {
                     ),
                     onPressed: () => provider.pickFile(),
                     padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                    constraints: const BoxConstraints(
+                      minWidth: 40,
+                      minHeight: 40,
+                    ),
                   ),
                 ),
               ),
@@ -1599,7 +1931,12 @@ class HomeScreenState extends State<HomeScreen> {
                     child: GestureDetector(
                       onTap: () => _sendMessage(provider, priority: 'next'),
                       onLongPressStart: (details) {
-                        _showPriorityMenu(context, details.globalPosition, provider, theme);
+                        _showPriorityMenu(
+                          context,
+                          details.globalPosition,
+                          provider,
+                          theme,
+                        );
                       },
                       child: Container(
                         width: 40,
@@ -1623,7 +1960,10 @@ class HomeScreenState extends State<HomeScreen> {
                       ),
                       onPressed: () => provider.abortQuery(),
                       padding: const EdgeInsets.all(8),
-                      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
                     ),
                   ),
                 ),
@@ -1632,13 +1972,13 @@ class HomeScreenState extends State<HomeScreen> {
                   height: 48,
                   child: Center(
                     child: IconButton(
-                      icon: Icon(
-                        Icons.send,
-                        color: theme.colorScheme.primary,
-                      ),
+                      icon: Icon(Icons.send, color: theme.colorScheme.primary),
                       onPressed: () => _sendMessage(provider),
                       padding: const EdgeInsets.all(8),
-                      constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
                     ),
                   ),
                 ),
