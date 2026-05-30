@@ -74,6 +74,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, double> _lastNotifiedProgress = {}; // throttle UI updates
   final Map<String, IOSink> _activeDownloads = {}; // fileId → write sink
   final Map<String, String> _downloadTempPaths = {}; // fileId → temp path
+  final Map<String, BytesBuilder> _fileBytesBuffers = {};
+  final Map<String, Completer<String?>> _fileBytesCompleters = {};
   final Map<String, String> _filePathToId = {}; // serverPath → latest fileId
   String? _activeSessionId;
   String? _activeSessionCwd;
@@ -558,6 +560,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ConnectionManager get connMgr => _connMgr;
   List<ServerConfig> get serverConfigs => _serverConfigs;
   String? get activeServerId => _connMgr.activeServerId;
+
+  Future<String?> fetchServerFileBase64(
+    String filePath, {
+    String? serverId,
+  }) async {
+    if (filePath.isEmpty) return null;
+    final fileId =
+        'bytes_${DateTime.now().microsecondsSinceEpoch}_${filePath.hashCode}';
+    final completer = Completer<String?>();
+    _fileBytesCompleters[fileId] = completer;
+    _fileBytesBuffers[fileId] = BytesBuilder(copy: false);
+
+    final request = {
+      'type': 'request_file',
+      'filePath': filePath,
+      'fileId': fileId,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, request);
+    } else {
+      _connMgr.send(request);
+    }
+
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        _fileBytesCompleters.remove(fileId);
+        _fileBytesBuffers.remove(fileId);
+        return null;
+      },
+    );
+  }
+
   SherpaSpeechService get speech => _speech;
   AsrModelManager get asrModelManager => _asrModelManager;
   CryptoService get crypto => _crypto;
@@ -1662,6 +1697,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'recent_cwds',
       'server_capabilities',
       'server_settings',
+      'file_data',
+      'file_chunk',
+      'file_complete',
     };
 
     // Route: only process non-global messages from the active server
@@ -4313,7 +4351,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _loadDismissedSubagents();
     notifyListeners();
 
-    // Fetch pending image data from server for history tool_image entries
+    // Fetch pending image data from server for history tool_image entries.
     if (_pendingImageLoads.isNotEmpty) {
       _fetchPendingImages();
     }
@@ -4330,27 +4368,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (toolUseId.isEmpty || filePath.isEmpty) continue;
 
       try {
-        final host = _serverHost;
-        final port = _serverPort;
-        final token = _authToken;
-        final uri = Uri.parse(
-          'http://$host:$port/download?path=${Uri.encodeComponent(filePath)}&token=${Uri.encodeComponent(token)}',
+        final base64Data = await fetchServerFileBase64(filePath);
+        if (base64Data == null || base64Data.isEmpty) continue;
+
+        final idx = _messages.lastIndexWhere(
+          (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
         );
-
-        final response = await http
-            .get(uri)
-            .timeout(const Duration(seconds: 10));
-
-        if (response.statusCode == 200) {
-          final base64Data = base64Encode(response.bodyBytes);
-
-          final idx = _messages.lastIndexWhere(
-            (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
-          );
-          if (idx >= 0) {
-            _messages[idx].toolImageData = base64Data;
-            notifyListeners();
-          }
+        if (idx >= 0) {
+          _messages[idx].toolImageData = base64Data;
+          notifyListeners();
         }
       } catch (e) {
         // Image no longer available — leave toolImageData null, widget will show placeholder
@@ -5890,129 +5916,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Request file data from server (user tapped download).
-  /// Uses HTTP streaming for direct connections, WebSocket chunked for relay.
+  /// All app-server file bytes move over the connected socket.
   void requestFile(String fileId) {
     final serverPath = _serverFiles[fileId];
     if (serverPath == null) return;
-    final fileName = _serverFileNames[fileId] ?? 'file';
     _downloadingFiles.add(fileId);
     notifyListeners();
-
-    // Relay connections can't use HTTP — fall back to WebSocket chunked transfer
-    final config = _connMgr.activeConfig;
-    if (config != null && config.useRelay) {
-      _ws.send({
-        'type': 'request_file',
-        'filePath': serverPath,
-        'fileId': fileId,
-      });
-      return;
-    }
-
-    _downloadFileViaHttp(fileId, fileName, serverPath);
-  }
-
-  Future<void> _downloadFileViaHttp(
-    String fileId,
-    String fileName,
-    String serverPath,
-  ) async {
-    try {
-      // Use active server config, fall back to legacy fields
-      final config = _connMgr.activeConfig;
-      final host =
-          (config != null && !config.useRelay && config.host.isNotEmpty)
-          ? config.host
-          : _serverHost;
-      final port =
-          (config != null && !config.useRelay && config.host.isNotEmpty)
-          ? config.port
-          : _serverPort;
-      final token =
-          (config != null && !config.useRelay && config.token.isNotEmpty)
-          ? config.token
-          : _authToken;
-
-      if (host.isEmpty) {
-        debugPrint('[File] No server host available for HTTP download');
-        _downloadingFiles.remove(fileId);
-        notifyListeners();
-        return;
-      }
-
-      final url = Uri.parse(
-        'http://$host:$port/download?token=${Uri.encodeComponent(token)}&path=${Uri.encodeComponent(serverPath)}',
-      );
-      debugPrint('[File] Starting HTTP download: $fileName from $url');
-
-      final client = HttpClient();
-      final request = await client.getUrl(url);
-      final response = await request.close();
-
-      if (response.statusCode != 200) {
-        debugPrint('[File] HTTP download failed: ${response.statusCode}');
-        _downloadingFiles.remove(fileId);
-        notifyListeners();
-        client.close();
-        return;
-      }
-
-      final contentLength = response.contentLength;
-      final downloadsDir = Directory('/storage/emulated/0/Download');
-      if (!downloadsDir.existsSync()) {
-        downloadsDir.createSync(recursive: true);
-      }
-
-      // Find unique filename
-      var targetFile = File('${downloadsDir.path}/$fileName');
-      var counter = 1;
-      while (targetFile.existsSync()) {
-        final ext = fileName.contains('.')
-            ? '.${fileName.split('.').last}'
-            : '';
-        final base = fileName.contains('.')
-            ? fileName.substring(0, fileName.lastIndexOf('.'))
-            : fileName;
-        targetFile = File('${downloadsDir.path}/$base ($counter)$ext');
-        counter++;
-      }
-
-      final sink = targetFile.openWrite();
-      var received = 0;
-      var lastNotified = 0.0;
-
-      await for (final chunk in response) {
-        sink.add(chunk);
-        received += chunk.length;
-
-        if (contentLength > 0) {
-          final progress = received / contentLength;
-          _downloadProgress[fileId] = progress;
-          // Throttle UI updates to every 5%
-          if (progress - lastNotified >= 0.05 || received >= contentLength) {
-            lastNotified = progress;
-            notifyListeners();
-          }
-        }
-      }
-
-      await sink.flush();
-      await sink.close();
-      client.close();
-
-      _receivedFiles[fileId] = targetFile.path;
-      _downloadingFiles.remove(fileId);
-      _downloadProgress.remove(fileId);
-      debugPrint(
-        '[File] HTTP download complete: ${targetFile.path} (${(received / 1024 / 1024).toStringAsFixed(1)} MB)',
-      );
-      notifyListeners();
-    } catch (e) {
-      debugPrint('[File] HTTP download error: $e');
-      _downloadingFiles.remove(fileId);
-      _downloadProgress.remove(fileId);
-      notifyListeners();
-    }
+    _ws.send({
+      'type': 'request_file',
+      'filePath': serverPath,
+      'fileId': fileId,
+    });
   }
 
   /// Handle file data response from server (legacy non-chunked)
@@ -6022,6 +5936,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final fileName = msg['fileName'] as String? ?? 'file';
     final base64Data = msg['data'] as String? ?? '';
     final fileSize = msg['fileSize'] as int? ?? 0;
+
+    final byteCompleter = _fileBytesCompleters.remove(fileId);
+    if (byteCompleter != null) {
+      _fileBytesBuffers.remove(fileId);
+      if (!byteCompleter.isCompleted) {
+        byteCompleter.complete(base64Data.isEmpty ? null : base64Data);
+      }
+      return;
+    }
 
     _downloadingFiles.remove(fileId);
 
@@ -6073,6 +5996,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final base64Data = msg['data'] as String? ?? '';
 
     try {
+      final bytes = base64Decode(base64Data);
+      final byteCompleter = _fileBytesCompleters[fileId];
+      if (byteCompleter != null) {
+        _fileBytesBuffers[fileId]?.add(bytes);
+        return;
+      }
+
       // Open temp file on first chunk
       if (!_activeDownloads.containsKey(fileId)) {
         final safeId = fileId.replaceAll('/', '_').replaceAll(' ', '_');
@@ -6086,8 +6016,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
       }
 
-      // Fallback path for relay connections (HTTP download is primary)
-      final bytes = base64Decode(base64Data);
       _activeDownloads[fileId]!.add(bytes);
 
       _downloadProgress[fileId] = (chunkIndex + 1) / totalChunks;
@@ -6106,6 +6034,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final fileName = msg['fileName'] as String? ?? 'file';
 
     try {
+      final byteCompleter = _fileBytesCompleters.remove(fileId);
+      if (byteCompleter != null) {
+        final bytes = _fileBytesBuffers.remove(fileId)?.takeBytes();
+        if (!byteCompleter.isCompleted) {
+          byteCompleter.complete(bytes == null ? null : base64Encode(bytes));
+        }
+        return;
+      }
+
       // Close the temp file
       final sink = _activeDownloads.remove(fileId);
       await sink?.flush();

@@ -287,8 +287,12 @@ class HomeScreenState extends State<HomeScreen> {
           }
         }
         final permMode = provider.permissionMode ?? 'bypassPermissions';
+        final displayPermMode = _displayPermissionMode(
+          permMode,
+          provider.activeSessionBackend,
+        );
         final isPlan = permMode == 'plan';
-        final permTheme = _permissionModeTheme(permMode);
+        final permTheme = _permissionModeTheme(displayPermMode);
         return Theme(
           data: permTheme != null
               ? Theme.of(context).copyWith(
@@ -362,7 +366,7 @@ class HomeScreenState extends State<HomeScreen> {
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Icon(
-                                _permissionModeIcon(permMode),
+                                _permissionModeIcon(displayPermMode),
                                 size: 11,
                                 color:
                                     (permTheme?.textColor ??
@@ -373,7 +377,10 @@ class HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                _permissionModeLabel(permMode),
+                                _permissionModeLabel(
+                                  displayPermMode,
+                                  backend: provider.activeSessionBackend,
+                                ),
                                 style: TextStyle(
                                   fontSize: 11,
                                   color:
@@ -669,7 +676,7 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   static const _permModes = [
-    ('bypassPermissions', 'Auto', 'Auto-approve everything', Icons.speed),
+    ('bypassPermissions', 'Yolo', 'Auto-approve everything', Icons.speed),
     (
       'auto',
       'Smart Auto',
@@ -685,6 +692,31 @@ class HomeScreenState extends State<HomeScreen> {
     ('default', 'Ask', 'Ask before risky actions', Icons.shield_outlined),
     ('plan', 'Plan', 'Plan only, no execution', Icons.edit_note),
   ];
+
+  List<(String, String, String, IconData)> _permissionModesForBackend(
+    String? backend,
+  ) {
+    if (backend == 'codex') {
+      return const [
+        ('bypassPermissions', 'Yolo', 'Auto-approve everything', Icons.speed),
+        (
+          'default',
+          'Ask',
+          'Ask before commands and file changes',
+          Icons.shield_outlined,
+        ),
+        ('plan', 'Plan', 'Read-only, no execution', Icons.edit_note),
+      ];
+    }
+    return _permModes;
+  }
+
+  String _displayPermissionMode(String mode, String? backend) {
+    if (backend == 'codex' && (mode == 'auto' || mode == 'acceptEdits')) {
+      return 'default';
+    }
+    return mode;
+  }
 
   _PermTheme? _permissionModeTheme(String mode) {
     switch (mode) {
@@ -708,15 +740,20 @@ class HomeScreenState extends State<HomeScreen> {
     return Icons.speed;
   }
 
-  String _permissionModeLabel(String mode) {
-    for (final m in _permModes) {
+  String _permissionModeLabel(String mode, {String? backend}) {
+    for (final m in _permissionModesForBackend(backend)) {
       if (m.$1 == mode) return m.$2;
     }
-    return 'Auto';
+    return 'Yolo';
   }
 
   void _showPermissionModePicker(ChatProvider provider) {
     final mode = provider.permissionMode ?? 'bypassPermissions';
+    final modes = _permissionModesForBackend(provider.activeSessionBackend);
+    final displayMode = _displayPermissionMode(
+      mode,
+      provider.activeSessionBackend,
+    );
     final RenderBox button = context.findRenderObject() as RenderBox;
 
     showMenu<String>(
@@ -728,12 +765,12 @@ class HomeScreenState extends State<HomeScreen> {
         0,
       ),
       items: [
-        for (final entry in _permModes)
+        for (final entry in modes)
           PopupMenuItem(
             value: entry.$1,
             child: Row(
               children: [
-                if (entry.$1 == mode)
+                if (entry.$1 == displayMode)
                   Icon(
                     Icons.check,
                     size: 16,

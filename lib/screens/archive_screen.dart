@@ -2,7 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/archive_entry.dart';
+import '../models/message.dart';
 import '../services/chat_provider.dart';
+import '../widgets/codex_plan_card.dart';
+import '../widgets/file_card.dart';
+import '../widgets/message_bubble.dart';
+import '../widgets/reminder_card.dart';
+import '../widgets/speak_card.dart';
+import '../widgets/tool_output_block.dart';
 
 class ArchiveScreen extends StatefulWidget {
   const ArchiveScreen({super.key});
@@ -88,8 +95,9 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   String _displayCwd(String cwd) {
     final homePattern = RegExp(r'^/home/[^/]+/');
     final homeExact = RegExp(r'^/home/[^/]+$');
-    if (homePattern.hasMatch(cwd))
+    if (homePattern.hasMatch(cwd)) {
       return '~/${cwd.replaceFirst(homePattern, '')}';
+    }
     if (homeExact.hasMatch(cwd)) return '~';
     return cwd;
   }
@@ -397,7 +405,7 @@ class ArchiveDetailScreen extends StatefulWidget {
 }
 
 class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
-  List<dynamic>? _messages;
+  List<ChatMessage>? _messages;
   bool _loading = true;
 
   @override
@@ -407,16 +415,167 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
   }
 
   Future<void> _load() async {
-    final messages = await context.read<ChatProvider>().fetchArchiveHistory(
+    final provider = context.read<ChatProvider>();
+    final rawMessages = await provider.fetchArchiveHistory(
       widget.entry.sid,
       widget.entry.ts,
       serverId: widget.entry.serverId.isNotEmpty ? widget.entry.serverId : null,
     );
+    final messages = _historyToMessages(rawMessages);
+    await _fetchArchiveImages(provider, messages);
     if (!mounted) return;
     setState(() {
       _messages = messages;
       _loading = false;
     });
+  }
+
+  List<ChatMessage> _historyToMessages(List<dynamic> entries) {
+    final loaded = <ChatMessage>[];
+    for (final raw in entries) {
+      if (raw is! Map) continue;
+      final entry = Map<String, dynamic>.from(raw);
+      final role = entry['role'] as String? ?? '';
+      final content = entry['content'] as String? ?? '';
+      switch (role) {
+        case 'user':
+          loaded.add(
+            ChatMessage(
+              id: 'archive_user_${loaded.length}',
+              sender: MessageSender.user,
+              type: MessageType.text,
+              timestamp: _entryTimestamp(entry),
+              textContent: content,
+            ),
+          );
+          break;
+        case 'assistant':
+          loaded.add(
+            ChatMessage(
+              id: 'archive_assistant_${loaded.length}',
+              sender: MessageSender.assistant,
+              type: MessageType.text,
+              timestamp: _entryTimestamp(entry),
+              textContent: content,
+            ),
+          );
+          break;
+        case 'tool_call':
+          final toolName = (entry['toolName'] as String? ?? 'Tool')
+              .replaceFirst('mcp__app__', '');
+          final toolInput = Map<String, dynamic>.from(
+            (entry['toolInput'] as Map?) ?? const {},
+          );
+          loaded.add(
+            ChatMessage.toolCall(
+              tool: toolName,
+              input: toolInput,
+              toolUseId: entry['toolUseId'] as String? ?? '',
+            )..toolStreaming = false,
+          );
+          break;
+        case 'tool_result':
+          final toolUseId = entry['toolUseId'] as String? ?? '';
+          final output = entry['toolOutput'] as String? ?? content;
+          final idx = loaded.lastIndexWhere(
+            (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
+          );
+          if (idx >= 0) {
+            loaded[idx].toolOutput = output;
+            loaded[idx].toolStreaming = false;
+          } else {
+            loaded.add(
+              ChatMessage.toolResult(toolUseId: toolUseId, output: output),
+            );
+          }
+          break;
+        case 'tool_image':
+          final toolUseId = entry['toolUseId'] as String? ?? '';
+          final filePath = entry['filePath'] as String? ?? '';
+          final mimeType = entry['mimeType'] as String? ?? 'image/png';
+          final idx = loaded.lastIndexWhere(
+            (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
+          );
+          if (idx >= 0) {
+            loaded[idx].toolImageFilePath = filePath;
+            loaded[idx].toolImageMimeType = mimeType;
+          }
+          break;
+        case 'codex_plan':
+          final turnId = entry['toolUseId'] as String? ?? '';
+          final input = Map<String, dynamic>.from(
+            (entry['toolInput'] as Map?) ?? const {},
+          );
+          final explanation = input['explanation'] as String? ?? content;
+          final rawSteps = input['steps'] as List? ?? const [];
+          final steps = rawSteps
+              .whereType<Map>()
+              .map((step) => Map<String, dynamic>.from(step))
+              .toList();
+          if (steps.isNotEmpty || explanation.trim().isNotEmpty) {
+            loaded.add(
+              ChatMessage.codexPlan(
+                turnId: turnId,
+                explanation: explanation,
+                steps: steps,
+              ),
+            );
+          }
+          break;
+        default:
+          if (content.trim().isNotEmpty || role.isNotEmpty) {
+            loaded.add(
+              ChatMessage(
+                id: 'archive_system_${loaded.length}',
+                sender: MessageSender.system,
+                type: MessageType.text,
+                timestamp: _entryTimestamp(entry),
+                textContent: content.trim().isNotEmpty ? content : role,
+              ),
+            );
+          }
+      }
+    }
+    for (final message in loaded) {
+      if (message.type == MessageType.toolCall && message.toolOutput == null) {
+        message.toolOutput = '';
+        message.toolStreaming = false;
+      }
+    }
+    return loaded;
+  }
+
+  DateTime _entryTimestamp(Map<String, dynamic> entry) {
+    return DateTime.tryParse(entry['timestamp'] as String? ?? '') ??
+        DateTime.now();
+  }
+
+  Future<void> _fetchArchiveImages(
+    ChatProvider provider,
+    List<ChatMessage> messages,
+  ) async {
+    for (final message in messages) {
+      final filePath = message.toolImageFilePath;
+      if (message.type != MessageType.toolCall ||
+          filePath == null ||
+          filePath.isEmpty ||
+          message.toolImageData != null) {
+        continue;
+      }
+      try {
+        final data = await provider.fetchServerFileBase64(
+          filePath,
+          serverId: widget.entry.serverId.isNotEmpty
+              ? widget.entry.serverId
+              : null,
+        );
+        if (data != null && data.isNotEmpty) {
+          message.toolImageData = data;
+        }
+      } catch (_) {
+        // Leave the image placeholder visible if the archived file is gone.
+      }
+    }
   }
 
   Future<void> _confirmRestore() async {
@@ -550,11 +709,8 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
                           padding: const EdgeInsets.all(12),
                           itemCount: _messages!.length,
                           itemBuilder: (_, idx) {
-                            return _ArchiveMessageTile(
-                              entry: Map<String, dynamic>.from(
-                                _messages![idx] as Map,
-                              ),
-                              backend: widget.entry.backend,
+                            return _ArchiveChatMessageTile(
+                              message: _messages![idx],
                             );
                           },
                         ),
@@ -565,99 +721,29 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
   }
 }
 
-class _ArchiveMessageTile extends StatelessWidget {
-  final Map<String, dynamic> entry;
-  final String? backend;
-  const _ArchiveMessageTile({required this.entry, this.backend});
+class _ArchiveChatMessageTile extends StatelessWidget {
+  final ChatMessage message;
+  const _ArchiveChatMessageTile({required this.message});
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final role = entry['role'] as String? ?? '';
-    final content = entry['content'] as String? ?? '';
-    final toolName = entry['toolName'] as String?;
-    final toolInput = entry['toolInput'];
-    final toolOutput = entry['toolOutput'] as String?;
-
-    Color color;
-    String label;
-    IconData icon;
-    switch (role) {
-      case 'user':
-        color = theme.colorScheme.primary.withAlpha(40);
-        label = 'You';
-        icon = Icons.person_outline;
-        break;
-      case 'assistant':
-        color = theme.colorScheme.surface;
-        label = backend == 'codex' ? 'Codex' : 'Claude';
-        icon = Icons.smart_toy_outlined;
-        break;
-      case 'tool_call':
-        color = theme.colorScheme.tertiary.withAlpha(28);
-        label = toolName ?? 'tool_call';
-        icon = Icons.build_outlined;
-        break;
-      case 'tool_result':
-        color = theme.colorScheme.surfaceContainerLow;
-        label = 'tool_result';
-        icon = Icons.output;
-        break;
-      case 'tool_image':
-        color = theme.colorScheme.surfaceContainerLow;
-        label = 'tool_image';
-        icon = Icons.image_outlined;
-        break;
+    switch (message.type) {
+      case MessageType.text:
+        return MessageBubble(message: message);
+      case MessageType.toolCall:
+        if (message.toolName == 'Speak') return SpeakCard(message: message);
+        if (message.toolName == 'SendFile') return FileCard(message: message);
+        if (message.toolName == 'ScheduleReminder') {
+          return ReminderCard(message: message);
+        }
+        return ToolOutputBlock(message: message);
+      case MessageType.toolResult:
+        return ToolOutputBlock(message: message);
+      case MessageType.codexPlan:
+        return CodexPlanCard(msg: message);
       default:
-        color = theme.colorScheme.surfaceContainerLow;
-        label = role;
-        icon = Icons.circle_outlined;
+        if (message.textContent.trim().isEmpty) return const SizedBox.shrink();
+        return MessageBubble(message: message);
     }
-
-    final body = role == 'tool_call'
-        ? (toolInput == null ? '' : toolInput.toString())
-        : role == 'tool_result'
-        ? (toolOutput ?? content)
-        : content;
-
-    return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: theme.colorScheme.outline.withAlpha(40)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(
-                icon,
-                size: 14,
-                color: theme.colorScheme.onSurface.withAlpha(160),
-              ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: theme.colorScheme.onSurface.withAlpha(180),
-                ),
-              ),
-            ],
-          ),
-          if (body.trim().isNotEmpty) ...[
-            const SizedBox(height: 6),
-            SelectableText(
-              body.length > 2000 ? '${body.substring(0, 2000)}…' : body,
-              style: const TextStyle(fontSize: 13, height: 1.35),
-            ),
-          ],
-        ],
-      ),
-    );
   }
 }

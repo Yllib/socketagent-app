@@ -1,7 +1,5 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
@@ -78,9 +76,6 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
     super.dispose();
   }
 
-  bool get _useWebSocket =>
-      widget.serverConfig != null && widget.serverConfig!.useRelay;
-
   String get _nameHelperText {
     final displayName = _nameController.text.isEmpty
         ? 'name'
@@ -128,11 +123,7 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
         payload['filePath'] = widget.existing!['filePath'];
       }
 
-      if (_useWebSocket) {
-        await _saveViaWebSocket(payload);
-      } else {
-        await _saveViaHttp(payload);
-      }
+      await _saveViaWebSocket(payload);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -144,28 +135,10 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
     }
   }
 
-  Future<void> _saveViaHttp(Map<String, dynamic> payload) async {
-    final uri = Uri.parse(
-      '${widget.baseUrl}/skills?token=${Uri.encodeComponent(widget.token)}',
-    );
-    final response = await http
-        .put(
-          uri,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode(payload),
-        )
-        .timeout(const Duration(seconds: 10));
-
-    if (response.statusCode == 200) {
-      if (mounted) Navigator.pop(context, true);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to save: ${response.statusCode}')),
-      );
-    }
-  }
-
   Future<void> _saveViaWebSocket(Map<String, dynamic> payload) async {
+    if (widget.serverConfig == null) {
+      throw Exception('No server selected');
+    }
     final connMgr = context.read<ChatProvider>().connMgr;
     final serverId = widget.serverConfig!.id;
     final completer = Completer<bool>();
