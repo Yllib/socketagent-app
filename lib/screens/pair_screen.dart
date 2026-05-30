@@ -53,11 +53,12 @@ class _PairScreenState extends State<PairScreen> {
     });
 
     try {
-      // Format: SA|<token>|<pubkey>
+      // Format: SA|<token>|<pubkey>. SC is accepted for existing servers that
+      // kept the original SocketClaude pairing marker.
       final parts = rawData.split('|');
-      if (parts.length != 3 || parts[0] != 'SC') {
+      if (parts.length != 3 || (parts[0] != 'SA' && parts[0] != 'SC')) {
         setState(() {
-          _error = 'Invalid QR code — expected SA|token|pubkey format';
+          _error = 'Invalid QR code — expected SA|token|pubkey or SC|token|pubkey format';
           _processing = false;
         });
         return;

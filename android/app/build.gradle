@@ -21,7 +21,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.socketagent.app"
+        // Keep the original application ID so SocketAgent upgrades preserve
+        // existing SocketClaude installs, preferences, and paired servers.
+        applicationId = "com.claudeassistant.app"
         minSdk = 24
         targetSdk = 34
         versionCode = flutter.versionCode
