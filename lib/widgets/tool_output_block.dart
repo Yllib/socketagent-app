@@ -20,7 +20,11 @@ class ToolOutputBlock extends StatefulWidget {
   final ChatMessage message;
   final bool greenTheme;
 
-  const ToolOutputBlock({super.key, required this.message, this.greenTheme = false});
+  const ToolOutputBlock({
+    super.key,
+    required this.message,
+    this.greenTheme = false,
+  });
 
   @override
   State<ToolOutputBlock> createState() => _ToolOutputBlockState();
@@ -34,7 +38,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   bool get _isApplyPatchTool => widget.message.toolName == 'ApplyPatch';
   bool get _isWriteTool => widget.message.toolName == 'Write';
   bool get _isTaskOutput => widget.message.toolName == 'TaskOutput';
-  bool get _hasImage => widget.message.toolImageData != null && widget.message.toolImageData!.isNotEmpty;
+  bool get _hasImage =>
+      widget.message.toolImageData != null &&
+      widget.message.toolImageData!.isNotEmpty;
 
   /// Parse TaskOutput XML-like result into structured fields
   Map<String, String>? get _parsedTaskOutput {
@@ -42,12 +48,21 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final raw = widget.message.toolOutput;
     if (raw == null || raw.isEmpty) return null;
     final result = <String, String>{};
-    for (final tag in ['retrieval_status', 'task_id', 'task_type', 'status', 'exit_code']) {
+    for (final tag in [
+      'retrieval_status',
+      'task_id',
+      'task_type',
+      'status',
+      'exit_code',
+    ]) {
       final match = RegExp('<$tag>(.*?)</$tag>', dotAll: true).firstMatch(raw);
       if (match != null) result[tag] = match.group(1)!.trim();
     }
     // Extract <output> content
-    final outputMatch = RegExp(r'<output>(.*?)</output>', dotAll: true).firstMatch(raw);
+    final outputMatch = RegExp(
+      r'<output>(.*?)</output>',
+      dotAll: true,
+    ).firstMatch(raw);
     if (outputMatch != null) result['output'] = outputMatch.group(1)!.trim();
     return result.isEmpty ? null : result;
   }
@@ -68,7 +83,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       final timeout = input['timeout'] as num?;
       final blocking = input['block'] == true;
       final parts = <String>[taskId];
-      if (blocking && timeout != null) parts.add('${(timeout / 1000).round()}s timeout');
+      if (blocking && timeout != null) {
+        parts.add('${(timeout / 1000).round()}s timeout');
+      }
       return parts.join(' · ');
     }
     return '';
@@ -78,9 +95,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   String get _bashFormatted {
     final cmd = widget.message.toolInput?['command'] as String? ?? '';
     // Split on && and ; but keep the delimiter at the start of the next line
-    return cmd
-        .replaceAll(' && ', '\n&& ')
-        .replaceAll('; ', '\n; ');
+    return cmd.replaceAll(' && ', '\n&& ').replaceAll('; ', '\n; ');
   }
 
   /// Short single-line summary for Bash header when collapsed
@@ -125,7 +140,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final parsed = _parsedTaskOutput;
     final taskStatus = parsed?['retrieval_status'] ?? parsed?['status'];
     final toolName = _isTaskOutput
-        ? (widget.message.toolInput?['block'] == true ? 'Waiting' : 'Checking Task')
+        ? (widget.message.toolInput?['block'] == true
+              ? 'Waiting'
+              : 'Checking Task')
         : rawToolName;
     final output = widget.message.toolOutput;
     final gotResult = output != null;
@@ -140,12 +157,20 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final accentColor = widget.greenTheme
         ? const Color(0xFFA6E3A1)
         : colorful
-            ? _toolAccentColor(rawToolName)
-            : const Color(0xFF89B4FA);
+        ? _toolAccentColor(rawToolName)
+        : const Color(0xFF89B4FA);
 
     // Always expandable if there's content to show
-    final writeContent = _isWriteTool ? (widget.message.toolInput?['content'] as String?) : null;
-    final hasExpandableContent = _isBash || _isWriteTool || hasOutput || editDiff != null || patchDiff != null || _hasImage;
+    final writeContent = _isWriteTool
+        ? (widget.message.toolInput?['content'] as String?)
+        : null;
+    final hasExpandableContent =
+        _isBash ||
+        _isWriteTool ||
+        hasOutput ||
+        editDiff != null ||
+        patchDiff != null ||
+        _hasImage;
     final isBg = widget.message.isBackgrounded;
 
     return Container(
@@ -157,8 +182,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           color: isBg
               ? accentColor.withAlpha(120)
               : colorful
-                  ? accentColor.withAlpha(80)
-                  : const Color(0xFF313244),
+              ? accentColor.withAlpha(80)
+              : const Color(0xFF313244),
           width: 1,
         ),
       ),
@@ -168,18 +193,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           // Header
           InkWell(
             onTap: () => setState(() => _expanded = !_expanded),
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(12)),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  Icon(
-                    _toolIcon(rawToolName),
-                    size: 16,
-                    color: accentColor,
-                  ),
+                  Icon(_toolIcon(rawToolName), size: 16, color: accentColor),
                   const SizedBox(width: 8),
                   Text(
                     toolName,
@@ -192,7 +211,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   if (isBg) ...[
                     const SizedBox(width: 6),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFFF9E2AF).withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(4),
@@ -222,7 +244,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   // TaskOutput status badge
                   if (_isTaskOutput && taskStatus != null) ...[
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
                       decoration: BoxDecoration(
                         color: _taskStatusColor(taskStatus).withAlpha(30),
                         borderRadius: BorderRadius.circular(4),
@@ -239,14 +264,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     const SizedBox(width: 4),
                   ],
                   if (_hasImage && !_expanded) ...[
-                    const Icon(
-                      Icons.image,
-                      size: 14,
-                      color: Color(0xFFA6E3A1),
-                    ),
+                    const Icon(Icons.image, size: 14, color: Color(0xFFA6E3A1)),
                     const SizedBox(width: 4),
                   ],
-                  if (_isApplyPatchTool && patchStats != null && !_expanded) ...[
+                  if (_isApplyPatchTool &&
+                      patchStats != null &&
+                      !_expanded) ...[
                     _buildDiffStatBadges(patchStats),
                     const SizedBox(width: 6),
                   ],
@@ -257,11 +280,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                       color: const Color(0xFF6C7086),
                     )
                   else if (gotResult && !isStreaming)
-                    const Icon(
-                      Icons.check,
-                      size: 16,
-                      color: Color(0xFF6C7086),
-                    )
+                    const Icon(Icons.check, size: 16, color: Color(0xFF6C7086))
                   else ...[
                     if (elapsed > 0)
                       Padding(
@@ -305,7 +324,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                 ),
               ),
             ),
-            if (hasOutput) _buildOutputContainer(output),
+            if (hasOutput)
+              _buildOutputContainer(output)
+            else if (gotResult && !isStreaming)
+              _buildOutputContainer('(no output)', muted: true),
           ],
           // Diff view for Edit tool
           if (_isEditTool && editDiff != null && _expanded)
@@ -346,11 +368,16 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           if (_isTaskOutput && hasOutput && _expanded)
             _buildTaskOutputContent(),
           // Regular output (for non-Bash, non-Edit, non-TaskOutput, non-Write tools)
-          if (!_isBash && !_isEditTool && !_isApplyPatchTool && !_isWriteTool && !_isTaskOutput && hasOutput && _expanded)
+          if (!_isBash &&
+              !_isEditTool &&
+              !_isApplyPatchTool &&
+              !_isWriteTool &&
+              !_isTaskOutput &&
+              hasOutput &&
+              _expanded)
             _buildOutputContainer(output),
           // Inline image (visible when expanded)
-          if (_hasImage && _expanded)
-            _buildInlineImage(),
+          if (_hasImage && _expanded) _buildInlineImage(),
           // Placeholder for images loading from history
           if (_expanded &&
               widget.message.toolImageFilePath != null &&
@@ -367,8 +394,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const SizedBox(
-                    width: 14, height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF6C7086)),
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Color(0xFF6C7086),
+                    ),
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -419,9 +450,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: Color(0xFF313244), width: 1),
-        ),
+        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -465,17 +494,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       child: Container(
         constraints: const BoxConstraints(maxHeight: 300),
         decoration: const BoxDecoration(
-          border: Border(
-            top: BorderSide(color: Color(0xFF313244), width: 1),
-          ),
+          border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
         ),
         padding: const EdgeInsets.all(8),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: Image.memory(
-            bytes,
-            fit: BoxFit.contain,
-          ),
+          child: Image.memory(bytes, fit: BoxFit.contain),
         ),
       ),
     );
@@ -518,9 +542,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 400),
       decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: Color(0xFF313244), width: 1),
-        ),
+        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -577,13 +599,11 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     );
   }
 
-  Widget _buildOutputContainer(String? text) {
+  Widget _buildOutputContainer(String? text, {bool muted = false}) {
     return Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
-        border: Border(
-          top: BorderSide(color: Color(0xFF313244), width: 1),
-        ),
+        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -592,8 +612,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
             text ?? '',
             style: GoogleFonts.jetBrainsMono(
               fontSize: 11,
-              color: const Color(0xFFCDD6F4),
+              color: muted ? const Color(0xFF6C7086) : const Color(0xFFCDD6F4),
               height: 1.4,
+              fontStyle: muted ? FontStyle.italic : FontStyle.normal,
             ),
           ),
         ),
@@ -608,7 +629,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       children: lines.map((line) {
         Color textColor;
         Color? bgColor;
-        if (line.startsWith('---') || line.startsWith('+++') || line.startsWith('@@')) {
+        if (line.startsWith('---') ||
+            line.startsWith('+++') ||
+            line.startsWith('@@')) {
           textColor = const Color(0xFFA6ADC8);
           bgColor = null;
         } else if (line.startsWith('-')) {
@@ -663,8 +686,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               color: const Color(0xFFA6E3A1),
             ),
           ),
-        if (stats.added > 0 && stats.removed > 0)
-          const SizedBox(width: 5),
+        if (stats.added > 0 && stats.removed > 0) const SizedBox(width: 5),
         if (stats.removed > 0)
           Text(
             '-${stats.removed}',

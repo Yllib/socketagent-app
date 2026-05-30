@@ -238,7 +238,17 @@ class ChatViewState extends State<ChatView> {
       return _buildRawView(context);
     }
 
-    if (widget.messages.isEmpty) {
+    final codexPlanMessages = widget.messages
+        .where((m) => m.type == MessageType.codexPlan)
+        .toList();
+    final activeCodexPlan = codexPlanMessages.isEmpty
+        ? null
+        : codexPlanMessages.last;
+    final visibleMessages = widget.messages
+        .where((m) => m.type != MessageType.codexPlan)
+        .toList();
+
+    if (visibleMessages.isEmpty && activeCodexPlan == null) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -272,12 +282,17 @@ class ChatViewState extends State<ChatView> {
     final hasLoadMore = widget.hasMoreHistory;
     final loadMoreOffset = hasLoadMore ? 1 : 0;
     final itemCount =
-        loadMoreOffset + widget.messages.length + (widget.isProcessing ? 1 : 0);
+        loadMoreOffset + visibleMessages.length + (widget.isProcessing ? 1 : 0);
 
     return Column(
       children: [
         if (widget.todos.isNotEmpty)
           TodoListCard(todos: widget.todos, onDismiss: widget.onDismissTodos),
+        if (activeCodexPlan != null)
+          _CodexPlanCard(
+            key: ValueKey(activeCodexPlan.id),
+            msg: activeCodexPlan,
+          ),
         Expanded(
           child: Listener(
             onPointerDown: (_) => _userTouching = true,
@@ -293,10 +308,10 @@ class ChatViewState extends State<ChatView> {
                   return _buildLoadMoreButton(context);
                 }
                 final msgIndex = index - loadMoreOffset;
-                if (msgIndex == widget.messages.length && widget.isProcessing) {
+                if (msgIndex == visibleMessages.length && widget.isProcessing) {
                   return _buildThinkingIndicator(context);
                 }
-                final msg = widget.messages[msgIndex];
+                final msg = visibleMessages[msgIndex];
                 return _buildMessageWidget(msg);
               },
             ),
@@ -826,8 +841,9 @@ class ChatViewState extends State<ChatView> {
     final spans = <TextSpan>[];
     int last = 0;
     for (final m in matches) {
-      if (m.start > last)
+      if (m.start > last) {
         spans.add(TextSpan(text: text.substring(last, m.start)));
+      }
       final url = m.group(0)!;
       spans.add(
         TextSpan(
@@ -968,14 +984,14 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
 
 class _CodexPlanCard extends StatefulWidget {
   final ChatMessage msg;
-  const _CodexPlanCard({required this.msg});
+  const _CodexPlanCard({super.key, required this.msg});
 
   @override
   State<_CodexPlanCard> createState() => _CodexPlanCardState();
 }
 
 class _CodexPlanCardState extends State<_CodexPlanCard> {
-  bool _expanded = true;
+  bool _expanded = false;
 
   @override
   Widget build(BuildContext context) {
@@ -990,46 +1006,130 @@ class _CodexPlanCardState extends State<_CodexPlanCard> {
             .trim();
     final completed = steps.where((s) => s['status'] == 'completed').length;
     final total = steps.length;
-    final color = theme.colorScheme.tertiary;
+    final progress = total > 0 ? completed / total : null;
+    String? activeLabel;
+    for (final step in steps) {
+      if (step['status'] == 'in_progress' || step['status'] == 'inProgress') {
+        activeLabel = step['step'] as String?;
+        break;
+      }
+    }
+    const accent = Color(0xFF89B4FA);
 
-    return GestureDetector(
-      onTap: () => setState(() => _expanded = !_expanded),
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHigh,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withAlpha(70)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(Icons.fact_check_outlined, size: 15, color: color),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    total > 0 ? 'Codex Plan ($completed/$total)' : 'Codex Plan',
+    return Container(
+      margin: EdgeInsets.symmetric(horizontal: 8, vertical: _expanded ? 4 : 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E2E),
+        borderRadius: BorderRadius.circular(_expanded ? 12 : 8),
+        border: Border.all(color: const Color(0xFF313244), width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.only(
+              topLeft: Radius.circular(_expanded ? 12 : 8),
+              topRight: Radius.circular(_expanded ? 12 : 8),
+              bottomLeft: Radius.circular(_expanded ? 0 : 8),
+              bottomRight: Radius.circular(_expanded ? 0 : 8),
+            ),
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                10,
+                _expanded ? 10 : 6,
+                6,
+                _expanded ? 6 : 6,
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.fact_check_outlined,
+                    size: _expanded ? 16 : 14,
+                    color: accent,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    total > 0 ? '$completed/$total' : 'Plan',
                     style: TextStyle(
-                      color: color,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                      fontSize: _expanded ? 11 : 10,
+                      color: const Color(0xFFA6ADC8),
                     ),
                   ),
-                ),
-                Icon(
-                  _expanded ? Icons.expand_less : Icons.expand_more,
-                  size: 16,
-                  color: theme.colorScheme.outline,
-                ),
-              ],
+                  if (!_expanded &&
+                      activeLabel != null &&
+                      activeLabel.isNotEmpty) ...[
+                    const SizedBox(width: 6),
+                    Container(
+                      width: 1,
+                      height: 10,
+                      color: const Color(0xFF313244),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        activeLabel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Color(0xFFF9E2AF),
+                        ),
+                      ),
+                    ),
+                  ] else if (!_expanded && progress != null) ...[
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(2),
+                        child: LinearProgressIndicator(
+                          value: progress,
+                          minHeight: 2,
+                          backgroundColor: const Color(0xFF313244),
+                          color: const Color(0xFFA6E3A1),
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    const SizedBox(width: 4),
+                    const Text(
+                      'Codex Plan',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                        color: accent,
+                      ),
+                    ),
+                    const Spacer(),
+                  ],
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    size: _expanded ? 18 : 16,
+                    color: const Color(0xFF6C7086),
+                  ),
+                ],
+              ),
             ),
-            if (_expanded) ...[
-              if (explanation.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                Text(
+          ),
+          if (_expanded && progress != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(4),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 3,
+                  backgroundColor: const Color(0xFF313244),
+                  color: const Color(0xFFA6E3A1),
+                ),
+              ),
+            ),
+          if (_expanded) ...[
+            if (explanation.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
                   explanation,
                   style: TextStyle(
                     fontSize: 12,
@@ -1037,14 +1137,15 @@ class _CodexPlanCardState extends State<_CodexPlanCard> {
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
-              ],
-              if (steps.isNotEmpty) ...[
-                const SizedBox(height: 8),
-                ...steps.map((step) => _buildStep(context, step)),
-              ],
+              ),
+            ],
+            if (steps.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              ...steps.map((step) => _buildStep(context, step)),
+              const SizedBox(height: 6),
             ],
           ],
-        ),
+        ],
       ),
     );
   }
@@ -1060,6 +1161,7 @@ class _CodexPlanCardState extends State<_CodexPlanCard> {
         icon = Icons.check_circle;
         color = Colors.green.shade300;
         break;
+      case 'in_progress':
       case 'inProgress':
         icon = Icons.play_circle_fill;
         color = Colors.yellow.shade300;
