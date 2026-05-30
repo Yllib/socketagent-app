@@ -108,7 +108,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isCompacting = false;
   bool _requiresAction = false; // SDK says session needs user input
   String?
-  _permissionMode; // 'plan', 'bypassPermissions', 'default', 'auto', etc.
+  _permissionMode; // 'plan', 'bypassPermissions', 'superYolo', 'default', etc.
   bool _isRateLimited = false;
   double? _rateLimitUtilization;
   bool _isRetrying = false;
@@ -2191,7 +2191,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         break;
       case 'permission_mode_changed':
-        _permissionMode = msg['permissionMode'] as String?;
+        final mode = msg['permissionMode'] as String?;
+        if (mode != null && mode.isNotEmpty && mode != _permissionMode) {
+          _permissionMode = mode;
+          _messages.add(_permissionModeMessage(mode));
+        } else {
+          _permissionMode = mode;
+        }
         notifyListeners();
         break;
       case 'status':
@@ -3109,7 +3115,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       ),
     );
     // Use the first question's text as notification body
-    String questionBody = 'Claude needs your input';
+    String questionBody = 'Your agent needs your input';
     if (questions.isNotEmpty) {
       final qText = questions[0].question;
       if (qText.isNotEmpty) {
@@ -3539,8 +3545,43 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void setPermissionMode(String mode) {
     _ws.sendSetPermissionMode(mode);
-    _permissionMode = mode;
+    if (_permissionMode != mode) {
+      _permissionMode = mode;
+      _messages.add(_permissionModeMessage(mode));
+    } else {
+      _permissionMode = mode;
+    }
     notifyListeners();
+  }
+
+  ChatMessage _permissionModeMessage(String mode) {
+    return ChatMessage(
+      id: 'permission_${DateTime.now().microsecondsSinceEpoch}',
+      sender: MessageSender.system,
+      type: MessageType.taskNotification,
+      timestamp: DateTime.now(),
+      textContent: 'Permission mode changed to ${_permissionModeLabel(mode)}',
+      toolName: 'permission_mode',
+    );
+  }
+
+  String _permissionModeLabel(String mode) {
+    switch (mode) {
+      case 'superYolo':
+        return 'Super Yolo';
+      case 'bypassPermissions':
+        return 'Yolo';
+      case 'default':
+        return 'Ask';
+      case 'auto':
+        return 'Smart Auto';
+      case 'acceptEdits':
+        return 'Auto-Edit';
+      case 'plan':
+        return 'Plan';
+      default:
+        return mode;
+    }
   }
 
   void requestMcpStatus() {
@@ -3702,6 +3743,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // the real id). Capture it so the chat header label is right immediately.
     final backend = msg['backend'] as String?;
     if (backend != null) _activeSessionBackend = backend;
+    final permissionMode = msg['permissionMode'] as String?;
+    if (permissionMode != null) _permissionMode = permissionMode;
     if (_activeSessionBackend == 'codex') requestActiveSkills();
     notifyListeners();
   }
@@ -4085,6 +4128,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             );
             notifMsg.parentToolUseId = originToolUseId;
             loaded.add(notifMsg);
+          }
+          break;
+        case 'permission_mode':
+          final mode = entry['permissionMode'] as String?;
+          if (mode != null && mode.isNotEmpty) {
+            _permissionMode = mode;
+            loaded.add(_permissionModeMessage(mode));
           }
           break;
         case 'monitor':

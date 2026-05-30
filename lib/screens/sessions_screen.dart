@@ -1109,6 +1109,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     final provider = context.read<ChatProvider>();
     final notifEnabled = provider.isNotifEnabled(session.id);
     final isPinned = provider.isSessionPinned(session.id);
+    final codexDriver =
+        session.codexDriver ?? provider.codexDriverForServer(session.serverId);
+    final canForkSession =
+        session.backend != 'codex' || codexDriver == 'app-server';
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1141,15 +1145,22 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                   provider.toggleSessionNotifications(session.id);
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.fork_right),
-                title: const Text('Fork Session'),
-                subtitle: const Text('Create a copy of this conversation'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _forkSession(context, session);
-                },
-              ),
+              if (canForkSession)
+                ListTile(
+                  leading: const Icon(Icons.fork_right),
+                  title: Text(
+                    session.backend == 'codex' ? 'Fork Thread' : 'Fork Session',
+                  ),
+                  subtitle: Text(
+                    session.backend == 'codex'
+                        ? 'Create a copy of this Codex thread'
+                        : 'Create a copy of this conversation',
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _forkSession(context, session);
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.refresh),
                 title: const Text('Clear Context'),
@@ -1338,7 +1349,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               const SizedBox(height: 4),
             ] else ...[
               Text(
-                'Extra instructions appended to the default Claude Code prompt:',
+                'Extra instructions appended to the default agent prompt:',
                 style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
@@ -1487,7 +1498,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
         title: const Text('Clear Context'),
         content: const Text(
           'This will archive the conversation history and start fresh. '
-          'The session will be kept but Claude will have no memory of previous messages.',
+          'The session will be kept but the agent will have no memory of previous messages.',
         ),
         actions: [
           TextButton(

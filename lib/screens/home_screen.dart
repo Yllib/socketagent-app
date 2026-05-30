@@ -431,8 +431,12 @@ class HomeScreenState extends State<HomeScreen> {
                     onLoadMore: provider.loadMoreHistory,
                     onStopTask: provider.stopTask,
                     onDismissTodos: provider.dismissTodos,
-                    onRewindConversation: provider.rewindConversation,
-                    onBranch: provider.branchFromMessage,
+                    onRewindConversation: provider.activeSessionBackend == 'codex'
+                        ? null
+                        : provider.rewindConversation,
+                    onBranch: provider.activeSessionBackend == 'codex'
+                        ? null
+                        : provider.branchFromMessage,
                     onRetractQueuedMessage: (messageId) {
                       final text = provider.retractQueuedMessage(messageId);
                       if (text == null) return;
@@ -501,8 +505,10 @@ class HomeScreenState extends State<HomeScreen> {
                 ],
                 _buildEffortChip(provider),
                 const SizedBox(width: 6),
-                _buildThinkingChip(provider),
-                const SizedBox(width: 6),
+                if (provider.activeSessionBackend != 'codex') ...[
+                  _buildThinkingChip(provider),
+                  const SizedBox(width: 6),
+                ],
                 _buildTtsChip(provider),
                 if (provider.activeSessionId != null) ...[
                   const SizedBox(width: 6),
@@ -624,6 +630,7 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildEffortChip(ChatProvider provider) {
+    final isCodex = provider.activeSessionBackend == 'codex';
     IconData icon;
     Color color;
     switch (provider.effort) {
@@ -645,15 +652,19 @@ class HomeScreenState extends State<HomeScreen> {
     }
     final label =
         provider.effort[0].toUpperCase() + provider.effort.substring(1);
+    final chipLabel = isCodex ? 'Reason $label' : label;
+    final options = isCodex
+        ? const ['low', 'medium', 'high']
+        : const ['low', 'medium', 'high', 'max'];
 
     return PopupMenuButton<String>(
       onSelected: (value) => provider.setEffort(value),
-      tooltip: 'Effort: $label',
+      tooltip: isCodex ? 'Reasoning effort: $label' : 'Effort: $label',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
-      child: _buildChipBody(icon, label, iconColor: color),
+      child: _buildChipBody(icon, chipLabel, iconColor: color),
       itemBuilder: (context) => [
-        for (final e in ['low', 'medium', 'high', 'max'])
+        for (final e in options)
           PopupMenuItem(
             value: e,
             child: Row(
@@ -698,7 +709,18 @@ class HomeScreenState extends State<HomeScreen> {
   ) {
     if (backend == 'codex') {
       return const [
-        ('bypassPermissions', 'Yolo', 'Auto-approve everything', Icons.speed),
+        (
+          'bypassPermissions',
+          'Yolo',
+          'Auto-approve except protected files',
+          Icons.speed,
+        ),
+        (
+          'superYolo',
+          'Super Yolo',
+          'Auto-approve everything',
+          Icons.flash_on,
+        ),
         (
           'default',
           'Ask',
@@ -728,6 +750,8 @@ class HomeScreenState extends State<HomeScreen> {
         return const _PermTheme(Color(0xFF4D3D1A), Color(0xFFE6D5A0));
       case 'default':
         return const _PermTheme(Color(0xFF4D2A1A), Color(0xFFE6C0A0));
+      case 'superYolo':
+        return const _PermTheme(Color(0xFF4D1A3A), Color(0xFFE6A0C8));
       default:
         return null; // bypassPermissions — default theme
     }

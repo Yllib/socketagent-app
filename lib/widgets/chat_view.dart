@@ -481,6 +481,7 @@ class ChatViewState extends State<ChatView> {
     final isCancelled = status == 'cancelled';
     final isUploaded = status == 'uploaded';
     final isTodoUpdate = status == 'todos_updated';
+    final isPermissionMode = status == 'permission_mode';
 
     // Todo updates get a dedicated card
     if (isTodoUpdate) {
@@ -504,7 +505,11 @@ class ChatViewState extends State<ChatView> {
     final Color color;
     final Color bgColor;
 
-    if (isCancelled) {
+    if (isPermissionMode) {
+      icon = Icons.shield_outlined;
+      color = Colors.cyan.shade300;
+      bgColor = Colors.cyan.shade900.withAlpha(40);
+    } else if (isCancelled) {
       icon = Icons.cancel_outlined;
       color = Colors.red.shade300;
       bgColor = Colors.red.shade900.withAlpha(40);
@@ -575,7 +580,7 @@ class ChatViewState extends State<ChatView> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              status.toUpperCase(),
+              isPermissionMode ? 'PERMISSION' : status.toUpperCase(),
               style: TextStyle(
                 color: color,
                 fontSize: 10,

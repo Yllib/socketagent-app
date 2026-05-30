@@ -47,7 +47,7 @@ class NotificationService {
       const AndroidNotificationChannel(
         'reminders',
         'Reminders',
-        description: 'Scheduled reminders from Claude',
+        description: 'Scheduled reminders from your agent',
         importance: Importance.high,
         playSound: true,
         enableVibration: true,
@@ -59,7 +59,7 @@ class NotificationService {
       const AndroidNotificationChannel(
         'session_alerts',
         'Session Alerts',
-        description: 'Notifications when Claude completes a query or needs input',
+        description: 'Notifications when your agent completes a query or needs input',
         importance: Importance.high,
         playSound: true,
         enableVibration: true,
@@ -82,7 +82,7 @@ class NotificationService {
       const androidDetails = AndroidNotificationDetails(
         'session_alerts',
         'Session Alerts',
-        channelDescription: 'Notifications when Claude completes a query or needs input',
+        channelDescription: 'Notifications when your agent completes a query or needs input',
         importance: Importance.high,
         priority: Priority.high,
         playSound: true,
@@ -117,7 +117,7 @@ class NotificationService {
       const androidDetails = AndroidNotificationDetails(
         'reminders',
         'Reminders',
-        channelDescription: 'Scheduled reminders from Claude',
+        channelDescription: 'Scheduled reminders from your agent',
         importance: Importance.high,
         priority: Priority.high,
         playSound: true,

@@ -363,7 +363,7 @@ class _ProtectedFilesScreenState extends State<ProtectedFilesScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Tap + to add a file or path that requires\nyour approval before Claude can access it.',
+                    'Tap + to add a file or path that requires\nyour approval before an agent can access it.',
                     textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 12,

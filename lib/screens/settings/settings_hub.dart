@@ -84,10 +84,10 @@ class SettingsHub extends StatelessWidget {
 
               // Skills & Commands
               _buildCategoryTile(
-                context,
-                icon: Icons.auto_fix_high,
-                title: 'Skills & Commands',
-                subtitle: 'View and manage Claude slash commands',
+                  context,
+                  icon: Icons.auto_fix_high,
+                  title: 'Skills & Commands',
+                  subtitle: 'View and manage agent skills and commands',
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const SkillsScreen()),
                 ),
@@ -95,10 +95,10 @@ class SettingsHub extends StatelessWidget {
 
               // Protected Files
               _buildCategoryTile(
-                context,
-                icon: Icons.shield_outlined,
-                title: 'Protected Files',
-                subtitle: 'Require approval before Claude accesses them',
+                  context,
+                  icon: Icons.shield_outlined,
+                  title: 'Protected Files',
+                  subtitle: 'Require approval before agents access them',
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ProtectedFilesScreen()),
                 ),

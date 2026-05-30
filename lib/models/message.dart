@@ -375,6 +375,7 @@ class Session {
   // 'claude' | 'codex' | null. Null on legacy sessions persisted before the
   // codex backend existed — treat absent as claude everywhere downstream.
   final String? backend;
+  final String? codexDriver;
 
   Session({
     required this.id,
@@ -388,6 +389,7 @@ class Session {
     this.serverName = '',
     this.serverColor,
     this.backend,
+    this.codexDriver,
   });
 
   factory Session.fromJson(Map<String, dynamic> json) {
@@ -402,6 +404,7 @@ class Session {
       serverId: json['serverId'] ?? '',
       serverName: json['serverName'] ?? '',
       backend: json['backend'] as String?,
+      codexDriver: json['codexDriver'] as String?,
     );
   }
 
@@ -422,6 +425,7 @@ class Session {
       serverName: serverName,
       serverColor: serverColor,
       backend: backend,
+      codexDriver: codexDriver,
     );
   }
 }
