@@ -4158,6 +4158,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           }
           break;
+        case 'codex_plan':
+          final turnId = entry['toolUseId'] as String? ?? '';
+          final input = (entry['toolInput'] as Map<String, dynamic>?) ?? {};
+          final explanation =
+              input['explanation'] as String? ??
+              entry['content'] as String? ??
+              '';
+          final rawSteps = input['steps'] as List? ?? const [];
+          final steps = rawSteps
+              .whereType<Map>()
+              .map((step) => Map<String, dynamic>.from(step))
+              .toList();
+          if (steps.isNotEmpty || explanation.trim().isNotEmpty) {
+            final planMessage = ChatMessage.codexPlan(
+              turnId: turnId,
+              explanation: explanation,
+              steps: steps,
+            );
+            final idx = loaded.lastIndexWhere(
+              (m) => m.type == MessageType.codexPlan && m.toolUseId == turnId,
+            );
+            if (idx >= 0) {
+              loaded[idx] = planMessage;
+            } else {
+              loaded.add(planMessage);
+            }
+          }
+          break;
         case 'todos_update':
           // Legacy: old history entries had inline todos diffs — skip them.
           // Current state is restored via the 'todos' field on session_history.
