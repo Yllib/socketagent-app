@@ -2481,6 +2481,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'scheduled_task_notification':
         final title = msg['title'] as String? ?? 'Scheduled Task';
+        final status = msg['status'] as String? ?? '';
+        if (status == 'started' ||
+            status == 'running' ||
+            title.toLowerCase().contains('started')) {
+          break;
+        }
         final body = msg['body'] as String? ?? '';
         final sid = msg['sessionId'] as String? ?? '';
         _notifications.showInstant(
