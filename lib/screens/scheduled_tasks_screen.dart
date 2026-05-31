@@ -591,7 +591,11 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     final status = task['status'] as String? ?? '';
     final sessionId = task['sessionId'] as String?;
     final isRecurring = task['recurrence'] != null;
-    final canEdit = status == 'pending' || status == 'cancelled' || status == 'completed' || status == 'failed';
+    final canEdit = status == 'pending' ||
+        status == 'running' ||
+        status == 'cancelled' ||
+        status == 'completed' ||
+        status == 'failed';
 
     showModalBottomSheet(
       context: context,
@@ -1202,8 +1206,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       child: Column(
                         children: [
                           InkWell(
-                            onTap: () => _showTaskActions(task),
-                            onLongPress: runs.isNotEmpty
+                            onTap: runs.isNotEmpty
                                 ? () {
                                     setState(() {
                                       if (isExpanded) {
@@ -1214,6 +1217,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                     });
                                   }
                                 : null,
+                            onLongPress: () => _showTaskActions(task),
                             borderRadius: BorderRadius.circular(12),
                             child: Padding(
                               padding: const EdgeInsets.all(12),
