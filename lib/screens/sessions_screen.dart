@@ -1170,21 +1170,28 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                   _confirmClearContext(context, session);
                 },
               ),
-              ListTile(
-                leading: const Icon(Icons.block),
-                title: const Text('Blocked Tools'),
-                subtitle: Text(() {
-                  final blocked = provider.getDisallowedTools(session.id);
-                  return blocked.isEmpty ? 'None blocked' : '${blocked.length} blocked';
-                }()),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showBlockedToolsDialog(context, session);
-                },
-              ),
+              if (session.backend != 'codex')
+                ListTile(
+                  leading: const Icon(Icons.block),
+                  title: const Text('Blocked Tools'),
+                  subtitle: Text(() {
+                    final blocked = provider.getDisallowedTools(session.id);
+                    return blocked.isEmpty
+                        ? 'None blocked'
+                        : '${blocked.length} blocked';
+                  }()),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showBlockedToolsDialog(context, session);
+                  },
+                ),
               ListTile(
                 leading: const Icon(Icons.description),
-                title: const Text('System Prompt'),
+                title: Text(
+                  session.backend == 'codex'
+                      ? 'Additional Instructions'
+                      : 'System Prompt',
+                ),
                 subtitle: Text(() {
                   final sp = provider.getSessionSystemPrompt(session.id);
                   if (sp.isNotEmpty) return 'Custom override set';
@@ -1310,7 +1317,11 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('System Prompt'),
+        title: Text(
+          session.backend == 'codex'
+              ? 'Additional Instructions'
+              : 'System Prompt',
+        ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1349,7 +1360,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               const SizedBox(height: 4),
             ] else ...[
               Text(
-                'Extra instructions appended to the default agent prompt:',
+                session.backend == 'codex'
+                    ? 'Developer instructions sent to Codex for this session:'
+                    : 'Extra instructions appended to the default agent prompt:',
                 style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
