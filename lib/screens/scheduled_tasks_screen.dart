@@ -160,6 +160,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     DateTime selectedDate = DateTime.now().add(const Duration(hours: 1));
     String recurrenceType = 'once';
     bool reuseSession = false;
+    bool quietMode = false;
     int customHours = 0;
     int customMinutes = 30;
     final hoursController = TextEditingController(text: '0');
@@ -532,6 +533,16 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       ),
                     ],
 
+                    SwitchListTile(
+                      title: const Text('Quiet mode', style: TextStyle(fontSize: 14)),
+                      subtitle: const Text(
+                        'Only notify when the agent calls NotifyUser',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      value: quietMode,
+                      onChanged: (v) => setSheetState(() => quietMode = v),
+                    ),
+
                     // Schedule button
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -550,6 +561,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                               recurrenceType: recurrenceType != 'once' ? recurrenceType : null,
                               customIntervalMs: recurrenceType == 'custom' ? (customHours * 3600000 + customMinutes * 60000) : null,
                               reuseSession: reuseSession,
+                              notificationMode: quietMode ? 'quiet' : 'completion',
                               serverId: selectedServerId,
                             );
                             Navigator.pop(ctx);
@@ -656,6 +668,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     final existingRecurrence = task['recurrence'] as Map<String, dynamic>?;
     String recurrenceType = existingRecurrence?['type'] as String? ?? 'once';
     bool reuseSession = task['reuseSession'] as bool? ?? false;
+    bool quietMode = task['notificationMode'] == 'quiet';
     String selectedBackend = task['backend'] as String? ?? 'claude';
     final taskServerId = task['_serverId'] as String?;
 
@@ -977,6 +990,16 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       ),
                     ],
 
+                    SwitchListTile(
+                      title: const Text('Quiet mode', style: TextStyle(fontSize: 14)),
+                      subtitle: const Text(
+                        'Only notify when the agent calls NotifyUser',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                      value: quietMode,
+                      onChanged: (v) => setSheetState(() => quietMode = v),
+                    ),
+
                     // Save button
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -998,6 +1021,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                   ? (customHours * 3600000 + customMinutes * 60000)
                                   : null,
                               reuseSession: reuseSession,
+                              notificationMode: quietMode ? 'quiet' : 'completion',
                             );
                             Navigator.pop(ctx);
                           },
@@ -1171,6 +1195,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     final runs = (task['runs'] as List?) ?? [];
                     final backend = task['backend'] as String? ?? 'claude';
                     final isRecurring = recurrence != null;
+                    final isQuiet = task['notificationMode'] == 'quiet';
                     final isExpanded = _expandedTasks.contains(taskId);
 
                     return Card(
@@ -1285,6 +1310,22 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                                 color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
                                               ),
                                             ),
+                                            if (isQuiet) ...[
+                                              const SizedBox(width: 8),
+                                              Icon(
+                                                Icons.notifications_off_outlined,
+                                                size: 12,
+                                                color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                'Quiet',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                                ),
+                                              ),
+                                            ],
                                           ],
                                         ),
                                         const SizedBox(height: 2),

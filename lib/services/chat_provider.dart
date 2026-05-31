@@ -5186,6 +5186,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? recurrenceType,
     int? customIntervalMs,
     bool reuseSession = false,
+    String notificationMode = 'completion',
     String? serverId,
   }) {
     final msg = <String, dynamic>{
@@ -5195,6 +5196,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'backend': backend ?? preferredBackendForServer(serverId),
       'scheduledTime': scheduledTime,
       'reuseSession': reuseSession,
+      'notificationMode': notificationMode,
     };
     if (recurrenceType != null && recurrenceType != 'once') {
       msg['recurrence'] = <String, dynamic>{
@@ -5219,6 +5221,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? recurrenceType,
     int? customIntervalMs,
     bool? reuseSession,
+    String? notificationMode,
   }) {
     final msg = <String, dynamic>{
       'type': 'update_scheduled_task',
@@ -5229,6 +5232,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (backend != null) msg['backend'] = backend;
     if (scheduledTime != null) msg['scheduledTime'] = scheduledTime;
     if (reuseSession != null) msg['reuseSession'] = reuseSession;
+    if (notificationMode != null) msg['notificationMode'] = notificationMode;
     if (recurrenceType != null) {
       if (recurrenceType == 'once') {
         msg['recurrence'] = null;
