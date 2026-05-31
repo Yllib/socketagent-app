@@ -783,7 +783,7 @@ class ChatViewState extends State<ChatView> {
     if (items.isEmpty) {
       return Center(
         child: Text(
-          'No SDK events yet.\nSend a message to see the raw stream.',
+          'No raw events yet.\nSend a message to see the raw stream.',
           textAlign: TextAlign.center,
           style: TextStyle(
             color: Theme.of(context).colorScheme.outline,

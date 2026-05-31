@@ -431,7 +431,8 @@ class HomeScreenState extends State<HomeScreen> {
                     onLoadMore: provider.loadMoreHistory,
                     onStopTask: provider.stopTask,
                     onDismissTodos: provider.dismissTodos,
-                    onRewindConversation: provider.activeSessionBackend == 'codex'
+                    onRewindConversation:
+                        provider.activeSessionBackend == 'codex'
                         ? null
                         : provider.rewindConversation,
                     onBranch: provider.activeSessionBackend == 'codex'
@@ -505,6 +506,11 @@ class HomeScreenState extends State<HomeScreen> {
                 ],
                 _buildEffortChip(provider),
                 const SizedBox(width: 6),
+                if (provider.activeSessionBackend == 'codex' &&
+                    provider.codexDriverForServer(null) == 'app-server') ...[
+                  _buildCodexModeChip(provider),
+                  const SizedBox(width: 6),
+                ],
                 if (provider.activeSessionBackend != 'codex') ...[
                   _buildThinkingChip(provider),
                   const SizedBox(width: 6),
@@ -686,6 +692,61 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildCodexModeChip(ChatProvider provider) {
+    final modes = provider.codexCollaborationModes;
+    final current = provider.codexCollaborationMode;
+    final selected = modes.firstWhere(
+      (m) => m['id'] == current,
+      orElse: () => {'id': current, 'name': _formatModeName(current)},
+    );
+    final label = (selected['name'] as String? ?? _formatModeName(current))
+        .trim();
+
+    return PopupMenuButton<String>(
+      onOpened: () => provider.requestCodexCollaborationModes(),
+      onSelected: provider.setCodexCollaborationMode,
+      tooltip: 'Codex collaboration mode: $label',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      child: _buildChipBody(Icons.groups_outlined, label),
+      itemBuilder: (context) => [
+        for (final mode in modes)
+          PopupMenuItem(
+            value: mode['id'] as String? ?? 'default',
+            child: Row(
+              children: [
+                if ((mode['id'] as String? ?? 'default') == current)
+                  Icon(
+                    Icons.check,
+                    size: 16,
+                    color: Theme.of(context).colorScheme.primary,
+                  )
+                else
+                  const SizedBox(width: 16),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    mode['name'] as String? ??
+                        _formatModeName(mode['id'] as String? ?? 'default'),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  String _formatModeName(String mode) {
+    if (mode.isEmpty) return 'Default';
+    return mode
+        .split(RegExp(r'[-_\s]+'))
+        .where((part) => part.isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
   static const _permModes = [
     ('bypassPermissions', 'Yolo', 'Auto-approve everything', Icons.speed),
     (
@@ -715,12 +776,7 @@ class HomeScreenState extends State<HomeScreen> {
           'Auto-approve except protected files',
           Icons.speed,
         ),
-        (
-          'superYolo',
-          'Super Yolo',
-          'Auto-approve everything',
-          Icons.flash_on,
-        ),
+        ('superYolo', 'Super Yolo', 'Auto-approve everything', Icons.flash_on),
         (
           'default',
           'Ask',

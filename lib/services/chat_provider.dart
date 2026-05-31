@@ -93,6 +93,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<String>> _serverBackends = {};
   final Map<String, String> _serverCodexDrivers = {};
   final Map<String, List<String>> _serverCodexDriversAvailable = {};
+  final Map<String, List<Map<String, dynamic>>> _serverCodexCollaborationModes =
+      {};
+  final Map<String, String> _serverCodexCollaborationMode = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
   String? _activeSessionBackend;
@@ -377,6 +380,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<String> get promptSuggestions => _promptSuggestions;
   List<dynamic>? get supportedCommands => _supportedCommands;
   List<dynamic>? get supportedAgents => _supportedAgents;
+  String get codexCollaborationMode {
+    final serverId = _connMgr.activeServerId ?? _serverConfigs.firstOrNull?.id;
+    if (serverId == null) return 'default';
+    return _serverCodexCollaborationMode[serverId] ?? 'default';
+  }
+
+  List<Map<String, dynamic>> get codexCollaborationModes {
+    final serverId = _connMgr.activeServerId ?? _serverConfigs.firstOrNull?.id;
+    if (serverId == null) {
+      return const [
+        {'id': 'default', 'name': 'Default'},
+      ];
+    }
+    return _serverCodexCollaborationModes[serverId] ??
+        const [
+          {'id': 'default', 'name': 'Default'},
+        ];
+  }
+
   String _cleanSlashName(String value) {
     final trimmed = value.trim();
     if (trimmed.length >= 2) {
@@ -1483,6 +1505,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           rawData: msg,
         ),
       );
+    } else if (sdkType == 'codex_app_server') {
+      final method = msg['method'] as String? ?? 'codex';
+      final params = msg['params'];
+      _addRawItem(
+        SdkItem.standalone(
+          timestamp:
+              DateTime.tryParse(msg['ts'] as String? ?? '') ?? DateTime.now(),
+          role: method,
+          blocks: [
+            {
+              'type': params == null ? 'event' : 'json',
+              'text': params == null
+                  ? method
+                  : const JsonEncoder.withIndent('  ').convert(params),
+            },
+          ],
+          rawData: msg,
+        ),
+      );
     } else if (sdkType == 'assistant') {
       // Redundant — message card already has streamed content blocks.
     } else if (sdkType == 'user') {
@@ -1671,6 +1712,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ),
           );
           break;
+        case 'codex_app_server':
+          final method = e['method'] as String? ?? 'codex';
+          final params = e['params'];
+          _rawItems.add(
+            SdkItem.standalone(
+              timestamp: ts,
+              role: method,
+              blocks: [
+                {
+                  'type': params == null ? 'event' : 'json',
+                  'text': params == null
+                      ? method
+                      : const JsonEncoder.withIndent('  ').convert(params),
+                },
+              ],
+              rawData: e,
+            ),
+          );
+          break;
       }
     }
     if (_rawItems.length > 300) {
@@ -1799,6 +1859,45 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _captureCodexDriverSettings(msg, serverId);
             notifyListeners();
           }
+          break;
+        }
+      case 'codex_collaboration_modes':
+        {
+          final key = serverId ?? _connMgr.activeServerId;
+          if (key != null) {
+            final modes =
+                (msg['modes'] as List?)
+                    ?.whereType<Map>()
+                    .map((m) => Map<String, dynamic>.from(m))
+                    .toList() ??
+                const <Map<String, dynamic>>[
+                  {'id': 'default', 'name': 'Default'},
+                ];
+            _serverCodexCollaborationModes[key] = modes;
+            final currentMode = msg['currentMode'] as String?;
+            if (currentMode != null && currentMode.isNotEmpty) {
+              _serverCodexCollaborationMode[key] = currentMode;
+            }
+            notifyListeners();
+          }
+          break;
+        }
+      case 'codex_collaboration_mode_changed':
+        {
+          final key = serverId ?? _connMgr.activeServerId;
+          final mode = msg['mode'] as String? ?? 'default';
+          if (key != null) _serverCodexCollaborationMode[key] = mode;
+          _messages.add(
+            ChatMessage(
+              id: 'codex_mode_${DateTime.now().microsecondsSinceEpoch}',
+              sender: MessageSender.system,
+              type: MessageType.taskNotification,
+              timestamp: DateTime.now(),
+              textContent: 'Codex collaboration mode set to $mode',
+              toolName: 'codex_mode',
+            ),
+          );
+          notifyListeners();
           break;
         }
       case 'usage_restore':
@@ -2135,6 +2234,37 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'context_usage':
         _contextUsage = Map<String, dynamic>.from(msg);
+        notifyListeners();
+        break;
+      case 'codex_compact_result':
+        _messages.add(
+          ChatMessage(
+            id: 'codex_compact_${DateTime.now().microsecondsSinceEpoch}',
+            sender: MessageSender.system,
+            type: MessageType.taskNotification,
+            timestamp: DateTime.now(),
+            textContent: msg['success'] == true
+                ? 'Codex thread compaction started'
+                : 'Codex compaction failed: ${msg['error'] ?? 'unknown error'}',
+            toolName: msg['success'] == true ? 'success' : 'failed',
+          ),
+        );
+        notifyListeners();
+        break;
+      case 'codex_rollback_result':
+        final turns = (msg['numTurns'] as num?)?.toInt() ?? 1;
+        _messages.add(
+          ChatMessage(
+            id: 'codex_rollback_${DateTime.now().microsecondsSinceEpoch}',
+            sender: MessageSender.system,
+            type: MessageType.taskNotification,
+            timestamp: DateTime.now(),
+            textContent: msg['success'] == true
+                ? 'Rolled back $turns Codex turn${turns == 1 ? '' : 's'}'
+                : 'Codex rollback failed: ${msg['error'] ?? 'unknown error'}',
+            toolName: msg['success'] == true ? 'success' : 'failed',
+          ),
+        );
         notifyListeners();
         break;
       case 'task_created_hook':
@@ -2495,7 +2625,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           body: body,
           payload: sid.isNotEmpty
               ? 'session:${Uri.encodeComponent(sid)}'
-                  '${serverId != null ? ':${Uri.encodeComponent(serverId)}' : ''}'
+                    '${serverId != null ? ':${Uri.encodeComponent(serverId)}' : ''}'
               : null,
         );
         break;
@@ -4878,6 +5008,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .toList();
       _serverCodexDriversAvailable[serverId] = drivers;
     }
+
+    final currentMode = msg['codexCollaborationMode'] as String?;
+    if (currentMode != null && currentMode.isNotEmpty) {
+      _serverCodexCollaborationMode[serverId] = currentMode;
+    }
+
+    final rawModes = msg['codexCollaborationModes'];
+    if (rawModes is List) {
+      _serverCodexCollaborationModes[serverId] = rawModes
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+    }
   }
 
   String codexDriverForServer(String? serverId) {
@@ -4920,6 +5063,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'set_codex_driver',
       'driver': driver,
     });
+    notifyListeners();
+  }
+
+  void requestCodexCollaborationModes({String? serverId}) {
+    final targetServerId = serverId ?? _connMgr.activeServerId;
+    final msg = {'type': 'codex_collaboration_modes'};
+    if (targetServerId != null) {
+      _connMgr.sendToServer(targetServerId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
+  }
+
+  void setCodexCollaborationMode(String mode) {
+    final serverId = _connMgr.activeServerId;
+    if (serverId != null) {
+      _serverCodexCollaborationMode[serverId] = mode;
+      _connMgr.sendToServer(serverId, {
+        'type': 'set_codex_collaboration_mode',
+        'mode': mode,
+      });
+    } else {
+      _ws.send({'type': 'set_codex_collaboration_mode', 'mode': mode});
+    }
     notifyListeners();
   }
 
@@ -5380,6 +5547,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _lastUsage = null;
     }
     notifyListeners();
+  }
+
+  void compactCodexThread(String sessionId) {
+    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+    final msg = {'type': 'compact_context', 'sessionId': sessionId};
+    if (session != null && session.serverId.isNotEmpty) {
+      _connMgr.sendToServer(session.serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
+  }
+
+  void rollbackCodexThread(String sessionId, {int numTurns = 1}) {
+    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+    final msg = {
+      'type': 'codex_rollback_thread',
+      'sessionId': sessionId,
+      'numTurns': numTurns,
+    };
+    if (session != null && session.serverId.isNotEmpty) {
+      _connMgr.sendToServer(session.serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
   }
 
   Future<List<ArchiveEntry>> fetchArchives() {

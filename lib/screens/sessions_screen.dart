@@ -18,7 +18,8 @@ class SessionsTab extends StatefulWidget {
   State<SessionsTab> createState() => _SessionsTabState();
 }
 
-class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin {
+class _SessionsTabState extends State<SessionsTab>
+    with TickerProviderStateMixin {
   TabController? _tabController;
   int _lastServerCount = 0;
 
@@ -49,14 +50,26 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     return true;
   }
 
-  Future<void> _openSession(BuildContext context, {String? sessionId, String? cwd, String? serverId, String? backend, bool sdkSession = false}) async {
+  Future<void> _openSession(
+    BuildContext context, {
+    String? sessionId,
+    String? cwd,
+    String? serverId,
+    String? backend,
+    bool sdkSession = false,
+  }) async {
     if (!await _requireSubscription()) return;
     if (!context.mounted) return;
 
     final provider = context.read<ChatProvider>();
 
     if (sdkSession && sessionId != null && cwd != null) {
-      provider.resumeSdkSession(sessionId, cwd, serverId: serverId, backend: backend);
+      provider.resumeSdkSession(
+        sessionId,
+        cwd,
+        serverId: serverId,
+        backend: backend,
+      );
     } else if (sessionId != null) {
       provider.resumeSession(sessionId);
     } else {
@@ -66,13 +79,16 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       // (e.g., a code path that bypasses the CWD picker).
       String? effectiveBackend = backend;
       if (effectiveBackend == null) {
-        final needsServerPick = serverId == null && provider.serverConfigs.length > 1;
-        final initialServer = serverId ?? provider.serverConfigs.firstOrNull?.id;
+        final needsServerPick =
+            serverId == null && provider.serverConfigs.length > 1;
+        final initialServer =
+            serverId ?? provider.serverConfigs.firstOrNull?.id;
         final initialBackends = provider.backendsForServer(initialServer);
         final needsBackendPick = needsServerPick || initialBackends.length > 1;
         if (needsBackendPick) {
           final result = await _pickServerAndBackend(
-            context, provider,
+            context,
+            provider,
             presetServerId: serverId,
           );
           if (result == null || !context.mounted) return;
@@ -82,14 +98,16 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
           effectiveBackend = provider.preferredBackendForServer(initialServer);
         }
       }
-      provider.createNewSession(cwd: cwd, serverId: serverId, backend: effectiveBackend);
+      provider.createNewSession(
+        cwd: cwd,
+        serverId: serverId,
+        backend: effectiveBackend,
+      );
     }
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const HomeScreen(),
-      ),
-    );
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
   }
 
   /// Combined server + backend picker. Server section is hidden when there's
@@ -101,10 +119,13 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     String? presetServerId,
   }) async {
     final connectedServers = provider.serverConfigs
-        .where((c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected)
+        .where(
+          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+        )
         .toList();
-    String? selectedServer = presetServerId
-        ?? (connectedServers.isNotEmpty
+    String? selectedServer =
+        presetServerId ??
+        (connectedServers.isNotEmpty
             ? connectedServers.first.id
             : provider.serverConfigs.firstOrNull?.id);
     String selectedBackend = provider.preferredBackendForServer(selectedServer);
@@ -113,111 +134,128 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
-        return StatefulBuilder(builder: (ctx, setState) {
-          final supported = provider.backendsForServer(selectedServer);
-          // Snap back to a valid choice if the user just changed servers.
-          if (!supported.contains(selectedBackend)) {
-            selectedBackend = provider.preferredBackendForServer(selectedServer);
-          }
-          // Hide the server radio when a server was preselected upstream
-          // (e.g., in the CWD picker) — re-asking would be confusing.
-          final showServers = provider.serverConfigs.length > 1 && presetServerId == null;
-          final showBackends = supported.length > 1;
+        return StatefulBuilder(
+          builder: (ctx, setState) {
+            final supported = provider.backendsForServer(selectedServer);
+            // Snap back to a valid choice if the user just changed servers.
+            if (!supported.contains(selectedBackend)) {
+              selectedBackend = provider.preferredBackendForServer(
+                selectedServer,
+              );
+            }
+            // Hide the server radio when a server was preselected upstream
+            // (e.g., in the CWD picker) — re-asking would be confusing.
+            final showServers =
+                provider.serverConfigs.length > 1 && presetServerId == null;
+            final showBackends = supported.length > 1;
 
-          return SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-                  child: Text(
-                    'New Session',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                const Divider(height: 1),
-                if (showServers) ...[
+            return SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
                     child: Text(
-                      'Server',
-                      style: Theme.of(context).textTheme.labelSmall,
+                      'New Session',
+                      style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
-                  ...provider.serverConfigs.map((config) {
-                    final status = provider.connMgr.statusOf(config.id);
-                    final isConnected = status == ConnectionStatus.connected;
-                    return RadioListTile<String>(
-                      value: config.id,
-                      groupValue: selectedServer,
-                      onChanged: isConnected
-                          ? (v) => setState(() => selectedServer = v)
-                          : null,
-                      title: Text(config.name),
-                      subtitle: Text(
-                        config.useRelay ? 'Relay' : '${config.host}:${config.port}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
-                        ),
-                      ),
-                      secondary: Icon(
-                        isConnected ? Icons.cloud_done : Icons.cloud_off,
-                        color: isConnected ? Colors.green : Colors.grey,
-                      ),
-                      dense: true,
-                    );
-                  }),
                   const Divider(height: 1),
-                ],
-                if (showBackends) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: Text(
-                      'Backend',
-                      style: Theme.of(context).textTheme.labelSmall,
+                  if (showServers) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Text(
+                        'Server',
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
                     ),
-                  ),
-                  ...supported.map((b) => RadioListTile<String>(
+                    ...provider.serverConfigs.map((config) {
+                      final status = provider.connMgr.statusOf(config.id);
+                      final isConnected = status == ConnectionStatus.connected;
+                      return RadioListTile<String>(
+                        value: config.id,
+                        groupValue: selectedServer,
+                        onChanged: isConnected
+                            ? (v) => setState(() => selectedServer = v)
+                            : null,
+                        title: Text(config.name),
+                        subtitle: Text(
+                          config.useRelay
+                              ? 'Relay'
+                              : '${config.host}:${config.port}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withAlpha(128),
+                          ),
+                        ),
+                        secondary: Icon(
+                          isConnected ? Icons.cloud_done : Icons.cloud_off,
+                          color: isConnected ? Colors.green : Colors.grey,
+                        ),
+                        dense: true,
+                      );
+                    }),
+                    const Divider(height: 1),
+                  ],
+                  if (showBackends) ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Text(
+                        'Backend',
+                        style: Theme.of(context).textTheme.labelSmall,
+                      ),
+                    ),
+                    ...supported.map(
+                      (b) => RadioListTile<String>(
                         value: b,
                         groupValue: selectedBackend,
-                        onChanged: (v) => setState(() => selectedBackend = v ?? b),
+                        onChanged: (v) =>
+                            setState(() => selectedBackend = v ?? b),
                         title: Text(_backendLabel(b)),
-                        subtitle: Text(_backendSubtitle(b),
-                            style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.onSurface.withAlpha(128))),
+                        subtitle: Text(
+                          _backendSubtitle(b),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withAlpha(128),
+                          ),
+                        ),
                         dense: true,
-                      )),
-                  const Divider(height: 1),
-                ],
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('Cancel'),
                       ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: selectedServer == null
-                            ? null
-                            : () => Navigator.pop(ctx, (
+                    ),
+                    const Divider(height: 1),
+                  ],
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: const Text('Cancel'),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: selectedServer == null
+                              ? null
+                              : () => Navigator.pop(ctx, (
                                   serverId: selectedServer,
                                   backend: selectedBackend,
                                 )),
-                        child: const Text('Create'),
-                      ),
-                    ],
+                          child: const Text('Create'),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          );
-        });
+                ],
+              ),
+            );
+          },
+        );
       },
     );
   }
@@ -227,7 +265,12 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       ? 'OpenAI Codex CLI — billed via your ChatGPT subscription'
       : 'Anthropic Claude Agent SDK — billed via your Claude subscription';
 
-  Future<void> _validateAndOpen(BuildContext context, String path, {String? serverId, String? backend}) async {
+  Future<void> _validateAndOpen(
+    BuildContext context,
+    String path, {
+    String? serverId,
+    String? backend,
+  }) async {
     final provider = context.read<ChatProvider>();
     final exists = await provider.checkCwd(path, serverId: serverId);
     if (!context.mounted) return;
@@ -261,9 +304,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       if (created) {
         _openSession(context, cwd: path, serverId: serverId, backend: backend);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to create $path')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to create $path')));
       }
     }
   }
@@ -280,9 +323,14 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     String? selectedServerId;
     if (hasMultipleServers) {
       final connected = provider.serverConfigs
-          .where((c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected)
+          .where(
+            (c) =>
+                provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+          )
           .toList();
-      selectedServerId = connected.isNotEmpty ? connected.first.id : provider.serverConfigs.first.id;
+      selectedServerId = connected.isNotEmpty
+          ? connected.first.id
+          : provider.serverConfigs.first.id;
     } else if (provider.serverConfigs.isNotEmpty) {
       selectedServerId = provider.serverConfigs.first.id;
     }
@@ -292,7 +340,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     bool loadingSdkSessions = false;
     bool initialFetchDone = false;
     Timer? fetchDebounce;
-    String selectedBackend = provider.preferredBackendForServer(selectedServerId);
+    String selectedBackend = provider.preferredBackendForServer(
+      selectedServerId,
+    );
 
     showModalBottomSheet(
       context: context,
@@ -304,8 +354,12 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
-            final recentCwds = provider.getRecentCwds(serverId: selectedServerId);
-            final supportedBackends = provider.backendsForServer(selectedServerId);
+            final recentCwds = provider.getRecentCwds(
+              serverId: selectedServerId,
+            );
+            final supportedBackends = provider.backendsForServer(
+              selectedServerId,
+            );
             final showBackendChip = supportedBackends.length > 1;
 
             void fetchSdkSessions() {
@@ -320,20 +374,24 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               }
               setSheetState(() => loadingSdkSessions = true);
               fetchDebounce = Timer(const Duration(milliseconds: 250), () {
-                provider.requestSdkSessions(path, serverId: selectedServerId).then((sessions) {
-                  if (ctx.mounted) {
-                    setSheetState(() {
-                      sdkSessions = sessions;
-                      loadingSdkSessions = false;
+                provider
+                    .requestSdkSessions(path, serverId: selectedServerId)
+                    .then((sessions) {
+                      if (ctx.mounted) {
+                        setSheetState(() {
+                          sdkSessions = sessions;
+                          loadingSdkSessions = false;
+                        });
+                      }
                     });
-                  }
-                });
               });
             }
 
             if (!initialFetchDone) {
               initialFetchDone = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) => fetchSdkSessions());
+              WidgetsBinding.instance.addPostFrameCallback(
+                (_) => fetchSdkSessions(),
+              );
             }
 
             // Compact tappable chip used for server + backend selection.
@@ -347,9 +405,14 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 borderRadius: BorderRadius.circular(20),
                 onTap: onTap,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
-                    color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                       color: Theme.of(context).colorScheme.outlineVariant,
@@ -366,7 +429,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                       Icon(
                         Icons.arrow_drop_down,
                         size: 16,
-                        color: Theme.of(context).colorScheme.onSurface.withAlpha(140),
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(140),
                       ),
                     ],
                   ),
@@ -377,8 +442,12 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
             // Build server chip (only when there's a choice to make).
             Widget? serverChipWidget;
             if (hasMultipleServers && selectedServerId != null) {
-              final config = provider.serverConfigs.firstWhere((c) => c.id == selectedServerId);
-              final isConnected = provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
+              final config = provider.serverConfigs.firstWhere(
+                (c) => c.id == selectedServerId,
+              );
+              final isConnected =
+                  provider.connMgr.statusOf(config.id) ==
+                  ConnectionStatus.connected;
               serverChipWidget = PopupMenuButton<String>(
                 initialValue: selectedServerId,
                 tooltip: 'Switch server',
@@ -387,26 +456,31 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                   setSheetState(() {
                     selectedServerId = id;
                     final supported = provider.backendsForServer(id);
-                    if (!supported.contains(selectedBackend) && supported.isNotEmpty) {
+                    if (!supported.contains(selectedBackend) &&
+                        supported.isNotEmpty) {
                       selectedBackend = provider.preferredBackendForServer(id);
                     }
                   });
                   fetchSdkSessions();
                 },
                 itemBuilder: (_) => provider.serverConfigs.map((c) {
-                  final connected = provider.connMgr.statusOf(c.id) == ConnectionStatus.connected;
+                  final connected =
+                      provider.connMgr.statusOf(c.id) ==
+                      ConnectionStatus.connected;
                   return PopupMenuItem(
                     value: c.id,
                     enabled: connected,
-                    child: Row(children: [
-                      Icon(
-                        connected ? Icons.cloud_done : Icons.cloud_off,
-                        size: 16,
-                        color: connected ? Colors.green : Colors.grey,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(c.name),
-                    ]),
+                    child: Row(
+                      children: [
+                        Icon(
+                          connected ? Icons.cloud_done : Icons.cloud_off,
+                          size: 16,
+                          color: connected ? Colors.green : Colors.grey,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(c.name),
+                      ],
+                    ),
                   );
                 }).toList(),
                 child: AbsorbPointer(
@@ -429,20 +503,28 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 tooltip: 'Switch backend',
                 position: PopupMenuPosition.under,
                 onSelected: (b) => setSheetState(() => selectedBackend = b),
-                itemBuilder: (_) => supportedBackends.map((b) => PopupMenuItem(
-                  value: b,
-                  child: Row(children: [
-                    Icon(
-                      b == 'codex' ? Icons.code : Icons.psychology_alt,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(_backendLabel(b)),
-                  ]),
-                )).toList(),
+                itemBuilder: (_) => supportedBackends
+                    .map(
+                      (b) => PopupMenuItem(
+                        value: b,
+                        child: Row(
+                          children: [
+                            Icon(
+                              b == 'codex' ? Icons.code : Icons.psychology_alt,
+                              size: 16,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(_backendLabel(b)),
+                          ],
+                        ),
+                      ),
+                    )
+                    .toList(),
                 child: AbsorbPointer(
                   child: miniChip(
-                    icon: selectedBackend == 'codex' ? Icons.code : Icons.psychology_alt,
+                    icon: selectedBackend == 'codex'
+                        ? Icons.code
+                        : Icons.psychology_alt,
                     label: _backendLabel(selectedBackend),
                     onTap: () {},
                   ),
@@ -455,14 +537,17 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               if (path.isEmpty) return;
               Navigator.pop(ctx);
               _validateAndOpen(
-                context, path,
+                context,
+                path,
                 serverId: selectedServerId,
                 backend: selectedBackend,
               );
             }
 
             return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.of(ctx).viewInsets.bottom),
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+              ),
               child: SizedBox(
                 height: MediaQuery.of(ctx).size.height * 0.85,
                 child: Column(
@@ -503,15 +588,21 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                               controller: controller,
                               decoration: InputDecoration(
                                 hintText: '/path/to/project',
-                                prefixIcon: const Icon(Icons.folder_open, size: 18),
+                                prefixIcon: const Icon(
+                                  Icons.folder_open,
+                                  size: 18,
+                                ),
                                 filled: true,
-                                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                                fillColor: Theme.of(
+                                  context,
+                                ).colorScheme.surfaceContainerHighest,
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(12),
                                   borderSide: BorderSide.none,
                                 ),
                                 contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 10,
+                                  horizontal: 12,
+                                  vertical: 10,
                                 ),
                                 isDense: true,
                               ),
@@ -527,14 +618,16 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                             tooltip: 'Browse server filesystem',
                             onPressed: () async {
                               final picked = await _showFolderBrowser(
-                                context, provider,
+                                context,
+                                provider,
                                 serverId: selectedServerId,
                               );
                               if (picked != null && ctx.mounted) {
                                 controller.text = picked;
-                                controller.selection = TextSelection.fromPosition(
-                                  TextPosition(offset: picked.length),
-                                );
+                                controller.selection =
+                                    TextSelection.fromPosition(
+                                      TextPosition(offset: picked.length),
+                                    );
                                 fetchSdkSessions();
                               }
                             },
@@ -556,24 +649,39 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                             // Show the trailing path component for compactness;
                             // the full path is in the tooltip and the field itself
                             // when tapped.
-                            final shortLabel = cwd.split('/').where((s) => s.isNotEmpty).lastOrNull ?? cwd;
+                            final shortLabel =
+                                cwd
+                                    .split('/')
+                                    .where((s) => s.isNotEmpty)
+                                    .lastOrNull ??
+                                cwd;
                             return InputChip(
-                              label: Text(shortLabel, style: const TextStyle(fontSize: 12)),
+                              label: Text(
+                                shortLabel,
+                                style: const TextStyle(fontSize: 12),
+                              ),
                               tooltip: cwd,
                               visualDensity: VisualDensity.compact,
-                              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
                               onPressed: () {
                                 controller.text = cwd;
-                                controller.selection = TextSelection.fromPosition(
-                                  TextPosition(offset: cwd.length),
-                                );
+                                controller.selection =
+                                    TextSelection.fromPosition(
+                                      TextPosition(offset: cwd.length),
+                                    );
                                 fetchSdkSessions();
                               },
                               onDeleted: () {
-                                provider.removeRecentCwd(cwd, serverId: selectedServerId);
+                                provider.removeRecentCwd(
+                                  cwd,
+                                  serverId: selectedServerId,
+                                );
                                 setSheetState(() {});
                               },
-                              deleteIconColor: Theme.of(context).colorScheme.onSurface.withAlpha(120),
+                              deleteIconColor: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withAlpha(120),
                             );
                           },
                         ),
@@ -584,7 +692,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                       child: SizedBox(
                         width: double.infinity,
                         child: FilledButton.icon(
-                          onPressed: controller.text.trim().isEmpty ? null : startNewSession,
+                          onPressed: controller.text.trim().isEmpty
+                              ? null
+                              : startNewSession,
                           icon: const Icon(Icons.add, size: 18),
                           label: Text(
                             showBackendChip
@@ -605,7 +715,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                             style: TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.w500,
-                              color: Theme.of(context).colorScheme.onSurface.withAlpha(140),
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withAlpha(140),
                             ),
                           ),
                           const Spacer(),
@@ -614,7 +726,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                               '${sdkSessions.length}',
                               style: TextStyle(
                                 fontSize: 12,
-                                color: Theme.of(context).colorScheme.onSurface.withAlpha(100),
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withAlpha(100),
                               ),
                             ),
                         ],
@@ -627,105 +741,131 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                               child: SizedBox(
                                 width: 20,
                                 height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               ),
                             )
                           : sdkSessions.isEmpty
-                              ? Center(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(16),
-                                    child: Text(
-                                      controller.text.trim().isEmpty
-                                          ? 'Type or pick a path to see past sessions'
-                                          : 'No past sessions in this folder',
-                                      textAlign: TextAlign.center,
-                                      style: TextStyle(
-                                        fontSize: 12,
-                                        color: Theme.of(context).colorScheme.onSurface.withAlpha(120),
-                                      ),
-                                    ),
+                          ? Center(
+                              child: Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Text(
+                                  controller.text.trim().isEmpty
+                                      ? 'Type or pick a path to see past sessions'
+                                      : 'No past sessions in this folder',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withAlpha(120),
                                   ),
-                                )
-                              : ListView.builder(
-                                  padding: const EdgeInsets.only(bottom: 16),
-                                  itemCount: sdkSessions.length,
-                                  itemBuilder: (_, index) {
-                                    final session = sdkSessions[index];
-                                    final preview = session['firstMessage'] as String? ?? '';
-                                    final sessionBackend = session['backend'] as String?;
-                                    final lastActive = DateTime.tryParse(
+                                ),
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.only(bottom: 16),
+                              itemCount: sdkSessions.length,
+                              itemBuilder: (_, index) {
+                                final session = sdkSessions[index];
+                                final preview =
+                                    session['firstMessage'] as String? ?? '';
+                                final sessionBackend =
+                                    session['backend'] as String?;
+                                final lastActive =
+                                    DateTime.tryParse(
                                       session['lastActive'] as String? ?? '',
-                                    ) ?? DateTime.now();
-                                    final timeDiff = DateTime.now().difference(lastActive);
-                                    String timeAgo;
-                                    if (timeDiff.inMinutes < 1) {
-                                      timeAgo = 'just now';
-                                    } else if (timeDiff.inHours < 1) {
-                                      timeAgo = '${timeDiff.inMinutes}m ago';
-                                    } else if (timeDiff.inDays < 1) {
-                                      timeAgo = '${timeDiff.inHours}h ago';
-                                    } else {
-                                      timeAgo = '${timeDiff.inDays}d ago';
-                                    }
-                                    return ListTile(
-                                      dense: true,
-                                      leading: Icon(
-                                        Icons.history,
-                                        size: 20,
-                                        color: Theme.of(context).colorScheme.secondary,
+                                    ) ??
+                                    DateTime.now();
+                                final timeDiff = DateTime.now().difference(
+                                  lastActive,
+                                );
+                                String timeAgo;
+                                if (timeDiff.inMinutes < 1) {
+                                  timeAgo = 'just now';
+                                } else if (timeDiff.inHours < 1) {
+                                  timeAgo = '${timeDiff.inMinutes}m ago';
+                                } else if (timeDiff.inDays < 1) {
+                                  timeAgo = '${timeDiff.inHours}h ago';
+                                } else {
+                                  timeAgo = '${timeDiff.inDays}d ago';
+                                }
+                                return ListTile(
+                                  dense: true,
+                                  leading: Icon(
+                                    Icons.history,
+                                    size: 20,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.secondary,
+                                  ),
+                                  title: Text(
+                                    preview,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(fontSize: 13),
+                                  ),
+                                  subtitle: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        timeAgo,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: Theme.of(context)
+                                              .colorScheme
+                                              .onSurface
+                                              .withAlpha(128),
+                                        ),
                                       ),
-                                      title: Text(
-                                        preview,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(fontSize: 13),
-                                      ),
-                                      subtitle: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Text(
-                                            timeAgo,
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                                      if (sessionBackend == 'codex') ...[
+                                        const SizedBox(width: 6),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 5,
+                                            vertical: 1,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(context)
+                                                .colorScheme
+                                                .tertiaryContainer
+                                                .withAlpha(170),
+                                            borderRadius: BorderRadius.circular(
+                                              4,
                                             ),
                                           ),
-                                          if (sessionBackend == 'codex') ...[
-                                            const SizedBox(width: 6),
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                                              decoration: BoxDecoration(
-                                                color: Theme.of(context).colorScheme.tertiaryContainer.withAlpha(170),
-                                                borderRadius: BorderRadius.circular(4),
-                                              ),
-                                              child: Text(
-                                                'CODEX',
-                                                style: TextStyle(
-                                                  fontSize: 10,
-                                                  fontWeight: FontWeight.w600,
-                                                  letterSpacing: 0.5,
-                                                  color: Theme.of(context).colorScheme.onTertiaryContainer,
-                                                ),
-                                              ),
+                                          child: Text(
+                                            'CODEX',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.w600,
+                                              letterSpacing: 0.5,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.onTertiaryContainer,
                                             ),
-                                          ],
-                                        ],
-                                      ),
-                                      onTap: () {
-                                        Navigator.pop(ctx);
-                                        final isTracked = session['tracked'] == true;
-                                        _openSession(
-                                          context,
-                                          sessionId: session['sessionId'] as String,
-                                          cwd: controller.text.trim(),
-                                          serverId: selectedServerId,
-                                          sdkSession: !isTracked,
-                                          backend: sessionBackend,
-                                        );
-                                      },
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                  onTap: () {
+                                    Navigator.pop(ctx);
+                                    final isTracked =
+                                        session['tracked'] == true;
+                                    _openSession(
+                                      context,
+                                      sessionId: session['sessionId'] as String,
+                                      cwd: controller.text.trim(),
+                                      serverId: selectedServerId,
+                                      sdkSession: !isTracked,
+                                      backend: sessionBackend,
                                     );
                                   },
-                                ),
+                                );
+                              },
+                            ),
                     ),
                   ],
                 ),
@@ -740,10 +880,15 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     });
   }
 
-  Future<String?> _showFolderBrowser(BuildContext context, ChatProvider provider, {String? serverId}) async {
+  Future<String?> _showFolderBrowser(
+    BuildContext context,
+    ChatProvider provider, {
+    String? serverId,
+  }) async {
     return Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => FolderBrowserScreen(provider: provider, serverId: serverId),
+        builder: (_) =>
+            FolderBrowserScreen(provider: provider, serverId: serverId),
       ),
     );
   }
@@ -752,13 +897,16 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     final configs = provider.serverConfigs;
     if (configs.length > 1) {
       final connectedCount = configs
-          .where((c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected)
+          .where(
+            (c) =>
+                provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+          )
           .length;
       final color = connectedCount == configs.length
           ? Colors.green
           : connectedCount > 0
-              ? Colors.orange
-              : Colors.grey;
+          ? Colors.orange
+          : Colors.grey;
       return Tooltip(
         message: '$connectedCount/${configs.length} servers connected',
         child: Padding(
@@ -896,13 +1044,20 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                       ? TabBarView(
                           controller: _tabController,
                           children: [
-                            _buildFilteredSessionList(context, provider, unpinned),
+                            _buildFilteredSessionList(
+                              context,
+                              provider,
+                              unpinned,
+                            ),
                             ...configs.map((c) {
                               final serverSessions = unpinned
                                   .where((s) => s.serverId == c.id)
                                   .toList();
                               return _buildFilteredSessionList(
-                                  context, provider, serverSessions);
+                                context,
+                                provider,
+                                serverSessions,
+                              );
                             }),
                           ],
                         )
@@ -921,12 +1076,18 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               borderRadius: BorderRadius.circular(20),
               onTap: () => _showCwdPicker(context),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.folder_open, size: 16,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant),
+                    Icon(
+                      Icons.folder_open,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
                     const SizedBox(width: 6),
                     Text(
                       'Choose directory...',
@@ -947,7 +1108,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
 
   Widget _buildUpdateBanner(BuildContext context) {
     final shell = context.findAncestorStateOfType<MainShellScreenState>();
-    if (shell == null || !shell.updateService.updateAvailable || shell.updateBannerDismissed) {
+    if (shell == null ||
+        !shell.updateService.updateAvailable ||
+        shell.updateBannerDismissed) {
       return const SizedBox.shrink();
     }
     final info = shell.updateService.updateInfo!;
@@ -969,7 +1132,11 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            Icon(Icons.system_update, size: 20, color: Theme.of(context).colorScheme.primary),
+            Icon(
+              Icons.system_update,
+              size: 20,
+              color: Theme.of(context).colorScheme.primary,
+            ),
             const SizedBox(width: 10),
             Expanded(
               child: Text(
@@ -990,9 +1157,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
             FilledButton(
               onPressed: () {
                 shell.dismissUpdateBanner();
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AboutScreen()),
-                );
+                Navigator.of(
+                  context,
+                ).push(MaterialPageRoute(builder: (_) => const AboutScreen()));
               },
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1038,7 +1205,11 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildPinnedSection(BuildContext context, ChatProvider provider, List<Session> pinned) {
+  Widget _buildPinnedSection(
+    BuildContext context,
+    ChatProvider provider,
+    List<Session> pinned,
+  ) {
     final theme = Theme.of(context);
     return Container(
       width: double.infinity,
@@ -1058,8 +1229,11 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: Row(
               children: [
-                Icon(Icons.push_pin, size: 14,
-                    color: theme.colorScheme.onSurface.withAlpha(128)),
+                Icon(
+                  Icons.push_pin,
+                  size: 14,
+                  color: theme.colorScheme.onSurface.withAlpha(128),
+                ),
                 const SizedBox(width: 4),
                 Text(
                   'Pinned',
@@ -1079,7 +1253,11 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     );
   }
 
-  Widget _buildFilteredSessionList(BuildContext context, ChatProvider provider, List<Session> sessions) {
+  Widget _buildFilteredSessionList(
+    BuildContext context,
+    ChatProvider provider,
+    List<Session> sessions,
+  ) {
     if (sessions.isEmpty) {
       return Center(
         child: Text(
@@ -1124,10 +1302,14 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               ListTile(
                 leading: Icon(
                   isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                  color: isPinned ? Theme.of(context).colorScheme.primary : null,
+                  color: isPinned
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
                 ),
                 title: Text(isPinned ? 'Unpin Session' : 'Pin Session'),
-                subtitle: Text(isPinned ? 'Remove from pinned' : 'Keep at the top'),
+                subtitle: Text(
+                  isPinned ? 'Remove from pinned' : 'Keep at the top',
+                ),
                 onTap: () {
                   Navigator.pop(ctx);
                   provider.toggleSessionPin(session.id);
@@ -1135,11 +1317,19 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               ),
               ListTile(
                 leading: Icon(
-                  notifEnabled ? Icons.notifications_active : Icons.notifications_off_outlined,
-                  color: notifEnabled ? Theme.of(context).colorScheme.primary : null,
+                  notifEnabled
+                      ? Icons.notifications_active
+                      : Icons.notifications_off_outlined,
+                  color: notifEnabled
+                      ? Theme.of(context).colorScheme.primary
+                      : null,
                 ),
-                title: Text(notifEnabled ? 'Notifications On' : 'Notifications Off'),
-                subtitle: Text(notifEnabled ? 'Tap to disable' : 'Tap to enable'),
+                title: Text(
+                  notifEnabled ? 'Notifications On' : 'Notifications Off',
+                ),
+                subtitle: Text(
+                  notifEnabled ? 'Tap to disable' : 'Tap to enable',
+                ),
                 onTap: () {
                   Navigator.pop(ctx);
                   provider.toggleSessionNotifications(session.id);
@@ -1161,6 +1351,30 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                     _forkSession(context, session);
                   },
                 ),
+              if (session.backend == 'codex' &&
+                  codexDriver == 'app-server') ...[
+                ListTile(
+                  leading: const Icon(Icons.compress),
+                  title: const Text('Compact Thread'),
+                  subtitle: const Text('Ask Codex to compact this thread'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    provider.compactCodexThread(session.id);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Codex compact requested')),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.history),
+                  title: const Text('Rollback Last Turn'),
+                  subtitle: const Text('Drop the newest Codex turn'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _confirmCodexRollback(context, session);
+                  },
+                ),
+              ],
               ListTile(
                 leading: const Icon(Icons.refresh),
                 title: const Text('Clear Context'),
@@ -1195,8 +1409,12 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 subtitle: Text(() {
                   final sp = provider.getSessionSystemPrompt(session.id);
                   if (sp.isNotEmpty) return 'Custom override set';
-                  final effective = provider.getEffectiveSystemPrompt(session.id);
-                  return effective.isNotEmpty ? 'Using server default' : 'Not set';
+                  final effective = provider.getEffectiveSystemPrompt(
+                    session.id,
+                  );
+                  return effective.isNotEmpty
+                      ? 'Using server default'
+                      : 'Not set';
                 }()),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1206,7 +1424,11 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               ListTile(
                 leading: const Icon(Icons.edit),
                 title: const Text('Rename Session'),
-                subtitle: Text(session.title == 'Untitled' ? 'Set a display name' : session.title),
+                subtitle: Text(
+                  session.title == 'Untitled'
+                      ? 'Set a display name'
+                      : session.title,
+                ),
                 onTap: () {
                   Navigator.pop(ctx);
                   _showRenameDialog(context, session);
@@ -1214,8 +1436,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               ),
               ListTile(
                 leading: Icon(Icons.archive, color: Colors.orange.shade300),
-                title: Text('Archive Session',
-                    style: TextStyle(color: Colors.orange.shade300)),
+                title: Text(
+                  'Archive Session',
+                  style: TextStyle(color: Colors.orange.shade300),
+                ),
                 subtitle: const Text('Remove from list, keep history'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1224,8 +1448,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
               ),
               ListTile(
                 leading: Icon(Icons.delete, color: Colors.red.shade300),
-                title: Text('Delete Session',
-                    style: TextStyle(color: Colors.red.shade300)),
+                title: Text(
+                  'Delete Session',
+                  style: TextStyle(color: Colors.red.shade300),
+                ),
                 subtitle: const Text('Permanent — no archive'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1242,11 +1468,17 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
   void _showBlockedToolsDialog(BuildContext context, Session session) {
     final provider = context.read<ChatProvider>();
     final allTools = provider.availableTools;
-    final currentBlocked = Set<String>.from(provider.getDisallowedTools(session.id));
+    final currentBlocked = Set<String>.from(
+      provider.getDisallowedTools(session.id),
+    );
 
     if (allTools.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No tools available yet — open the session first to load the tools list')),
+        const SnackBar(
+          content: Text(
+            'No tools available yet — open the session first to load the tools list',
+          ),
+        ),
       );
       return;
     }
@@ -1296,7 +1528,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 ),
               TextButton(
                 onPressed: () {
-                  provider.setDisallowedTools(session.id, currentBlocked.toList());
+                  provider.setDisallowedTools(
+                    session.id,
+                    currentBlocked.toList(),
+                  );
                   Navigator.pop(ctx);
                 },
                 child: const Text('Save'),
@@ -1342,10 +1577,14 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  serverDefault.length > 200 ? '${serverDefault.substring(0, 200)}...' : serverDefault,
+                  serverDefault.length > 200
+                      ? '${serverDefault.substring(0, 200)}...'
+                      : serverDefault,
                   style: TextStyle(
                     fontSize: 12,
-                    color: Theme.of(context).colorScheme.onSurface.withAlpha(178),
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withAlpha(178),
                   ),
                 ),
               ),
@@ -1377,7 +1616,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                 hintText: 'e.g. Always respond in Spanish...',
                 border: const OutlineInputBorder(),
                 filled: true,
-                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+                fillColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest,
               ),
               style: const TextStyle(fontSize: 13),
             ),
@@ -1398,7 +1639,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
             ),
           TextButton(
             onPressed: () {
-              provider.setSessionSystemPrompt(session.id, controller.text.trim());
+              provider.setSessionSystemPrompt(
+                session.id,
+                controller.text.trim(),
+              );
               Navigator.pop(ctx);
             },
             child: const Text('Save'),
@@ -1419,9 +1663,7 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(
-            hintText: 'Session name',
-          ),
+          decoration: const InputDecoration(hintText: 'Session name'),
           onSubmitted: (value) {
             final name = value.trim();
             if (name.isNotEmpty) {
@@ -1450,7 +1692,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     );
   }
 
-  Future<bool> _confirmArchiveSession(BuildContext context, Session session) async {
+  Future<bool> _confirmArchiveSession(
+    BuildContext context,
+    Session session,
+  ) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1464,7 +1709,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
             child: const Text('Cancel'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade700),
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.orange.shade700,
+            ),
             onPressed: () {
               Navigator.pop(ctx, true);
               context.read<ChatProvider>().archiveSession(session.id);
@@ -1477,14 +1724,15 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     return confirmed ?? false;
   }
 
-  Future<bool> _confirmDeleteSession(BuildContext context, Session session) async {
+  Future<bool> _confirmDeleteSession(
+    BuildContext context,
+    Session session,
+  ) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Session'),
-        content: Text(
-          'Delete "${session.title}"? This cannot be undone.',
-        ),
+        content: Text('Delete "${session.title}"? This cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1504,7 +1752,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
     return confirmed ?? false;
   }
 
-  Future<void> _confirmClearContext(BuildContext context, Session session) async {
+  Future<void> _confirmClearContext(
+    BuildContext context,
+    Session session,
+  ) async {
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1522,9 +1773,9 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
             onPressed: () {
               Navigator.pop(ctx);
               context.read<ChatProvider>().clearSessionContext(session.id);
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Context cleared')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('Context cleared')));
             },
             child: const Text('Clear'),
           ),
@@ -1539,11 +1790,39 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
 
     final provider = context.read<ChatProvider>();
     provider.forkSession(session.id);
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const HomeScreen(),
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+  }
+
+  Future<void> _confirmCodexRollback(
+    BuildContext context,
+    Session session,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rollback Codex Turn?'),
+        content: const Text(
+          'This asks Codex to remove the latest turn from the native thread. It does not restore files.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Rollback'),
+          ),
+        ],
       ),
     );
+    if (confirmed != true || !context.mounted) return;
+    context.read<ChatProvider>().rollbackCodexThread(session.id);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Codex rollback requested')));
   }
 
   Widget _buildSessionTile(BuildContext context, Session session) {
@@ -1619,7 +1898,10 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                             ? Icons.push_pin
                             : Icons.terminal,
                         size: 20,
-                        color: context.read<ChatProvider>().isSessionPinned(session.id)
+                        color:
+                            context.read<ChatProvider>().isSessionPinned(
+                              session.id,
+                            )
                             ? theme.colorScheme.primary.withAlpha(180)
                             : theme.colorScheme.onSurface.withAlpha(128),
                       ),
@@ -1677,21 +1959,30 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                           ),
                         ),
                         if (session.serverName.isNotEmpty &&
-                            context.read<ChatProvider>().serverConfigs.length > 1) ...[
+                            context.read<ChatProvider>().serverConfigs.length >
+                                1) ...[
                           const SizedBox(width: 6),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
                               color: session.serverColor != null
-                                  ? Color(session.serverColor!).withAlpha(session.running ? 200 : 140)
-                                  : theme.colorScheme.primaryContainer.withAlpha(120),
+                                  ? Color(
+                                      session.serverColor!,
+                                    ).withAlpha(session.running ? 200 : 140)
+                                  : theme.colorScheme.primaryContainer
+                                        .withAlpha(120),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
                               session.serverName,
                               style: TextStyle(
                                 fontSize: 10,
-                                fontWeight: session.serverColor != null ? FontWeight.w500 : null,
+                                fontWeight: session.serverColor != null
+                                    ? FontWeight.w500
+                                    : null,
                                 color: session.serverColor != null
                                     ? Colors.white
                                     : theme.colorScheme.onPrimaryContainer,
@@ -1704,9 +1995,13 @@ class _SessionsTabState extends State<SessionsTab> with TickerProviderStateMixin
                         if (session.backend == 'codex') ...[
                           const SizedBox(width: 6),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 5,
+                              vertical: 1,
+                            ),
                             decoration: BoxDecoration(
-                              color: theme.colorScheme.tertiaryContainer.withAlpha(170),
+                              color: theme.colorScheme.tertiaryContainer
+                                  .withAlpha(170),
                               borderRadius: BorderRadius.circular(4),
                             ),
                             child: Text(
