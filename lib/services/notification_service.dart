@@ -12,9 +12,16 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
+  String? _launchPayload;
 
   /// Set this to handle notification taps (e.g., navigate to a session)
   static void Function(String? payload)? onNotificationTap;
+
+  String? takeLaunchPayload() {
+    final payload = _launchPayload;
+    _launchPayload = null;
+    return payload;
+  }
 
   Future<void> initialize() async {
     if (_isInitialized) return;
@@ -27,6 +34,11 @@ class NotificationService {
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
     const initSettings = InitializationSettings(android: androidSettings);
+
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    if (launchDetails?.didNotificationLaunchApp == true) {
+      _launchPayload = launchDetails?.notificationResponse?.payload;
+    }
 
     await _plugin.initialize(
       settings: initSettings,
@@ -79,7 +91,7 @@ class NotificationService {
     if (!_isInitialized) await initialize();
 
     try {
-      const androidDetails = AndroidNotificationDetails(
+      final androidDetails = AndroidNotificationDetails(
         'session_alerts',
         'Session Alerts',
         channelDescription: 'Notifications when your agent completes a query or needs input',
@@ -87,8 +99,12 @@ class NotificationService {
         priority: Priority.high,
         playSound: true,
         enableVibration: true,
+        styleInformation: BigTextStyleInformation(
+          body,
+          contentTitle: title,
+        ),
       );
-      const details = NotificationDetails(android: androidDetails);
+      final details = NotificationDetails(android: androidDetails);
 
       await _plugin.show(
         id: id,

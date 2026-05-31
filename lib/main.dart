@@ -64,6 +64,7 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
       vsync: this,
       duration: const Duration(milliseconds: 400),
     );
+    NotificationService.onNotificationTap = _handleNotificationPayload;
     _setupAssistListener();
     _checkLaunchIntent();
   }
@@ -104,7 +105,10 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
     final provider = context.read<ChatProvider>();
     provider.connectToServer();
 
-    if (launchedFromAssist) {
+    final launchPayload = NotificationService().takeLaunchPayload();
+    if (launchPayload != null) {
+      _handleNotificationPayload(launchPayload);
+    } else if (launchedFromAssist) {
       _openMostRecentSession(autoVoice: provider.autoVoiceOnAssist);
     }
 
@@ -187,8 +191,35 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
     );
   }
 
+  void _handleNotificationPayload(String? payload) {
+    if (!mounted || payload == null || payload.isEmpty) return;
+    final parsed = _parseSessionPayload(payload);
+    if (parsed == null) return;
+
+    final provider = context.read<ChatProvider>();
+    provider.resumeSessionFromNotification(
+      parsed.sessionId,
+      serverId: parsed.serverId,
+    );
+    _navigateToHome(false);
+  }
+
+  _SessionNotificationPayload? _parseSessionPayload(String payload) {
+    if (payload.startsWith('session_')) {
+      return _SessionNotificationPayload(payload.substring('session_'.length));
+    }
+    if (!payload.startsWith('session:')) return null;
+    final parts = payload.split(':');
+    if (parts.length < 2) return null;
+    return _SessionNotificationPayload(
+      Uri.decodeComponent(parts[1]),
+      serverId: parts.length >= 3 ? Uri.decodeComponent(parts[2]) : null,
+    );
+  }
+
   @override
   void dispose() {
+    NotificationService.onNotificationTap = null;
     _fadeController.dispose();
     super.dispose();
   }
@@ -250,4 +281,11 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
       ),
     );
   }
+}
+
+class _SessionNotificationPayload {
+  final String sessionId;
+  final String? serverId;
+
+  _SessionNotificationPayload(this.sessionId, {this.serverId});
 }

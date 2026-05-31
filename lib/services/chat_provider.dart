@@ -2493,7 +2493,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           id: title.hashCode & 0x7FFFFFFF,
           title: title,
           body: body,
-          payload: sid.isNotEmpty ? 'session_$sid' : null,
+          payload: sid.isNotEmpty
+              ? 'session:${Uri.encodeComponent(sid)}'
+                  '${serverId != null ? ':${Uri.encodeComponent(serverId)}' : ''}'
+              : null,
         );
         break;
       case 'upload_complete':
@@ -4975,6 +4978,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSessionBackend == 'codex') requestActiveSkills();
 
     notifyListeners();
+  }
+
+  void resumeSessionFromNotification(String sessionId, {String? serverId}) {
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.activeServerId = serverId;
+    }
+    resumeSession(sessionId);
   }
 
   void _loadSessionSettings(String sessionId) {
