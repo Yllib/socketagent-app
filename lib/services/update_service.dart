@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:http/http.dart' as http;
 
 class UpdateInfo {
   final String latestVersion;
@@ -35,7 +35,47 @@ class UpdateService extends ChangeNotifier {
   String? get error => _error;
   bool get updateAvailable => _updateInfo?.updateAvailable ?? false;
 
-  /// Check GitHub for a newer version.
+  /// Apply app release metadata returned by the SocketAgent server over the
+  /// active socket connection.
+  Future<UpdateInfo?> applyVersionInfo(Map<String, dynamic> serverInfo) async {
+    _error = null;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      final currentVersion = packageInfo.version;
+      final appInfoRaw = serverInfo['app'];
+      final appInfo = appInfoRaw is Map
+          ? Map<String, dynamic>.from(appInfoRaw)
+          : serverInfo;
+
+      final latestVersion = appInfo['version'] as String?;
+      final downloadUrl = appInfo['url'] as String? ?? '';
+      if (latestVersion == null || latestVersion.isEmpty) {
+        _error = serverInfo['error'] as String? ??
+            serverInfo['fetchError'] as String? ??
+            'Server did not provide app update info';
+        notifyListeners();
+        return null;
+      }
+
+      debugPrint('[Update] current=$currentVersion latest=$latestVersion newer=${_isNewer(latestVersion, currentVersion)}');
+
+      _updateInfo = UpdateInfo(
+        latestVersion: latestVersion,
+        downloadUrl: downloadUrl,
+        currentVersion: currentVersion,
+        updateAvailable: _isNewer(latestVersion, currentVersion),
+      );
+      notifyListeners();
+      return _updateInfo;
+    } catch (e) {
+      _error = 'Update check failed: $e';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Fallback direct check for development builds that are not connected to a
+  /// SocketAgent server.
   Future<UpdateInfo?> checkForUpdate() async {
     _error = null;
     try {

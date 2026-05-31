@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:provider/provider.dart';
+import '../../services/chat_provider.dart';
 import '../../services/update_service.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
@@ -40,7 +42,9 @@ class _AboutScreenState extends State<AboutScreen> {
 
   Future<void> _checkForUpdate() async {
     setState(() => _checking = true);
-    final result = await _updateService.checkForUpdate();
+    final provider = context.read<ChatProvider>();
+    final versionInfo = await provider.requestVersionCheck();
+    final result = await _updateService.applyVersionInfo(versionInfo);
     if (!mounted) return;
     setState(() => _checking = false);
 

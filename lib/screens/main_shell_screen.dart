@@ -8,7 +8,6 @@ import '../services/websocket_service.dart';
 import 'sessions_screen.dart';
 import 'scheduled_tasks_screen.dart';
 import 'settings/settings_hub.dart';
-import 'settings/about_screen.dart';
 import 'paywall_screen.dart';
 
 class MainShellScreen extends StatefulWidget {
@@ -35,9 +34,15 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
       });
       await provider.connectToServer();
       provider.requestSessionList();
-      // Silent update check on startup
-      _updateService.checkForUpdate();
+      // Silent app update check through the active SocketAgent connection.
+      _checkForAppUpdate(provider);
     });
+  }
+
+  Future<void> _checkForAppUpdate(ChatProvider provider) async {
+    final versionInfo = await provider.requestVersionCheck();
+    if (!mounted) return;
+    await _updateService.applyVersionInfo(versionInfo);
   }
 
   void _onUpdateChange() {
