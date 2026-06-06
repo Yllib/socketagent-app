@@ -5444,6 +5444,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void executeScheduledTask(String taskId) {
+    final msg = {'type': 'execute_scheduled_task', 'taskId': taskId};
+    final serverId = _serverIdForScheduledTask(taskId);
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
+  }
+
   void deleteScheduledTask(String taskId) {
     final serverId = _serverIdForScheduledTask(taskId);
     _scheduledTasks.removeWhere((t) => t['id'] == taskId);

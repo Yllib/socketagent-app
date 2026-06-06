@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/archive_entry.dart';
@@ -65,10 +66,19 @@ String _formatAbsolute(String iso) {
   }
 }
 
-class _ArchiveScreenState extends State<ArchiveScreen> {
+class _ArchiveScreenState extends State<ArchiveScreen>
+    with TickerProviderStateMixin {
   bool _loading = true;
+  bool _searching = false;
   StreamSubscription<String>? _feedbackSub;
   _ArchiveSort _sort = _ArchiveSort.newestFirst;
+  TabController? _tabController;
+  int _lastServerCount = -1;
+  final TextEditingController _searchController = TextEditingController();
+  Timer? _searchDebounce;
+  int _searchGeneration = 0;
+  final Set<String> _historyMatchedKeys = {};
+  final Map<String, String> _historySearchCache = {};
 
   @override
   void initState() {
@@ -83,13 +93,27 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   @override
   void dispose() {
     _feedbackSub?.cancel();
+    _tabController?.dispose();
+    _searchDebounce?.cancel();
+    _searchController.dispose();
     super.dispose();
   }
 
   Future<void> _refresh() async {
     setState(() => _loading = true);
     await context.read<ChatProvider>().fetchArchives();
-    if (mounted) setState(() => _loading = false);
+    if (!mounted) return;
+    setState(() => _loading = false);
+    _scheduleSearch(context.read<ChatProvider>(), immediate: true);
+  }
+
+  void _ensureTabController(int serverCount) {
+    if (_tabController != null && _lastServerCount == serverCount) return;
+    _tabController?.dispose();
+    _tabController = serverCount > 0
+        ? TabController(length: 1 + serverCount, vsync: this)
+        : null;
+    _lastServerCount = serverCount;
   }
 
   String _displayCwd(String cwd) {
@@ -161,6 +185,134 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
     }
   }
 
+  String get _searchQuery => _searchController.text.trim().toLowerCase();
+
+  String _entryKey(ArchiveEntry entry) =>
+      '${entry.serverId}_${entry.sid}_${entry.ts}';
+
+  bool _metadataMatches(ArchiveEntry entry, String query) {
+    if (query.isEmpty) return true;
+    final haystack = [
+      entry.title,
+      entry.cwd,
+      entry.messagePreview,
+      entry.serverName,
+      entry.backend ?? '',
+      _backendLabel(entry.backend),
+      entry.createdAt,
+      entry.clearedAt,
+    ].join('\n').toLowerCase();
+    return haystack.contains(query);
+  }
+
+  bool _belongsToServer(
+    ArchiveEntry entry,
+    String serverId,
+    ChatProvider provider,
+  ) {
+    if (entry.serverId == serverId) return true;
+    return entry.serverId.isEmpty &&
+        provider.serverConfigs.length == 1 &&
+        provider.serverConfigs.first.id == serverId;
+  }
+
+  List<ArchiveEntry> _filteredArchives(
+    ChatProvider provider,
+    String? serverId,
+  ) {
+    final query = _searchQuery;
+    final scoped = provider.archives.where((entry) {
+      if (serverId == null) return true;
+      return _belongsToServer(entry, serverId, provider);
+    }).toList();
+    final searched = query.isEmpty
+        ? scoped
+        : scoped.where((entry) {
+            return _metadataMatches(entry, query) ||
+                _historyMatchedKeys.contains(_entryKey(entry));
+          }).toList();
+    return _sortedArchives(searched);
+  }
+
+  void _scheduleSearch(ChatProvider provider, {bool immediate = false}) {
+    _searchDebounce?.cancel();
+    if (_searchQuery.isEmpty) {
+      setState(() {
+        _searching = false;
+        _historyMatchedKeys.clear();
+      });
+      return;
+    }
+    if (immediate) {
+      _runSearch(provider);
+    } else {
+      _searchDebounce = Timer(const Duration(milliseconds: 300), () {
+        _runSearch(provider);
+      });
+    }
+  }
+
+  Future<void> _runSearch(ChatProvider provider) async {
+    final query = _searchQuery;
+    final generation = ++_searchGeneration;
+    if (query.isEmpty) return;
+    setState(() => _searching = true);
+
+    final matches = <String>{};
+    for (final entry in provider.archives) {
+      final key = _entryKey(entry);
+      if (_metadataMatches(entry, query)) {
+        matches.add(key);
+        continue;
+      }
+      var historyText = _historySearchCache[key];
+      if (historyText == null) {
+        final raw = await provider.fetchArchiveHistory(
+          entry.sid,
+          entry.ts,
+          serverId: entry.serverId.isNotEmpty ? entry.serverId : null,
+        );
+        historyText = _archiveHistorySearchText(raw);
+        _historySearchCache[key] = historyText;
+      }
+      if (historyText.contains(query)) matches.add(key);
+      if (!mounted || generation != _searchGeneration) return;
+    }
+
+    if (!mounted || generation != _searchGeneration) return;
+    setState(() {
+      _historyMatchedKeys
+        ..clear()
+        ..addAll(matches);
+      _searching = false;
+    });
+  }
+
+  String _archiveHistorySearchText(List<dynamic> entries) {
+    final parts = <String>[];
+    for (final raw in entries) {
+      if (raw is! Map) continue;
+      final entry = Map<String, dynamic>.from(raw);
+      for (final key in const [
+        'role',
+        'content',
+        'toolName',
+        'toolOutput',
+        'filePath',
+      ]) {
+        final value = entry[key];
+        if (value is String && value.isNotEmpty) parts.add(value);
+      }
+      final input = entry['toolInput'];
+      if (input is Map || input is List) {
+        try {
+          parts.add(jsonEncode(input));
+        } catch (_) {}
+      }
+    }
+    return parts.join('\n').toLowerCase();
+  }
+
   Future<void> _confirmDelete(ArchiveEntry entry) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -194,203 +346,301 @@ class _ArchiveScreenState extends State<ArchiveScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Archived Sessions'),
-        actions: [
-          PopupMenuButton<_ArchiveSort>(
-            icon: const Icon(Icons.sort),
-            tooltip: 'Sort: ${_sortLabel(_sort)}',
-            onSelected: (v) => setState(() => _sort = v),
-            itemBuilder: (_) => _ArchiveSort.values.map((s) {
-              final selected = s == _sort;
-              return PopupMenuItem<_ArchiveSort>(
-                value: s,
-                child: Row(
-                  children: [
-                    Icon(
-                      _sortIcon(s),
-                      size: 18,
-                      color: selected ? theme.colorScheme.primary : null,
-                    ),
-                    const SizedBox(width: 10),
-                    Text(
-                      _sortLabel(s),
-                      style: TextStyle(
-                        fontWeight: selected
-                            ? FontWeight.w600
-                            : FontWeight.normal,
-                        color: selected ? theme.colorScheme.primary : null,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }).toList(),
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh',
-            onPressed: _refresh,
-          ),
-        ],
-      ),
-      body: Consumer<ChatProvider>(
-        builder: (context, provider, _) {
-          if (_loading && provider.archives.isEmpty) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (provider.archives.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(32),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.inventory_2_outlined,
-                      size: 64,
-                      color: theme.colorScheme.onSurface.withAlpha(90),
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No archived sessions',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: theme.colorScheme.onSurface.withAlpha(140),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'Clearing a session\'s context archives its history here.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: theme.colorScheme.onSurface.withAlpha(110),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-          final archives = _sortedArchives(provider.archives);
-          return RefreshIndicator(
-            onRefresh: _refresh,
-            child: ListView.separated(
-              itemCount: archives.length,
-              separatorBuilder: (_, __) => Divider(
-                height: 1,
-                color: theme.colorScheme.outline.withAlpha(40),
-              ),
-              itemBuilder: (context, idx) {
-                final e = archives[idx];
-                return Dismissible(
-                  key: Key('archive_${e.serverId}_${e.sid}_${e.ts}'),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    alignment: Alignment.centerRight,
-                    padding: const EdgeInsets.only(right: 20),
-                    color: Colors.red,
-                    child: const Icon(Icons.delete, color: Colors.white),
-                  ),
-                  confirmDismiss: (_) async {
-                    await _confirmDelete(e);
-                    return false;
-                  },
-                  child: ListTile(
-                    leading: Icon(
-                      e.hasJsonl
-                          ? _backendIcon(e.backend)
-                          : Icons.description_outlined,
-                      color: theme.colorScheme.primary.withAlpha(180),
-                    ),
-                    title: Text(
-                      e.title.isNotEmpty ? e.title : 'Untitled',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+    return Consumer<ChatProvider>(
+      builder: (context, provider, _) {
+        final configs = provider.serverConfigs;
+        _ensureTabController(configs.length);
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Archived Sessions'),
+            actions: [
+              PopupMenuButton<_ArchiveSort>(
+                icon: const Icon(Icons.sort),
+                tooltip: 'Sort: ${_sortLabel(_sort)}',
+                onSelected: (v) => setState(() => _sort = v),
+                itemBuilder: (_) => _ArchiveSort.values.map((s) {
+                  final selected = s == _sort;
+                  return PopupMenuItem<_ArchiveSort>(
+                    value: s,
+                    child: Row(
                       children: [
-                        if (e.cwd.isNotEmpty)
-                          Text(
-                            _displayCwd(e.cwd),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 2,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _backendIcon(e.backend),
-                                  size: 12,
-                                  color: theme.colorScheme.onSurface.withAlpha(
-                                    130,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _backendLabel(e.backend),
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: theme.colorScheme.onSurface
-                                        .withAlpha(130),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (e.serverName.isNotEmpty)
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.dns_outlined,
-                                    size: 12,
-                                    color: theme.colorScheme.onSurface
-                                        .withAlpha(130),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    e.serverName,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: theme.colorScheme.onSurface
-                                          .withAlpha(130),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                          ],
+                        Icon(
+                          _sortIcon(s),
+                          size: 18,
+                          color: selected ? theme.colorScheme.primary : null,
                         ),
-                        Tooltip(
-                          message: _formatAbsolute(e.clearedAt),
-                          child: Text(
-                            'Cleared ${_formatRelative(e.clearedAt)} · ${e.messageCount} msg${e.messageCount == 1 ? '' : 's'}',
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: theme.colorScheme.onSurface.withAlpha(130),
-                            ),
+                        const SizedBox(width: 10),
+                        Text(
+                          _sortLabel(s),
+                          style: TextStyle(
+                            fontWeight: selected
+                                ? FontWeight.w600
+                                : FontWeight.normal,
+                            color: selected ? theme.colorScheme.primary : null,
                           ),
                         ),
                       ],
                     ),
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => ArchiveDetailScreen(entry: e),
+                  );
+                }).toList(),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refresh',
+                onPressed: _refresh,
+              ),
+            ],
+            bottom: configs.isNotEmpty && _tabController != null
+                ? TabBar(
+                    controller: _tabController,
+                    isScrollable: true,
+                    tabAlignment: TabAlignment.start,
+                    tabs: [
+                      const Tab(text: 'All'),
+                      ...configs.map((c) => Tab(text: c.name)),
+                    ],
+                  )
+                : null,
+          ),
+          body: _loading && provider.archives.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : provider.archives.isEmpty
+              ? _buildEmptyState(theme)
+              : Column(
+                  children: [
+                    _buildSearchField(provider),
+                    if (_searching) const LinearProgressIndicator(minHeight: 2),
+                    Expanded(
+                      child: configs.isNotEmpty && _tabController != null
+                          ? TabBarView(
+                              controller: _tabController,
+                              children: [
+                                _buildArchiveList(context, provider, null),
+                                ...configs.map(
+                                  (config) => _buildArchiveList(
+                                    context,
+                                    provider,
+                                    config.id,
+                                  ),
+                                ),
+                              ],
+                            )
+                          : _buildArchiveList(context, provider, null),
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState(ThemeData theme) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.inventory_2_outlined,
+              size: 64,
+              color: theme.colorScheme.onSurface.withAlpha(90),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No archived sessions',
+              style: TextStyle(
+                fontSize: 16,
+                color: theme.colorScheme.onSurface.withAlpha(140),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Clearing a session\'s context archives its history here.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurface.withAlpha(110),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSearchField(ChatProvider provider) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      child: TextField(
+        controller: _searchController,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          hintText: 'Search archives',
+          prefixIcon: const Icon(Icons.search),
+          suffixIcon: _searchController.text.isEmpty
+              ? null
+              : IconButton(
+                  icon: const Icon(Icons.clear),
+                  tooltip: 'Clear search',
+                  onPressed: () {
+                    _searchController.clear();
+                    _scheduleSearch(provider, immediate: true);
+                  },
+                ),
+          isDense: true,
+          filled: true,
+          fillColor: theme.colorScheme.surfaceContainerHighest.withAlpha(120),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: BorderSide.none,
+          ),
+        ),
+        onChanged: (_) {
+          setState(() {});
+          _scheduleSearch(provider);
+        },
+      ),
+    );
+  }
+
+  Widget _buildArchiveList(
+    BuildContext context,
+    ChatProvider provider,
+    String? serverId,
+  ) {
+    final theme = Theme.of(context);
+    final archives = _filteredArchives(provider, serverId);
+    if (archives.isEmpty) {
+      return RefreshIndicator(
+        onRefresh: _refresh,
+        child: ListView(
+          children: [
+            SizedBox(height: MediaQuery.of(context).size.height * 0.22),
+            Icon(
+              Icons.search_off,
+              size: 48,
+              color: theme.colorScheme.onSurface.withAlpha(90),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _searchQuery.isEmpty
+                  ? 'No archives on this server'
+                  : 'No matches',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: theme.colorScheme.onSurface.withAlpha(140),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView.separated(
+        itemCount: archives.length,
+        separatorBuilder: (_, __) =>
+            Divider(height: 1, color: theme.colorScheme.outline.withAlpha(40)),
+        itemBuilder: (context, idx) => _buildArchiveRow(archives[idx]),
+      ),
+    );
+  }
+
+  Widget _buildArchiveRow(ArchiveEntry e) {
+    final theme = Theme.of(context);
+    return Dismissible(
+      key: Key('archive_${e.serverId}_${e.sid}_${e.ts}'),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        color: Colors.red,
+        child: const Icon(Icons.delete, color: Colors.white),
+      ),
+      confirmDismiss: (_) async {
+        await _confirmDelete(e);
+        return false;
+      },
+      child: ListTile(
+        leading: Icon(
+          e.hasJsonl ? _backendIcon(e.backend) : Icons.description_outlined,
+          color: theme.colorScheme.primary.withAlpha(180),
+        ),
+        title: Text(
+          e.title.isNotEmpty ? e.title : 'Untitled',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (e.cwd.isNotEmpty)
+              Text(
+                _displayCwd(e.cwd),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
+            Wrap(
+              spacing: 8,
+              runSpacing: 2,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      _backendIcon(e.backend),
+                      size: 12,
+                      color: theme.colorScheme.onSurface.withAlpha(130),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _backendLabel(e.backend),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurface.withAlpha(130),
                       ),
                     ),
+                  ],
+                ),
+                if (e.serverName.isNotEmpty)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.dns_outlined,
+                        size: 12,
+                        color: theme.colorScheme.onSurface.withAlpha(130),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        e.serverName,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.onSurface.withAlpha(130),
+                        ),
+                      ),
+                    ],
                   ),
-                );
-              },
+              ],
             ),
-          );
-        },
+            Tooltip(
+              message: _formatAbsolute(e.clearedAt),
+              child: Text(
+                'Cleared ${_formatRelative(e.clearedAt)} · ${e.messageCount} msg${e.messageCount == 1 ? '' : 's'}',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: theme.colorScheme.onSurface.withAlpha(130),
+                ),
+              ),
+            ),
+          ],
+        ),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => ArchiveDetailScreen(entry: e)),
+        ),
       ),
     );
   }

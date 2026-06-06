@@ -237,6 +237,15 @@ class ChatMessage {
     required String trigger,
     required int preTokens,
   }) {
+    if (preTokens <= 0) {
+      return ChatMessage(
+        id: 'compact_${DateTime.now().microsecondsSinceEpoch}',
+        sender: MessageSender.system,
+        type: MessageType.compactBoundary,
+        timestamp: DateTime.now(),
+        textContent: 'Context compacted ($trigger)',
+      );
+    }
     final tokenStr = preTokens >= 1000000
         ? '${(preTokens / 1000000).toStringAsFixed(1)}M'
         : preTokens >= 1000
