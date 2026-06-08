@@ -20,6 +20,7 @@ class MainShellScreen extends StatefulWidget {
 class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   int _currentIndex = 0;
   StreamSubscription? _subRequiredSub;
+  Future<bool>? _paywallFuture;
   final UpdateService _updateService = UpdateService();
   bool _updateBannerDismissed = false;
 
@@ -30,7 +31,18 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
       _subRequiredSub = provider.onSubscriptionRequired.listen((_) {
-        if (mounted) _showPaywall();
+        if (!mounted) return;
+        if (provider.subscriberToken.isNotEmpty) {
+          unawaited(
+            provider.checkSubscriptionStatus().then((active) {
+              if (!active && mounted) {
+                _showPaywall();
+              }
+            }),
+          );
+          return;
+        }
+        _showPaywall();
       });
       await provider.connectToServer();
       provider.requestSessionList();
@@ -73,14 +85,29 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   }
 
   Future<bool> _showPaywall() async {
+    final existing = _paywallFuture;
+    if (existing != null) return existing;
+
+    final future = _openPaywall();
+    _paywallFuture = future;
+    try {
+      return await future;
+    } finally {
+      if (_paywallFuture == future) {
+        _paywallFuture = null;
+      }
+    }
+  }
+
+  Future<bool> _openPaywall() async {
     final result = await Navigator.of(
       context,
     ).push<bool>(MaterialPageRoute(builder: (_) => const PaywallScreen()));
-    if (result == true && mounted) {
+    final signedIn = result == true;
+    if (signedIn && mounted) {
       context.read<ChatProvider>().connectToServer();
-      return true;
     }
-    return false;
+    return signedIn;
   }
 
   /// Expose update service to child widgets
