@@ -73,9 +73,9 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   }
 
   Future<bool> _showPaywall() async {
-    final result = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => const PaywallScreen()),
-    );
+    final result = await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute(builder: (_) => const PaywallScreen()));
     if (result == true && mounted) {
       context.read<ChatProvider>().connectToServer();
       return true;
@@ -92,7 +92,10 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   Future<bool> requireSubscription() async {
     final provider = context.read<ChatProvider>();
     if (provider.connectionMode != ConnectionMode.relay) return true;
-    if (provider.subscriberToken.isNotEmpty) return true;
+    if (provider.subscriberToken.isNotEmpty &&
+        await provider.checkSubscriptionStatus()) {
+      return true;
+    }
     return await _showPaywall();
   }
 
@@ -129,8 +132,9 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
         bottomNavigationBar: Consumer<ChatProvider>(
           builder: (context, provider, _) {
             final pendingTasks = provider.scheduledTasks
-                .where((t) =>
-                    t['status'] == 'pending' || t['status'] == 'running')
+                .where(
+                  (t) => t['status'] == 'pending' || t['status'] == 'running',
+                )
                 .length;
             return NavigationBar(
               selectedIndex: _currentIndex,

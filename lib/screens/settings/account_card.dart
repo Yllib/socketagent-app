@@ -33,28 +33,37 @@ class AccountCard extends StatelessWidget {
           );
         }
 
-        // State 2: Signed in
-        if (hasToken) {
+        // State 2: Signed in, or still checking a saved token.
+        if (hasToken &&
+            (!provider.subscriptionChecked || provider.subscriptionActive)) {
           return _SignedInCard(provider: provider);
         }
 
-        // State 3: Has relay servers but not signed in
+        // State 3: Has relay servers but not signed in, or saved token is stale.
         if (hasRelay) {
+          final staleToken =
+              hasToken &&
+              provider.subscriptionChecked &&
+              !provider.subscriptionActive;
           return _buildCard(
             context,
             icon: Icons.warning_amber_rounded,
             iconColor: Colors.orange.shade400,
-            title: 'Not signed in',
-            subtitle: 'Sign in to use relay access',
+            title: staleToken ? 'Subscription inactive' : 'Not signed in',
+            subtitle: staleToken
+                ? 'Sign in again to use relay access'
+                : 'Sign in to use relay access',
             action: FilledButton.icon(
               onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const PaywallScreen()),
-                ).then((result) {
-                  if (result == true) {
-                    provider.connectToServer();
-                  }
-                });
+                Navigator.of(context)
+                    .push(
+                      MaterialPageRoute(builder: (_) => const PaywallScreen()),
+                    )
+                    .then((result) {
+                      if (result == true) {
+                        provider.connectToServer();
+                      }
+                    });
               },
               icon: const Icon(Icons.login, size: 18),
               label: const Text('Sign In'),
@@ -138,7 +147,12 @@ class _SignedInCardState extends State<_SignedInCard> {
     if (_detailsLoaded) return;
     setState(() => _loading = true);
     await widget.provider.checkSubscriptionStatus();
-    if (mounted) setState(() { _detailsLoaded = true; _loading = false; });
+    if (mounted) {
+      setState(() {
+        _detailsLoaded = true;
+        _loading = false;
+      });
+    }
   }
 
   String _statusLine(ChatProvider p) {
@@ -180,9 +194,9 @@ class _SignedInCardState extends State<_SignedInCard> {
       return;
     }
     if (!mounted) return;
-    Navigator.of(context).push(MaterialPageRoute(
-      builder: (_) => _BillingPortalScreen(url: url),
-    )).then((_) => _loadDetails());
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => _BillingPortalScreen(url: url)))
+        .then((_) => _loadDetails());
   }
 
   @override
@@ -201,7 +215,11 @@ class _SignedInCardState extends State<_SignedInCard> {
               children: [
                 Row(
                   children: [
-                    Icon(_statusIcon(provider), size: 32, color: _statusColor(provider)),
+                    Icon(
+                      _statusIcon(provider),
+                      size: 32,
+                      color: _statusColor(provider),
+                    ),
                     const SizedBox(width: 16),
                     Expanded(
                       child: Column(
@@ -221,7 +239,9 @@ class _SignedInCardState extends State<_SignedInCard> {
                               provider.subscriberEmail,
                               style: TextStyle(
                                 fontSize: 13,
-                                color: theme.colorScheme.onSurface.withAlpha(160),
+                                color: theme.colorScheme.onSurface.withAlpha(
+                                  160,
+                                ),
                               ),
                             ),
                           ],
@@ -253,7 +273,10 @@ class _SignedInCardState extends State<_SignedInCard> {
     );
   }
 
-  Future<void> _confirmSignOut(BuildContext context, ChatProvider provider) async {
+  Future<void> _confirmSignOut(
+    BuildContext context,
+    ChatProvider provider,
+  ) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -292,9 +315,7 @@ class _BillingPortalScreen extends StatelessWidget {
       ..loadRequest(Uri.parse(url));
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Manage Subscription'),
-      ),
+      appBar: AppBar(title: const Text('Manage Subscription')),
       body: WebViewWidget(controller: controller),
     );
   }

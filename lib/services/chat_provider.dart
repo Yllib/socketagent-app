@@ -1243,19 +1243,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         _subscriptionActive = data['active'] == true;
-        _subscriptionStatus = data['status'] as String? ?? '';
-        _trialEnd = data['trialEnd'] != null
-            ? DateTime.fromMillisecondsSinceEpoch(data['trialEnd'] as int)
-            : null;
-        _periodEnd = data['periodEnd'] != null
-            ? DateTime.fromMillisecondsSinceEpoch(data['periodEnd'] as int)
-            : null;
-        _cancelAtPeriodEnd = data['cancelAtPeriodEnd'] == true;
+        if (_subscriptionActive) {
+          _subscriptionStatus = data['status'] as String? ?? '';
+          _trialEnd = data['trialEnd'] != null
+              ? DateTime.fromMillisecondsSinceEpoch(data['trialEnd'] as int)
+              : null;
+          _periodEnd = data['periodEnd'] != null
+              ? DateTime.fromMillisecondsSinceEpoch(data['periodEnd'] as int)
+              : null;
+          _cancelAtPeriodEnd = data['cancelAtPeriodEnd'] == true;
+        } else {
+          _subscriptionStatus = '';
+          _trialEnd = null;
+          _periodEnd = null;
+          _cancelAtPeriodEnd = false;
+        }
       } else {
         _subscriptionActive = false;
+        _subscriptionStatus = '';
+        _trialEnd = null;
+        _periodEnd = null;
+        _cancelAtPeriodEnd = false;
       }
     } catch (e) {
       _subscriptionActive = false;
+      _subscriptionStatus = '';
+      _trialEnd = null;
+      _periodEnd = null;
+      _cancelAtPeriodEnd = false;
     }
 
     _subscriptionChecked = true;

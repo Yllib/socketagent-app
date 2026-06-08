@@ -25,7 +25,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Future<void> _subscribe() async {
-    final input = _emailController.text.trim();
+    final input = _emailController.text.trim().toLowerCase();
     if (input.isEmpty) {
       setState(() => _error = 'Enter your email to continue');
       return;
@@ -58,8 +58,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
       return;
     }
 
-    // Owner bypass: token returned directly
-    if (result['ownerBypass'] == true) {
+    // Existing subscription / owner bypass: token returned directly.
+    if (result['ownerBypass'] == true ||
+        result['existingSubscription'] == true) {
       final token = result['token'] as String? ?? '';
       final email = result['email'] as String? ?? '';
       await provider.saveSubscriberToken(token, email);
@@ -84,23 +85,25 @@ class _PaywallScreenState extends State<PaywallScreen> {
 
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(NavigationDelegate(
-        onNavigationRequest: (request) {
-          // Intercept success redirect
-          if (request.url.contains('/checkout/success')) {
-            _handleCheckoutSuccess();
-            return NavigationDecision.prevent;
-          }
-          if (request.url.contains('/checkout/cancel')) {
-            setState(() {
-              _showWebView = false;
-              _loading = false;
-            });
-            return NavigationDecision.prevent;
-          }
-          return NavigationDecision.navigate;
-        },
-      ))
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            // Intercept success redirect
+            if (request.url.contains('/checkout/success')) {
+              _handleCheckoutSuccess(request.url);
+              return NavigationDecision.prevent;
+            }
+            if (request.url.contains('/checkout/cancel')) {
+              setState(() {
+                _showWebView = false;
+                _loading = false;
+              });
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
       ..loadRequest(Uri.parse(url));
 
     setState(() {
@@ -109,13 +112,17 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
   }
 
-  Future<void> _handleCheckoutSuccess() async {
+  Future<void> _handleCheckoutSuccess(String successUrl) async {
     setState(() {
       _showWebView = false;
       _loading = true;
     });
 
-    if (_checkoutSessionId == null) {
+    final redirectSessionId = Uri.tryParse(
+      successUrl,
+    )?.queryParameters['session_id'];
+    final sessionId = redirectSessionId ?? _checkoutSessionId;
+    if (sessionId == null || sessionId.isEmpty) {
       setState(() {
         _loading = false;
         _error = 'Missing session ID — please try again';
@@ -124,7 +131,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     }
 
     final provider = context.read<ChatProvider>();
-    final success = await provider.verifyCheckoutSession(_checkoutSessionId!);
+    final success = await provider.verifyCheckoutSession(sessionId);
 
     if (!mounted) return;
 
@@ -180,10 +187,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                'Claude and Codex on your phone, anywhere.',
+                'Sign in to relay Claude and Codex from your phone.',
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                   color: Theme.of(context).colorScheme.onSurface.withAlpha(180),
                 ),
+                textAlign: TextAlign.center,
               ),
               const SizedBox(height: 48),
               TextField(
@@ -211,12 +219,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Start 7-Day Free Trial'),
+                      : const Text('Continue'),
                 ),
               ),
               const SizedBox(height: 12),
               Text(
-                'Try free for 7 days, then \$5/month.\nNo charge during trial. Cancel anytime.',
+                'Existing subscribers are signed in automatically.\nNew accounts get 7 days free, then \$5/month.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,
