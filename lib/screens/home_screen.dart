@@ -6,6 +6,7 @@ import '../services/chat_provider.dart';
 import '../services/tts_engine.dart';
 import '../services/kokoro_server_engine.dart';
 import '../services/websocket_service.dart';
+import 'settings/voice_speech_screen.dart';
 import '../widgets/chat_view.dart';
 import '../widgets/active_tasks_pane.dart';
 import '../widgets/voice_button.dart';
@@ -34,6 +35,8 @@ class HomeScreenState extends State<HomeScreen> {
   String? _trackedSessionId;
   bool _showCommandPicker = false;
   String _commandFilter = '';
+  bool _pttPressed = false;
+  bool _pttStartChecking = false;
 
   @override
   void initState() {
@@ -119,6 +122,40 @@ class HomeScreenState extends State<HomeScreen> {
     if (!provider.isListening) {
       provider.toggleListening(existingText: _textController.text);
     }
+  }
+
+  Future<void> _startPushToTalk(ChatProvider provider) async {
+    _pttPressed = true;
+    if (_pttStartChecking) return;
+    _pttStartChecking = true;
+    try {
+      final installed = await provider.asrModelManager.isModelInstalled();
+      if (!mounted || !_pttPressed) return;
+      if (!installed) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Download the speech model to use voice input'),
+            action: SnackBarAction(
+              label: 'Open',
+              onPressed: () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const VoiceSpeechScreen()),
+                );
+              },
+            ),
+          ),
+        );
+        return;
+      }
+      await provider.startListening(existingText: _textController.text);
+    } finally {
+      _pttStartChecking = false;
+    }
+  }
+
+  void _stopPushToTalk(ChatProvider provider) {
+    _pttPressed = false;
+    provider.stopListening();
   }
 
   bool _isSlashCommandPrefix(String text) {
@@ -1907,13 +1944,13 @@ class HomeScreenState extends State<HomeScreen> {
             Center(
               child: Listener(
                 onPointerDown: (_) {
-                  provider.startListening(existingText: _textController.text);
+                  _startPushToTalk(provider);
                 },
                 onPointerUp: (_) {
-                  provider.stopListening();
+                  _stopPushToTalk(provider);
                 },
                 onPointerCancel: (_) {
-                  provider.stopListening();
+                  _stopPushToTalk(provider);
                 },
                 child: Container(
                   width: 72,
@@ -1948,15 +1985,13 @@ class HomeScreenState extends State<HomeScreen> {
                   child: Center(
                     child: Listener(
                       onPointerDown: (_) {
-                        provider.startListening(
-                          existingText: _textController.text,
-                        );
+                        _startPushToTalk(provider);
                       },
                       onPointerUp: (_) {
-                        provider.stopListening();
+                        _stopPushToTalk(provider);
                       },
                       onPointerCancel: (_) {
-                        provider.stopListening();
+                        _stopPushToTalk(provider);
                       },
                       child: Container(
                         width: 40,
