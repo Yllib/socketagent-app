@@ -25,7 +25,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.socketagent.app"
+        applicationId = "com.rubano.socketclaude"
         minSdk = 24
         targetSdk = 34
         versionCode = flutter.versionCode
