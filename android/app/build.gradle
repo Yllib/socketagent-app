@@ -8,7 +8,7 @@ plugins {
 def socketAgentApplicationId = (
     project.findProperty("SOCKETAGENT_APPLICATION_ID")
         ?: System.getenv("SOCKETAGENT_APPLICATION_ID")
-        ?: "com.rubano.socketclaude"
+        ?: "com.socketagent.app"
 ).toString()
 def googleServicesFile = file("google-services.json")
 def googleServicesPackageNeedle = "\"package_name\": \"${socketAgentApplicationId}\""
