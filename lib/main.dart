@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'services/chat_provider.dart';
 import 'services/notification_service.dart';
+import 'services/push_notification_service.dart';
 import 'screens/main_shell_screen.dart';
 import 'screens/home_screen.dart';
 
@@ -16,6 +17,7 @@ final routeObserver = RouteObserver<ModalRoute<void>>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService().initialize();
+  await PushNotificationService().initialize();
   runApp(const ClaudeAssistantApp());
 }
 
@@ -51,7 +53,8 @@ class AppLauncher extends StatefulWidget {
   State<AppLauncher> createState() => _AppLauncherState();
 }
 
-class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStateMixin {
+class _AppLauncherState extends State<AppLauncher>
+    with SingleTickerProviderStateMixin {
   static const _channel = MethodChannel('com.socketagent.app/intent');
   bool _checked = false;
   bool _splashDone = false;
@@ -65,6 +68,7 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
       duration: const Duration(milliseconds: 400),
     );
     NotificationService.onNotificationTap = _handleNotificationPayload;
+    PushNotificationService.onNotificationTap = _handleNotificationPayload;
     _setupAssistListener();
     _checkLaunchIntent();
   }
@@ -105,7 +109,9 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
     final provider = context.read<ChatProvider>();
     provider.connectToServer();
 
-    final launchPayload = NotificationService().takeLaunchPayload();
+    final launchPayload =
+        NotificationService().takeLaunchPayload() ??
+        PushNotificationService().takeLaunchPayload();
     if (launchPayload != null) {
       _handleNotificationPayload(launchPayload);
     } else if (launchedFromAssist) {
@@ -185,9 +191,7 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
   void _navigateToHome(bool autoVoice) {
     if (!mounted) return;
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => HomeScreen(autoStartVoice: autoVoice),
-      ),
+      MaterialPageRoute(builder: (_) => HomeScreen(autoStartVoice: autoVoice)),
     );
   }
 
@@ -220,6 +224,7 @@ class _AppLauncherState extends State<AppLauncher> with SingleTickerProviderStat
   @override
   void dispose() {
     NotificationService.onNotificationTap = null;
+    PushNotificationService.onNotificationTap = null;
     _fadeController.dispose();
     super.dispose();
   }

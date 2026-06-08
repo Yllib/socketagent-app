@@ -22,6 +22,7 @@ import 'kokoro_server_engine.dart';
 import 'kokoro_device_engine.dart';
 import 'kokoro_model_manager.dart';
 import 'notification_service.dart';
+import 'push_notification_service.dart';
 import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 
@@ -640,6 +641,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _kokoroDeviceEngine = KokoroDeviceEngine(_kokoroModelManager);
     _kokoroServerEngine.sendToServer = (msg) => _connMgr.send(msg);
     WidgetsBinding.instance.addObserver(this);
+    PushNotificationService.onTokenRefresh = _registerPushNotifications;
     _loadSettings();
     _setupListeners();
   }
@@ -774,6 +776,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
+    await _registerPushNotifications();
     _lastServerStartedAt = prefs.getString('server_started_at');
     _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
         .toSet();
@@ -861,10 +864,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _secureStorage.setServerConfigs(json);
   }
 
+  Future<void> _registerPushNotifications() async {
+    await PushNotificationService().registerWithRelays(
+      configs: _serverConfigs,
+      subscriberToken: _subscriberToken,
+    );
+  }
+
   Future<void> addServer(ServerConfig config) async {
     _serverConfigs.add(config);
     await _saveServerConfigs();
     await _connMgr.setServers(_serverConfigs);
+    await _registerPushNotifications();
     // Connect the new server
     final ws = _connMgr.getConnection(config.id);
     ws?.connect();
@@ -906,6 +917,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final ws = _connMgr.getConnection(config.id);
     ws?.disconnect();
     await _connMgr.setServers(_serverConfigs);
+    await _registerPushNotifications();
     _connMgr.getConnection(config.id)?.connect();
     notifyListeners();
   }
@@ -915,6 +927,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _perServerSessions.remove(serverId);
     await _saveServerConfigs();
     await _connMgr.setServers(_serverConfigs);
+    await _registerPushNotifications();
     _rebuildSessionList();
     notifyListeners();
   }
@@ -993,6 +1006,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       pairingToken: pairingToken,
       serverPubkey: serverPubkey,
     );
+    await _registerPushNotifications();
     ws?.connect();
     notifyListeners();
   }
@@ -1350,6 +1364,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Update subscriber token on all relay connections
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
+    await _registerPushNotifications();
     _subscriptionActive = true;
     _subscriptionChecked = true;
     notifyListeners();
@@ -6401,6 +6416,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    PushNotificationService.onTokenRefresh = null;
     _messageSub?.cancel();
     _statusSub?.cancel();
     _speechResultSub?.cancel();
