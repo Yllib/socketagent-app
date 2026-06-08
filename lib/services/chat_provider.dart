@@ -106,6 +106,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _sessionDrafts = {};
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   bool _isListening = false;
+  bool _listeningStartInFlight = false;
+  bool _stopListeningAfterStart = false;
   bool _pushToTalk = false;
   bool _isProcessing = false;
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
@@ -6403,13 +6405,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> toggleListening({String existingText = ''}) async {
     if (_isListening) {
-      await _speech.stopListening();
+      await stopListening();
     } else {
+      await startListening(existingText: existingText);
+    }
+  }
+
+  Future<void> startListening({String existingText = ''}) async {
+    if (_isListening) return;
+    if (_listeningStartInFlight) return;
+
+    _listeningStartInFlight = true;
+    _stopListeningAfterStart = false;
+    try {
       await _speech.startListening(
         existingText: existingText,
         pushToTalk: _pushToTalk,
       );
+    } finally {
+      _listeningStartInFlight = false;
     }
+
+    if (_stopListeningAfterStart) {
+      _stopListeningAfterStart = false;
+      if (_isListening) {
+        await _speech.stopListening();
+      }
+    }
+  }
+
+  Future<void> stopListening() async {
+    if (_listeningStartInFlight && !_isListening) {
+      _stopListeningAfterStart = true;
+      return;
+    }
+    if (!_isListening) return;
+    await _speech.stopListening();
   }
 
   @override

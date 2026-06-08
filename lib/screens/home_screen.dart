@@ -1907,16 +1907,13 @@ class HomeScreenState extends State<HomeScreen> {
             Center(
               child: Listener(
                 onPointerDown: (_) {
-                  if (!provider.isListening) {
-                    provider.toggleListening(
-                      existingText: _textController.text,
-                    );
-                  }
+                  provider.startListening(existingText: _textController.text);
                 },
                 onPointerUp: (_) {
-                  if (provider.isListening) {
-                    provider.toggleListening();
-                  }
+                  provider.stopListening();
+                },
+                onPointerCancel: (_) {
+                  provider.stopListening();
                 },
                 child: Container(
                   width: 72,
@@ -1951,16 +1948,15 @@ class HomeScreenState extends State<HomeScreen> {
                   child: Center(
                     child: Listener(
                       onPointerDown: (_) {
-                        if (!provider.isListening) {
-                          provider.toggleListening(
-                            existingText: _textController.text,
-                          );
-                        }
+                        provider.startListening(
+                          existingText: _textController.text,
+                        );
                       },
                       onPointerUp: (_) {
-                        if (provider.isListening) {
-                          provider.toggleListening();
-                        }
+                        provider.stopListening();
+                      },
+                      onPointerCancel: (_) {
+                        provider.stopListening();
                       },
                       child: Container(
                         width: 40,
