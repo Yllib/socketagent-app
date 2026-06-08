@@ -1157,9 +1157,14 @@ class _SessionsTabState extends State<SessionsTab>
             FilledButton(
               onPressed: () {
                 shell.dismissUpdateBanner();
-                Navigator.of(
-                  context,
-                ).push(MaterialPageRoute(builder: (_) => const AboutScreen()));
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => AboutScreen(
+                      updateService: shell.updateService,
+                      autoStartDownload: true,
+                    ),
+                  ),
+                );
               },
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 12),

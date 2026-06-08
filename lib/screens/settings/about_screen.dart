@@ -7,22 +7,36 @@ import '../config_export_screen.dart';
 import '../config_import_screen.dart';
 
 class AboutScreen extends StatefulWidget {
-  const AboutScreen({super.key});
+  final UpdateService? updateService;
+  final bool autoStartDownload;
+
+  const AboutScreen({
+    super.key,
+    this.updateService,
+    this.autoStartDownload = false,
+  });
 
   @override
   State<AboutScreen> createState() => _AboutScreenState();
 }
 
 class _AboutScreenState extends State<AboutScreen> {
-  final UpdateService _updateService = UpdateService();
+  late final UpdateService _updateService;
   String _currentVersion = '';
   bool _checking = false;
+  bool _autoDownloadStarted = false;
 
   @override
   void initState() {
     super.initState();
+    _updateService = widget.updateService ?? UpdateService();
     _loadVersion();
     _updateService.addListener(_onUpdate);
+    if (widget.autoStartDownload) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _startDownloadFromBanner();
+      });
+    }
   }
 
   @override
@@ -33,6 +47,14 @@ class _AboutScreenState extends State<AboutScreen> {
 
   void _onUpdate() {
     if (mounted) setState(() {});
+  }
+
+  void _startDownloadFromBanner() {
+    if (_autoDownloadStarted || !mounted) return;
+    _autoDownloadStarted = true;
+    if (_updateService.updateAvailable && !_updateService.isDownloading) {
+      _updateService.downloadAndInstall();
+    }
   }
 
   Future<void> _loadVersion() async {
@@ -54,9 +76,9 @@ class _AboutScreenState extends State<AboutScreen> {
       );
     }
     if (_updateService.error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(_updateService.error!)),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_updateService.error!)));
     }
   }
 
@@ -66,9 +88,7 @@ class _AboutScreenState extends State<AboutScreen> {
     final muted = theme.colorScheme.onSurface.withAlpha(100);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('About'),
-      ),
+      appBar: AppBar(title: const Text('About')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
@@ -105,8 +125,12 @@ class _AboutScreenState extends State<AboutScreen> {
                   title: const Text('Export Server Configs'),
                   subtitle: const Text('Share configs via QR code'),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.push(context,
-                    MaterialPageRoute(builder: (_) => const ConfigExportScreen())),
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const ConfigExportScreen(),
+                    ),
+                  ),
                 ),
                 const Divider(height: 1, indent: 56),
                 ListTile(
@@ -115,11 +139,19 @@ class _AboutScreenState extends State<AboutScreen> {
                   subtitle: const Text('Scan QR code to import'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () async {
-                    final imported = await Navigator.push<int>(context,
-                      MaterialPageRoute(builder: (_) => const ConfigImportScreen()));
+                    final imported = await Navigator.push<int>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ConfigImportScreen(),
+                      ),
+                    );
                     if (imported != null && imported > 0 && context.mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Imported $imported server${imported == 1 ? '' : 's'}')),
+                        SnackBar(
+                          content: Text(
+                            'Imported $imported server${imported == 1 ? '' : 's'}',
+                          ),
+                        ),
                       );
                     }
                   },

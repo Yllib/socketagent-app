@@ -4,6 +4,7 @@ import '../../services/chat_provider.dart';
 import '../../services/tts_engine.dart';
 import '../../services/websocket_service.dart';
 import '../protected_files_screen.dart';
+import '../main_shell_screen.dart';
 import 'account_card.dart';
 import 'servers_screen.dart';
 import 'voice_speech_screen.dart';
@@ -17,9 +18,7 @@ class SettingsHub extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Settings'),
-      ),
+      appBar: AppBar(title: const Text('Settings')),
       body: Consumer<ChatProvider>(
         builder: (context, provider, _) {
           return ListView(
@@ -61,10 +60,16 @@ class SettingsHub extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
                 child: SwitchListTile(
-                  secondary: Icon(Icons.palette_outlined,
-                      color: Theme.of(context).colorScheme.onSurface.withAlpha(180)),
+                  secondary: Icon(
+                    Icons.palette_outlined,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withAlpha(180),
+                  ),
                   title: const Text('Colorful tool cards'),
-                  subtitle: const Text('Each tool type gets a distinct accent color'),
+                  subtitle: const Text(
+                    'Each tool type gets a distinct accent color',
+                  ),
                   value: provider.colorfulCards,
                   onChanged: (val) => provider.setColorfulCards(val),
                 ),
@@ -84,23 +89,25 @@ class SettingsHub extends StatelessWidget {
 
               // Skills & Commands
               _buildCategoryTile(
+                context,
+                icon: Icons.auto_fix_high,
+                title: 'Skills & Commands',
+                subtitle: 'View and manage agent skills and commands',
+                onTap: () => Navigator.of(
                   context,
-                  icon: Icons.auto_fix_high,
-                  title: 'Skills & Commands',
-                  subtitle: 'View and manage agent skills and commands',
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const SkillsScreen()),
-                ),
+                ).push(MaterialPageRoute(builder: (_) => const SkillsScreen())),
               ),
 
               // Protected Files
               _buildCategoryTile(
-                  context,
-                  icon: Icons.shield_outlined,
-                  title: 'Protected Files',
-                  subtitle: 'Require approval before agents access them',
+                context,
+                icon: Icons.shield_outlined,
+                title: 'Protected Files',
+                subtitle: 'Require approval before agents access them',
                 onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ProtectedFilesScreen()),
+                  MaterialPageRoute(
+                    builder: (_) => const ProtectedFilesScreen(),
+                  ),
                 ),
               ),
 
@@ -110,9 +117,16 @@ class SettingsHub extends StatelessWidget {
                 icon: Icons.info_outline,
                 title: 'About',
                 subtitle: 'Samsung AI button, config transfer',
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const AboutScreen()),
-                ),
+                onTap: () {
+                  final shell = context
+                      .findAncestorStateOfType<MainShellScreenState>();
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          AboutScreen(updateService: shell?.updateService),
+                    ),
+                  );
+                },
               ),
             ],
           );
@@ -131,8 +145,10 @@ class SettingsHub extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: ListTile(
-        leading: Icon(icon,
-            color: Theme.of(context).colorScheme.onSurface.withAlpha(180)),
+        leading: Icon(
+          icon,
+          color: Theme.of(context).colorScheme.onSurface.withAlpha(180),
+        ),
         title: Text(title),
         subtitle: Text(
           subtitle,
@@ -151,7 +167,9 @@ class SettingsHub extends StatelessWidget {
     final configs = provider.serverConfigs;
     if (configs.isEmpty) return 'No servers configured';
     final connected = configs
-        .where((c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected)
+        .where(
+          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+        )
         .length;
     if (configs.length == 1) {
       return connected > 0 ? 'Connected' : 'Disconnected';
