@@ -202,6 +202,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription? _statusSub;
   StreamSubscription? _speechResultSub;
   StreamSubscription? _speechStatusSub;
+  Timer? _foregroundResumeTimer;
+  DateTime? _backgroundedAt;
 
   List<ChatMessage> get messages => _messages;
   List<Session> get sessions => _sessions;
@@ -672,7 +674,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    _appInForeground = state == AppLifecycleState.resumed;
+    final resumed = state == AppLifecycleState.resumed;
+    _appInForeground = resumed;
+    if (resumed) {
+      _resumeActiveSessionAfterForeground();
+    } else {
+      _backgroundedAt ??= DateTime.now();
+    }
+  }
+
+  void _resumeActiveSessionAfterForeground() {
+    _foregroundResumeTimer?.cancel();
+    _foregroundResumeTimer = Timer(const Duration(milliseconds: 250), () {
+      final sessionId = _activeSessionId;
+      final serverId = _connMgr.activeServerId;
+      if (sessionId == null || serverId == null) return;
+
+      final wasAwayFor = _backgroundedAt == null
+          ? Duration.zero
+          : DateTime.now().difference(_backgroundedAt!);
+      _backgroundedAt = null;
+
+      final ws = _connMgr.getConnection(serverId);
+      if (ws == null) return;
+
+      // Android can suspend a socket without us immediately seeing onDone.
+      // Reconnect after a real background stint; otherwise just reattach.
+      if (wasAwayFor > const Duration(seconds: 1) ||
+          ws.status != ConnectionStatus.connected) {
+        ws.connect();
+      } else {
+        _connMgr.sendToServer(serverId, {
+          'type': 'resume_session',
+          'sessionId': sessionId,
+        });
+      }
+    });
   }
 
   /// Migrate sensitive credentials from SharedPreferences to SecureStorage (one-time)
@@ -6463,6 +6500,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     PushNotificationService.onTokenRefresh = null;
+    _foregroundResumeTimer?.cancel();
     _messageSub?.cancel();
     _statusSub?.cancel();
     _speechResultSub?.cancel();
