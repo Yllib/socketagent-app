@@ -708,6 +708,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'type': 'resume_session',
           'sessionId': sessionId,
         });
+        _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
       }
     });
   }
@@ -1143,6 +1144,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'type': 'resume_session',
         'sessionId': _activeSessionId,
       });
+      _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
     }
   }
 
@@ -5220,8 +5222,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'type': 'resume_session',
         'sessionId': sessionId,
       });
+      _connMgr.sendToServer(session.serverId, {'type': 'get_status_sync'});
     } else {
       _ws.sendResumeSession(sessionId);
+      _ws.send({'type': 'get_status_sync'});
     }
 
     // Send per-session settings after resume
