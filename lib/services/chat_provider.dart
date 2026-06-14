@@ -1451,6 +1451,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void toggleRawMode() {
     _rawMode = !_rawMode;
+    if (_rawMode && _activeSessionId != null && _rawItems.isEmpty) {
+      _ws.send({
+        'type': 'get_sdk_event_history',
+        'sessionId': _activeSessionId,
+        'limit': 300,
+      });
+    }
     notifyListeners();
   }
 
