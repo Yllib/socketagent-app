@@ -1092,9 +1092,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    if (_ttsEnabled) {
-      sendTo({'type': 'set_tts', 'enabled': true});
-    }
+    sendTo({'type': 'set_tts', 'enabled': _ttsEnabled});
     // Sync TTS engine mode
     final engineStr = _ttsEngineMode == TtsEngineMode.kokoroServer
         ? 'kokoro_server'
