@@ -141,6 +141,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Subagent tasks: toolUseId → {description, status}
   final Map<String, Map<String, dynamic>> _subagentTasks = {};
   ChatMessage? _currentStreamingMessage;
+  String? _currentStreamingStreamId;
   ChatMessage? _currentThinkingMessage;
   String? _lastServerStartedAt; // detect server restarts
   Map<String, dynamic>? _contextUsage; // detailed context breakdown from SDK
@@ -2963,6 +2964,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _closeThinkingMessage();
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
+    final streamId = msg['streamId'] as String?;
+
+    if (_currentStreamingMessage != null &&
+        streamId != null &&
+        _currentStreamingStreamId != null &&
+        _currentStreamingStreamId != streamId) {
+      _currentStreamingMessage = null;
+      _currentStreamingStreamId = null;
+    }
 
     if (_currentStreamingMessage == null ||
         _currentStreamingMessage!.type != MessageType.text ||
@@ -2970,14 +2980,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _currentStreamingMessage = ChatMessage.assistantText(
         msg['sessionId'] ?? '',
       );
+      _currentStreamingStreamId = streamId;
       // Forward SDK hierarchy fields
       _currentStreamingMessage!.parentToolUseId =
           msg['parentToolUseId'] as String?;
       _currentStreamingMessage!.uuid = msg['uuid'] as String?;
       // Don't add to _messages yet — wait until there's visible content
+    } else if (_currentStreamingStreamId == null && streamId != null) {
+      _currentStreamingStreamId = streamId;
     }
 
-    _currentStreamingMessage!.textContent += content;
+    if (streamId != null) {
+      final currentText = _currentStreamingMessage!.textContent;
+      if (content == currentText) {
+        // Live-state replay after reconnect/resume can resend the full text
+        // already shown for this Codex item.
+      } else if (currentText.isNotEmpty && content.startsWith(currentText)) {
+        _currentStreamingMessage!.textContent = content;
+      } else {
+        _currentStreamingMessage!.textContent += content;
+      }
+    } else {
+      _currentStreamingMessage!.textContent += content;
+    }
 
     // Extract task notifications and create notification messages
     final rawText = _currentStreamingMessage!.textContent;
@@ -4559,18 +4584,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (isAppend) {
       // Append missed messages (e.g., from server downtime recovery)
-      // Deduplicate: skip user messages whose text already exists in recent messages
+      // Deduplicate text entries whose content already exists in recent
+      // messages. Codex native sync can append the finalized assistant message
+      // while its streamed bubble is already visible.
       final deduped = <ChatMessage>[];
       for (final msg in loaded) {
-        if (msg.sender == MessageSender.user && msg.type == MessageType.text) {
-          final isDupe = _messages.reversed
-              .take(20)
-              .any(
-                (m) =>
-                    m.sender == MessageSender.user &&
-                    m.type == MessageType.text &&
-                    m.textContent == msg.textContent,
-              );
+        if ((msg.sender == MessageSender.user ||
+                msg.sender == MessageSender.assistant) &&
+            msg.type == MessageType.text) {
+          final normalizedText = _normalizeHistoryText(msg.textContent);
+          final isDupe =
+              _messages.reversed
+                  .take(20)
+                  .any(
+                    (m) =>
+                        m.sender == msg.sender &&
+                        m.type == MessageType.text &&
+                        _normalizeHistoryText(m.textContent) == normalizedText,
+                  ) ||
+              (_currentStreamingMessage != null &&
+                  _currentStreamingMessage!.sender == msg.sender &&
+                  _currentStreamingMessage!.type == MessageType.text &&
+                  _normalizeHistoryText(
+                        _currentStreamingMessage!.textContent,
+                      ) ==
+                      normalizedText);
           if (isDupe) continue;
         }
         deduped.add(msg);
@@ -4582,6 +4620,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _isLoadingMore = false;
     } else {
       // Initial load — replace
+      _currentStreamingMessage = null;
+      _currentStreamingStreamId = null;
       final localOnlyCards = _messages.where((m) {
         if (m.type != MessageType.toolCall || m.toolUseId == null) return false;
         final isLocalOnly =
@@ -4628,6 +4668,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_pendingImageLoads.isNotEmpty) {
       _fetchPendingImages();
     }
+  }
+
+  String _normalizeHistoryText(String text) {
+    return text.trim().replaceAll(RegExp(r'\s+'), ' ');
   }
 
   /// Fetch image files from the server for tool_image history entries
