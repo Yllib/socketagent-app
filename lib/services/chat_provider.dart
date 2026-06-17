@@ -2413,15 +2413,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         break;
       case 'status':
-        _isProcessing = msg['running'] == true;
+        final serverSaysCompacting = msg['compacting'] == true;
+        _isProcessing = msg['running'] == true || serverSaysCompacting;
         if (!_isProcessing) {
           _isCompacting = false;
           _currentStreamingMessage = null;
         } else {
-          // Restore compacting state on resume (server sends compacting: true if active)
-          if (msg['compacting'] == true) {
-            _isCompacting = true;
-          }
+          // Restore compacting state on resume. Compacting is active work even
+          // if the agent turn itself is between running status updates.
+          _isCompacting = serverSaysCompacting;
         }
         // Restore permission mode (e.g., plan mode) on session resume
         final resumePermMode = msg['permissionMode'] as String?;
@@ -2483,6 +2483,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final runningSessions = (msg['runningSessions'] as List?)
             ?.map((e) => e.toString())
             .toSet();
+        final compactingSessions = (msg['compactingSessions'] as List?)
+            ?.map((e) => e.toString())
+            .toSet();
+        final serverSaysCompacting =
+            compactingSessions != null &&
+            _activeSessionId != null &&
+            compactingSessions.contains(_activeSessionId);
         bool serverSaysRunning;
         if (runningSessions != null) {
           // Modern server sends a per-session list. Our session is running
@@ -2498,6 +2505,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           // Pre-runningSessions servers: best effort with the global flag.
           serverSaysRunning = msg['running'] == true;
         }
+        serverSaysRunning = serverSaysRunning || serverSaysCompacting;
         // Don't let status_sync clear processing during the grace period after
         // sendPrompt() — the server may not have started the SDK query yet.
         if (!serverSaysRunning && _isProcessing && _processingSetAt != null) {
@@ -2516,13 +2524,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _isCompacting = false;
           _currentStreamingMessage = null;
         } else {
-          // Check if our active session is compacting
-          final compactingSessions = (msg['compactingSessions'] as List?)
-              ?.map((e) => e.toString())
-              .toSet();
-          if (compactingSessions != null && _activeSessionId != null) {
-            _isCompacting = compactingSessions.contains(_activeSessionId);
-          }
+          _isCompacting = serverSaysCompacting;
         }
         // Reconcile background tasks — remove any not reported by server
         final serverTaskIds =

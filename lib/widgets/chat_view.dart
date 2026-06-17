@@ -24,6 +24,7 @@ import 'codex_plan_card.dart';
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final bool isProcessing;
+  final bool isCompacting;
   final bool isLoadingHistory;
   final bool isLoadingMore;
   final bool hasMoreHistory;
@@ -45,6 +46,7 @@ class ChatView extends StatefulWidget {
     super.key,
     required this.messages,
     required this.isProcessing,
+    this.isCompacting = false,
     this.isLoadingHistory = false,
     this.isLoadingMore = false,
     this.hasMoreHistory = false,
@@ -433,6 +435,7 @@ class ChatViewState extends State<ChatView> {
 
   Widget _buildThinkingIndicator(BuildContext context) {
     final theme = Theme.of(context);
+    final label = widget.isCompacting ? 'Compacting context...' : 'Working...';
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -461,7 +464,7 @@ class ChatViewState extends State<ChatView> {
             ),
             const SizedBox(width: 10),
             Text(
-              'Working...',
+              label,
               style: TextStyle(
                 color: theme.colorScheme.onSurface.withAlpha(178),
                 fontSize: 14,
