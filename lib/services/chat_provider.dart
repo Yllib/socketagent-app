@@ -136,6 +136,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Per-session disallowed tools and system prompt caches
   final Map<String, List<String>> _sessionDisallowedTools = {};
   final Map<String, String> _sessionSystemPrompts = {};
+  final Set<String> _locallyClearedSessions = {};
   // Background tasks: taskId → {status, summary, outputFile}
   final Map<String, Map<String, dynamic>> _backgroundTasks = {};
   // Subagent tasks: toolUseId → {description, status}
@@ -2669,6 +2670,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'context_cleared':
         final clearedId = msg['sessionId'] as String?;
+        if (clearedId != null && clearedId.isNotEmpty) {
+          _locallyClearedSessions.add(clearedId);
+        }
         if (clearedId == _activeSessionId) {
           _messages.clear();
           _todos.clear();
@@ -4034,10 +4038,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleSessionHistory(Map<String, dynamic> msg) {
+    final historySessionId = msg['sessionId'] as String?;
     final rawMessages = msg['messages'] as List? ?? [];
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
     final isAppend = msg['append'] == true;
     final isPrepend = _isLoadingMore && _messages.isNotEmpty;
+
+    if (historySessionId != null &&
+        _locallyClearedSessions.contains(historySessionId) &&
+        rawMessages.isNotEmpty) {
+      _isLoadingHistory = false;
+      _isLoadingMore = false;
+      notifyListeners();
+      return;
+    }
 
     // Silently restore todos from session_history (server includes current state)
     final rawTodos = msg['todos'] as List?;
@@ -5706,6 +5720,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void clearSessionContext(String sessionId) {
+    _locallyClearedSessions.add(sessionId);
     final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
     if (session != null && session.serverId.isNotEmpty) {
       _connMgr.sendToServer(session.serverId, {
