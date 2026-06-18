@@ -912,6 +912,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _captureRelayPairingFromCapabilities(
+    String serverId,
+    Map<String, dynamic> msg,
+  ) async {
+    final relay = msg['relayPairing'];
+    if (relay is! Map) return;
+    final relayUrl = relay['relayUrl'] as String? ?? '';
+    final pairingToken = relay['pairingToken'] as String? ?? '';
+    final serverPubkey = relay['serverPubkey'] as String? ?? '';
+    if (relayUrl.isEmpty || pairingToken.isEmpty || serverPubkey.isEmpty) {
+      return;
+    }
+
+    final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
+    if (idx < 0) return;
+    final existing = _serverConfigs[idx];
+    if (existing.relayUrl == relayUrl &&
+        existing.pairingToken == pairingToken &&
+        existing.serverPubkey == serverPubkey) {
+      return;
+    }
+
+    _serverConfigs[idx] = existing.copyWith(
+      relayUrl: relayUrl,
+      pairingToken: pairingToken,
+      serverPubkey: serverPubkey,
+    );
+    await _saveServerConfigs();
+    await _connMgr.setServers(_serverConfigs);
+    await _registerPushNotifications();
+    notifyListeners();
+  }
+
   Future<void> addServer(ServerConfig config) async {
     _serverConfigs.add(config);
     await _saveServerConfigs();
@@ -1931,6 +1964,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (serverId != null) {
             _serverBackends[serverId] = backends;
             _captureCodexDriverSettings(msg, serverId);
+            unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
             notifyListeners();
           }
           break;

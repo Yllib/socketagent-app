@@ -93,7 +93,7 @@ class PushNotificationService {
     if (token == null || token.isEmpty) return;
 
     for (final config in configs) {
-      if (!config.useRelay || !config.isRelayPaired) continue;
+      if (!config.isRelayPaired) continue;
       final relayHttpUrl = _relayHttpUrl(config.relayUrl);
       if (relayHttpUrl == null) continue;
       try {
