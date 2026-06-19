@@ -175,6 +175,7 @@ class _AboutScreenState extends State<AboutScreen> {
     final update = _updateService.updateInfo;
     final downloading = _updateService.isDownloading;
     final progress = _updateService.downloadProgress;
+    final hasDownloaded = _updateService.hasDownloadedApk;
 
     return Card(
       child: Padding(
@@ -225,11 +226,32 @@ class _AboutScreenState extends State<AboutScreen> {
               LinearProgressIndicator(value: progress),
               const SizedBox(height: 4),
               Text(
-                'Downloading... ${(progress * 100).toStringAsFixed(0)}%',
+                'Downloading... ${(progress * 100).toStringAsFixed(0)}%. You can leave this screen.',
                 style: TextStyle(
                   fontSize: 12,
                   color: theme.colorScheme.onSurface.withAlpha(140),
                 ),
+              ),
+            ] else if (update?.updateAvailable == true && hasDownloaded) ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Icon(
+                    Icons.download_done,
+                    size: 18,
+                    color: Colors.green.shade400,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Downloaded. Ready to install.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: theme.colorScheme.onSurface.withAlpha(140),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
             const SizedBox(height: 12),
@@ -238,9 +260,20 @@ class _AboutScreenState extends State<AboutScreen> {
               children: [
                 if (update?.updateAvailable == true && !downloading)
                   FilledButton.icon(
-                    onPressed: _updateService.downloadAndInstall,
-                    icon: const Icon(Icons.download, size: 18),
-                    label: const Text('Download & Install'),
+                    onPressed: hasDownloaded
+                        ? _updateService.installDownloaded
+                        : _updateService.downloadAndInstall,
+                    icon: Icon(
+                      hasDownloaded ? Icons.install_mobile : Icons.download,
+                      size: 18,
+                    ),
+                    label: Text(
+                      hasDownloaded
+                          ? 'Install'
+                          : progress != null
+                          ? 'Resume Download'
+                          : 'Download & Install',
+                    ),
                   ),
                 if (update?.updateAvailable != true)
                   TextButton(

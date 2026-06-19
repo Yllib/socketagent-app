@@ -27,11 +27,15 @@ class UpdateService extends ChangeNotifier {
   UpdateInfo? _updateInfo;
   double? _downloadProgress;
   bool _isDownloading = false;
+  bool _hasDownloadedApk = false;
+  String? _downloadedApkPath;
   String? _error;
 
   UpdateInfo? get updateInfo => _updateInfo;
   double? get downloadProgress => _downloadProgress;
   bool get isDownloading => _isDownloading;
+  bool get hasDownloadedApk => _hasDownloadedApk;
+  String? get downloadedApkPath => _downloadedApkPath;
   String? get error => _error;
   bool get updateAvailable => _updateInfo?.updateAvailable ?? false;
 
@@ -50,14 +54,17 @@ class UpdateService extends ChangeNotifier {
       final latestVersion = appInfo['version'] as String?;
       final downloadUrl = appInfo['url'] as String? ?? '';
       if (latestVersion == null || latestVersion.isEmpty) {
-        _error = serverInfo['error'] as String? ??
+        _error =
+            serverInfo['error'] as String? ??
             serverInfo['fetchError'] as String? ??
             'Server did not provide app update info';
         notifyListeners();
         return null;
       }
 
-      debugPrint('[Update] current=$currentVersion latest=$latestVersion newer=${_isNewer(latestVersion, currentVersion)}');
+      debugPrint(
+        '[Update] current=$currentVersion latest=$latestVersion newer=${_isNewer(latestVersion, currentVersion)}',
+      );
 
       _updateInfo = UpdateInfo(
         latestVersion: latestVersion,
@@ -65,6 +72,7 @@ class UpdateService extends ChangeNotifier {
         currentVersion: currentVersion,
         updateAvailable: _isNewer(latestVersion, currentVersion),
       );
+      await _refreshDownloadedApkState();
       notifyListeners();
       return _updateInfo;
     } catch (e) {
@@ -83,7 +91,8 @@ class UpdateService extends ChangeNotifier {
       final currentVersion = packageInfo.version;
 
       final cacheBust = DateTime.now().millisecondsSinceEpoch;
-      final response = await http.get(Uri.parse('$_versionUrl?t=$cacheBust'))
+      final response = await http
+          .get(Uri.parse('$_versionUrl?t=$cacheBust'))
           .timeout(const Duration(seconds: 10));
 
       if (response.statusCode != 200) {
@@ -96,7 +105,9 @@ class UpdateService extends ChangeNotifier {
       final latestVersion = data['version'] as String? ?? currentVersion;
       final downloadUrl = data['url'] as String? ?? '';
 
-      debugPrint('[Update] current=$currentVersion latest=$latestVersion newer=${_isNewer(latestVersion, currentVersion)}');
+      debugPrint(
+        '[Update] current=$currentVersion latest=$latestVersion newer=${_isNewer(latestVersion, currentVersion)}',
+      );
 
       _updateInfo = UpdateInfo(
         latestVersion: latestVersion,
@@ -104,6 +115,7 @@ class UpdateService extends ChangeNotifier {
         currentVersion: currentVersion,
         updateAvailable: _isNewer(latestVersion, currentVersion),
       );
+      await _refreshDownloadedApkState();
       notifyListeners();
       return _updateInfo;
     } catch (e) {
@@ -117,72 +129,203 @@ class UpdateService extends ChangeNotifier {
   Future<void> downloadAndInstall() async {
     if (_updateInfo == null || _updateInfo!.downloadUrl.isEmpty) return;
     if (_isDownloading) return;
+    await _refreshDownloadedApkState();
+    if (_hasDownloadedApk) {
+      await installDownloaded();
+      return;
+    }
 
     _isDownloading = true;
-    _downloadProgress = 0;
     _error = null;
+    await _updatePartialProgress();
     notifyListeners();
 
     try {
-      final cacheDir = await getTemporaryDirectory();
-      final updateDir = Directory('${cacheDir.path}/updates');
+      final updateDir = await _updatesDirectory();
       if (!await updateDir.exists()) await updateDir.create(recursive: true);
 
-      final apkPath = '${updateDir.path}/socketagent-${_updateInfo!.latestVersion}.apk';
+      final apkPath = await _apkPathForVersion(_updateInfo!.latestVersion);
       final apkFile = File(apkPath);
+      final partFile = File('$apkPath.part');
 
       // Delete old APKs
       if (await updateDir.exists()) {
         for (final f in updateDir.listSync()) {
-          if (f is File && f.path != apkPath) f.deleteSync();
+          if (f is File && f.path != apkPath && f.path != partFile.path) {
+            f.deleteSync();
+          }
         }
       }
 
-      // Download with progress
-      final request = http.Request('GET', Uri.parse(_updateInfo!.downloadUrl));
-      final streamedResponse = await http.Client().send(request);
-
-      if (streamedResponse.statusCode != 200) {
-        throw Exception('Download failed (${streamedResponse.statusCode})');
+      final result = await _downloadWithResume(
+        url: _updateInfo!.downloadUrl,
+        partFile: partFile,
+        finalFile: apkFile,
+      );
+      if (!result) {
+        throw Exception('Download failed');
       }
-
-      final totalBytes = streamedResponse.contentLength ?? 0;
-      int receivedBytes = 0;
-      final sink = apkFile.openWrite();
-
-      await for (final chunk in streamedResponse.stream) {
-        sink.add(chunk);
-        receivedBytes += chunk.length;
-        if (totalBytes > 0) {
-          _downloadProgress = receivedBytes / totalBytes;
-          notifyListeners();
-        }
-      }
-
-      await sink.close();
 
       _isDownloading = false;
       _downloadProgress = null;
+      _hasDownloadedApk = true;
+      _downloadedApkPath = apkPath;
       notifyListeners();
 
-      // Open APK installer
-      final result = await OpenFilex.open(apkPath, type: 'application/vnd.android.package-archive');
-      if (result.type != ResultType.done) {
-        _error = 'Could not open installer: ${result.message}';
-        notifyListeners();
-      }
+      await installDownloaded();
     } catch (e) {
       _isDownloading = false;
-      _downloadProgress = null;
+      await _updatePartialProgress();
       _error = 'Download failed: $e';
       notifyListeners();
     }
   }
 
+  Future<void> installDownloaded() async {
+    await _refreshDownloadedApkState();
+    final apkPath = _downloadedApkPath;
+    if (apkPath == null || apkPath.isEmpty) {
+      _error = 'No downloaded update found';
+      notifyListeners();
+      return;
+    }
+
+    final result = await OpenFilex.open(
+      apkPath,
+      type: 'application/vnd.android.package-archive',
+    );
+    if (result.type != ResultType.done) {
+      _error = 'Could not open installer: ${result.message}';
+      notifyListeners();
+    }
+  }
+
+  Future<bool> _downloadWithResume({
+    required String url,
+    required File partFile,
+    required File finalFile,
+  }) async {
+    var existingBytes = await partFile.exists() ? await partFile.length() : 0;
+    var request = http.Request('GET', Uri.parse(url));
+    if (existingBytes > 0) {
+      request.headers['Range'] = 'bytes=$existingBytes-';
+    }
+
+    var client = http.Client();
+    http.StreamedResponse response;
+    try {
+      response = await client.send(request);
+    } finally {
+      // The response stream owns the socket after send returns.
+    }
+
+    if (response.statusCode == 416 && existingBytes > 0) {
+      await _deleteIfExists(partFile);
+      existingBytes = 0;
+      client.close();
+      request = http.Request('GET', Uri.parse(url));
+      client = http.Client();
+      response = await client.send(request);
+    }
+
+    if (response.statusCode == 200 && existingBytes > 0) {
+      await _deleteIfExists(partFile);
+      existingBytes = 0;
+    } else if (response.statusCode != 200 && response.statusCode != 206) {
+      client.close();
+      throw Exception('Download failed (${response.statusCode})');
+    }
+
+    final contentLength = response.contentLength ?? 0;
+    final totalBytes = response.statusCode == 206
+        ? existingBytes + contentLength
+        : contentLength;
+    var receivedBytes = existingBytes;
+    _downloadProgress = totalBytes > 0 ? receivedBytes / totalBytes : null;
+    notifyListeners();
+
+    final sink = partFile.openWrite(mode: FileMode.append);
+    try {
+      await for (final chunk in response.stream) {
+        sink.add(chunk);
+        receivedBytes += chunk.length;
+        if (totalBytes > 0) {
+          _downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
+          notifyListeners();
+        }
+      }
+      await sink.close();
+      client.close();
+    } catch (_) {
+      await sink.close();
+      client.close();
+      rethrow;
+    }
+
+    if (await finalFile.exists()) await finalFile.delete();
+    await partFile.rename(finalFile.path);
+    return true;
+  }
+
+  Future<void> _deleteIfExists(File file) async {
+    try {
+      if (await file.exists()) await file.delete();
+    } catch (_) {}
+  }
+
+  Future<void> _refreshDownloadedApkState() async {
+    final info = _updateInfo;
+    if (info == null) {
+      _hasDownloadedApk = false;
+      _downloadedApkPath = null;
+      return;
+    }
+    final path = await _apkPathForVersion(info.latestVersion);
+    final file = File(path);
+    _hasDownloadedApk = await file.exists() && await file.length() > 0;
+    _downloadedApkPath = _hasDownloadedApk ? path : null;
+    if (!_isDownloading) {
+      await _updatePartialProgress();
+    }
+  }
+
+  Future<void> _updatePartialProgress() async {
+    final info = _updateInfo;
+    if (info == null) {
+      _downloadProgress = null;
+      return;
+    }
+    final partFile = File(
+      '${await _apkPathForVersion(info.latestVersion)}.part',
+    );
+    if (!await partFile.exists()) {
+      _downloadProgress = null;
+      return;
+    }
+    final bytes = await partFile.length();
+    _downloadProgress = bytes > 0 ? 0.0 : null;
+  }
+
+  Future<Directory> _updatesDirectory() async {
+    final dir = await getApplicationDocumentsDirectory();
+    return Directory('${dir.path}/updates');
+  }
+
+  Future<String> _apkPathForVersion(String version) async {
+    final updateDir = await _updatesDirectory();
+    return '${updateDir.path}/socketagent-$version.apk';
+  }
+
   /// Compare semver strings. Returns true if latest > current.
   static bool _isNewer(String latest, String current) {
-    final latestParts = latest.split('.').map((s) => int.tryParse(s) ?? 0).toList();
-    final currentParts = current.split('.').map((s) => int.tryParse(s) ?? 0).toList();
+    final latestParts = latest
+        .split('.')
+        .map((s) => int.tryParse(s) ?? 0)
+        .toList();
+    final currentParts = current
+        .split('.')
+        .map((s) => int.tryParse(s) ?? 0)
+        .toList();
 
     for (int i = 0; i < 3; i++) {
       final l = i < latestParts.length ? latestParts[i] : 0;
