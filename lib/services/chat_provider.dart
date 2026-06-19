@@ -646,7 +646,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   SherpaSpeechService get speech => _speech;
   AsrModelManager get asrModelManager => _asrModelManager;
   CryptoService get crypto => _crypto;
-  ConnectionMode get connectionMode => _ws.mode;
+  ConnectionMode get connectionMode => _connMgr.active?.mode ?? _ws.mode;
   Future<void> get settingsReady => _settingsLoaded.future;
   String get subscriberEmail => _subscriberEmail;
   String get subscriberToken => _subscriberToken;
@@ -1288,24 +1288,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.connectAll();
   }
 
-  /// Derive HTTP URL from relay WebSocket URL
+  /// Derive HTTP URL from relay WebSocket URL.
+  ///
+  /// Prefer the active/per-server relay config. The legacy shared-pref
+  /// `relay_url` can be stale on upgraded installs and should only be a
+  /// fallback.
   String? _relayHttpUrl() {
-    // Try legacy shared prefs key first
-    final legacyUrl = _cachedPrefs?.getString('relay_url');
-    if (legacyUrl != null && legacyUrl.isNotEmpty) {
-      return legacyUrl
-          .replaceFirst('wss://', 'https://')
-          .replaceFirst('ws://', 'http://');
-    }
-    // Fall back to first relay server's URL from multi-server configs
-    for (final config in _serverConfigs) {
-      if (config.relayUrl.isNotEmpty) {
-        return config.relayUrl
-            .replaceFirst('wss://', 'https://')
-            .replaceFirst('ws://', 'http://');
-      }
+    final candidates = <String>[
+      if (_connMgr.activeConfig?.relayUrl.isNotEmpty == true)
+        _connMgr.activeConfig!.relayUrl,
+      ..._serverConfigs
+          .where((config) => config.relayUrl.isNotEmpty)
+          .map((config) => config.relayUrl),
+      if (_cachedPrefs?.getString('relay_url')?.isNotEmpty == true)
+        _cachedPrefs!.getString('relay_url')!,
+      'wss://relay.jarofdirt.info',
+    ];
+
+    for (final candidate in candidates) {
+      final normalized = _relayHttpUrlFromWs(candidate);
+      if (normalized != null) return normalized;
     }
     return null;
+  }
+
+  String? _relayHttpUrlFromWs(String relayUrl) {
+    var value = relayUrl.trim();
+    if (value.isEmpty) return null;
+    if (value == 'ws://jarofdirt.info:9988' ||
+        value == 'http://jarofdirt.info:9988') {
+      value = 'wss://relay.jarofdirt.info';
+    }
+    final httpUrl = value
+        .replaceFirst('wss://', 'https://')
+        .replaceFirst('ws://', 'http://');
+    return httpUrl.replaceFirst(RegExp(r'/+$'), '');
   }
 
   SharedPreferences? _cachedPrefs;
@@ -1359,11 +1376,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _cancelAtPeriodEnd = false;
       }
     } catch (e) {
-      _subscriptionActive = false;
-      _subscriptionStatus = '';
-      _trialEnd = null;
-      _periodEnd = null;
-      _cancelAtPeriodEnd = false;
+      debugPrint('[Subscription] Status check error: $e');
+      if (_subscriberToken.isNotEmpty) {
+        _subscriptionActive = true;
+        if (_subscriptionStatus.isEmpty) _subscriptionStatus = 'unknown';
+      } else {
+        _subscriptionActive = false;
+        _subscriptionStatus = '';
+        _trialEnd = null;
+        _periodEnd = null;
+        _cancelAtPeriodEnd = false;
+      }
     }
 
     _subscriptionChecked = true;
