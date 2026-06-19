@@ -210,7 +210,7 @@ class _SignedInCardState extends State<_SignedInCard> {
       SnackBar(
         content: Text(
           ok
-              ? 'Push notifications registered for relay servers'
+              ? 'Push notifications registered for connected servers'
               : 'Could not register push notifications',
         ),
       ),

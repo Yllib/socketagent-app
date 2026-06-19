@@ -927,11 +927,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _secureStorage.setServerConfigs(json);
   }
 
-  Future<bool> _registerPushNotifications() async {
-    return PushNotificationService().registerWithRelays(
-      configs: _serverConfigs,
-      subscriberToken: _subscriberToken,
-    );
+  Future<bool> _registerPushNotifications({String? serverId}) async {
+    final token = await PushNotificationService().getFcmToken();
+    if (token == null || token.isEmpty) return false;
+    final message = {
+      'type': 'register_push_token',
+      'fcmToken': token,
+      'platform': 'android',
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, {...message, 'appServerId': serverId});
+      return true;
+    }
+    var sent = false;
+    for (final config in _serverConfigs) {
+      final ws = _connMgr.getConnection(config.id);
+      if (ws?.status == ConnectionStatus.connected) {
+        ws!.send({...message, 'appServerId': config.id});
+        sent = true;
+      }
+    }
+    return sent;
   }
 
   Future<bool> registerPushNotificationsNow() => _registerPushNotifications();
@@ -1122,6 +1138,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Auto-sync state on every (re)connect for this server
       if (update.status == ConnectionStatus.connected) {
         _syncStateToServer(serverId: update.serverId);
+        unawaited(_registerPushNotifications(serverId: update.serverId));
       }
     });
 

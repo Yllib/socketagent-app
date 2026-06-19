@@ -1,10 +1,7 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import '../models/server_config.dart';
 import 'notification_service.dart';
 
 @pragma('vm:entry-point')
@@ -83,53 +80,10 @@ class PushNotificationService {
     return _available;
   }
 
-  Future<bool> registerWithRelays({
-    required List<ServerConfig> configs,
-    required String subscriberToken,
-  }) async {
-    if (subscriberToken.isEmpty) return false;
-    if (!await initialize()) return false;
+  Future<String?> getFcmToken() async {
+    if (!await initialize()) return null;
     final token = await FirebaseMessaging.instance.getToken();
-    if (token == null || token.isEmpty) return false;
-
-    var registered = false;
-    for (final config in configs) {
-      if (!config.isRelayPaired) continue;
-      final relayHttpUrl = _relayHttpUrl(config.relayUrl);
-      if (relayHttpUrl == null) continue;
-      try {
-        final response = await http
-            .post(
-              Uri.parse('$relayHttpUrl/api/push/register'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({
-                'pairingToken': config.pairingToken,
-                'subscriberToken': subscriberToken,
-                'fcmToken': token,
-                'serverId': config.id,
-                'platform': 'android',
-              }),
-            )
-            .timeout(const Duration(seconds: 10));
-        if (response.statusCode >= 300) {
-          debugPrint(
-            '[Push] Register failed for ${config.name}: ${response.statusCode} ${response.body}',
-          );
-        } else {
-          registered = true;
-        }
-      } catch (e) {
-        debugPrint('[Push] Register error for ${config.name}: $e');
-      }
-    }
-    return registered;
-  }
-
-  String? _relayHttpUrl(String relayUrl) {
-    if (relayUrl.isEmpty) return null;
-    return relayUrl
-        .replaceFirst('wss://', 'https://')
-        .replaceFirst('ws://', 'http://');
+    return token != null && token.isNotEmpty ? token : null;
   }
 
   String? _payloadFor(RemoteMessage? message) {
