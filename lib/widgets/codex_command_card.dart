@@ -291,10 +291,35 @@ class CodexCommandCard extends StatelessWidget {
     return Column(
       children: servers.map((server) {
         final s = Map<String, dynamic>.from(server as Map);
-        return _kvRow(
-          theme,
-          s['name']?.toString() ?? 'server',
-          '${s['authStatus']} · ${s['toolCount']} tools',
+        final tools = s['tools'] is List
+            ? (s['tools'] as List)
+                  .map((tool) => tool.toString())
+                  .where((tool) => tool.isNotEmpty)
+                  .toList()
+            : <String>[];
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _kvRow(
+                theme,
+                s['name']?.toString() ?? 'server',
+                '${s['authStatus']} · ${s['toolCount']} tools',
+              ),
+              if (tools.isNotEmpty) ...[
+                const SizedBox(height: 3),
+                Wrap(
+                  spacing: 5,
+                  runSpacing: 5,
+                  children: tools
+                      .take(12)
+                      .map((tool) => _toolChip(theme, tool))
+                      .toList(),
+                ),
+              ],
+            ],
+          ),
         );
       }).toList(),
     );
@@ -329,6 +354,24 @@ class CodexCommandCard extends StatelessWidget {
         style: TextStyle(
           fontSize: 11,
           color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+
+  Widget _toolChip(ThemeData theme, String value) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        value,
+        style: TextStyle(
+          fontSize: 10,
+          color: theme.colorScheme.onSurfaceVariant,
+          fontFamily: 'monospace',
         ),
       ),
     );
