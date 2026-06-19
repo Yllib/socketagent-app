@@ -927,12 +927,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _secureStorage.setServerConfigs(json);
   }
 
-  Future<void> _registerPushNotifications() async {
-    await PushNotificationService().registerWithRelays(
+  Future<bool> _registerPushNotifications() async {
+    return PushNotificationService().registerWithRelays(
       configs: _serverConfigs,
       subscriberToken: _subscriberToken,
     );
   }
+
+  Future<bool> registerPushNotificationsNow() => _registerPushNotifications();
 
   Future<void> _captureRelayPairingFromCapabilities(
     String serverId,

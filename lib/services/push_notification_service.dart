@@ -83,15 +83,16 @@ class PushNotificationService {
     return _available;
   }
 
-  Future<void> registerWithRelays({
+  Future<bool> registerWithRelays({
     required List<ServerConfig> configs,
     required String subscriberToken,
   }) async {
-    if (subscriberToken.isEmpty) return;
-    if (!await initialize()) return;
+    if (subscriberToken.isEmpty) return false;
+    if (!await initialize()) return false;
     final token = await FirebaseMessaging.instance.getToken();
-    if (token == null || token.isEmpty) return;
+    if (token == null || token.isEmpty) return false;
 
+    var registered = false;
     for (final config in configs) {
       if (!config.isRelayPaired) continue;
       final relayHttpUrl = _relayHttpUrl(config.relayUrl);
@@ -114,11 +115,14 @@ class PushNotificationService {
           debugPrint(
             '[Push] Register failed for ${config.name}: ${response.statusCode} ${response.body}',
           );
+        } else {
+          registered = true;
         }
       } catch (e) {
         debugPrint('[Push] Register error for ${config.name}: $e');
       }
     }
+    return registered;
   }
 
   String? _relayHttpUrl(String relayUrl) {
