@@ -18,6 +18,7 @@ enum MessageType {
   monitorOutput,
   skillInvocation,
   codexPlan,
+  codexCommand,
 }
 
 class ChatMessage {
@@ -154,6 +155,24 @@ class ChatMessage {
       textContent: explanation,
       toolUseId: turnId,
       toolInput: {'explanation': explanation, 'steps': steps},
+    );
+  }
+
+  factory ChatMessage.codexCommand({
+    required String command,
+    required String summary,
+    required Map<String, dynamic> payload,
+    String status = 'completed',
+  }) {
+    return ChatMessage(
+      id: 'codex_command_${command}_${DateTime.now().microsecondsSinceEpoch}',
+      sender: MessageSender.system,
+      type: MessageType.codexCommand,
+      timestamp: DateTime.now(),
+      textContent: summary,
+      toolName: command,
+      toolInput: {'command': command, 'status': status, 'payload': payload},
+      parentToolUseId: 'codex_slash_$command',
     );
   }
 

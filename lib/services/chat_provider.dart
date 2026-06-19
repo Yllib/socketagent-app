@@ -2462,6 +2462,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
         }
         break;
+      case 'codex_command_result':
+        final command = msg['command'] as String? ?? 'command';
+        final summary = msg['summary'] as String? ?? '';
+        final status = msg['status'] as String? ?? 'completed';
+        final payload = msg['payload'] is Map
+            ? Map<String, dynamic>.from(msg['payload'] as Map)
+            : <String, dynamic>{};
+        _messages.add(
+          ChatMessage.codexCommand(
+            command: command,
+            summary: summary,
+            status: status,
+            payload: payload,
+          ),
+        );
+        notifyListeners();
+        break;
       case 'permission_mode_changed':
         final mode = msg['permissionMode'] as String?;
         if (mode != null && mode.isNotEmpty && mode != _permissionMode) {
@@ -4500,6 +4517,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (content.isNotEmpty) {
             final status = entry['status'] as String? ?? 'info';
             final originToolUseId = entry['originToolUseId'] as String?;
+            final commandName = entry['commandName'] as String?;
+            final commandPayload = entry['commandPayload'] is Map
+                ? Map<String, dynamic>.from(entry['commandPayload'] as Map)
+                : null;
+            if (commandName != null && commandPayload != null) {
+              loaded.add(
+                ChatMessage.codexCommand(
+                  command: commandName,
+                  summary: content,
+                  status: status,
+                  payload: commandPayload,
+                ),
+              );
+              break;
+            }
             final notifMsg = ChatMessage(
               id: 'notif_${DateTime.now().microsecondsSinceEpoch}_$offset',
               sender: MessageSender.system,

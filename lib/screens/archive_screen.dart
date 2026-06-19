@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/archive_entry.dart';
 import '../models/message.dart';
 import '../services/chat_provider.dart';
+import '../widgets/codex_command_card.dart';
 import '../widgets/codex_plan_card.dart';
 import '../widgets/file_card.dart';
 import '../widgets/message_bubble.dart';
@@ -772,6 +773,32 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
             );
           }
           break;
+        case 'notification':
+          final commandName = entry['commandName'] as String?;
+          final commandPayload = entry['commandPayload'] is Map
+              ? Map<String, dynamic>.from(entry['commandPayload'] as Map)
+              : null;
+          if (commandName != null && commandPayload != null) {
+            loaded.add(
+              ChatMessage.codexCommand(
+                command: commandName,
+                summary: content,
+                status: entry['status'] as String? ?? 'completed',
+                payload: commandPayload,
+              ),
+            );
+          } else if (content.trim().isNotEmpty) {
+            loaded.add(
+              ChatMessage(
+                id: 'archive_system_${loaded.length}',
+                sender: MessageSender.system,
+                type: MessageType.text,
+                timestamp: _entryTimestamp(entry),
+                textContent: content,
+              ),
+            );
+          }
+          break;
         default:
           if (content.trim().isNotEmpty || role.isNotEmpty) {
             loaded.add(
@@ -991,6 +1018,8 @@ class _ArchiveChatMessageTile extends StatelessWidget {
         return ToolOutputBlock(message: message);
       case MessageType.codexPlan:
         return CodexPlanCard(msg: message);
+      case MessageType.codexCommand:
+        return CodexCommandCard(message: message);
       default:
         if (message.textContent.trim().isEmpty) return const SizedBox.shrink();
         return MessageBubble(message: message);

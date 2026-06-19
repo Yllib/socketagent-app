@@ -20,6 +20,7 @@ import 'thinking_card.dart';
 import 'elicitation_card.dart';
 import 'monitor_card.dart';
 import 'codex_plan_card.dart';
+import 'codex_command_card.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -407,6 +408,8 @@ class ChatViewState extends State<ChatView> {
         return _buildSkillInvocationCard(msg);
       case MessageType.codexPlan:
         return CodexPlanCard(msg: msg);
+      case MessageType.codexCommand:
+        return CodexCommandCard(message: msg);
     }
   }
 
