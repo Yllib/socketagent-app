@@ -82,6 +82,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeSessionCwd;
   String? _activeSessionTitle;
   final Map<String, List<Map<String, dynamic>>> _skillsByServer = {};
+  final Map<String, List<Map<String, dynamic>>> _codexSlashCommandsByServer =
+      {};
   // Per-session notification toggles
   Set<String> _notifMutedSessions = {};
   // Pinned sessions
@@ -422,8 +424,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSessionBackend == 'codex') {
       final serverId = _connMgr.activeServerId;
       if (serverId == null) return const [];
+      final nativeCommands = (_codexSlashCommandsByServer[serverId] ?? const [])
+          .map((command) {
+            final mapped = Map<String, dynamic>.from(command);
+            return {
+              ...mapped,
+              'name': _cleanSlashName((mapped['name'] ?? '').toString()),
+              'kind': 'command',
+              'agent': 'codex',
+            };
+          })
+          .where((command) {
+            return (command['name'] as String? ?? '').isNotEmpty &&
+                (command['name'] as String) != 'skills';
+          })
+          .toList();
       final skills = _skillsByServer[serverId] ?? const [];
-      final commands = skills
+      final skillCommands = skills
           .where(
             (skill) =>
                 skill['agent'] == 'codex' &&
@@ -440,11 +457,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             };
           })
           .toList();
-      commands.sort(
+      nativeCommands.sort(
         (a, b) =>
             (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? ''),
       );
-      return commands;
+      skillCommands.sort(
+        (a, b) =>
+            (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? ''),
+      );
+      return [...nativeCommands, ...skillCommands];
     }
 
     final commands = _supportedCommands ?? const [];
@@ -2434,6 +2455,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _skillsByServer[serverId] = (msg['skills'] as List? ?? [])
               .map((skill) => Map<String, dynamic>.from(skill as Map))
               .toList();
+          _codexSlashCommandsByServer[serverId] =
+              (msg['codexSlashCommands'] as List? ?? [])
+                  .map((command) => Map<String, dynamic>.from(command as Map))
+                  .toList();
           notifyListeners();
         }
         break;
@@ -3996,27 +4021,86 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return skillMessage ?? ChatMessage.userText(text);
   }
 
-  ChatMessage? _buildSkillInvocationMessage(String text) {
+  RegExpMatch? _parseCodexSlashInvocation(String text) {
     if (_activeSessionBackend != 'codex') return null;
-    final match = RegExp(
+    return RegExp(
       r'''^/(?:"([^"]+)"|'([^']+)'|([^\s]+))(?:\s+([\s\S]*))?$''',
     ).firstMatch(text.trim());
-    if (match == null) return null;
+  }
 
+  Map<String, dynamic>? _knownCodexSlashCommand(String text) {
+    final match = _parseCodexSlashInvocation(text);
+    if (match == null) return null;
     final rawName = match.group(1) ?? match.group(2) ?? match.group(3) ?? '';
     final name = _cleanSlashName(rawName);
     if (name.isEmpty) return null;
-    final args = (match.group(4) ?? '').trim();
-    final command = slashCommands.where((candidate) {
-      return _cleanSlashName((candidate['name'] ?? '').toString()) == name;
+    return slashCommands.where((candidate) {
+      return candidate['kind'] == 'command' &&
+          _cleanSlashName((candidate['name'] ?? '').toString()).toLowerCase() ==
+              name.toLowerCase();
     }).firstOrNull;
+  }
+
+  String _codexSlashInvocationName(RegExpMatch match) {
+    return _cleanSlashName(
+      match.group(1) ?? match.group(2) ?? match.group(3) ?? '',
+    );
+  }
+
+  String _codexSlashInvocationArgs(RegExpMatch match) {
+    return (match.group(4) ?? '').trim();
+  }
+
+  ChatMessage? _buildSkillInvocationMessage(String text) {
+    final match = _parseCodexSlashInvocation(text);
+    if (match == null) return null;
+
+    final name = _codexSlashInvocationName(match);
+    if (name.isEmpty) return null;
+    final args = _codexSlashInvocationArgs(match);
+    final command = slashCommands.where((candidate) {
+      return candidate['kind'] == 'skill' &&
+          _cleanSlashName((candidate['name'] ?? '').toString()).toLowerCase() ==
+              name.toLowerCase();
+    }).firstOrNull;
+    if (command == null) return null;
 
     return ChatMessage.skillInvocation(
       name: name,
       args: args,
-      description: (command?['description'] ?? '').toString(),
-      body: (command?['body'] ?? '').toString(),
+      description: (command['description'] ?? '').toString(),
+      body: (command['body'] ?? '').toString(),
     );
+  }
+
+  bool _sendCodexSlashCommand(String text) {
+    final match = _parseCodexSlashInvocation(text);
+    if (match == null) return false;
+    final name = _codexSlashInvocationName(match);
+    if (name.isEmpty) return false;
+    final args = _codexSlashInvocationArgs(match);
+
+    _messages.add(ChatMessage.userText(text.trim()));
+    _promptSuggestions = [];
+    notifyListeners();
+
+    if (name == 'fork') {
+      if (_activeSessionId == null || _activeSessionId!.isEmpty) {
+        _messages.add(ChatMessage.error('No Codex session to fork'));
+        notifyListeners();
+        return true;
+      }
+      _connMgr.send({'type': 'fork_session', 'sessionId': _activeSessionId});
+      return true;
+    }
+
+    _connMgr.send({
+      'type': 'codex_slash_command',
+      'name': name,
+      'args': args,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+    });
+    return true;
   }
 
   void _handleSessionCreated(Map<String, dynamic> msg) {
@@ -4781,6 +4865,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> sendPrompt(String text, {String? priority}) async {
     if (text.trim().isEmpty && _pendingAttachmentPath == null) return;
+
+    final knownSlashCommand = _knownCodexSlashCommand(text);
+    if (knownSlashCommand != null &&
+        _pendingAttachmentPath == null &&
+        priority == null) {
+      _sendCodexSlashCommand(text);
+      return;
+    }
 
     // Snapshot attachment fields up front so we can clear the input chip
     // immediately while we still have the path to actually upload from.

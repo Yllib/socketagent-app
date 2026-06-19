@@ -1793,8 +1793,11 @@ class HomeScreenState extends State<HomeScreen> {
           final argHint = _slashArgumentHint(cmd);
           final agent = _slashAgent(cmd);
           final kind = _slashKind(cmd);
-          final badgeColor = agent == 'codex'
+          final isSkill = kind == 'skill';
+          final badgeColor = isSkill
               ? Colors.green
+              : agent == 'codex'
+              ? theme.colorScheme.tertiary
               : theme.colorScheme.primary;
           return InkWell(
             onTap: () => _insertSlashCommand(cmd),
@@ -1844,7 +1847,7 @@ class HomeScreenState extends State<HomeScreen> {
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
-                      agent == 'codex' ? 'Skill' : kind,
+                      isSkill ? 'Skill' : 'Command',
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w600,

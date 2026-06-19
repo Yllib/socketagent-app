@@ -478,6 +478,7 @@ class ChatViewState extends State<ChatView> {
   }
 
   Widget _buildTaskNotification(ChatMessage msg) {
+    final theme = Theme.of(context);
     final status = msg.toolName ?? 'unknown'; // status stored in toolName
     final isSuccess = status == 'completed' || status == 'success';
     final isFailed = status == 'failed';
@@ -485,6 +486,8 @@ class ChatViewState extends State<ChatView> {
     final isUploaded = status == 'uploaded';
     final isTodoUpdate = status == 'todos_updated';
     final isPermissionMode = status == 'permission_mode';
+    final slashCommandId = msg.parentToolUseId ?? msg.toolUseId ?? '';
+    final isSlashCommand = slashCommandId.startsWith('codex_slash_');
 
     // Todo updates get a dedicated card
     if (isTodoUpdate) {
@@ -508,7 +511,11 @@ class ChatViewState extends State<ChatView> {
     final Color color;
     final Color bgColor;
 
-    if (isPermissionMode) {
+    if (isSlashCommand) {
+      icon = Icons.terminal;
+      color = theme.colorScheme.tertiary;
+      bgColor = theme.colorScheme.tertiaryContainer.withAlpha(70);
+    } else if (isPermissionMode) {
       icon = Icons.shield_outlined;
       color = Colors.cyan.shade300;
       bgColor = Colors.cyan.shade900.withAlpha(40);
@@ -583,7 +590,11 @@ class ChatViewState extends State<ChatView> {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              isPermissionMode ? 'PERMISSION' : status.toUpperCase(),
+              isSlashCommand && !isFailed
+                  ? 'COMMAND'
+                  : isPermissionMode
+                  ? 'PERMISSION'
+                  : status.toUpperCase(),
               style: TextStyle(
                 color: color,
                 fontSize: 10,
