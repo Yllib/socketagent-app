@@ -335,8 +335,21 @@ class MessageBubble extends StatelessWidget {
         _openFileManager(context, filePath, serverId);
         return;
       case 'reveal':
+        _openFileManager(
+          context,
+          _parentPath(filePath),
+          serverId,
+          highlightPath: filePath,
+        );
+        return;
       case 'view':
-        _openFileManager(context, _parentPath(filePath), serverId);
+        _openFileManager(
+          context,
+          _parentPath(filePath),
+          serverId,
+          highlightPath: filePath,
+          initialAction: 'view',
+        );
         return;
       default:
         ScaffoldMessenger.of(context).showSnackBar(
@@ -373,12 +386,20 @@ class MessageBubble extends StatelessWidget {
     }
   }
 
-  void _openFileManager(BuildContext context, String path, String? serverId) {
+  void _openFileManager(
+    BuildContext context,
+    String path,
+    String? serverId, {
+    String? highlightPath,
+    String? initialAction,
+  }) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => FileManagerScreen(
           serverId: serverId == null || serverId.isEmpty ? null : serverId,
           initialPath: path,
+          highlightPath: highlightPath,
+          initialAction: initialAction,
         ),
       ),
     );

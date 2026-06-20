@@ -13,8 +13,16 @@ import '../services/websocket_service.dart';
 class FileManagerScreen extends StatefulWidget {
   final String? serverId;
   final String? initialPath;
+  final String? highlightPath;
+  final String? initialAction;
 
-  const FileManagerScreen({super.key, this.serverId, this.initialPath});
+  const FileManagerScreen({
+    super.key,
+    this.serverId,
+    this.initialPath,
+    this.highlightPath,
+    this.initialAction,
+  });
 
   @override
   State<FileManagerScreen> createState() => _FileManagerScreenState();
@@ -29,6 +37,8 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
   String? _error;
   String _filter = '';
   final TextEditingController _filterController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  bool _initialActionHandled = false;
 
   @override
   void initState() {
@@ -41,6 +51,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
   @override
   void dispose() {
     _filterController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -109,6 +120,9 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
         _listing = listing;
         _currentPath = listing.path;
         _loading = false;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _revealHighlightedEntry(listing);
       });
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('file_manager_last_path_$serverId', listing.path);
@@ -305,6 +319,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     return RefreshIndicator(
       onRefresh: () => _load(_currentPath),
       child: ListView.builder(
+        controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
         itemCount: rows.length + (listing.parentPath != null ? 1 : 0),
         itemBuilder: (context, index) {
@@ -324,6 +339,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
           final fileId = provider.getFileId(entry.path);
           return _FileEntryTile(
             entry: entry,
+            highlighted: entry.path == widget.highlightPath,
             isDownloading: fileId != null && provider.isDownloading(fileId),
             downloadProgress: fileId == null
                 ? null
@@ -346,6 +362,37 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
         },
       ),
     );
+  }
+
+  void _revealHighlightedEntry(FileManagerListing listing) {
+    final targetPath = widget.highlightPath;
+    if (targetPath == null || targetPath.isEmpty) return;
+    final index = listing.entries.indexWhere(
+      (entry) => entry.path == targetPath,
+    );
+    if (index < 0) return;
+
+    final visualIndex = index + (listing.parentPath != null ? 1 : 0);
+    if (_scrollController.hasClients) {
+      final offset = (visualIndex * 72.0 - 96).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.animateTo(
+        offset,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOutCubic,
+      );
+    }
+
+    if (_initialActionHandled || widget.initialAction != 'view') return;
+    _initialActionHandled = true;
+    final entry = listing.entries[index];
+    if (_canPreviewText(entry)) {
+      _previewTextEntry(entry);
+    } else {
+      _showFileActions(entry);
+    }
   }
 
   Future<void> _downloadEntry(FileManagerEntry entry) async {
@@ -803,6 +850,7 @@ class _SearchField extends StatelessWidget {
 
 class _FileEntryTile extends StatelessWidget {
   final FileManagerEntry entry;
+  final bool highlighted;
   final bool isDownloading;
   final double? downloadProgress;
   final VoidCallback? onOpen;
@@ -818,6 +866,7 @@ class _FileEntryTile extends StatelessWidget {
     required this.onProtectExact,
     required this.onRename,
     required this.onDelete,
+    this.highlighted = false,
     this.isDownloading = false,
     this.downloadProgress,
     this.onOpen,
@@ -830,6 +879,9 @@ class _FileEntryTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return ListTile(
+      tileColor: highlighted
+          ? theme.colorScheme.primaryContainer.withAlpha(150)
+          : null,
       leading: Icon(_iconFor(entry), color: _colorFor(entry, theme)),
       title: Row(
         children: [
