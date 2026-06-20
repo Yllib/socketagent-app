@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../models/archive_entry.dart';
+import '../models/file_manager_entry.dart';
 import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
@@ -197,6 +198,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Completer<bool>? _pendingCwdCheck;
   Completer<Map<String, dynamic>>? _pendingDirList;
   Completer<List<Map<String, dynamic>>>? _pendingSdkSessions;
+  final Map<String, Completer<FileManagerListing>> _fileManagerListCompleters =
+      {};
+  final Map<String, Completer<Map<String, dynamic>>>
+  _fileManagerProtectedCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>>
+  _fileManagerOperationCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>>
+  _fileManagerTextCompleters = {};
   String? _pendingSdkSessionsServerId;
   int _sdkSessionsRequestSeq = 0;
   Completer<Map<String, dynamic>>? _pendingVersionCheck;
@@ -1923,6 +1932,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'status_sync',
       'subscription_required',
       'directory_listing',
+      'file_manager_list_result',
+      'file_manager_protected_result',
+      'file_manager_operation_result',
+      'file_manager_text_result',
       'cwd_check',
       'sdk_session_list',
       'active_subagents',
@@ -2193,6 +2206,68 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _pendingDirList?.complete(Map<String, dynamic>.from(msg));
         _pendingDirList = null;
         break;
+      case 'file_manager_list_result':
+        {
+          final requestId = msg['requestId'] as String? ?? '';
+          final completer = _fileManagerListCompleters.remove(requestId);
+          if (completer != null && !completer.isCompleted) {
+            if (msg['ok'] == true) {
+              completer.complete(FileManagerListing.fromJson(msg));
+            } else {
+              completer.completeError(
+                Exception(msg['error'] as String? ?? 'Failed to list files'),
+              );
+            }
+          }
+          break;
+        }
+      case 'file_manager_protected_result':
+        {
+          final requestId = msg['requestId'] as String? ?? '';
+          final completer = _fileManagerProtectedCompleters.remove(requestId);
+          if (completer != null && !completer.isCompleted) {
+            if (msg['ok'] == true) {
+              completer.complete(Map<String, dynamic>.from(msg));
+            } else {
+              completer.completeError(
+                Exception(
+                  msg['error'] as String? ?? 'Failed to update protection',
+                ),
+              );
+            }
+          }
+          break;
+        }
+      case 'file_manager_operation_result':
+        {
+          final requestId = msg['requestId'] as String? ?? '';
+          final completer = _fileManagerOperationCompleters.remove(requestId);
+          if (completer != null && !completer.isCompleted) {
+            if (msg['ok'] == true) {
+              completer.complete(Map<String, dynamic>.from(msg));
+            } else {
+              completer.completeError(
+                Exception(msg['error'] as String? ?? 'File operation failed'),
+              );
+            }
+          }
+          break;
+        }
+      case 'file_manager_text_result':
+        {
+          final requestId = msg['requestId'] as String? ?? '';
+          final completer = _fileManagerTextCompleters.remove(requestId);
+          if (completer != null && !completer.isCompleted) {
+            if (msg['ok'] == true) {
+              completer.complete(Map<String, dynamic>.from(msg));
+            } else {
+              completer.completeError(
+                Exception(msg['error'] as String? ?? 'Failed to read text'),
+              );
+            }
+          }
+          break;
+        }
       case 'recent_cwds':
         final cwds = (msg['cwds'] as List?)?.cast<String>() ?? [];
         final key = serverId ?? '';
@@ -5586,6 +5661,264 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'error': 'Timeout',
       },
     );
+  }
+
+  Future<FileManagerListing> listFileManagerDirectory(
+    String dirPath, {
+    String? serverId,
+    bool includeHidden = false,
+  }) {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<FileManagerListing>();
+    _fileManagerListCompleters[requestId] = completer;
+    final msg = {
+      'type': 'file_manager_list',
+      'requestId': requestId,
+      'path': dirPath,
+      'includeHidden': includeHidden,
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _fileManagerListCompleters.remove(requestId);
+        throw TimeoutException('Timed out listing files');
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> setFileManagerProtected({
+    required String path,
+    required bool protected,
+    String? serverId,
+    String? label,
+    String pattern = 'exact',
+  }) {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<Map<String, dynamic>>();
+    _fileManagerProtectedCompleters[requestId] = completer;
+    final msg = {
+      'type': 'file_manager_set_protected',
+      'requestId': requestId,
+      'path': path,
+      'protected': protected,
+      'pattern': pattern,
+      if (label != null && label.trim().isNotEmpty) 'label': label.trim(),
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _fileManagerProtectedCompleters.remove(requestId);
+        throw TimeoutException('Timed out updating protection');
+      },
+    );
+  }
+
+  Future<void> downloadFileManagerFile({
+    required String path,
+    required String fileName,
+    String? serverId,
+  }) async {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final fileId = 'fm_$requestId';
+    final completer = Completer<Map<String, dynamic>>();
+    _fileManagerOperationCompleters[requestId] = completer;
+    _serverFiles[fileId] = path;
+    _serverFileNames[fileId] = fileName;
+    _filePathToId[path] = fileId;
+    _downloadingFiles.add(fileId);
+    notifyListeners();
+
+    final msg = {
+      'type': 'file_manager_download',
+      'requestId': requestId,
+      'path': path,
+      'fileId': fileId,
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
+
+    try {
+      await completer.future.timeout(const Duration(seconds: 10));
+    } catch (e) {
+      _fileManagerOperationCompleters.remove(requestId);
+      _serverFiles.remove(fileId);
+      _serverFileNames.remove(fileId);
+      _filePathToId.remove(path);
+      _downloadingFiles.remove(fileId);
+      _downloadProgress.remove(fileId);
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<Map<String, dynamic>> readFileManagerText({
+    required String path,
+    String? serverId,
+    int maxBytes = 512 * 1024,
+  }) {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<Map<String, dynamic>>();
+    _fileManagerTextCompleters[requestId] = completer;
+    final msg = {
+      'type': 'file_manager_read_text',
+      'requestId': requestId,
+      'path': path,
+      'maxBytes': maxBytes,
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _fileManagerTextCompleters.remove(requestId);
+        throw TimeoutException('Timed out reading file text');
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> _sendFileManagerOperation(
+    Map<String, dynamic> msg, {
+    String? serverId,
+    Duration timeout = const Duration(seconds: 10),
+  }) {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<Map<String, dynamic>>();
+    _fileManagerOperationCompleters[requestId] = completer;
+    final withId = {'requestId': requestId, ...msg};
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, withId);
+    } else {
+      _ws.send(withId);
+    }
+    return completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        _fileManagerOperationCompleters.remove(requestId);
+        throw TimeoutException('Timed out waiting for file operation');
+      },
+    );
+  }
+
+  Future<void> createFileManagerFolder({
+    required String path,
+    String? serverId,
+  }) async {
+    await _sendFileManagerOperation({
+      'type': 'file_manager_mkdir',
+      'path': path,
+    }, serverId: serverId);
+  }
+
+  Future<void> renameFileManagerEntry({
+    required String fromPath,
+    required String toName,
+    String? serverId,
+  }) async {
+    await _sendFileManagerOperation({
+      'type': 'file_manager_rename',
+      'fromPath': fromPath,
+      'toName': toName,
+    }, serverId: serverId);
+  }
+
+  Future<void> deleteFileManagerEntry({
+    required String path,
+    required bool recursive,
+    String? serverId,
+  }) async {
+    await _sendFileManagerOperation({
+      'type': 'file_manager_delete',
+      'path': path,
+      'recursive': recursive,
+    }, serverId: serverId);
+  }
+
+  Future<String> uploadFileManagerFile({
+    required String localPath,
+    required String name,
+    required String targetDir,
+    String? serverId,
+    String conflictPolicy = 'rename',
+  }) async {
+    final file = File(localPath);
+    final bytes = await file.readAsBytes();
+    final ws = serverId == null ? _ws : _connMgr.getConnection(serverId) ?? _ws;
+    final binary = ws.serverSupportsBinary;
+    final chunkSize = binary ? 1 * 1024 * 1024 : 512 * 1024;
+    final totalChunks = (bytes.length / chunkSize)
+        .ceil()
+        .clamp(1, double.infinity)
+        .toInt();
+    final uploadId = DateTime.now().microsecondsSinceEpoch.toString();
+    _pendingUploadId = uploadId;
+    final uploadCompleter = Completer<String>();
+    _uploadCompleter = uploadCompleter;
+
+    final start = await _sendFileManagerOperation({
+      'type': 'file_manager_upload_start',
+      'uploadId': uploadId,
+      'targetDir': targetDir,
+      'fileName': name,
+      'fileSize': bytes.length,
+      'totalChunks': totalChunks,
+      'chunkSize': chunkSize,
+      'conflictPolicy': conflictPolicy,
+    }, serverId: serverId);
+
+    for (var i = 0; i < totalChunks; i++) {
+      final chunkStart = i * chunkSize;
+      final chunkEnd = (chunkStart + chunkSize).clamp(0, bytes.length);
+      final chunk = Uint8List.fromList(bytes.sublist(chunkStart, chunkEnd));
+      if (binary) {
+        ws.sendUploadChunkBinary(
+          uploadId: uploadId,
+          chunkIndex: i,
+          bytes: chunk,
+        );
+      } else if (serverId != null) {
+        _connMgr.sendToServer(serverId, {
+          'type': 'upload_chunk',
+          'uploadId': uploadId,
+          'chunkIndex': i,
+          'data': base64Encode(chunk),
+        });
+      } else {
+        _ws.send({
+          'type': 'upload_chunk',
+          'uploadId': uploadId,
+          'chunkIndex': i,
+          'data': base64Encode(chunk),
+        });
+      }
+    }
+
+    final serverPath = await uploadCompleter.future.timeout(
+      const Duration(minutes: 5),
+      onTimeout: () {
+        throw TimeoutException('Timed out waiting for upload completion');
+      },
+    );
+    _pendingUploadId = null;
+    _uploadCompleter = null;
+    return serverPath.isNotEmpty
+        ? serverPath
+        : (start['path'] as String? ?? '');
   }
 
   /// Request SDK sessions for a given CWD from the server.

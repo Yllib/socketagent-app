@@ -4,6 +4,7 @@ import '../../services/chat_provider.dart';
 import '../../services/tts_engine.dart';
 import '../../services/websocket_service.dart';
 import '../protected_files_screen.dart';
+import '../file_manager_screen.dart';
 import '../main_shell_screen.dart';
 import 'account_card.dart';
 import 'servers_screen.dart';
@@ -108,6 +109,17 @@ class SettingsHub extends StatelessWidget {
                   MaterialPageRoute(
                     builder: (_) => const ProtectedFilesScreen(),
                   ),
+                ),
+              ),
+
+              // Server Files
+              _buildCategoryTile(
+                context,
+                icon: Icons.folder_open_outlined,
+                title: 'Server Files',
+                subtitle: 'Browse files and manage agent protection',
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const FileManagerScreen()),
                 ),
               ),
 
