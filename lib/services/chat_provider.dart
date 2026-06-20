@@ -5770,6 +5770,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String path,
     required String fileName,
     String? serverId,
+    bool showInChat = false,
   }) async {
     final requestId = DateTime.now().microsecondsSinceEpoch.toString();
     final fileId = 'fm_$requestId';
@@ -5779,6 +5780,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _serverFileNames[fileId] = fileName;
     _filePathToId[path] = fileId;
     _downloadingFiles.add(fileId);
+    if (showInChat) {
+      final hasVisibleCard = _messages.any(
+        (m) =>
+            m.type == MessageType.toolCall &&
+            m.toolName == 'SendFile' &&
+            m.toolInput?['file_path'] == path,
+      );
+      if (!hasVisibleCard) {
+        _messages.add(
+          ChatMessage.toolCall(
+            tool: 'SendFile',
+            input: {'file_path': path},
+            toolUseId: 'file_$fileId',
+          ),
+        );
+      }
+    }
     notifyListeners();
 
     final msg = {

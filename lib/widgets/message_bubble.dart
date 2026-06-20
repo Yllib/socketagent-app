@@ -359,6 +359,7 @@ class MessageBubble extends StatelessWidget {
         serverId: serverId == null || serverId.isEmpty
             ? provider.activeServerId
             : serverId,
+        showInChat: true,
       );
       if (!context.mounted) return;
       ScaffoldMessenger.of(
