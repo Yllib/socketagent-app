@@ -1030,19 +1030,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> updateServer(ServerConfig config) async {
     final idx = _serverConfigs.indexWhere((c) => c.id == config.id);
+    final previous = idx >= 0 ? _serverConfigs[idx] : null;
     if (idx >= 0) {
       _serverConfigs[idx] = config;
     } else {
       _serverConfigs.add(config);
     }
     await _saveServerConfigs();
-    // Disconnect and reconfigure
-    final ws = _connMgr.getConnection(config.id);
-    ws?.disconnect();
+    final reconnect =
+        previous == null || _requiresServerReconnect(previous, config);
+    if (reconnect) {
+      _connMgr.getConnection(config.id)?.disconnect();
+    }
     await _connMgr.setServers(_serverConfigs);
     await _registerPushNotifications();
-    _connMgr.getConnection(config.id)?.connect();
+    if (reconnect) {
+      _connMgr.getConnection(config.id)?.connect();
+    }
+    _sendServerSettings(config.id, defaultCwd: config.defaultCwd);
     notifyListeners();
+  }
+
+  bool _requiresServerReconnect(ServerConfig previous, ServerConfig next) {
+    return previous.host != next.host ||
+        previous.port != next.port ||
+        previous.token != next.token ||
+        previous.useRelay != next.useRelay ||
+        previous.relayUrl != next.relayUrl ||
+        previous.pairingToken != next.pairingToken ||
+        previous.serverPubkey != next.serverPubkey;
   }
 
   Future<void> removeServer(String serverId) async {
@@ -5433,6 +5449,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serverCodexCollaborationMode[serverId] = currentMode;
     }
 
+    final defaultCwd = msg['defaultCwd'] as String?;
+    if (defaultCwd != null && defaultCwd.isNotEmpty) {
+      final idx = _serverConfigs.indexWhere((config) => config.id == serverId);
+      if (idx >= 0 && _serverConfigs[idx].defaultCwd != defaultCwd) {
+        _serverConfigs[idx] = _serverConfigs[idx].copyWith(
+          defaultCwd: defaultCwd,
+        );
+        unawaited(_saveServerConfigs());
+      }
+    }
+
     final rawModes = msg['codexCollaborationModes'];
     if (rawModes is List) {
       _serverCodexCollaborationModes[serverId] = rawModes
@@ -5483,6 +5510,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'driver': driver,
     });
     notifyListeners();
+  }
+
+  void _sendServerSettings(String serverId, {String? defaultCwd}) {
+    final msg = <String, dynamic>{
+      'type': 'set_server_settings',
+      if (defaultCwd != null) 'defaultCwd': defaultCwd,
+    };
+    if (_connMgr.statusOf(serverId) == ConnectionStatus.connected) {
+      _connMgr.sendToServer(serverId, msg);
+      return;
+    }
+    Future.delayed(const Duration(seconds: 2), () {
+      if (_connMgr.statusOf(serverId) == ConnectionStatus.connected) {
+        _connMgr.sendToServer(serverId, msg);
+      }
+    });
   }
 
   void requestCodexCollaborationModes({String? serverId}) {
