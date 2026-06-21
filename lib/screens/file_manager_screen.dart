@@ -1,14 +1,23 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:flutter_highlight/themes/github.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:open_filex/open_filex.dart';
+import 'package:pdfx/pdfx.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 import '../models/file_manager_entry.dart';
 import '../models/server_config.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
+
+enum _FilePreviewKind { text, markdown, html, code, image, pdf }
 
 class FileManagerScreen extends StatefulWidget {
   final String? serverId;
@@ -388,8 +397,8 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     if (_initialActionHandled || widget.initialAction != 'view') return;
     _initialActionHandled = true;
     final entry = listing.entries[index];
-    if (_canPreviewText(entry)) {
-      _previewTextEntry(entry);
+    if (_canPreview(entry)) {
+      _previewEntry(entry);
     } else {
       _showFileActions(entry);
     }
@@ -455,11 +464,11 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
                 ),
                 onTap: () => Navigator.of(context).pop('open'),
               ),
-            if (_canPreviewText(entry))
+            if (_canPreview(entry))
               ListTile(
-                leading: const Icon(Icons.article_outlined),
-                title: const Text('Preview text'),
-                onTap: () => Navigator.of(context).pop('preview_text'),
+                leading: const Icon(Icons.visibility_outlined),
+                title: const Text('View'),
+                onTap: () => Navigator.of(context).pop('preview'),
               ),
             ListTile(
               leading: const Icon(Icons.download_outlined),
@@ -497,8 +506,8 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       case 'download':
         await _downloadEntry(entry);
         break;
-      case 'preview_text':
-        await _previewTextEntry(entry);
+      case 'preview':
+        await _previewEntry(entry);
         break;
       case 'rename':
         await _renameEntry(entry);
@@ -509,7 +518,24 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     }
   }
 
-  Future<void> _previewTextEntry(FileManagerEntry entry) async {
+  Future<void> _previewEntry(FileManagerEntry entry) async {
+    final kind = _previewKindFor(entry);
+    if (kind == null) return;
+    if (kind == _FilePreviewKind.image) {
+      await _previewImageEntry(entry);
+      return;
+    }
+    if (kind == _FilePreviewKind.pdf) {
+      await _previewPdfEntry(entry);
+      return;
+    }
+    await _previewTextEntry(entry, kind);
+  }
+
+  Future<void> _previewTextEntry(
+    FileManagerEntry entry,
+    _FilePreviewKind kind,
+  ) async {
     final provider = context.read<ChatProvider>();
     final serverId = _effectiveServerId(provider);
     if (serverId == null) return;
@@ -517,29 +543,19 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       final result = await provider.readFileManagerText(
         path: entry.path,
         serverId: serverId,
+        maxBytes: 1024 * 1024,
       );
       if (!mounted) return;
       final content = result['content'] as String? ?? '';
       final truncated = result['truncated'] == true;
-      await showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(entry.name),
-          content: SizedBox(
-            width: double.maxFinite,
-            child: SingleChildScrollView(
-              child: SelectableText(
-                truncated ? '$content\n\n[Preview truncated]' : content,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
-            ),
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _FileTextPreviewScreen(
+            entry: entry,
+            content: content,
+            truncated: truncated,
+            kind: kind,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Close'),
-            ),
-          ],
         ),
       );
     } catch (e) {
@@ -547,6 +563,67 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
+    }
+  }
+
+  Future<void> _previewImageEntry(FileManagerEntry entry) async {
+    final provider = context.read<ChatProvider>();
+    final serverId = _effectiveServerId(provider);
+    if (serverId == null) return;
+    try {
+      final base64Data = await provider.fetchFileManagerFileBase64(
+        path: entry.path,
+        fileName: entry.name,
+        serverId: serverId,
+      );
+      if (!mounted) return;
+      if (base64Data == null || base64Data.isEmpty) {
+        throw Exception('No image data returned');
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _FileImagePreviewScreen(
+            entry: entry,
+            bytes: base64Decode(base64Data),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Image preview failed: $e')));
+    }
+  }
+
+  Future<void> _previewPdfEntry(FileManagerEntry entry) async {
+    final provider = context.read<ChatProvider>();
+    final serverId = _effectiveServerId(provider);
+    if (serverId == null) return;
+    try {
+      final base64Data = await provider.fetchFileManagerFileBase64(
+        path: entry.path,
+        fileName: entry.name,
+        serverId: serverId,
+        timeout: const Duration(seconds: 45),
+      );
+      if (!mounted) return;
+      if (base64Data == null || base64Data.isEmpty) {
+        throw Exception('No PDF data returned');
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _FilePdfPreviewScreen(
+            entry: entry,
+            bytes: base64Decode(base64Data),
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('PDF preview failed: $e')));
     }
   }
 
@@ -720,6 +797,9 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     if (entry.kind == FileManagerEntryKind.directory) {
       return Icons.folder_outlined;
     }
+    if (_normalizedExtension(entry.extension) == 'pdf') {
+      return Icons.picture_as_pdf_outlined;
+    }
     switch (entry.mediaKind) {
       case FileManagerMediaKind.image:
         return Icons.image_outlined;
@@ -738,10 +818,482 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     }
   }
 
-  bool _canPreviewText(FileManagerEntry entry) {
-    return entry.mediaKind == FileManagerMediaKind.text ||
-        entry.mediaKind == FileManagerMediaKind.code;
+  bool _canPreview(FileManagerEntry entry) {
+    return _previewKindFor(entry) != null;
   }
+
+  _FilePreviewKind? _previewKindFor(FileManagerEntry entry) {
+    if (entry.mediaKind == FileManagerMediaKind.image) {
+      return _FilePreviewKind.image;
+    }
+    final extension = _normalizedExtension(entry.extension);
+    if (extension == 'md' ||
+        extension == 'markdown' ||
+        extension == 'mdown' ||
+        extension == 'mkd') {
+      return _FilePreviewKind.markdown;
+    }
+    if (extension == 'html' || extension == 'htm') {
+      return _FilePreviewKind.html;
+    }
+    if (extension == 'pdf') {
+      return _FilePreviewKind.pdf;
+    }
+    if (entry.mediaKind == FileManagerMediaKind.code) {
+      return _FilePreviewKind.code;
+    }
+    if (entry.mediaKind == FileManagerMediaKind.text) {
+      return _FilePreviewKind.text;
+    }
+    return null;
+  }
+}
+
+class _FileTextPreviewScreen extends StatefulWidget {
+  final FileManagerEntry entry;
+  final String content;
+  final bool truncated;
+  final _FilePreviewKind kind;
+
+  const _FileTextPreviewScreen({
+    required this.entry,
+    required this.content,
+    required this.truncated,
+    required this.kind,
+  });
+
+  @override
+  State<_FileTextPreviewScreen> createState() => _FileTextPreviewScreenState();
+}
+
+class _FileTextPreviewScreenState extends State<_FileTextPreviewScreen> {
+  WebViewController? _webViewController;
+  int _htmlZoomPercent = 100;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.kind == _FilePreviewKind.html) {
+      _webViewController = WebViewController()
+        ..setJavaScriptMode(JavaScriptMode.disabled)
+        ..enableZoom(true)
+        ..loadHtmlString(_htmlPreviewDocument);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.entry.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          if (widget.truncated)
+            Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: Center(
+                child: Chip(
+                  label: const Text('Truncated'),
+                  visualDensity: VisualDensity.compact,
+                  side: BorderSide.none,
+                  backgroundColor: Theme.of(
+                    context,
+                  ).colorScheme.secondaryContainer,
+                ),
+              ),
+            ),
+        ],
+      ),
+      body: _buildBody(context),
+    );
+  }
+
+  Widget _buildBody(BuildContext context) {
+    final theme = Theme.of(context);
+    switch (widget.kind) {
+      case _FilePreviewKind.markdown:
+        return Markdown(
+          data: _displayContent,
+          selectable: true,
+          padding: const EdgeInsets.all(16),
+          styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
+            codeblockDecoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            blockquoteDecoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(color: theme.colorScheme.primary, width: 4),
+              ),
+            ),
+          ),
+        );
+      case _FilePreviewKind.html:
+        final controller = _webViewController;
+        if (controller == null) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        return Stack(
+          children: [
+            WebViewWidget(controller: controller),
+            Positioned(
+              left: 12,
+              right: 12,
+              bottom: 12,
+              child: _HtmlPreviewControls(
+                zoomPercent: _htmlZoomPercent,
+                onZoomOut: () => _setHtmlZoom(_htmlZoomPercent - 10),
+                onReset: () => _setHtmlZoom(100),
+                onZoomIn: () => _setHtmlZoom(_htmlZoomPercent + 10),
+              ),
+            ),
+          ],
+        );
+      case _FilePreviewKind.code:
+        return Container(
+          color:
+              githubTheme['root']?.backgroundColor ?? theme.colorScheme.surface,
+          child: Scrollbar(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SingleChildScrollView(
+                child: HighlightView(
+                  _displayContent,
+                  language: _languageForExtension(widget.entry.extension),
+                  theme: githubTheme,
+                  padding: const EdgeInsets.all(16),
+                  textStyle: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      case _FilePreviewKind.text:
+      case _FilePreviewKind.image:
+      case _FilePreviewKind.pdf:
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: SelectableText(
+            _displayContent,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 13,
+              height: 1.35,
+            ),
+          ),
+        );
+    }
+  }
+
+  String get _displayContent {
+    if (!widget.truncated) return widget.content;
+    return '${widget.content}\n\n[Preview truncated]';
+  }
+
+  String get _htmlPreviewDocument {
+    final style =
+        '''
+<style>
+  html {
+    overflow: scroll;
+    scrollbar-gutter: stable both-edges;
+  }
+  body {
+    min-height: 100vh;
+    overflow: visible;
+    zoom: $_htmlZoomPercent%;
+  }
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+  ::-webkit-scrollbar-track {
+    background: rgba(128, 128, 128, 0.12);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(128, 128, 128, 0.55);
+    border-radius: 6px;
+  }
+</style>
+''';
+    final content = widget.content;
+    final headClose = RegExp('</head>', caseSensitive: false);
+    if (headClose.hasMatch(content)) {
+      return content.replaceFirst(headClose, '$style</head>');
+    }
+    return '''
+<!doctype html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  $style
+</head>
+<body>
+$content
+</body>
+</html>
+''';
+  }
+
+  void _setHtmlZoom(int zoomPercent) {
+    final next = zoomPercent.clamp(50, 220);
+    if (next == _htmlZoomPercent) return;
+    setState(() => _htmlZoomPercent = next);
+    _webViewController?.loadHtmlString(_htmlPreviewDocument);
+  }
+}
+
+class _HtmlPreviewControls extends StatelessWidget {
+  final int zoomPercent;
+  final VoidCallback onZoomOut;
+  final VoidCallback onReset;
+  final VoidCallback onZoomIn;
+
+  const _HtmlPreviewControls({
+    required this.zoomPercent,
+    required this.onZoomOut,
+    required this.onReset,
+    required this.onZoomIn,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Center(
+      child: Material(
+        elevation: 3,
+        borderRadius: BorderRadius.circular(18),
+        color: theme.colorScheme.surfaceContainerHigh.withAlpha(236),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Zoom out',
+                icon: const Icon(Icons.remove),
+                onPressed: onZoomOut,
+                visualDensity: VisualDensity.compact,
+              ),
+              TextButton(onPressed: onReset, child: Text('$zoomPercent%')),
+              IconButton(
+                tooltip: 'Zoom in',
+                icon: const Icon(Icons.add),
+                onPressed: onZoomIn,
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FilePdfPreviewScreen extends StatefulWidget {
+  final FileManagerEntry entry;
+  final Uint8List bytes;
+
+  const _FilePdfPreviewScreen({required this.entry, required this.bytes});
+
+  @override
+  State<_FilePdfPreviewScreen> createState() => _FilePdfPreviewScreenState();
+}
+
+class _FilePdfPreviewScreenState extends State<_FilePdfPreviewScreen> {
+  late final PdfControllerPinch _controller;
+  int _page = 1;
+  int? _pages;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = PdfControllerPinch(
+      document: PdfDocument.openData(widget.bytes),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          widget.entry.name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 16),
+            child: Center(
+              child: Text(
+                _pages == null ? '$_page' : '$_page/$_pages',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+      body: PdfViewPinch(
+        controller: _controller,
+        scrollDirection: Axis.vertical,
+        minScale: 1,
+        maxScale: 8,
+        padding: 12,
+        backgroundDecoration: BoxDecoration(
+          color: theme.colorScheme.surfaceContainerHighest,
+        ),
+        onPageChanged: (page) {
+          if (mounted) setState(() => _page = page);
+        },
+        onDocumentLoaded: (document) {
+          if (mounted) setState(() => _pages = document.pagesCount);
+        },
+        onDocumentError: (error) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('PDF render failed: $error')));
+        },
+      ),
+    );
+  }
+}
+
+class _FileImagePreviewScreen extends StatelessWidget {
+  final FileManagerEntry entry;
+  final Uint8List bytes;
+
+  const _FileImagePreviewScreen({required this.entry, required this.bytes});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+      backgroundColor: theme.colorScheme.surface,
+      body: Center(
+        child: InteractiveViewer(
+          minScale: 0.25,
+          maxScale: 5,
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) => Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(
+                'Image preview failed: $error',
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+String? _languageForExtension(String? extension) {
+  switch (_normalizedExtension(extension)) {
+    case 'bash':
+    case 'sh':
+    case 'zsh':
+      return 'bash';
+    case 'c':
+    case 'h':
+      return 'c';
+    case 'cc':
+    case 'cpp':
+    case 'cxx':
+    case 'hpp':
+      return 'cpp';
+    case 'cs':
+      return 'cs';
+    case 'css':
+      return 'css';
+    case 'dart':
+      return 'dart';
+    case 'go':
+      return 'go';
+    case 'gradle':
+      return 'gradle';
+    case 'graphql':
+    case 'gql':
+      return 'graphql';
+    case 'html':
+    case 'htm':
+      return 'xml';
+    case 'java':
+      return 'java';
+    case 'js':
+    case 'jsx':
+    case 'mjs':
+    case 'cjs':
+      return 'javascript';
+    case 'json':
+    case 'jsonc':
+      return 'json';
+    case 'kt':
+    case 'kts':
+      return 'kotlin';
+    case 'lua':
+      return 'lua';
+    case 'md':
+    case 'markdown':
+      return 'markdown';
+    case 'php':
+      return 'php';
+    case 'ps1':
+      return 'powershell';
+    case 'py':
+      return 'python';
+    case 'rb':
+      return 'ruby';
+    case 'rs':
+      return 'rust';
+    case 'sql':
+      return 'sql';
+    case 'swift':
+      return 'swift';
+    case 'toml':
+      return 'ini';
+    case 'ts':
+    case 'tsx':
+      return 'typescript';
+    case 'xml':
+    case 'svg':
+      return 'xml';
+    case 'yaml':
+    case 'yml':
+      return 'yaml';
+    default:
+      return null;
+  }
+}
+
+String _normalizedExtension(String? extension) {
+  final value = (extension ?? '').trim().toLowerCase();
+  if (value.startsWith('.')) return value.substring(1);
+  return value;
 }
 
 class _PathHeader extends StatelessWidget {

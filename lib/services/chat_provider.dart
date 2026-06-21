@@ -73,6 +73,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _serverFileNames = {}; // fileId → display name
   final Set<String> _downloadingFiles = {}; // fileId set
   final Map<String, double> _downloadProgress = {}; // fileId → progress
+  final Map<String, String> _downloadErrors = {}; // fileId → error
+  final Map<String, Timer> _downloadWatchdogs = {}; // fileId → watchdog timer
   final Map<String, double> _lastNotifiedProgress = {}; // throttle UI updates
   final Map<String, IOSink> _activeDownloads = {}; // fileId → write sink
   final Map<String, String> _downloadTempPaths = {}; // fileId → temp path
@@ -5773,13 +5775,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     bool showInChat = false,
   }) async {
     final requestId = DateTime.now().microsecondsSinceEpoch.toString();
-    final fileId = 'fm_$requestId';
+    final fileId = _stableFileTransferId(path);
     final completer = Completer<Map<String, dynamic>>();
     _fileManagerOperationCompleters[requestId] = completer;
     _serverFiles[fileId] = path;
     _serverFileNames[fileId] = fileName;
     _filePathToId[path] = fileId;
     _downloadingFiles.add(fileId);
+    _downloadErrors.remove(fileId);
+    _armDownloadWatchdog(fileId);
     if (showInChat) {
       final hasVisibleCard = _messages.any(
         (m) =>
@@ -5820,7 +5824,47 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _filePathToId.remove(path);
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
+      _downloadErrors[fileId] = e.toString();
+      _cancelDownloadWatchdog(fileId);
       notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<String?> fetchFileManagerFileBase64({
+    required String path,
+    required String fileName,
+    String? serverId,
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final fileId = 'fm_preview_$requestId';
+    final operationCompleter = Completer<Map<String, dynamic>>();
+    final byteCompleter = Completer<String?>();
+
+    _fileManagerOperationCompleters[requestId] = operationCompleter;
+    _fileBytesCompleters[fileId] = byteCompleter;
+    _fileBytesBuffers[fileId] = BytesBuilder(copy: false);
+
+    final msg = {
+      'type': 'file_manager_download',
+      'requestId': requestId,
+      'path': path,
+      'fileId': fileId,
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
+
+    try {
+      await operationCompleter.future.timeout(const Duration(seconds: 10));
+      return await byteCompleter.future.timeout(timeout);
+    } catch (e) {
+      _fileManagerOperationCompleters.remove(requestId);
+      _fileBytesCompleters.remove(fileId);
+      _fileBytesBuffers.remove(fileId);
       rethrow;
     }
   }
@@ -6878,6 +6922,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Get download progress for a file (0.0 to 1.0), or null if not downloading
   double? getDownloadProgress(String fileId) => _downloadProgress[fileId];
 
+  /// Get latest download error for a file, or null if there is no error.
+  String? getDownloadError(String fileId) => _downloadErrors[fileId];
+
   /// Handle file metadata from server (no data yet — just registers availability)
   void _handleFileMessage(Map<String, dynamic> msg) {
     final fileId = msg['fileId'] as String? ?? '';
@@ -6924,6 +6971,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Clear received state for a file so it can be re-downloaded
   void clearReceivedFile(String fileId) {
     _receivedFiles.remove(fileId);
+    _downloadErrors.remove(fileId);
     notifyListeners();
   }
 
@@ -6932,7 +6980,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void requestFile(String fileId) {
     final serverPath = _serverFiles[fileId];
     if (serverPath == null) return;
+    _cleanupActiveDownload(fileId, deleteTemp: true);
+    _downloadErrors.remove(fileId);
     _downloadingFiles.add(fileId);
+    _downloadProgress[fileId] = 0;
+    _armDownloadWatchdog(fileId);
     notifyListeners();
     _ws.send({
       'type': 'request_file',
@@ -6959,8 +7011,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     _downloadingFiles.remove(fileId);
+    _cancelDownloadWatchdog(fileId);
 
     if (base64Data.isEmpty) {
+      _downloadErrors[fileId] = 'No file data returned';
       notifyListeners();
       return;
     }
@@ -6988,12 +7042,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await targetFile.writeAsBytes(bytes);
 
       _receivedFiles[fileId] = targetFile.path;
+      _downloadErrors.remove(fileId);
       debugPrint(
         '[File] Saved: ${targetFile.path} (${(fileSize / 1024).toStringAsFixed(1)} KB)',
       );
       notifyListeners();
     } catch (e) {
       debugPrint('[File] Error saving file: $e');
+      _downloadErrors[fileId] = e.toString();
       notifyListeners();
     }
   }
@@ -7017,7 +7073,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       // Open temp file on first chunk
       if (!_activeDownloads.containsKey(fileId)) {
-        final safeId = fileId.replaceAll('/', '_').replaceAll(' ', '_');
+        final safeId = _safeDownloadTempId(fileId);
         final tempPath = '/storage/emulated/0/Download/.$safeId.tmp';
         final tempFile = File(tempPath);
         _activeDownloads[fileId] = tempFile.openWrite();
@@ -7031,11 +7087,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeDownloads[fileId]!.add(bytes);
 
       _downloadProgress[fileId] = (chunkIndex + 1) / totalChunks;
+      _downloadErrors.remove(fileId);
+      _armDownloadWatchdog(fileId);
       notifyListeners();
     } catch (e) {
       debugPrint(
         '[File] Error handling chunk $chunkIndex/$totalChunks for $fileName: $e',
       );
+      _failDownload(fileId, e.toString());
     }
   }
 
@@ -7060,12 +7119,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await sink?.flush();
       await sink?.close();
       _lastNotifiedProgress.remove(fileId);
+      _cancelDownloadWatchdog(fileId);
 
       final tempPath = _downloadTempPaths.remove(fileId);
       if (tempPath == null) {
         debugPrint('[File] Error: no temp path for $fileId');
         _downloadingFiles.remove(fileId);
         _downloadProgress.remove(fileId);
+        _downloadErrors[fileId] = 'Transfer completed without a temp file';
         notifyListeners();
         return;
       }
@@ -7075,6 +7136,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         debugPrint('[File] Error: temp file missing at $tempPath');
         _downloadingFiles.remove(fileId);
         _downloadProgress.remove(fileId);
+        _downloadErrors[fileId] = 'Downloaded temp file is missing';
         notifyListeners();
         return;
       }
@@ -7105,6 +7167,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _receivedFiles[fileId] = targetFile.path;
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
+      _downloadErrors.remove(fileId);
       debugPrint(
         '[File] Chunked download complete: ${targetFile.path} (fileId=$fileId)',
       );
@@ -7115,8 +7178,68 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
+      _downloadErrors[fileId] = e.toString();
+      _cancelDownloadWatchdog(fileId);
       notifyListeners();
     }
+  }
+
+  String _stableFileTransferId(String path) {
+    var hash = 0x811c9dc5;
+    for (final unit in path.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return 'fm_${hash.toRadixString(16).padLeft(8, '0')}';
+  }
+
+  String _safeDownloadTempId(String fileId) {
+    var hash = 0x811c9dc5;
+    for (final unit in fileId.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash.toRadixString(16).padLeft(8, '0');
+  }
+
+  void _armDownloadWatchdog(String fileId) {
+    _downloadWatchdogs[fileId]?.cancel();
+    _downloadWatchdogs[fileId] = Timer(const Duration(seconds: 45), () {
+      if (!_downloadingFiles.contains(fileId)) return;
+      _failDownload(fileId, 'Transfer stalled. Tap download to retry.');
+    });
+  }
+
+  void _cancelDownloadWatchdog(String fileId) {
+    _downloadWatchdogs.remove(fileId)?.cancel();
+  }
+
+  Future<void> _cleanupActiveDownload(
+    String fileId, {
+    bool deleteTemp = false,
+  }) async {
+    _cancelDownloadWatchdog(fileId);
+    _lastNotifiedProgress.remove(fileId);
+    _downloadingFiles.remove(fileId);
+    _downloadProgress.remove(fileId);
+    final sink = _activeDownloads.remove(fileId);
+    try {
+      await sink?.flush();
+      await sink?.close();
+    } catch (_) {}
+    final tempPath = _downloadTempPaths.remove(fileId);
+    if (deleteTemp && tempPath != null) {
+      try {
+        final tempFile = File(tempPath);
+        if (tempFile.existsSync()) await tempFile.delete();
+      } catch (_) {}
+    }
+  }
+
+  void _failDownload(String fileId, String error) {
+    _cleanupActiveDownload(fileId, deleteTemp: true);
+    _downloadErrors[fileId] = error;
+    notifyListeners();
   }
 
   Future<void> toggleListening({String existingText = ''}) async {
@@ -7169,6 +7292,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _statusSub?.cancel();
     _speechResultSub?.cancel();
     _speechStatusSub?.cancel();
+    for (final timer in _downloadWatchdogs.values) {
+      timer.cancel();
+    }
+    _downloadWatchdogs.clear();
     _connMgr.dispose();
     _speech.dispose();
     _tts.dispose();

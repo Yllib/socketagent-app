@@ -6,6 +6,7 @@ import '../services/chat_provider.dart';
 import '../services/tts_engine.dart';
 import '../services/kokoro_server_engine.dart';
 import '../services/websocket_service.dart';
+import 'file_manager_screen.dart';
 import 'settings/voice_speech_screen.dart';
 import '../widgets/chat_view.dart';
 import '../widgets/active_tasks_pane.dart';
@@ -567,6 +568,8 @@ class HomeScreenState extends State<HomeScreen> {
                     labelColor: Colors.orange.shade300,
                   ),
                 ],
+                const SizedBox(width: 6),
+                _buildSessionMoreChip(provider),
               ],
             ),
           ),
@@ -608,6 +611,92 @@ class HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildSessionMoreChip(ChatProvider provider) {
+    final projectPath = _projectFilesPath(provider);
+    return PopupMenuButton<String>(
+      onSelected: (value) {
+        switch (value) {
+          case 'project_files':
+            _openProjectFiles(provider, projectPath);
+            break;
+        }
+      },
+      tooltip: 'Session options',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      child: _buildChipBody(Icons.more_horiz, 'More'),
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          value: 'project_files',
+          enabled: projectPath != null && projectPath.isNotEmpty,
+          child: Row(
+            children: [
+              const Icon(Icons.folder_open_outlined, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Project files'),
+                    if (projectPath != null && projectPath.isNotEmpty)
+                      Text(
+                        projectPath,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(140),
+                        ),
+                      )
+                    else
+                      Text(
+                        'No project directory available',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(140),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  String? _projectFilesPath(ChatProvider provider) {
+    final sessionCwd = provider.activeSessionCwd?.trim();
+    if (sessionCwd != null && sessionCwd.isNotEmpty) return sessionCwd;
+
+    final activeDefault = provider.connMgr.activeConfig?.defaultCwd.trim();
+    if (activeDefault != null && activeDefault.isNotEmpty) {
+      return activeDefault;
+    }
+
+    final defaultCwd = provider.defaultCwd.trim();
+    if (defaultCwd.isNotEmpty) return defaultCwd;
+    return null;
+  }
+
+  void _openProjectFiles(ChatProvider provider, String? projectPath) {
+    if (projectPath == null || projectPath.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => FileManagerScreen(
+          serverId: provider.activeServerId,
+          initialPath: projectPath,
+        ),
       ),
     );
   }
