@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
+import '../models/server_config.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'archive_screen.dart';
 import 'home_screen.dart';
@@ -989,6 +990,95 @@ class _SessionsTabState extends State<SessionsTab>
     );
   }
 
+  List<ServerConfig> _configsForSessionTabs(ChatProvider provider) {
+    final sorted = [...provider.serverConfigs];
+    sorted.sort((a, b) {
+      final statusCmp = _tabStatusRank(
+        provider.connMgr.statusOf(a.id),
+      ).compareTo(_tabStatusRank(provider.connMgr.statusOf(b.id)));
+      if (statusCmp != 0) return statusCmp;
+      final orderCmp = a.sortOrder.compareTo(b.sortOrder);
+      if (orderCmp != 0) return orderCmp;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return sorted;
+  }
+
+  int _tabStatusRank(ConnectionStatus status) {
+    switch (status) {
+      case ConnectionStatus.connected:
+        return 0;
+      case ConnectionStatus.connecting:
+        return 1;
+      case ConnectionStatus.disconnected:
+      case ConnectionStatus.error:
+        return 2;
+    }
+  }
+
+  Color _serverStatusColor(ConnectionStatus status) {
+    switch (status) {
+      case ConnectionStatus.connected:
+        return Colors.green;
+      case ConnectionStatus.connecting:
+        return Colors.orange;
+      case ConnectionStatus.error:
+        return Colors.red;
+      case ConnectionStatus.disconnected:
+        return Colors.grey;
+    }
+  }
+
+  String _serverStatusLabel(ConnectionStatus status) {
+    switch (status) {
+      case ConnectionStatus.connected:
+        return 'Connected';
+      case ConnectionStatus.connecting:
+        return 'Connecting';
+      case ConnectionStatus.error:
+        return 'Connection error';
+      case ConnectionStatus.disconnected:
+        return 'Offline';
+    }
+  }
+
+  Widget _buildServerTab(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) {
+    final status = provider.connMgr.statusOf(config.id);
+    final color = _serverStatusColor(status);
+    return Tab(
+      child: Tooltip(
+        message: '${config.name}: ${_serverStatusLabel(status)}',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: color,
+                boxShadow: [
+                  if (status == ConnectionStatus.connected)
+                    BoxShadow(
+                      color: color.withAlpha(90),
+                      blurRadius: 4,
+                      spreadRadius: 1,
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(config.name, overflow: TextOverflow.ellipsis),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -1002,6 +1092,7 @@ class _SessionsTabState extends State<SessionsTab>
 
         final multiServer = configs.length > 1;
         _ensureTabController(configs.length);
+        final tabConfigs = _configsForSessionTabs(provider);
 
         final pinned = provider.pinnedSessions;
         final unpinned = provider.unpinnedSessions;
@@ -1026,7 +1117,9 @@ class _SessionsTabState extends State<SessionsTab>
                     tabAlignment: TabAlignment.start,
                     tabs: [
                       const Tab(text: 'All'),
-                      ...configs.map((c) => Tab(text: c.name)),
+                      ...tabConfigs.map(
+                        (c) => _buildServerTab(context, provider, c),
+                      ),
                     ],
                   )
                 : null,
@@ -1049,7 +1142,7 @@ class _SessionsTabState extends State<SessionsTab>
                               provider,
                               unpinned,
                             ),
-                            ...configs.map((c) {
+                            ...tabConfigs.map((c) {
                               final serverSessions = unpinned
                                   .where((s) => s.serverId == c.id)
                                   .toList();
