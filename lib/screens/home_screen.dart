@@ -330,13 +330,16 @@ class HomeScreenState extends State<HomeScreen> {
           provider.activeSessionBackend,
         );
         final isPlan = permMode == 'plan';
-        final permTheme = _permissionModeTheme(displayPermMode);
+        final sessionTheme =
+            provider.activeSessionBackend == 'codex' && provider.codexFastMode
+            ? _fastModeTheme()
+            : _permissionModeTheme(displayPermMode);
         return Theme(
-          data: permTheme != null
+          data: sessionTheme != null
               ? Theme.of(context).copyWith(
                   appBarTheme: AppBarTheme(
-                    backgroundColor: permTheme.barColor,
-                    foregroundColor: permTheme.textColor,
+                    backgroundColor: sessionTheme.barColor,
+                    foregroundColor: sessionTheme.textColor,
                   ),
                 )
               : Theme.of(context),
@@ -368,6 +371,10 @@ class HomeScreenState extends State<HomeScreen> {
                         final flags = <String>[];
                         if (provider.activeSessionBackend == 'codex')
                           flags.add('CODEX');
+                        if (provider.activeSessionBackend == 'codex' &&
+                            provider.codexFastMode) {
+                          flags.add('FAST');
+                        }
                         if (isPlan) {
                           flags.add(
                             provider.activeSessionBackend == 'codex'
@@ -384,7 +391,7 @@ class HomeScreenState extends State<HomeScreen> {
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.w600,
-                        color: permTheme?.textColor,
+                        color: sessionTheme?.textColor,
                       ),
                     ),
                     if (provider.activeSessionCwd != null)
@@ -396,7 +403,7 @@ class HomeScreenState extends State<HomeScreen> {
                         style: TextStyle(
                           fontSize: 11,
                           color:
-                              (permTheme?.textColor ??
+                              (sessionTheme?.textColor ??
                                       Theme.of(context).colorScheme.onSurface)
                                   .withAlpha(178),
                         ),
@@ -413,7 +420,7 @@ class HomeScreenState extends State<HomeScreen> {
                                 _permissionModeIcon(displayPermMode),
                                 size: 11,
                                 color:
-                                    (permTheme?.textColor ??
+                                    (sessionTheme?.textColor ??
                                             Theme.of(
                                               context,
                                             ).colorScheme.onSurface)
@@ -428,7 +435,7 @@ class HomeScreenState extends State<HomeScreen> {
                                 style: TextStyle(
                                   fontSize: 11,
                                   color:
-                                      (permTheme?.textColor ??
+                                      (sessionTheme?.textColor ??
                                               Theme.of(
                                                 context,
                                               ).colorScheme.onSurface)
@@ -439,7 +446,7 @@ class HomeScreenState extends State<HomeScreen> {
                                 Icons.arrow_drop_down,
                                 size: 14,
                                 color:
-                                    (permTheme?.textColor ??
+                                    (sessionTheme?.textColor ??
                                             Theme.of(
                                               context,
                                             ).colorScheme.onSurface)
@@ -709,8 +716,8 @@ class HomeScreenState extends State<HomeScreen> {
                       const Text('Fast mode'),
                       Text(
                         provider.codexFastMode
-                            ? 'On for next Codex prompt'
-                            : 'Off for next Codex prompt',
+                            ? 'On for this Codex session'
+                            : 'Off for this Codex session',
                         style: TextStyle(
                           fontSize: 11,
                           color: Theme.of(
@@ -993,6 +1000,10 @@ class HomeScreenState extends State<HomeScreen> {
       default:
         return null; // bypassPermissions — default theme
     }
+  }
+
+  _PermTheme _fastModeTheme() {
+    return const _PermTheme(Color(0xFF641E1E), Color(0xFFFFC9C9));
   }
 
   IconData _permissionModeIcon(String mode) {

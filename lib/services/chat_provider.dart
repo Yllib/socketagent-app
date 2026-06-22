@@ -5148,13 +5148,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       cwd: _activeSessionId == null ? _activeSessionCwd : null,
       codexFastMode: useCodexFastMode ? true : null,
     );
-    if (useCodexFastMode) {
-      _codexFastMode = false;
-      if (_activeSessionId != null) {
-        _sessionCodexFastModes[_activeSessionId!] = false;
-      }
-      _connMgr.send({'type': 'set_codex_fast_mode', 'enabled': false});
-    }
 
     // Upload + dispatch done — bubble is officially "sent" now (unless it's
     // queued behind a running query, in which case keep the pending state).
