@@ -67,6 +67,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final StreamController<String> _archiveFeedback =
       StreamController.broadcast();
   Map<String, dynamic>? _lastUsage;
+  Map<String, dynamic>? _codexStatus;
   // All file maps keyed on fileId (hash of path+mtime+size from server)
   final Map<String, String> _receivedFiles = {}; // fileId → local path
   final Map<String, String> _serverFiles = {}; // fileId → server path
@@ -214,6 +215,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   int _sdkSessionsRequestSeq = 0;
   Completer<Map<String, dynamic>>? _pendingVersionCheck;
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
+  Completer<Map<String, dynamic>?>? _pendingCodexStatus;
 
   StreamSubscription? _messageSub;
   StreamSubscription? _statusSub;
@@ -229,6 +231,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<ArchiveEntry> get archives => _archives;
   Stream<String> get archiveFeedback => _archiveFeedback.stream;
   Map<String, dynamic>? get lastUsage => _lastUsage;
+  Map<String, dynamic>? get codexStatus => _codexStatus;
   String? get activeSessionId => _activeSessionId;
   String? get activeSessionCwd => _activeSessionCwd;
   String? get activeSessionTitle => _activeSessionTitle;
@@ -1234,12 +1237,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
       if (serverId == _connMgr.activeServerId) {
         _connMgr.sendToServer(serverId, {'type': 'skills_list'});
+        if (_activeSessionBackend == 'codex' &&
+            codexDriverForServer(serverId) == 'app-server') {
+          _connMgr.sendToServer(serverId, {
+            'type': 'codex_collaboration_modes',
+          });
+        }
       }
     } else {
       requestServerSettings();
       requestSessionList();
       requestScheduledTasks();
-      requestActiveSkills();
+      _requestActiveCodexMetadata();
     }
 
     // Resume active session only on the server that owns it
@@ -2115,6 +2124,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ),
           );
           notifyListeners();
+          break;
+        }
+      case 'codex_status':
+        {
+          if (msg['error'] == null && msg['payload'] is Map) {
+            _codexStatus = Map<String, dynamic>.from(msg['payload'] as Map);
+            _pendingCodexStatus?.complete(_codexStatus);
+            _pendingCodexStatus = null;
+            notifyListeners();
+          } else {
+            _pendingCodexStatus?.complete(null);
+            _pendingCodexStatus = null;
+          }
           break;
         }
       case 'usage_restore':
@@ -4279,7 +4301,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // the real id). Capture it so the chat header label is right immediately.
     final permissionMode = msg['permissionMode'] as String?;
     if (permissionMode != null) _permissionMode = permissionMode;
-    if (_activeSessionBackend == 'codex') requestActiveSkills();
+    _requestActiveCodexMetadata();
     notifyListeners();
   }
 
@@ -5424,6 +5446,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
+    _requestActiveCodexMetadata();
     notifyListeners();
   }
 
@@ -5517,6 +5540,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.sendToServer(serverId, {'type': 'skills_list'});
   }
 
+  void _requestActiveCodexMetadata() {
+    if (_activeSessionBackend != 'codex') return;
+    requestActiveSkills();
+    if (codexDriverForServer(null) == 'app-server') {
+      requestCodexCollaborationModes();
+    }
+  }
+
   void setCodexDriverForServer(String serverId, String driver) {
     if (driver != 'exec' && driver != 'app-server') return;
     _serverCodexDrivers[serverId] = driver;
@@ -5551,6 +5582,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
+  }
+
+  Future<Map<String, dynamic>?> requestCodexStatus() {
+    _pendingCodexStatus?.complete(null);
+    final completer = Completer<Map<String, dynamic>?>();
+    _pendingCodexStatus = completer;
+    _connMgr.send({'type': 'get_codex_status'});
+    return completer.future.timeout(
+      const Duration(seconds: 6),
+      onTimeout: () {
+        if (_pendingCodexStatus == completer) {
+          _pendingCodexStatus = null;
+        }
+        return null;
+      },
+    );
   }
 
   void setCodexCollaborationMode(String mode) {
@@ -5622,7 +5669,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Send per-session settings after resume
     _sendSessionSettings(sessionId);
-    if (_activeSessionBackend == 'codex') requestActiveSkills();
+    _requestActiveCodexMetadata();
 
     notifyListeners();
   }
@@ -6141,7 +6188,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.send(msg);
     }
     _sendSessionSettings(sessionId);
-    if (_activeSessionBackend == 'codex') requestActiveSkills();
+    _requestActiveCodexMetadata();
     notifyListeners();
   }
 

@@ -876,6 +876,10 @@ class HomeScreenState extends State<HomeScreen> {
     IconData icon;
     Color color;
     switch (provider.effort) {
+      case 'minimal':
+        icon = Icons.remove_circle_outline;
+        color = Theme.of(context).colorScheme.onSurfaceVariant;
+        break;
       case 'low':
         icon = Icons.bolt;
         color = Colors.blue.shade300;
@@ -885,6 +889,7 @@ class HomeScreenState extends State<HomeScreen> {
         color = Theme.of(context).colorScheme.onSurfaceVariant;
         break;
       case 'max':
+      case 'xhigh':
         icon = Icons.whatshot;
         color = Colors.orange.shade300;
         break;
@@ -892,10 +897,9 @@ class HomeScreenState extends State<HomeScreen> {
         icon = Icons.auto_awesome;
         color = Theme.of(context).colorScheme.primary;
     }
-    final label =
-        provider.effort[0].toUpperCase() + provider.effort.substring(1);
+    final label = _effortLabel(provider.effort);
     final options = isCodex
-        ? const ['low', 'medium', 'high']
+        ? const ['minimal', 'low', 'medium', 'high', 'xhigh']
         : const ['low', 'medium', 'high', 'max'];
 
     return PopupMenuButton<String>(
@@ -919,12 +923,24 @@ class HomeScreenState extends State<HomeScreen> {
                 else
                   const SizedBox(width: 16),
                 const SizedBox(width: 8),
-                Text(e[0].toUpperCase() + e.substring(1)),
+                Text(_effortLabel(e)),
               ],
             ),
           ),
       ],
     );
+  }
+
+  String _effortLabel(String effort) {
+    switch (effort) {
+      case 'minimal':
+        return 'Minimal';
+      case 'xhigh':
+        return 'XHigh';
+      default:
+        if (effort.isEmpty) return 'Default';
+        return effort[0].toUpperCase() + effort.substring(1);
+    }
   }
 
   String _formatModeName(String mode) {
@@ -1249,8 +1265,13 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _showContextDialog(Map<String, dynamic> usage) {
+  Future<void> _showContextDialog(Map<String, dynamic> usage) async {
     final provider = context.read<ChatProvider>();
+    Map<String, dynamic>? codexStatus = provider.codexStatus;
+    if (provider.activeSessionBackend == 'codex') {
+      codexStatus = await provider.requestCodexStatus() ?? codexStatus;
+      if (!mounted) return;
+    }
     final ctx = provider.contextUsage;
     final inputTokens = (usage['inputTokens'] as num?)?.toInt() ?? 0;
     final outputTokens = (usage['outputTokens'] as num?)?.toInt() ?? 0;
@@ -1502,6 +1523,11 @@ class HomeScreenState extends State<HomeScreen> {
                       ),
                 ],
 
+                if (codexStatus != null) ...[
+                  const Divider(height: 24),
+                  _buildCodexStatusContextSection(codexStatus, theme),
+                ],
+
                 const Divider(height: 24),
                 // Metadata
                 if (numTurns != null)
@@ -1565,6 +1591,194 @@ class HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildCodexStatusContextSection(
+    Map<String, dynamic> status,
+    ThemeData theme,
+  ) {
+    final config = status['config'] is Map
+        ? Map<String, dynamic>.from(status['config'] as Map)
+        : <String, dynamic>{};
+    final limits = status['limits'] is List
+        ? status['limits'] as List
+        : const [];
+    final usage = status['usage'] is Map
+        ? Map<String, dynamic>.from(status['usage'] as Map)
+        : <String, dynamic>{};
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Codex Account',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: theme.colorScheme.onSurface.withAlpha(200),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _contextPill(
+              'Model',
+              config['model']?.toString() ?? 'default',
+              theme,
+            ),
+            _contextPill(
+              'Effort',
+              config['effort']?.toString() ?? 'default',
+              theme,
+            ),
+            if ((config['serviceTier']?.toString() ?? '').isNotEmpty)
+              _contextPill('Tier', config['serviceTier'].toString(), theme),
+          ],
+        ),
+        if (limits.isNotEmpty) ...[
+          const SizedBox(height: 12),
+          ...limits.map(
+            (limit) => _contextLimitBlock(
+              Map<String, dynamic>.from(limit as Map),
+              theme,
+            ),
+          ),
+        ],
+        if (usage.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _contextPill(
+                'Today',
+                _formatContextNumber(usage['todayTokens']),
+                theme,
+              ),
+              _contextPill(
+                'Lifetime',
+                _formatContextNumber(usage['lifetimeTokens']),
+                theme,
+              ),
+              _contextPill(
+                'Peak day',
+                _formatContextNumber(usage['peakDailyTokens']),
+                theme,
+              ),
+              _contextPill(
+                'Streak',
+                '${usage['currentStreakDays'] ?? 'unknown'}d',
+                theme,
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _contextLimitBlock(Map<String, dynamic> limit, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            limit['label']?.toString() ?? 'Codex',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: theme.colorScheme.onSurface,
+            ),
+          ),
+          const SizedBox(height: 4),
+          _contextLimitBar('5h', limit['primary'], theme),
+          const SizedBox(height: 4),
+          _contextLimitBar('Weekly', limit['secondary'], theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _contextLimitBar(String label, dynamic raw, ThemeData theme) {
+    if (raw is! Map) return const SizedBox.shrink();
+    final data = Map<String, dynamic>.from(raw);
+    final pct = (data['usedPercent'] as num?)?.toDouble();
+    final value = pct == null ? 0.0 : (pct / 100).clamp(0.0, 1.0);
+    final reset = data['resetLabel']?.toString() ?? '';
+    final window = data['window']?.toString() ?? '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              '$label ${pct?.round() ?? 0}%',
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const Spacer(),
+            Flexible(
+              child: Text(
+                [window, if (reset.isNotEmpty) 'resets $reset'].join(' · '),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontSize: 10,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 3),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(4),
+          child: LinearProgressIndicator(
+            value: value,
+            minHeight: 6,
+            backgroundColor: theme.colorScheme.surfaceContainerHighest,
+            valueColor: AlwaysStoppedAnimation<Color>(
+              value >= 0.85
+                  ? theme.colorScheme.error
+                  : theme.colorScheme.tertiary,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _contextPill(String label, String value, ThemeData theme) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        '$label: $value',
+        style: TextStyle(
+          fontSize: 11,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+
+  String _formatContextNumber(dynamic value) {
+    final n = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
+    if (n == null || n.isNaN) return 'unknown';
+    if (n >= 1000000000) return '${(n / 1000000000).toStringAsFixed(1)}B';
+    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
+    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
+    return n.round().toString();
   }
 
   Widget _contextDetailRow(String label, String value, ThemeData theme) {
