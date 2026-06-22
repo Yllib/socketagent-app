@@ -6,12 +6,14 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import 'crypto_service.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, error }
+
 enum ConnectionMode { direct, relay }
 
 class WebSocketService {
   WebSocketChannel? _channel;
   StreamSubscription? _channelSubscription;
-  int _connectionGeneration = 0; // prevents stale callbacks from affecting state
+  int _connectionGeneration =
+      0; // prevents stale callbacks from affecting state
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
   ConnectionStatus _status = ConnectionStatus.disconnected;
@@ -34,15 +36,19 @@ class WebSocketService {
   bool _serverSupportsBinary = false;
 
   // Binary plaintext markers (also defined server-side).
-  static const int _binMarkerJson = 0x4A;          // 'J'
-  static const int _binMarkerUploadChunk = 0x42;   // 'B'
+  static const int _binMarkerJson = 0x4A; // 'J'
+  static const int _binMarkerUploadChunk = 0x42; // 'B'
 
   Stream<Map<String, dynamic>> get messages => _messageController.stream;
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
   ConnectionStatus get status => _status;
   ConnectionMode get mode => _mode;
 
-  void configure({required String host, required int port, required String token}) {
+  void configure({
+    required String host,
+    required int port,
+    required String token,
+  }) {
     _host = host;
     _port = port;
     _token = token;
@@ -81,11 +87,15 @@ class WebSocketService {
     try {
       final Uri uri;
       if (_mode == ConnectionMode.relay) {
-        uri = Uri.parse('$_relayUrl?token=${Uri.encodeComponent(_pairingToken)}&role=phone&subscriber_token=${Uri.encodeComponent(_subscriberToken)}');
+        uri = Uri.parse(
+          '$_relayUrl?token=${Uri.encodeComponent(_pairingToken)}&role=phone&subscriber_token=${Uri.encodeComponent(_subscriberToken)}',
+        );
         _encryptionReady = false;
         // DO NOT log the full URI - it contains pairing and subscriber tokens
       } else {
-        uri = Uri.parse('ws://$_host:$_port?token=${Uri.encodeComponent(_token)}');
+        uri = Uri.parse(
+          'ws://$_host:$_port?token=${Uri.encodeComponent(_token)}',
+        );
       }
 
       // Use the IOWebSocketChannel.connect factory so it builds the underlying
@@ -101,7 +111,8 @@ class WebSocketService {
       _channelSubscription = _channel!.stream.listen(
         (data) {
           if (gen != _connectionGeneration) return;
-          if (_status != ConnectionStatus.connected && _mode == ConnectionMode.direct) {
+          if (_status != ConnectionStatus.connected &&
+              _mode == ConnectionMode.direct) {
             _setStatus(ConnectionStatus.connected);
           }
           try {
@@ -249,7 +260,9 @@ class WebSocketService {
     }
     if (t == 'server_capabilities') {
       _serverSupportsBinary = (msg['binaryEnvelope'] == true);
-      debugPrint('[Relay] Server supports binary envelope: $_serverSupportsBinary');
+      debugPrint(
+        '[Relay] Server supports binary envelope: $_serverSupportsBinary',
+      );
       // Fall through so listeners can read other fields (e.g., `backends`).
     }
     _messageController.add(msg);
@@ -293,7 +306,9 @@ class WebSocketService {
   void send(Map<String, dynamic> message) {
     if (_channel == null) return;
 
-    if (_mode == ConnectionMode.relay && _encryptionReady && _cryptoService != null) {
+    if (_mode == ConnectionMode.relay &&
+        _encryptionReady &&
+        _cryptoService != null) {
       final plaintext = jsonEncode(message);
       if (_serverSupportsBinary) {
         // Binary envelope: 1-byte JSON marker + UTF-8 JSON.
@@ -337,7 +352,7 @@ class WebSocketService {
     payload[1] = idBytes.length;
     payload.setRange(2, 2 + idBytes.length, idBytes);
     final off = 2 + idBytes.length;
-    payload[off]     = (chunkIndex >> 24) & 0xFF;
+    payload[off] = (chunkIndex >> 24) & 0xFF;
     payload[off + 1] = (chunkIndex >> 16) & 0xFF;
     payload[off + 2] = (chunkIndex >> 8) & 0xFF;
     payload[off + 3] = chunkIndex & 0xFF;
@@ -352,7 +367,14 @@ class WebSocketService {
     }
   }
 
-  void sendPrompt(String text, {String? sessionId, String? priority, String? messageId, String? cwd}) {
+  void sendPrompt(
+    String text, {
+    String? sessionId,
+    String? priority,
+    String? messageId,
+    String? cwd,
+    bool? codexFastMode,
+  }) {
     send({
       'type': 'prompt',
       'text': text,
@@ -360,36 +382,24 @@ class WebSocketService {
       if (priority != null) 'priority': priority,
       if (messageId != null) 'messageId': messageId,
       if (cwd != null) 'cwd': cwd,
+      if (codexFastMode != null) 'codexFastMode': codexFastMode,
     });
   }
 
   void sendRetractQueuedPrompt(String messageId) {
-    send({
-      'type': 'retract_queued_prompt',
-      'messageId': messageId,
-    });
+    send({'type': 'retract_queued_prompt', 'messageId': messageId});
   }
 
   void sendAnswer(String questionId, Map<String, String> answers) {
-    send({
-      'type': 'answer',
-      'questionId': questionId,
-      'answers': answers,
-    });
+    send({'type': 'answer', 'questionId': questionId, 'answers': answers});
   }
 
   void sendNewSession({String? cwd}) {
-    send({
-      'type': 'new_session',
-      if (cwd != null) 'cwd': cwd,
-    });
+    send({'type': 'new_session', if (cwd != null) 'cwd': cwd});
   }
 
   void sendResumeSession(String sessionId) {
-    send({
-      'type': 'resume_session',
-      'sessionId': sessionId,
-    });
+    send({'type': 'resume_session', 'sessionId': sessionId});
   }
 
   void sendListSessions() {
@@ -397,24 +407,15 @@ class WebSocketService {
   }
 
   void sendDeleteSession(String sessionId) {
-    send({
-      'type': 'delete_session',
-      'sessionId': sessionId,
-    });
+    send({'type': 'delete_session', 'sessionId': sessionId});
   }
 
   void sendClearContext(String sessionId) {
-    send({
-      'type': 'clear_context',
-      'sessionId': sessionId,
-    });
+    send({'type': 'clear_context', 'sessionId': sessionId});
   }
 
   void sendArchiveSession(String sessionId) {
-    send({
-      'type': 'archive_session',
-      'sessionId': sessionId,
-    });
+    send({'type': 'archive_session', 'sessionId': sessionId});
   }
 
   void sendListArchives() {
@@ -474,15 +475,32 @@ class WebSocketService {
   }
 
   void sendRewind(String userMessageUuid, {bool dryRun = false}) {
-    send({'type': 'rewind', 'userMessageUuid': userMessageUuid, 'dryRun': dryRun});
+    send({
+      'type': 'rewind',
+      'userMessageUuid': userMessageUuid,
+      'dryRun': dryRun,
+    });
   }
 
-  void sendRewindConversation(String userMessageUuid, {bool dryRun = false, bool rewindFiles = true}) {
-    send({'type': 'rewind_conversation', 'userMessageUuid': userMessageUuid, 'dryRun': dryRun, 'rewindFiles': rewindFiles});
+  void sendRewindConversation(
+    String userMessageUuid, {
+    bool dryRun = false,
+    bool rewindFiles = true,
+  }) {
+    send({
+      'type': 'rewind_conversation',
+      'userMessageUuid': userMessageUuid,
+      'dryRun': dryRun,
+      'rewindFiles': rewindFiles,
+    });
   }
 
   void sendBranchFromMessage(String sessionId, String userMessageUuid) {
-    send({'type': 'branch_from_message', 'sessionId': sessionId, 'userMessageUuid': userMessageUuid});
+    send({
+      'type': 'branch_from_message',
+      'sessionId': sessionId,
+      'userMessageUuid': userMessageUuid,
+    });
   }
 
   void disconnect() {

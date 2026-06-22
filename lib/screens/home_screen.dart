@@ -368,7 +368,13 @@ class HomeScreenState extends State<HomeScreen> {
                         final flags = <String>[];
                         if (provider.activeSessionBackend == 'codex')
                           flags.add('CODEX');
-                        if (isPlan) flags.add('PLAN');
+                        if (isPlan) {
+                          flags.add(
+                            provider.activeSessionBackend == 'codex'
+                                ? 'READ'
+                                : 'PLAN',
+                          );
+                        }
                         if (provider.rawMode) flags.add('RAW');
                         final suffix = flags.isEmpty
                             ? ''
@@ -545,11 +551,6 @@ class HomeScreenState extends State<HomeScreen> {
                 ],
                 _buildEffortChip(provider),
                 const SizedBox(width: 6),
-                if (provider.activeSessionBackend == 'codex' &&
-                    provider.codexDriverForServer(null) == 'app-server') ...[
-                  _buildCodexModeChip(provider),
-                  const SizedBox(width: 6),
-                ],
                 if (provider.activeSessionBackend != 'codex') ...[
                   _buildThinkingChip(provider),
                   const SizedBox(width: 6),
@@ -617,11 +618,28 @@ class HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSessionMoreChip(ChatProvider provider) {
     final projectPath = _projectFilesPath(provider);
+    final showCodexMode =
+        provider.activeSessionBackend == 'codex' &&
+        provider.codexDriverForServer(null) == 'app-server';
     return PopupMenuButton<String>(
+      onOpened: () {
+        if (showCodexMode) {
+          provider.requestCodexCollaborationModes();
+        }
+      },
       onSelected: (value) {
+        if (value.startsWith('codex_mode:')) {
+          provider.setCodexCollaborationMode(
+            value.substring('codex_mode:'.length),
+          );
+          return;
+        }
         switch (value) {
           case 'project_files':
             _openProjectFiles(provider, projectPath);
+            break;
+          case 'codex_fast_mode':
+            provider.setCodexFastMode(!provider.codexFastMode);
             break;
         }
       },
@@ -671,6 +689,90 @@ class HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        if (provider.activeSessionBackend == 'codex')
+          PopupMenuItem(
+            value: 'codex_fast_mode',
+            child: Row(
+              children: [
+                Icon(
+                  provider.codexFastMode
+                      ? Icons.flash_on_outlined
+                      : Icons.flash_off_outlined,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Fast mode'),
+                      Text(
+                        provider.codexFastMode
+                            ? 'On for next Codex prompt'
+                            : 'Off for next Codex prompt',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(140),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  provider.codexFastMode
+                      ? Icons.toggle_on_outlined
+                      : Icons.toggle_off_outlined,
+                  size: 34,
+                  color: provider.codexFastMode
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        if (showCodexMode) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            enabled: false,
+            child: Text(
+              'Codex mode',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurface.withAlpha(140),
+              ),
+            ),
+          ),
+          for (final mode in provider.codexCollaborationModes)
+            PopupMenuItem(
+              value: 'codex_mode:${mode['id'] as String? ?? 'default'}',
+              child: Row(
+                children: [
+                  if ((mode['id'] as String? ?? 'default') ==
+                      provider.codexCollaborationMode)
+                    Icon(
+                      Icons.check,
+                      size: 16,
+                      color: Theme.of(context).colorScheme.primary,
+                    )
+                  else
+                    const SizedBox(width: 16),
+                  const SizedBox(width: 8),
+                  const Icon(Icons.groups_outlined, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      mode['name'] as String? ??
+                          _formatModeName(mode['id'] as String? ?? 'default'),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
       ],
     );
   }
@@ -785,7 +887,6 @@ class HomeScreenState extends State<HomeScreen> {
     }
     final label =
         provider.effort[0].toUpperCase() + provider.effort.substring(1);
-    final chipLabel = isCodex ? 'Reason $label' : label;
     final options = isCodex
         ? const ['low', 'medium', 'high']
         : const ['low', 'medium', 'high', 'max'];
@@ -795,7 +896,7 @@ class HomeScreenState extends State<HomeScreen> {
       tooltip: isCodex ? 'Reasoning effort: $label' : 'Effort: $label',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
-      child: _buildChipBody(icon, chipLabel, iconColor: color),
+      child: _buildChipBody(icon, label, iconColor: color),
       itemBuilder: (context) => [
         for (final e in options)
           PopupMenuItem(
@@ -812,52 +913,6 @@ class HomeScreenState extends State<HomeScreen> {
                   const SizedBox(width: 16),
                 const SizedBox(width: 8),
                 Text(e[0].toUpperCase() + e.substring(1)),
-              ],
-            ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildCodexModeChip(ChatProvider provider) {
-    final modes = provider.codexCollaborationModes;
-    final current = provider.codexCollaborationMode;
-    final selected = modes.firstWhere(
-      (m) => m['id'] == current,
-      orElse: () => {'id': current, 'name': _formatModeName(current)},
-    );
-    final label = (selected['name'] as String? ?? _formatModeName(current))
-        .trim();
-
-    return PopupMenuButton<String>(
-      onOpened: () => provider.requestCodexCollaborationModes(),
-      onSelected: provider.setCodexCollaborationMode,
-      tooltip: 'Codex collaboration mode: $label',
-      padding: EdgeInsets.zero,
-      position: PopupMenuPosition.under,
-      child: _buildChipBody(Icons.groups_outlined, label),
-      itemBuilder: (context) => [
-        for (final mode in modes)
-          PopupMenuItem(
-            value: mode['id'] as String? ?? 'default',
-            child: Row(
-              children: [
-                if ((mode['id'] as String? ?? 'default') == current)
-                  Icon(
-                    Icons.check,
-                    size: 16,
-                    color: Theme.of(context).colorScheme.primary,
-                  )
-                else
-                  const SizedBox(width: 16),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    mode['name'] as String? ??
-                        _formatModeName(mode['id'] as String? ?? 'default'),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
               ],
             ),
           ),
@@ -910,7 +965,7 @@ class HomeScreenState extends State<HomeScreen> {
           'Ask before commands and file changes',
           Icons.shield_outlined,
         ),
-        ('plan', 'Plan', 'Read-only, no execution', Icons.edit_note),
+        ('plan', 'Read Only', 'No commands or file writes', Icons.visibility),
       ];
     }
     return _permModes;

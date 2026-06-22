@@ -136,11 +136,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
   bool _ttsEnabled = false;
   String _effort = 'high';
+  bool _codexFastMode = false;
   Map<String, dynamic> _thinking = {'type': 'adaptive'};
   List<String> _availableTools = [];
   // Per-session disallowed tools and system prompt caches
   final Map<String, List<String>> _sessionDisallowedTools = {};
   final Map<String, String> _sessionSystemPrompts = {};
+  final Map<String, bool> _sessionCodexFastModes = {};
   final Set<String> _locallyClearedSessions = {};
   // Background tasks: taskId → {status, summary, outputFile}
   final Map<String, Map<String, dynamic>> _backgroundTasks = {};
@@ -520,6 +522,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<SdkItem> get rawItems => _rawItems;
   bool get ttsEnabled => _ttsEnabled;
   String get effort => _effort;
+  bool get codexFastMode => _codexFastMode;
   Map<String, dynamic> get thinking => _thinking;
   Map<String, Map<String, dynamic>> get backgroundTasks => _backgroundTasks;
   Map<String, Map<String, dynamic>> get subagentTasks => _subagentTasks;
@@ -1207,6 +1210,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'voice': _kokoroServerEngine.selectedVoice?.id ?? 'af_heart',
     });
     sendTo({'type': 'set_effort', 'effort': _effort});
+    if (_activeSessionBackend == 'codex') {
+      sendTo({'type': 'set_codex_fast_mode', 'enabled': _codexFastMode});
+    }
     sendTo({'type': 'set_thinking', 'thinking': _thinking});
 
     // Send per-session disallowed tools and system prompt if we have an active session
@@ -4043,6 +4049,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'acceptEdits':
         return 'Auto-Edit';
       case 'plan':
+        if (_activeSessionBackend == 'codex') return 'Read Only';
         return 'Plan';
       default:
         return mode;
@@ -4257,16 +4264,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleSessionCreated(Map<String, dynamic> msg) {
     final sessionId = msg['sessionId'] as String?;
+    final backend = msg['backend'] as String?;
+    if (backend != null) _activeSessionBackend = backend;
     if (sessionId != null && sessionId.isNotEmpty) {
       _activeSessionId = sessionId;
+      if (_activeSessionBackend == 'codex') {
+        _sessionCodexFastModes[sessionId] = _codexFastMode;
+      }
       _loadPrepends();
     }
     _activeSessionCwd = msg['cwd'] as String?;
     _activeSessionTitle = msg['title'] as String?;
     // Server echoes the backend on the second session_created (the one with
     // the real id). Capture it so the chat header label is right immediately.
-    final backend = msg['backend'] as String?;
-    if (backend != null) _activeSessionBackend = backend;
     final permissionMode = msg['permissionMode'] as String?;
     if (permissionMode != null) _permissionMode = permissionMode;
     if (_activeSessionBackend == 'codex') requestActiveSkills();
@@ -5129,13 +5139,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _clearPrepends();
     }
 
+    final useCodexFastMode = _activeSessionBackend == 'codex' && _codexFastMode;
     _ws.sendPrompt(
       prompt,
       sessionId: _activeSessionId,
       priority: priority,
       messageId: userMsg.id,
       cwd: _activeSessionId == null ? _activeSessionCwd : null,
+      codexFastMode: useCodexFastMode ? true : null,
     );
+    if (useCodexFastMode) {
+      _codexFastMode = false;
+      if (_activeSessionId != null) {
+        _sessionCodexFastModes[_activeSessionId!] = false;
+      }
+      _connMgr.send({'type': 'set_codex_fast_mode', 'enabled': false});
+    }
 
     // Upload + dispatch done — bubble is officially "sent" now (unless it's
     // queued behind a running query, in which case keep the pending state).
@@ -5356,6 +5375,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _activeSessionId = null;
     final effectiveBackend = backend ?? preferredBackendForServer(serverId);
     _activeSessionBackend = effectiveBackend;
+    _codexFastMode = false;
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
     _isProcessing = false;
@@ -5561,6 +5581,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
+    _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
     _loadPrepends();
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
@@ -5630,6 +5651,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _sendSessionSettings(String sessionId) {
+    if (_activeSessionBackend == 'codex') {
+      _connMgr.send({
+        'type': 'set_codex_fast_mode',
+        'enabled': _sessionCodexFastModes[sessionId] ?? _codexFastMode,
+      });
+    }
     final dt = _sessionDisallowedTools[sessionId];
     if (dt != null && dt.isNotEmpty) {
       _connMgr.send({'type': 'set_disallowed_tools', 'tools': dt});
@@ -6095,6 +6122,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
+    _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
     _isLoadingHistory = true;
     _isProcessing = false;
     _isCompacting = false;
@@ -6119,6 +6147,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
+    _sendSessionSettings(sessionId);
     if (_activeSessionBackend == 'codex') requestActiveSkills();
     notifyListeners();
   }
@@ -6469,6 +6498,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     SharedPreferences.getInstance().then((prefs) {
       prefs.setString('effort', effort);
     });
+  }
+
+  void setCodexFastMode(bool enabled) {
+    _codexFastMode = enabled;
+    if (_activeSessionId != null) {
+      _sessionCodexFastModes[_activeSessionId!] = enabled;
+    }
+    _connMgr.send({'type': 'set_codex_fast_mode', 'enabled': enabled});
+    notifyListeners();
   }
 
   void setThinking(Map<String, dynamic> thinking) {
