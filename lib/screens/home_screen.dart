@@ -1269,8 +1269,40 @@ class HomeScreenState extends State<HomeScreen> {
     final provider = context.read<ChatProvider>();
     Map<String, dynamic>? codexStatus = provider.codexStatus;
     if (provider.activeSessionBackend == 'codex') {
+      final navigator = Navigator.of(context, rootNavigator: true);
+      var loadingOpen = true;
+      unawaited(
+        showDialog<void>(
+          context: context,
+          barrierDismissible: false,
+          builder: (dlgCtx) => AlertDialog(
+            content: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const SizedBox(
+                  width: 22,
+                  height: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 14),
+                Flexible(
+                  child: Text(
+                    'Loading Codex status...',
+                    style: TextStyle(
+                      color: Theme.of(dlgCtx).colorScheme.onSurface,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ).whenComplete(() => loadingOpen = false),
+      );
       codexStatus = await provider.requestCodexStatus() ?? codexStatus;
       if (!mounted) return;
+      if (loadingOpen) {
+        navigator.pop();
+      }
     }
     final ctx = provider.contextUsage;
     final inputTokens = (usage['inputTokens'] as num?)?.toInt() ?? 0;
