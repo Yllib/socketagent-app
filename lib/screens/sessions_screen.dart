@@ -312,31 +312,77 @@ class _SessionsTabState extends State<SessionsTab>
     }
   }
 
+  String? _serverIdForCurrentTab(
+    ChatProvider provider,
+    List<ServerConfig> tabConfigs,
+  ) {
+    final controller = _tabController;
+    if (controller != null && controller.index > 0) {
+      final idx = controller.index - 1;
+      if (idx >= 0 && idx < tabConfigs.length) return tabConfigs[idx].id;
+    }
+
+    final activeServerId = provider.activeServerId;
+    if (activeServerId != null &&
+        provider.serverConfigs.any((c) => c.id == activeServerId)) {
+      return activeServerId;
+    }
+    return null;
+  }
+
+  String? _initialCwdPickerServerId(
+    ChatProvider provider,
+    String? preferredServerId,
+  ) {
+    if (preferredServerId != null &&
+        provider.serverConfigs.any((c) => c.id == preferredServerId)) {
+      return preferredServerId;
+    }
+
+    final connected = provider.serverConfigs
+        .where(
+          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+        )
+        .toList();
+    if (connected.isNotEmpty) return connected.first.id;
+    return provider.serverConfigs.firstOrNull?.id;
+  }
+
+  String _defaultCwdForServer(ChatProvider provider, String? serverId) {
+    final config = serverId == null
+        ? null
+        : provider.serverConfigs.where((c) => c.id == serverId).firstOrNull;
+    final serverDefault = config?.defaultCwd.trim();
+    if (serverDefault != null && serverDefault.isNotEmpty) {
+      return serverDefault;
+    }
+
+    final globalDefault = provider.defaultCwd.trim();
+    if (globalDefault.isNotEmpty &&
+        (serverId == null ||
+            serverId == provider.serverConfigs.firstOrNull?.id)) {
+      return globalDefault;
+    }
+    return '';
+  }
+
   /// Resume-prominent picker: a tall bottom sheet where past sessions in the
   /// chosen folder dominate the available space. Server + backend live as
   /// compact chips at the top (only visible when there's a real choice to
   /// make), recent paths collapse into a horizontal chip strip, and "Start
   /// new session here" is a single FilledButton CTA — so the user can either
   /// pick from past sessions or create a new one with one tap each.
-  void _showCwdPicker(BuildContext context) {
+  void _showCwdPicker(BuildContext context, {String? initialServerId}) {
     final provider = context.read<ChatProvider>();
     final hasMultipleServers = provider.serverConfigs.length > 1;
-    String? selectedServerId;
-    if (hasMultipleServers) {
-      final connected = provider.serverConfigs
-          .where(
-            (c) =>
-                provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
-          )
-          .toList();
-      selectedServerId = connected.isNotEmpty
-          ? connected.first.id
-          : provider.serverConfigs.first.id;
-    } else if (provider.serverConfigs.isNotEmpty) {
-      selectedServerId = provider.serverConfigs.first.id;
-    }
+    String? selectedServerId = _initialCwdPickerServerId(
+      provider,
+      initialServerId,
+    );
 
-    final controller = TextEditingController(text: provider.defaultCwd);
+    final controller = TextEditingController(
+      text: _defaultCwdForServer(provider, selectedServerId),
+    );
     List<Map<String, dynamic>> sdkSessions = [];
     bool loadingSdkSessions = false;
     bool initialFetchDone = false;
@@ -454,12 +500,24 @@ class _SessionsTabState extends State<SessionsTab>
                 tooltip: 'Switch server',
                 position: PopupMenuPosition.under,
                 onSelected: (id) {
+                  final previousDefault = _defaultCwdForServer(
+                    provider,
+                    selectedServerId,
+                  );
+                  final currentPath = controller.text.trim();
                   setSheetState(() {
                     selectedServerId = id;
                     final supported = provider.backendsForServer(id);
                     if (!supported.contains(selectedBackend) &&
                         supported.isNotEmpty) {
                       selectedBackend = provider.preferredBackendForServer(id);
+                    }
+                    if (currentPath.isEmpty || currentPath == previousDefault) {
+                      final nextDefault = _defaultCwdForServer(provider, id);
+                      controller.text = nextDefault;
+                      controller.selection = TextSelection.fromPosition(
+                        TextPosition(offset: nextDefault.length),
+                      );
                     }
                   });
                   fetchSdkSessions();
@@ -1167,7 +1225,10 @@ class _SessionsTabState extends State<SessionsTab>
             borderRadius: BorderRadius.circular(20),
             child: InkWell(
               borderRadius: BorderRadius.circular(20),
-              onTap: () => _showCwdPicker(context),
+              onTap: () => _showCwdPicker(
+                context,
+                initialServerId: _serverIdForCurrentTab(provider, tabConfigs),
+              ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
