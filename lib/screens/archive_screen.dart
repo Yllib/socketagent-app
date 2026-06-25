@@ -551,16 +551,20 @@ class _ArchiveScreenState extends State<ArchiveScreen>
 
   Widget _buildArchiveRow(ArchiveEntry e) {
     final theme = Theme.of(context);
+    final canDelete = !e.isNativeCodexArchive;
     return Dismissible(
       key: Key('archive_${e.serverId}_${e.sid}_${e.ts}'),
-      direction: DismissDirection.endToStart,
-      background: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        color: Colors.red,
-        child: const Icon(Icons.delete, color: Colors.white),
-      ),
+      direction: canDelete ? DismissDirection.endToStart : DismissDirection.none,
+      background: canDelete
+          ? Container(
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 20),
+              color: Colors.red,
+              child: const Icon(Icons.delete, color: Colors.white),
+            )
+          : null,
       confirmDismiss: (_) async {
+        if (!canDelete) return false;
         await _confirmDelete(e);
         return false;
       },
@@ -941,11 +945,12 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
             tooltip: 'Restore',
             onPressed: _confirmRestore,
           ),
-          IconButton(
-            icon: const Icon(Icons.delete_outline),
-            tooltip: 'Delete',
-            onPressed: _confirmDelete,
-          ),
+          if (!widget.entry.isNativeCodexArchive)
+            IconButton(
+              icon: const Icon(Icons.delete_outline),
+              tooltip: 'Delete',
+              onPressed: _confirmDelete,
+            ),
         ],
       ),
       body: _loading

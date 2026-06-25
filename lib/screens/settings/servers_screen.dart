@@ -584,7 +584,6 @@ class _ServersScreenState extends State<ServersScreen> {
         builder: (_) => PairScreen(
           cryptoService:
               provider.connMgr.getCrypto(config.id) ?? provider.crypto,
-          serverId: config.id,
         ),
       ),
     );

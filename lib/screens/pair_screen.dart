@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../services/crypto_service.dart';
 
 /// Pairing result returned to caller with relay data.
@@ -9,22 +8,22 @@ class PairingResult {
   final String relayUrl;
   final String pairingToken;
   final String serverPubkey;
-  PairingResult({required this.relayUrl, required this.pairingToken, required this.serverPubkey});
+  PairingResult({
+    required this.relayUrl,
+    required this.pairingToken,
+    required this.serverPubkey,
+  });
 }
 
 /// QR scanner screen for pairing with a relay server.
 /// Scans a QR code containing {token, pubkey} and stores the pairing data.
 /// Relay URL is hardcoded — all users connect through the same relay.
 /// Also supports manual paste for remote pairing.
-///
-/// If [serverId] is provided, returns a [PairingResult] instead of saving
-/// to shared prefs (for per-server relay pairing).
 class PairScreen extends StatefulWidget {
   static const String relayUrl = 'wss://relay.jarofdirt.info';
   final CryptoService cryptoService;
-  final String? serverId;
 
-  const PairScreen({super.key, required this.cryptoService, this.serverId});
+  const PairScreen({super.key, required this.cryptoService});
 
   @override
   State<PairScreen> createState() => _PairScreenState();
@@ -58,7 +57,8 @@ class _PairScreenState extends State<PairScreen> {
       final parts = rawData.split('|');
       if (parts.length != 3 || (parts[0] != 'SA' && parts[0] != 'SC')) {
         setState(() {
-          _error = 'Invalid QR code — expected SA|token|pubkey or SC|token|pubkey format';
+          _error =
+              'Invalid QR code — expected SA|token|pubkey or SC|token|pubkey format';
           _processing = false;
         });
         return;
@@ -80,25 +80,14 @@ class _PairScreenState extends State<PairScreen> {
       // Set the server's public key
       widget.cryptoService.setServerPublicKey(pubkey);
 
-      if (widget.serverId != null) {
-        // Per-server pairing — return result to caller
-        if (mounted) {
-          Navigator.of(context).pop(PairingResult(
+      if (mounted) {
+        Navigator.of(context).pop(
+          PairingResult(
             relayUrl: PairScreen.relayUrl,
             pairingToken: token,
             serverPubkey: pubkey,
-          ));
-        }
-      } else {
-        // Legacy global pairing — save to shared prefs
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('relay_url', PairScreen.relayUrl);
-        await prefs.setString('pairing_token', token);
-        await prefs.setString('server_pubkey', pubkey);
-
-        if (mounted) {
-          Navigator.of(context).pop(true); // Return success
-        }
+          ),
+        );
       }
     } catch (e) {
       setState(() {
@@ -125,12 +114,15 @@ class _PairScreenState extends State<PairScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_showManualInput ? 'Paste Pairing Data' : 'Scan Pairing QR'),
+        title: Text(
+          _showManualInput ? 'Paste Pairing Data' : 'Scan Pairing QR',
+        ),
         actions: [
           IconButton(
             icon: Icon(_showManualInput ? Icons.qr_code_scanner : Icons.edit),
             tooltip: _showManualInput ? 'Scan QR' : 'Paste manually',
-            onPressed: () => setState(() => _showManualInput = !_showManualInput),
+            onPressed: () =>
+                setState(() => _showManualInput = !_showManualInput),
           ),
         ],
       ),
@@ -170,14 +162,19 @@ class _PairScreenState extends State<PairScreen> {
                             onPressed: _pasteFromClipboard,
                           ),
                         ),
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
                     FilledButton(
                       onPressed: _processing
                           ? null
-                          : () => _processPairingData(_pasteController.text.trim()),
+                          : () => _processPairingData(
+                              _pasteController.text.trim(),
+                            ),
                       child: _processing
                           ? const SizedBox(
                               width: 20,

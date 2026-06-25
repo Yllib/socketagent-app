@@ -13,6 +13,9 @@ class ArchiveEntry {
   final String serverName;
   final int? serverColor;
 
+  bool get isNativeCodexArchive =>
+      backend == 'codex' && ts.startsWith('codex-native-');
+
   const ArchiveEntry({
     required this.sid,
     required this.ts,

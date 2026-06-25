@@ -82,6 +82,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, BytesBuilder> _fileBytesBuffers = {};
   final Map<String, Completer<String?>> _fileBytesCompleters = {};
   final Map<String, String> _filePathToId = {}; // serverPath → latest fileId
+  final Map<String, String> _authRequestServers = {};
+  final Map<String, String> _authRequestSessions = {};
   String? _activeSessionId;
   String? _activeSessionCwd;
   String? _activeSessionTitle;
@@ -92,6 +94,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Set<String> _notifMutedSessions = {};
   // Pinned sessions
   Set<String> _pinnedSessionIds = {};
+  final Map<String, Session> _pendingArchivedSessions = {};
+  final Map<String, DateTime> _archivedSessionTombstones = {};
+  static const Duration _archiveTombstoneTtl = Duration(seconds: 30);
   // Persistent recent CWDs per server (serverId → ordered list, most recent first)
   final Map<String, List<String>> _recentCwds = {};
   // Backends each server can drive (serverId → ['claude','codex'] or just
@@ -130,6 +135,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<dynamic>? _supportedAgents;
   bool _taskPaneCollapsed = false;
   List<String> _pendingPrepends = [];
+  int _pendingInjectedMessageCount = 0;
   final List<Map<String, String>> _pendingImageLoads =
       []; // {toolUseId, filePath}
   bool _isLoadingHistory = false;
@@ -588,14 +594,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // transcript position. Keep them visually pinned to the bottom until the
     // server confirms the agent received them; then they fall back into the
     // normal message order used by history.
-    final queued = visible
-        .where(
-          (m) =>
-              m.sender == MessageSender.user &&
-              m.isPending &&
-              m.injectionPriority != null,
-        )
-        .toList();
+    if (_pendingInjectedMessageCount == 0) return visible;
+
+    final queued = visible.where(_isPendingInjectedMessage).toList();
     if (queued.isEmpty) return visible;
 
     return [...visible.where((m) => !queued.contains(m)), ...queued];
@@ -692,19 +693,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void notifyListeners() {
-    _keepPendingInjectedMessagesAtEnd();
+    if (_pendingInjectedMessageCount > 0) {
+      _keepPendingInjectedMessagesAtEnd();
+    }
     super.notifyListeners();
   }
 
+  bool _isPendingInjectedMessage(ChatMessage m) {
+    return m.sender == MessageSender.user &&
+        m.isPending &&
+        m.injectionPriority != null;
+  }
+
+  void _recountPendingInjectedMessages() {
+    _pendingInjectedMessageCount = _messages
+        .where(_isPendingInjectedMessage)
+        .length;
+  }
+
   void _keepPendingInjectedMessagesAtEnd() {
-    final pending = _messages
-        .where(
-          (m) =>
-              m.sender == MessageSender.user &&
-              m.isPending &&
-              m.injectionPriority != null,
-        )
-        .toList();
+    final pending = _messages.where(_isPendingInjectedMessage).toList();
+    _pendingInjectedMessageCount = pending.length;
     if (pending.isEmpty) return;
 
     final pendingIds = pending.map((m) => m.id).toSet();
@@ -1027,13 +1036,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       pairingToken: result.pairingToken,
       serverPubkey: result.serverPubkey,
     );
-    await addServer(config);
-    await _connMgr.configureServerRelay(
-      config.id,
-      relayUrl: result.relayUrl,
-      pairingToken: result.pairingToken,
-      serverPubkey: result.serverPubkey,
-    );
+    _serverConfigs.add(config);
+    await _saveServerConfigs();
+    await _connMgr.setServers(_serverConfigs);
+    await _registerPushNotifications();
+    notifyListeners();
   }
 
   Future<void> updateServer(ServerConfig config) async {
@@ -1082,6 +1089,110 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _rebuildSessionList() {
     _sessions = _perServerSessions.values.expand((list) => list).toList()
       ..sort((a, b) => b.lastActive.compareTo(a.lastActive));
+  }
+
+  String _archivePendingKey(String? serverId, String sessionId) {
+    return '${serverId ?? ''}\u0001$sessionId';
+  }
+
+  String _archiveKeySessionId(String key) {
+    final separator = key.indexOf('\u0001');
+    return separator >= 0 ? key.substring(separator + 1) : key;
+  }
+
+  void _pruneArchivedSessionTombstones() {
+    final cutoff = DateTime.now().subtract(_archiveTombstoneTtl);
+    _archivedSessionTombstones.removeWhere((_, at) => at.isBefore(cutoff));
+  }
+
+  void _markArchivedSessionHidden(String? serverId, String sessionId) {
+    _pruneArchivedSessionTombstones();
+    _archivedSessionTombstones[_archivePendingKey(serverId, sessionId)] =
+        DateTime.now();
+  }
+
+  bool _isSessionArchiveHidden(String? serverId, String sessionId) {
+    _pruneArchivedSessionTombstones();
+    if (_pendingArchivedSessions.containsKey(
+      _archivePendingKey(serverId, sessionId),
+    )) {
+      return true;
+    }
+    if (_archivedSessionTombstones.containsKey(
+      _archivePendingKey(serverId, sessionId),
+    )) {
+      return true;
+    }
+    return _pendingArchivedSessions.values.any((s) => s.id == sessionId) ||
+        _archivedSessionTombstones.keys.any(
+          (key) => _archiveKeySessionId(key) == sessionId,
+        );
+  }
+
+  void _clearArchiveMarkers(String? serverId, String sessionId) {
+    _pendingArchivedSessions.remove(_archivePendingKey(serverId, sessionId));
+    _archivedSessionTombstones.remove(_archivePendingKey(serverId, sessionId));
+    _pendingArchivedSessions.removeWhere(
+      (_, session) => session.id == sessionId,
+    );
+    _archivedSessionTombstones.removeWhere(
+      (key, _) => _archiveKeySessionId(key) == sessionId,
+    );
+  }
+
+  void _removeSessionFromLists(String? serverId, String sessionId) {
+    _sessions.removeWhere((s) => s.id == sessionId);
+    if (serverId != null && serverId.isNotEmpty) {
+      _perServerSessions[serverId]?.removeWhere((s) => s.id == sessionId);
+    } else {
+      for (final sessions in _perServerSessions.values) {
+        sessions.removeWhere((s) => s.id == sessionId);
+      }
+    }
+    if (_perServerSessions.isNotEmpty) {
+      _rebuildSessionList();
+    }
+  }
+
+  Session? _takePendingArchivedSession(String? serverId, String sessionId) {
+    final exact = _pendingArchivedSessions.remove(
+      _archivePendingKey(serverId, sessionId),
+    );
+    if (exact != null) return exact;
+
+    for (final entry in _pendingArchivedSessions.entries) {
+      if (entry.value.id == sessionId &&
+          (serverId == null || entry.value.serverId == serverId)) {
+        _pendingArchivedSessions.remove(entry.key);
+        return entry.value;
+      }
+    }
+    return null;
+  }
+
+  void _dropPendingArchivedSession(String? serverId, String sessionId) {
+    _takePendingArchivedSession(serverId, sessionId);
+    _markArchivedSessionHidden(serverId, sessionId);
+    _removeSessionFromLists(serverId, sessionId);
+  }
+
+  void _restorePendingArchivedSession(String? serverId, String sessionId) {
+    final session = _takePendingArchivedSession(serverId, sessionId);
+    _archivedSessionTombstones.removeWhere(
+      (key, _) => _archiveKeySessionId(key) == sessionId,
+    );
+    if (session == null) return;
+
+    if (session.serverId.isNotEmpty) {
+      final list = _perServerSessions.putIfAbsent(session.serverId, () => []);
+      if (!list.any((s) => s.id == session.id)) {
+        list.add(session);
+      }
+      _rebuildSessionList();
+    } else if (!_sessions.any((s) => s.id == session.id)) {
+      _sessions.add(session);
+      _sessions.sort((a, b) => b.lastActive.compareTo(a.lastActive));
+    }
   }
 
   /// Export all server configs as compact maps for QR transfer.
@@ -1977,6 +2088,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'recent_cwds',
       'archive_list',
       'archive_history',
+      'session_archived',
+      'session_archive_failed',
       'archive_restored',
       'archive_restore_failed',
       'archive_deleted',
@@ -2591,14 +2704,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             (m) => m.id == ackMsgId && m.isPending,
           );
           if (idx >= 0) {
+            if (_isPendingInjectedMessage(_messages[idx]) &&
+                _pendingInjectedMessageCount > 0) {
+              _pendingInjectedMessageCount--;
+            }
             _messages[idx].isPending = false;
             _messages[idx].injectionPriority = null;
             notifyListeners();
           }
         } else {
           // No messageId — promote the oldest pending message
-          final idx = _messages.indexWhere((m) => m.isPending);
+          final idx = _messages.indexWhere(_isPendingInjectedMessage);
           if (idx >= 0) {
+            if (_pendingInjectedMessageCount > 0) {
+              _pendingInjectedMessageCount--;
+            }
             _messages[idx].isPending = false;
             _messages[idx].injectionPriority = null;
             notifyListeners();
@@ -2857,7 +2977,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ?.complete(messages);
         _archiveHistoryCompleters.remove('${sid}_$ts')?.complete(messages);
         break;
+      case 'session_archived':
+        final archivedId = msg['sessionId'] as String? ?? '';
+        if (archivedId.isNotEmpty) {
+          _dropPendingArchivedSession(serverId, archivedId);
+          notifyListeners();
+        }
+        break;
+      case 'session_archive_failed':
+        final failedId = msg['sessionId'] as String? ?? '';
+        if (failedId.isNotEmpty) {
+          _restorePendingArchivedSession(serverId, failedId);
+        }
+        _messages.add(
+          ChatMessage.error(
+            'Archive failed: ${msg['error'] ?? 'unknown error'}',
+          ),
+        );
+        notifyListeners();
+        break;
       case 'archive_restored':
+        final restoredId =
+            (msg['session'] as Map?)?['id'] as String? ??
+            msg['sid'] as String? ??
+            '';
+        if (restoredId.isNotEmpty) {
+          _clearArchiveMarkers(serverId, restoredId);
+        }
         _archiveFeedback.add(
           'Restored "${(msg['session'] as Map?)?['title'] ?? 'session'}"',
         );
@@ -2880,6 +3026,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         if (clearedId == _activeSessionId) {
           _messages.clear();
+          _pendingInjectedMessageCount = 0;
           _todos.clear();
           _currentStreamingMessage = null;
           _lastUsage = null;
@@ -3012,10 +3159,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         break;
       case 'outlook_auth':
-        _handleOutlookAuth(msg);
+        _handleOutlookAuth(msg, serverId);
         break;
       case 'ibs_auth':
-        _handleIBSAuth(msg);
+        _handleIBSAuth(msg, serverId);
         break;
       case 'ibs_auth_result':
         _handleIBSAuthResult(msg);
@@ -3084,11 +3231,48 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _handleOutlookAuth(Map<String, dynamic> msg) {
+  void _rememberAuthRequestRoute(
+    String authRequestId,
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) {
+    if (serverId != null && serverId.isNotEmpty) {
+      _authRequestServers[authRequestId] = serverId;
+    }
+    final sessionId = msg['sessionId'] as String?;
+    if (sessionId != null && sessionId.isNotEmpty) {
+      _authRequestSessions[authRequestId] = sessionId;
+    }
+  }
+
+  void _clearAuthRequestRoute(String authRequestId) {
+    _authRequestServers.remove(authRequestId);
+    _authRequestSessions.remove(authRequestId);
+  }
+
+  void _sendAuthAnswer(String authRequestId, Map<String, String> answers) {
+    final serverId = _authRequestServers[authRequestId];
+    final sessionId = _authRequestSessions[authRequestId];
+    final msg = <String, dynamic>{
+      'type': 'answer',
+      'questionId': authRequestId,
+      'answers': answers,
+      if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+    };
+
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
+  }
+
+  void _handleOutlookAuth(Map<String, dynamic> msg, [String? serverId]) {
     _currentStreamingMessage = null;
     final authRequestId = msg['authRequestId'] as String? ?? '';
     if (authRequestId.isEmpty) return;
 
+    _rememberAuthRequestRoute(authRequestId, msg, serverId);
     _messages.add(ChatMessage.outlookAuth(authRequestId: authRequestId));
     notifyListeners();
   }
@@ -3103,11 +3287,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (idx >= 0) {
       _messages[idx].answered = true;
     }
-    _ws.sendAnswer(authRequestId, answers);
+    _sendAuthAnswer(authRequestId, answers);
     notifyListeners();
   }
 
   void _handleOutlookAuthResult(Map<String, dynamic> msg) {
+    final authRequestId = msg['authRequestId'] as String? ?? '';
+    if (authRequestId.isNotEmpty) {
+      _clearAuthRequestRoute(authRequestId);
+    }
     final success = msg['success'] as bool? ?? false;
     final message =
         msg['message'] as String? ??
@@ -3144,11 +3332,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void _handleIBSAuth(Map<String, dynamic> msg) {
+  void _handleIBSAuth(Map<String, dynamic> msg, [String? serverId]) {
     _currentStreamingMessage = null;
     final authRequestId = msg['authRequestId'] as String? ?? '';
     if (authRequestId.isEmpty) return;
 
+    _rememberAuthRequestRoute(authRequestId, msg, serverId);
     _messages.add(ChatMessage.ibsAuth(authRequestId: authRequestId));
     notifyListeners();
   }
@@ -3162,11 +3351,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (idx >= 0) {
       _messages[idx].answered = true;
     }
-    _ws.sendAnswer(authRequestId, answers);
+    _sendAuthAnswer(authRequestId, answers);
     notifyListeners();
   }
 
   void _handleIBSAuthResult(Map<String, dynamic> msg) {
+    final authRequestId = msg['authRequestId'] as String? ?? '';
+    if (authRequestId.isNotEmpty) {
+      _clearAuthRequestRoute(authRequestId);
+    }
     final success = msg['success'] as bool? ?? false;
     final message =
         msg['message'] as String? ??
@@ -4973,6 +5166,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _subagentTasks.clear();
       _isLoadingHistory = false;
     }
+    _recountPendingInjectedMessages();
     // Fallback: if server didn't include 'todos' field (old server compat),
     // sync _todos from the last todos_update in history for dedup.
     if (rawTodos == null && _historyPrevTodos.isNotEmpty) {
@@ -5049,6 +5243,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             serverColor: serverConfig?.colorValue,
           ),
         )
+        .where((s) => !_isSessionArchiveHidden(serverId, s.id))
         .toList();
 
     if (serverId != null) {
@@ -5090,6 +5285,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (priority != null && _isProcessing) {
       userMsg.isPending = true;
       userMsg.injectionPriority = priority;
+      _pendingInjectedMessageCount++;
     }
     if (hasAttachmentForSend) {
       userMsg.isPending = true;
@@ -5191,6 +5387,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final text = _messages[idx].textContent;
     _messages.removeAt(idx);
+    if (_pendingInjectedMessageCount > 0) {
+      _pendingInjectedMessageCount--;
+    }
     _ws.sendRetractQueuedPrompt(messageId);
     notifyListeners();
     return text;
@@ -5385,6 +5584,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void createNewSession({String? cwd, String? serverId, String? backend}) {
     _messages = [];
+    _pendingInjectedMessageCount = 0;
     _todos = [];
     _lastUsage = null;
     _activeSessionId = null;
@@ -5618,6 +5818,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void resumeSession(String sessionId) {
     _messages = [];
+    _pendingInjectedMessageCount = 0;
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
@@ -5660,10 +5861,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(session.serverId, {
         'type': 'resume_session',
         'sessionId': sessionId,
+        'cwd': session.cwd,
+        if (session.backend != null) 'backend': session.backend,
       });
       _connMgr.sendToServer(session.serverId, {'type': 'get_status_sync'});
     } else {
-      _ws.sendResumeSession(sessionId);
+      if (session != null) {
+        _ws.send({
+          'type': 'resume_session',
+          'sessionId': sessionId,
+          'cwd': session.cwd,
+          if (session.backend != null) 'backend': session.backend,
+        });
+      } else {
+        _ws.sendResumeSession(sessionId);
+      }
       _ws.send({'type': 'get_status_sync'});
     }
 
@@ -6159,6 +6371,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? backend,
   }) {
     _messages = [];
+    _pendingInjectedMessageCount = 0;
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
@@ -6337,12 +6550,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void archiveSession(String sessionId) {
     final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
-    _sessions.removeWhere((s) => s.id == sessionId);
-    if (session != null && session.serverId.isNotEmpty) {
-      _perServerSessions[session.serverId]?.removeWhere(
-        (s) => s.id == sessionId,
-      );
-      _connMgr.sendToServer(session.serverId, {
+    final serverId = session?.serverId.isNotEmpty == true
+        ? session!.serverId
+        : null;
+    _markArchivedSessionHidden(serverId, sessionId);
+    if (session != null) {
+      _pendingArchivedSessions[_archivePendingKey(serverId, sessionId)] =
+          session;
+    }
+    _removeSessionFromLists(serverId, sessionId);
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, {
         'type': 'archive_session',
         'sessionId': sessionId,
       });
@@ -6368,6 +6586,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         serverId: s.serverId,
         serverName: s.serverName,
         serverColor: s.serverColor,
+        backend: s.backend,
+        codexDriver: s.codexDriver,
       );
     }
     // Update active session title if renaming the current session
@@ -6406,6 +6626,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // If this is the active session, clear local messages/todos
     if (_activeSessionId == sessionId) {
       _messages.clear();
+      _pendingInjectedMessageCount = 0;
       _todos.clear();
       _currentStreamingMessage = null;
       _lastUsage = null;

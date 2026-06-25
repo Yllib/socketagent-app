@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import 'pair_screen.dart';
+import 'paywall_screen.dart';
 
 class OnboardingScreen extends StatelessWidget {
   const OnboardingScreen({super.key});
@@ -59,10 +60,7 @@ class OnboardingScreen extends StatelessWidget {
                       command: _windowsCmd,
                     ),
                     const SizedBox(height: 10),
-                    _CommandBlock(
-                      label: 'Linux',
-                      command: _linuxCmd,
-                    ),
+                    _CommandBlock(label: 'Linux', command: _linuxCmd),
                     const SizedBox(height: 8),
                     Text(
                       'This installs Node.js, the selected agent CLI(s), and the SocketAgent server. A QR code will appear when it\'s done.',
@@ -81,7 +79,7 @@ class OnboardingScreen extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'After the installer finishes, scan the QR code shown on your PC to pair this app with your server.',
+                      'After the installer finishes, sign in to the relay and scan the QR code shown on your PC.',
                       style: TextStyle(fontSize: 13, color: muted),
                     ),
                     const SizedBox(height: 12),
@@ -90,7 +88,7 @@ class OnboardingScreen extends StatelessWidget {
                       child: FilledButton.icon(
                         onPressed: () => _openScanner(context),
                         icon: const Icon(Icons.qr_code_scanner, size: 20),
-                        label: const Text('Scan QR Code'),
+                        label: const Text('Continue with Relay'),
                       ),
                     ),
                   ],
@@ -123,14 +121,37 @@ class OnboardingScreen extends StatelessWidget {
 
   void _openScanner(BuildContext context) async {
     final provider = context.read<ChatProvider>();
+    final hasActiveSubscription =
+        provider.subscriberToken.isNotEmpty &&
+        await provider.checkSubscriptionStatus();
+    if (!context.mounted) return;
+
+    if (!hasActiveSubscription) {
+      final signedIn = await Navigator.of(
+        context,
+      ).push<bool>(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+      if (!context.mounted) return;
+
+      if (signedIn != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sign in or start a trial to scan the relay QR.'),
+          ),
+        );
+        return;
+      }
+    }
+
     final result = await Navigator.of(context).push<PairingResult>(
       MaterialPageRoute(
         builder: (_) => PairScreen(cryptoService: provider.crypto),
       ),
     );
-    if (result != null && context.mounted) {
-      await provider.addServerFromPairing(result);
-    }
+    if (result == null || !context.mounted) return;
+
+    await provider.addServerFromPairing(result);
+    await provider.connectToServer();
+    provider.requestSessionList();
   }
 }
 
@@ -243,11 +264,7 @@ class _CommandBlock extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(
-                  Icons.copy,
-                  size: 16,
-                  color: Colors.grey.shade500,
-                ),
+                Icon(Icons.copy, size: 16, color: Colors.grey.shade500),
               ],
             ),
           ),
