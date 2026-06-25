@@ -1466,6 +1466,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// `relay_url` can be stale on upgraded installs and should only be a
   /// fallback.
   String? _relayHttpUrl() {
+    return _relayHttpUrlCandidates().firstOrNull;
+  }
+
+  List<String> _relayHttpUrlCandidates() {
     final candidates = <String>[
       if (_connMgr.activeConfig?.relayUrl.isNotEmpty == true)
         _connMgr.activeConfig!.relayUrl,
@@ -1477,11 +1481,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'wss://relay.jarofdirt.info',
     ];
 
+    final urls = <String>[];
+    final seen = <String>{};
     for (final candidate in candidates) {
       final normalized = _relayHttpUrlFromWs(candidate);
-      if (normalized != null) return normalized;
+      if (normalized != null && seen.add(normalized)) {
+        urls.add(normalized);
+      }
     }
-    return null;
+    return urls;
   }
 
   String? _relayHttpUrlFromWs(String relayUrl) {
@@ -1571,35 +1579,45 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<Map<String, dynamic>?> createCheckoutSession(String email) async {
     final prefs = await SharedPreferences.getInstance();
     _cachedPrefs = prefs;
-    final httpUrl = _relayHttpUrl();
-    if (httpUrl == null) return null;
-
-    try {
-      final uri = Uri.parse('$httpUrl/api/checkout');
-      final response = await http
-          .post(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'email': email.trim()}),
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body) as Map<String, dynamic>;
-      }
-      // Return server error so the UI can display it
-      try {
-        final errBody = jsonDecode(response.body) as Map<String, dynamic>;
-        return {
-          'error': errBody['error'] ?? 'Server error (${response.statusCode})',
-        };
-      } catch (_) {
-        return {'error': 'Server error (${response.statusCode})'};
-      }
-    } catch (e) {
-      debugPrint('[Subscription] Checkout error: $e');
+    final httpUrls = _relayHttpUrlCandidates();
+    if (httpUrls.isEmpty) {
+      return {'error': 'Relay checkout URL is not configured'};
     }
-    return null;
+
+    Object? lastError;
+    for (final httpUrl in httpUrls) {
+      try {
+        final uri = Uri.parse('$httpUrl/api/checkout');
+        final response = await http
+            .post(
+              uri,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'email': email.trim()}),
+            )
+            .timeout(const Duration(seconds: 15));
+
+        if (response.statusCode == 200) {
+          return jsonDecode(response.body) as Map<String, dynamic>;
+        }
+        // Return server error so the UI can display it.
+        try {
+          final errBody = jsonDecode(response.body) as Map<String, dynamic>;
+          return {
+            'error':
+                errBody['error'] ?? 'Server error (${response.statusCode})',
+          };
+        } catch (_) {
+          return {'error': 'Server error (${response.statusCode})'};
+        }
+      } catch (e) {
+        lastError = e;
+        debugPrint('[Subscription] Checkout error via $httpUrl: $e');
+      }
+    }
+    return {
+      'error':
+          'Could not reach relay checkout at ${httpUrls.join(', ')}: $lastError',
+    };
   }
 
   /// Verify a completed Stripe Checkout Session and get signed token

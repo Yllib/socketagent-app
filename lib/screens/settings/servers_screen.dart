@@ -6,6 +6,7 @@ import '../../services/chat_provider.dart';
 import '../../services/websocket_service.dart';
 import '../../services/window_security_service.dart';
 import '../pair_screen.dart';
+import '../paywall_screen.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
 import '../outlook_auth_screen.dart';
@@ -490,7 +491,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     : null,
                 size: 16,
               ),
-              onPressed: () {
+              onPressed: () async {
                 final name = nameCtrl.text.trim();
                 if (!useRelay) {
                   final host = hostCtrl.text.trim();
@@ -527,6 +528,12 @@ class _ServersScreenState extends State<ServersScreen> {
                     );
                     return;
                   }
+                  final hasRelayAccess = await _ensureRelayAccess(
+                    context,
+                    provider,
+                  );
+                  if (!mounted || !ctx.mounted || !hasRelayAccess) return;
+
                   final config = ServerConfig(
                     id: existing?.id ?? ServerConfig.generateId(),
                     name: name,
@@ -545,16 +552,27 @@ class _ServersScreenState extends State<ServersScreen> {
                   );
 
                   if (existing != null) {
-                    provider.updateServer(config);
-                    Navigator.pop(ctx);
+                    await provider.updateServer(config);
+                    if (ctx.mounted) Navigator.pop(ctx);
                     if (!config.isRelayPaired) {
-                      _pairServerRelay(context, provider, config);
+                      _pairServerRelay(
+                        context,
+                        provider,
+                        config,
+                        requireRelayAccess: false,
+                      );
                     }
                   } else {
-                    provider.addServer(config).then((_) {
-                      Navigator.pop(ctx);
-                      _pairServerRelay(context, provider, config);
-                    });
+                    await provider.addServer(config);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    if (mounted) {
+                      _pairServerRelay(
+                        context,
+                        provider,
+                        config,
+                        requireRelayAccess: false,
+                      );
+                    }
                   }
                 }
               },
@@ -577,8 +595,14 @@ class _ServersScreenState extends State<ServersScreen> {
   Future<void> _pairServerRelay(
     BuildContext context,
     ChatProvider provider,
-    ServerConfig config,
-  ) async {
+    ServerConfig config, {
+    bool requireRelayAccess = true,
+  }) async {
+    if (requireRelayAccess) {
+      final hasRelayAccess = await _ensureRelayAccess(context, provider);
+      if (!mounted || !context.mounted || !hasRelayAccess) return;
+    }
+
     final result = await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PairScreen(
@@ -596,6 +620,32 @@ class _ServersScreenState extends State<ServersScreen> {
       );
       setState(() {});
     }
+  }
+
+  Future<bool> _ensureRelayAccess(
+    BuildContext context,
+    ChatProvider provider,
+  ) async {
+    final hasActiveSubscription =
+        provider.subscriberToken.isNotEmpty &&
+        await provider.checkSubscriptionStatus();
+    if (!mounted || !context.mounted) return false;
+    if (hasActiveSubscription) return true;
+
+    final signedIn = await Navigator.of(
+      context,
+    ).push<bool>(MaterialPageRoute(builder: (_) => const PaywallScreen()));
+    if (!mounted || !context.mounted) return false;
+
+    if (signedIn != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Sign up for relay before scanning a QR code.'),
+        ),
+      );
+      return false;
+    }
+    return true;
   }
 
   void _showServerMenu(

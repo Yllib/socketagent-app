@@ -26,13 +26,7 @@ class SettingsHub extends StatelessWidget {
             padding: const EdgeInsets.only(bottom: 24),
             children: [
               // Account card — always visible, prominent
-              AccountCard(
-                onNavigateToServers: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(builder: (_) => const ServersScreen()),
-                  );
-                },
-              ),
+              const AccountCard(),
               const SizedBox(height: 8),
 
               // Servers

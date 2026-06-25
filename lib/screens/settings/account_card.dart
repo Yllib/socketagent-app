@@ -5,9 +5,7 @@ import '../../services/chat_provider.dart';
 import '../paywall_screen.dart';
 
 class AccountCard extends StatelessWidget {
-  final VoidCallback? onNavigateToServers;
-
-  const AccountCard({super.key, this.onNavigateToServers});
+  const AccountCard({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -19,16 +17,31 @@ class AccountCard extends StatelessWidget {
 
         // State 1: No servers configured
         if (!hasServers) {
+          if (hasToken &&
+              (!provider.subscriptionChecked || provider.subscriptionActive)) {
+            return _SignedInCard(provider: provider);
+          }
+
           return _buildCard(
             context,
-            icon: Icons.waving_hand,
+            icon: Icons.bolt,
             iconColor: Theme.of(context).colorScheme.primary,
-            title: 'Welcome to SocketAgent',
-            subtitle: 'Add a server to get started',
+            title: 'Relay access',
+            subtitle: 'Sign up for relay, then pair your server',
             action: FilledButton.icon(
-              onPressed: onNavigateToServers,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Add Server'),
+              onPressed: () {
+                Navigator.of(context)
+                    .push(
+                      MaterialPageRoute(builder: (_) => const PaywallScreen()),
+                    )
+                    .then((result) {
+                      if (result == true) {
+                        provider.connectToServer();
+                      }
+                    });
+              },
+              icon: const Icon(Icons.login, size: 18),
+              label: const Text('Sign Up'),
             ),
           );
         }
