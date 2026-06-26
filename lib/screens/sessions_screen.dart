@@ -59,10 +59,25 @@ class _SessionsTabState extends State<SessionsTab>
     String? backend,
     bool sdkSession = false,
   }) async {
+    final provider = context.read<ChatProvider>();
+    if (sessionId != null) {
+      final session = provider.sessions
+          .where(
+            (session) =>
+                session.id == sessionId &&
+                (serverId == null ||
+                    serverId.isEmpty ||
+                    session.serverId == serverId),
+          )
+          .firstOrNull;
+      if (session != null && !provider.isSessionAvailable(session)) {
+        _showOfflineSessionSnack(context, session);
+        return;
+      }
+    }
+
     if (!await _requireSubscription()) return;
     if (!context.mounted) return;
-
-    final provider = context.read<ChatProvider>();
 
     if (sdkSession && sessionId != null && cwd != null) {
       provider.resumeSdkSession(
@@ -72,7 +87,7 @@ class _SessionsTabState extends State<SessionsTab>
         backend: backend,
       );
     } else if (sessionId != null) {
-      provider.resumeSession(sessionId);
+      provider.resumeSession(sessionId, serverId: serverId);
     } else {
       // The CWD picker now collects server + backend + cwd in one sheet,
       // so backend usually arrives already chosen. Only show the fallback
@@ -1986,6 +2001,10 @@ class _SessionsTabState extends State<SessionsTab>
 
   Widget _buildSessionTile(BuildContext context, Session session) {
     final theme = Theme.of(context);
+    final provider = context.read<ChatProvider>();
+    final status = provider.sessionServerStatus(session);
+    final isAvailable = provider.isSessionAvailable(session);
+    final showRunning = session.running && isAvailable;
     final timeDiff = DateTime.now().difference(session.lastActive);
     String timeAgo;
     if (timeDiff.inMinutes < 1) {
@@ -2012,8 +2031,10 @@ class _SessionsTabState extends State<SessionsTab>
     final primaryText = hasTitle ? session.title : displayCwd;
 
     return Dismissible(
-      key: Key(session.id),
-      direction: DismissDirection.horizontal,
+      key: Key('${session.serverId}:${session.id}'),
+      direction: isAvailable
+          ? DismissDirection.horizontal
+          : DismissDirection.none,
       background: Container(
         alignment: Alignment.centerLeft,
         padding: const EdgeInsets.only(left: 20),
@@ -2027,6 +2048,10 @@ class _SessionsTabState extends State<SessionsTab>
         child: const Icon(Icons.archive, color: Colors.white),
       ),
       confirmDismiss: (dir) async {
+        if (!isAvailable) {
+          _showOfflineSessionSnack(context, session);
+          return false;
+        }
         if (dir == DismissDirection.endToStart) {
           return _confirmArchiveSession(context, session);
         }
@@ -2034,165 +2059,213 @@ class _SessionsTabState extends State<SessionsTab>
         return false;
       },
       child: InkWell(
-        onTap: () => _openSession(context, sessionId: session.id),
-        onLongPress: () => _showSessionContextMenu(context, session),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(top: 2, right: 12),
-                child: session.running
-                    ? SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: theme.colorScheme.primary,
+        onTap: isAvailable
+            ? () => _openSession(
+                context,
+                sessionId: session.id,
+                serverId: session.serverId,
+              )
+            : () => _showOfflineSessionSnack(context, session),
+        onLongPress: isAvailable
+            ? () => _showSessionContextMenu(context, session)
+            : () => _showOfflineSessionSnack(context, session),
+        child: Opacity(
+          opacity: isAvailable ? 1 : 0.48,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2, right: 12),
+                  child: showRunning
+                      ? SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: theme.colorScheme.primary,
+                          ),
+                        )
+                      : Icon(
+                          provider.isSessionPinned(session.id)
+                              ? Icons.push_pin
+                              : isAvailable
+                              ? Icons.terminal
+                              : Icons.cloud_off_outlined,
+                          size: 20,
+                          color: provider.isSessionPinned(session.id)
+                              ? theme.colorScheme.primary.withAlpha(180)
+                              : theme.colorScheme.onSurface.withAlpha(128),
                         ),
-                      )
-                    : Icon(
-                        context.read<ChatProvider>().isSessionPinned(session.id)
-                            ? Icons.push_pin
-                            : Icons.terminal,
-                        size: 20,
-                        color:
-                            context.read<ChatProvider>().isSessionPinned(
-                              session.id,
-                            )
-                            ? theme.colorScheme.primary.withAlpha(180)
-                            : theme.colorScheme.onSurface.withAlpha(128),
-                      ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Line 1: Title (or CWD if no title)
-                    Text(
-                      primaryText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w500,
-                        fontSize: 14,
-                        color: theme.colorScheme.onSurface,
-                      ),
-                    ),
-                    // Line 2: CWD (if title was shown) or message preview
-                    if (hasTitle) ...[
-                      const SizedBox(height: 3),
+                ),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Line 1: Title (or CWD if no title)
                       Text(
-                        displayCwd,
+                        primaryText,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 12,
-                          color: theme.colorScheme.onSurface.withAlpha(140),
+                          fontWeight: FontWeight.w500,
+                          fontSize: 14,
+                          color: theme.colorScheme.onSurface,
                         ),
                       ),
-                    ] else if (session.messagePreview.isNotEmpty) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        session.messagePreview,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: theme.colorScheme.onSurface.withAlpha(178),
+                      // Line 2: CWD (if title was shown) or message preview
+                      if (hasTitle) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          displayCwd,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurface.withAlpha(140),
+                          ),
                         ),
+                      ] else if (session.messagePreview.isNotEmpty) ...[
+                        const SizedBox(height: 3),
+                        Text(
+                          session.messagePreview,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: theme.colorScheme.onSurface.withAlpha(178),
+                          ),
+                        ),
+                      ],
+                      // Line 3: Time ago + server badge
+                      const SizedBox(height: 3),
+                      Row(
+                        children: [
+                          Text(
+                            showRunning ? 'Working... · $timeAgo' : timeAgo,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: showRunning
+                                  ? theme.colorScheme.primary
+                                  : theme.colorScheme.onSurface.withAlpha(128),
+                            ),
+                          ),
+                          if (session.serverName.isNotEmpty &&
+                              provider.serverConfigs.length > 1) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: session.serverColor != null
+                                    ? Color(
+                                        session.serverColor!,
+                                      ).withAlpha(showRunning ? 200 : 140)
+                                    : theme.colorScheme.primaryContainer
+                                          .withAlpha(120),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                session.serverName,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: session.serverColor != null
+                                      ? FontWeight.w500
+                                      : null,
+                                  color: session.serverColor != null
+                                      ? Colors.white
+                                      : theme.colorScheme.onPrimaryContainer,
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (!isAvailable) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color:
+                                    theme.colorScheme.surfaceContainerHighest,
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                _serverStatusLabel(status).toUpperCase(),
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.5,
+                                  color: theme.colorScheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ),
+                          ],
+                          // Codex sessions get a small badge so mixed backend
+                          // lists are easy to scan.
+                          if (session.backend == 'codex') ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.tertiaryContainer
+                                    .withAlpha(170),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                'CODEX',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.5,
+                                  color: theme.colorScheme.onTertiaryContainer,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
                       ),
                     ],
-                    // Line 3: Time ago + server badge
-                    const SizedBox(height: 3),
-                    Row(
-                      children: [
-                        Text(
-                          session.running ? 'Working... · $timeAgo' : timeAgo,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: session.running
-                                ? theme.colorScheme.primary
-                                : theme.colorScheme.onSurface.withAlpha(128),
-                          ),
-                        ),
-                        if (session.serverName.isNotEmpty &&
-                            context.read<ChatProvider>().serverConfigs.length >
-                                1) ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: session.serverColor != null
-                                  ? Color(
-                                      session.serverColor!,
-                                    ).withAlpha(session.running ? 200 : 140)
-                                  : theme.colorScheme.primaryContainer
-                                        .withAlpha(120),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              session.serverName,
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: session.serverColor != null
-                                    ? FontWeight.w500
-                                    : null,
-                                color: session.serverColor != null
-                                    ? Colors.white
-                                    : theme.colorScheme.onPrimaryContainer,
-                              ),
-                            ),
-                          ),
-                        ],
-                        // Codex sessions get a small badge so mixed backend
-                        // lists are easy to scan.
-                        if (session.backend == 'codex') ...[
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 5,
-                              vertical: 1,
-                            ),
-                            decoration: BoxDecoration(
-                              color: theme.colorScheme.tertiaryContainer
-                                  .withAlpha(170),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              'CODEX',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                letterSpacing: 0.5,
-                                color: theme.colorScheme.onTertiaryContainer,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-              // Overflow menu icon (replaces notification bell)
-              IconButton(
-                icon: Icon(
-                  Icons.more_vert,
-                  size: 18,
-                  color: theme.colorScheme.onSurface.withAlpha(128),
+                // Overflow menu icon (replaces notification bell)
+                IconButton(
+                  icon: Icon(
+                    Icons.more_vert,
+                    size: 18,
+                    color: theme.colorScheme.onSurface.withAlpha(128),
+                  ),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
+                  onPressed: isAvailable
+                      ? () => _showSessionContextMenu(context, session)
+                      : () => _showOfflineSessionSnack(context, session),
                 ),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: () => _showSessionContextMenu(context, session),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showOfflineSessionSnack(BuildContext context, Session session) {
+    final server = session.serverName.isNotEmpty
+        ? session.serverName
+        : 'server';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$server is offline. Reconnect it to open this session.'),
       ),
     );
   }

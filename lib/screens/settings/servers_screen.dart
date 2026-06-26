@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/websocket_service.dart';
@@ -683,6 +685,49 @@ class _ServersScreenState extends State<ServersScreen> {
                   _showVersionCheck(context, provider, config);
                 },
               ),
+            if (isConnected)
+              Consumer<ChatProvider>(
+                builder: (context, currentProvider, _) {
+                  final state = currentProvider.backendInstallState(
+                    config.id,
+                    'codex',
+                  );
+                  final running = state?.running == true;
+                  return ListTile(
+                    leading: Icon(
+                      running ? Icons.sync : Icons.build_circle_outlined,
+                    ),
+                    title: Text(
+                      running
+                          ? 'Repairing Codex Backend'
+                          : 'Install / Repair Codex',
+                    ),
+                    subtitle: Text(
+                      running
+                          ? state?.message ?? 'Repair running...'
+                          : 'Reinstall Codex and run device-code login',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      if (!running) {
+                        currentProvider.repairBackend(
+                          config.id,
+                          backend: 'codex',
+                          reinstall: true,
+                          authenticate: true,
+                        );
+                      }
+                      _showBackendRepairDialog(
+                        context,
+                        currentProvider,
+                        config,
+                        'codex',
+                      );
+                    },
+                  );
+                },
+              ),
             if (isConnected && hasOutlookAuth)
               ListTile(
                 leading: const Icon(Icons.mail_lock),
@@ -784,6 +829,175 @@ class _ServersScreenState extends State<ServersScreen> {
             const SizedBox(height: 8),
           ],
         ),
+      ),
+    );
+  }
+
+  void _showBackendRepairDialog(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+    String backend,
+  ) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Consumer<ChatProvider>(
+        builder: (context, currentProvider, _) {
+          final state = currentProvider.backendInstallState(config.id, backend);
+          final running = state?.running == true;
+          final failed = state?.status == 'failed';
+          final authUrl = state?.authUrl;
+          final authCode = state?.authCode;
+          final output = state?.output ?? const <String>[];
+          final title = backend == 'codex' ? 'Codex Backend' : 'Backend';
+
+          return AlertDialog(
+            title: Row(
+              children: [
+                Icon(
+                  failed
+                      ? Icons.error_outline
+                      : running
+                      ? Icons.sync
+                      : Icons.check_circle_outline,
+                  size: 22,
+                ),
+                const SizedBox(width: 10),
+                Expanded(child: Text('$title Repair')),
+              ],
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(state?.message ?? 'Starting repair...'),
+                  if (authUrl != null || authCode != null) ...[
+                    const SizedBox(height: 12),
+                    DecoratedBox(
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: Theme.of(context).colorScheme.outlineVariant,
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (authCode != null && authCode.isNotEmpty) ...[
+                              const Text(
+                                'Device Code',
+                                style: TextStyle(fontWeight: FontWeight.w600),
+                              ),
+                              const SizedBox(height: 6),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: SelectableText(
+                                      authCode,
+                                      style: const TextStyle(
+                                        fontSize: 20,
+                                        letterSpacing: 0,
+                                      ),
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Copy code',
+                                    icon: const Icon(Icons.copy, size: 20),
+                                    onPressed: () {
+                                      Clipboard.setData(
+                                        ClipboardData(text: authCode),
+                                      );
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('Code copied'),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ],
+                              ),
+                            ],
+                            if (authUrl != null && authUrl.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  onPressed: () {
+                                    final uri = Uri.tryParse(authUrl);
+                                    if (uri != null) {
+                                      launchUrl(
+                                        uri,
+                                        mode: LaunchMode.externalApplication,
+                                      );
+                                    }
+                                  },
+                                  icon: const Icon(Icons.open_in_browser),
+                                  label: const Text('Open Device Page'),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                  if (output.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      'Output',
+                      style: Theme.of(context).textTheme.labelMedium,
+                    ),
+                    const SizedBox(height: 6),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      child: DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).colorScheme.surfaceContainer,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: SingleChildScrollView(
+                          reverse: true,
+                          padding: const EdgeInsets.all(10),
+                          child: SelectableText(
+                            output.join('\n'),
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+              if (failed)
+                FilledButton(
+                  onPressed: () {
+                    currentProvider.repairBackend(
+                      config.id,
+                      backend: backend,
+                      reinstall: true,
+                      authenticate: true,
+                    );
+                  },
+                  child: const Text('Retry'),
+                ),
+            ],
+          );
+        },
       ),
     );
   }

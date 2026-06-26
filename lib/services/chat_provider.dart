@@ -27,9 +27,54 @@ import 'push_notification_service.dart';
 import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 
+class BackendInstallState {
+  BackendInstallState({
+    required this.backend,
+    this.phase = 'install',
+    this.status = 'running',
+    this.message = '',
+    this.authUrl,
+    this.authCode,
+    this.running = true,
+    List<String>? output,
+  }) : output = output ?? <String>[];
+
+  final String backend;
+  String phase;
+  String status;
+  String message;
+  String? authUrl;
+  String? authCode;
+  bool running;
+  final List<String> output;
+
+  void apply(Map<String, dynamic> msg) {
+    phase = msg['phase'] as String? ?? phase;
+    status = msg['status'] as String? ?? status;
+    message = msg['message'] as String? ?? message;
+    authUrl = msg['authUrl'] as String? ?? authUrl;
+    authCode = msg['authCode'] as String? ?? authCode;
+
+    final rawOutput = msg['output'] as String?;
+    if (rawOutput != null && rawOutput.trim().isNotEmpty) {
+      final lines = const LineSplitter()
+          .convert(rawOutput.replaceAll('\r\n', '\n'))
+          .map((line) => line.trimRight())
+          .where((line) => line.trim().isNotEmpty);
+      output.addAll(lines);
+      if (output.length > 120) {
+        output.removeRange(0, output.length - 120);
+      }
+    }
+
+    running = status == 'running' || !(status == 'failed' || phase == 'probe');
+  }
+}
+
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
+  static const String _sessionCachePrefsKey = 'cached_session_lists_v1';
 
   final ConnectionManager _connMgr = ConnectionManager();
 
@@ -108,6 +153,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<Map<String, dynamic>>> _serverCodexCollaborationModes =
       {};
   final Map<String, String> _serverCodexCollaborationMode = {};
+  final Map<String, BackendInstallState> _backendInstallStates = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
   String? _activeSessionBackend;
@@ -629,6 +675,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<ServerConfig> get serverConfigs => _serverConfigs;
   String? get activeServerId => _connMgr.activeServerId;
 
+  ConnectionStatus sessionServerStatus(Session session) {
+    if (session.serverId.isNotEmpty) {
+      return _connMgr.statusOf(session.serverId);
+    }
+    return _connectionStatus;
+  }
+
+  bool isSessionAvailable(Session session) =>
+      sessionServerStatus(session) == ConnectionStatus.connected;
+
   Future<String?> fetchServerFileBase64(
     String filePath, {
     String? serverId,
@@ -862,6 +918,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _saveServerConfigs();
     }
 
+    await _loadSessionCache(prefs);
+
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
@@ -1080,6 +1138,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _serverConfigs.removeWhere((c) => c.id == serverId);
     _perServerSessions.remove(serverId);
     await _saveServerConfigs();
+    await _saveSessionCache();
     await _connMgr.setServers(_serverConfigs);
     await _registerPushNotifications();
     _rebuildSessionList();
@@ -1089,6 +1148,71 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _rebuildSessionList() {
     _sessions = _perServerSessions.values.expand((list) => list).toList()
       ..sort((a, b) => b.lastActive.compareTo(a.lastActive));
+  }
+
+  Future<void> _loadSessionCache(SharedPreferences prefs) async {
+    final raw = prefs.getString(_sessionCachePrefsKey);
+    if (raw == null || raw.isEmpty || _serverConfigs.isEmpty) return;
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+
+      final configsById = {
+        for (final config in _serverConfigs) config.id: config,
+      };
+      final loaded = <String, List<Session>>{};
+      for (final entry in decoded.entries) {
+        final serverId = entry.key.toString();
+        final config = configsById[serverId];
+        if (config == null || entry.value is! List) continue;
+
+        final sessions = <Session>[];
+        for (final item in entry.value as List) {
+          if (item is! Map) continue;
+          final session = Session.fromJson(Map<String, dynamic>.from(item))
+              .withServer(
+                serverId: serverId,
+                serverName: config.name,
+                serverColor: config.colorValue,
+              )
+              .copyWith(running: false);
+          if (!_isSessionArchiveHidden(serverId, session.id)) {
+            sessions.add(session);
+          }
+        }
+        loaded[serverId] = sessions;
+      }
+
+      if (loaded.isEmpty) return;
+      _perServerSessions
+        ..clear()
+        ..addAll(loaded);
+      _rebuildSessionList();
+    } catch (e) {
+      debugPrint('[Sessions] Failed to load session cache: $e');
+    }
+  }
+
+  Future<void> _saveSessionCache() async {
+    try {
+      final prefs = _cachedPrefs ?? await SharedPreferences.getInstance();
+      _cachedPrefs = prefs;
+      final payload = <String, List<Map<String, dynamic>>>{};
+      for (final config in _serverConfigs) {
+        final sessions = _perServerSessions[config.id] ?? const <Session>[];
+        payload[config.id] = sessions
+            .map((session) => session.copyWith(running: false).toJson())
+            .toList();
+      }
+      await prefs.setString(_sessionCachePrefsKey, jsonEncode(payload));
+    } catch (e) {
+      debugPrint('[Sessions] Failed to save session cache: $e');
+    }
+  }
+
+  void _saveSessionCacheSoon() {
+    unawaited(_saveSessionCache());
   }
 
   String _archivePendingKey(String? serverId, String sessionId) {
@@ -1152,6 +1276,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_perServerSessions.isNotEmpty) {
       _rebuildSessionList();
     }
+    _saveSessionCacheSoon();
   }
 
   Session? _takePendingArchivedSession(String? serverId, String sessionId) {
@@ -1189,6 +1314,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         list.add(session);
       }
       _rebuildSessionList();
+      _saveSessionCacheSoon();
     } else if (!_sessions.any((s) => s.id == session.id)) {
       _sessions.add(session);
       _sessions.sort((a, b) => b.lastActive.compareTo(a.lastActive));
@@ -2113,6 +2239,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'archive_deleted',
       'server_capabilities',
       'server_settings',
+      'backend_install_progress',
       'file_data',
       'file_chunk',
       'file_complete',
@@ -2218,6 +2345,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
         }
+      case 'backend_install_progress':
+        _handleBackendInstallProgress(msg, serverId);
+        break;
       case 'codex_collaboration_modes':
         {
           final key = serverId ?? _connMgr.activeServerId;
@@ -5268,6 +5398,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Store per-server and rebuild merged list
       _perServerSessions[serverId] = sessions;
       _rebuildSessionList();
+      _saveSessionCacheSoon();
     } else {
       // Legacy single-server path
       _sessions = sessions;
@@ -5680,6 +5811,56 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return ['codex', ...raw.where((b) => b != 'codex')];
   }
 
+  String _backendInstallKey(String serverId, String backend) =>
+      '$serverId::$backend';
+
+  BackendInstallState? backendInstallState(String serverId, String backend) {
+    return _backendInstallStates[_backendInstallKey(serverId, backend)];
+  }
+
+  void repairBackend(
+    String serverId, {
+    String backend = 'codex',
+    bool reinstall = true,
+    bool authenticate = true,
+  }) {
+    if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
+    final key = _backendInstallKey(serverId, backend);
+    _backendInstallStates[key] = BackendInstallState(
+      backend: backend,
+      message: backend == 'codex'
+          ? 'Starting Codex repair...'
+          : 'Starting backend repair...',
+    );
+    _connMgr.sendToServer(serverId, {
+      'type': 'backend_install',
+      'backend': backend,
+      'reinstall': reinstall,
+      'authenticate': authenticate,
+      'requestId': 'backend_install_${DateTime.now().millisecondsSinceEpoch}',
+    });
+    notifyListeners();
+  }
+
+  void _handleBackendInstallProgress(
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) {
+    if (serverId == null || serverId.isEmpty) return;
+    final backend = msg['backend'] as String? ?? 'codex';
+    final key = _backendInstallKey(serverId, backend);
+    final state =
+        _backendInstallStates[key] ?? BackendInstallState(backend: backend);
+    state.apply(msg);
+    _backendInstallStates[key] = state;
+
+    if (!state.running) {
+      requestServerSettings(serverId: serverId);
+      _connMgr.sendToServer(serverId, {'type': 'list_sessions'});
+    }
+    notifyListeners();
+  }
+
   String preferredBackendForServer(String? serverId) {
     final backends = backendsForServer(serverId);
     return backends.firstOrNull ?? 'claude';
@@ -5834,7 +6015,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   String? get activeSessionBackend => _activeSessionBackend;
 
-  void resumeSession(String sessionId) {
+  void resumeSession(String sessionId, {String? serverId}) {
     _messages = [];
     _pendingInjectedMessageCount = 0;
     _todos = [];
@@ -5866,7 +6047,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _loadSessionSettings(sessionId);
 
     // Look up which server owns this session and switch active server
-    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+    final session =
+        _sessions
+            .where(
+              (s) =>
+                  s.id == sessionId &&
+                  (serverId == null ||
+                      serverId.isEmpty ||
+                      s.serverId == serverId),
+            )
+            .firstOrNull ??
+        _sessions.where((s) => s.id == sessionId).firstOrNull;
     if (session != null) {
       _activeSessionTitle = session.title;
       _activeSessionCwd = session.cwd;
@@ -5908,7 +6099,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (serverId != null && serverId.isNotEmpty) {
       _connMgr.activeServerId = serverId;
     }
-    resumeSession(sessionId);
+    resumeSession(sessionId, serverId: serverId);
   }
 
   void _loadSessionSettings(String sessionId) {
@@ -6556,6 +6747,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _perServerSessions[session.serverId]?.removeWhere(
         (s) => s.id == sessionId,
       );
+      _saveSessionCacheSoon();
       _connMgr.sendToServer(session.serverId, {
         'type': 'delete_session',
         'sessionId': sessionId,
@@ -6593,20 +6785,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final idx = _sessions.indexWhere((s) => s.id == sessionId);
     if (idx >= 0) {
       final s = _sessions[idx];
-      _sessions[idx] = Session(
-        id: s.id,
-        title: title,
-        cwd: s.cwd,
-        createdAt: s.createdAt,
-        lastActive: s.lastActive,
-        messagePreview: s.messagePreview,
-        running: s.running,
-        serverId: s.serverId,
-        serverName: s.serverName,
-        serverColor: s.serverColor,
-        backend: s.backend,
-        codexDriver: s.codexDriver,
-      );
+      final updated = s.copyWith(title: title);
+      _sessions[idx] = updated;
+      if (updated.serverId.isNotEmpty) {
+        final serverSessions = _perServerSessions[updated.serverId];
+        final serverIdx =
+            serverSessions?.indexWhere((s) => s.id == sessionId) ?? -1;
+        if (serverSessions != null && serverIdx >= 0) {
+          serverSessions[serverIdx] = updated;
+        }
+      }
+      _saveSessionCacheSoon();
     }
     // Update active session title if renaming the current session
     if (_activeSessionId == sessionId) {

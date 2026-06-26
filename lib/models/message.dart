@@ -431,8 +431,54 @@ class Session {
       running: json['running'] == true,
       serverId: json['serverId'] ?? '',
       serverName: json['serverName'] ?? '',
+      serverColor: json['serverColor'] as int?,
       backend: json['backend'] as String?,
       codexDriver: json['codexDriver'] as String?,
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'title': title,
+    'cwd': cwd,
+    'createdAt': createdAt.toIso8601String(),
+    'lastActive': lastActive.toIso8601String(),
+    'messagePreview': messagePreview,
+    'running': running,
+    'serverId': serverId,
+    'serverName': serverName,
+    'serverColor': serverColor,
+    'backend': backend,
+    'codexDriver': codexDriver,
+  };
+
+  Session copyWith({
+    String? id,
+    String? title,
+    String? cwd,
+    DateTime? createdAt,
+    DateTime? lastActive,
+    String? messagePreview,
+    bool? running,
+    String? serverId,
+    String? serverName,
+    int? serverColor,
+    String? backend,
+    String? codexDriver,
+  }) {
+    return Session(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      cwd: cwd ?? this.cwd,
+      createdAt: createdAt ?? this.createdAt,
+      lastActive: lastActive ?? this.lastActive,
+      messagePreview: messagePreview ?? this.messagePreview,
+      running: running ?? this.running,
+      serverId: serverId ?? this.serverId,
+      serverName: serverName ?? this.serverName,
+      serverColor: serverColor ?? this.serverColor,
+      backend: backend ?? this.backend,
+      codexDriver: codexDriver ?? this.codexDriver,
     );
   }
 
