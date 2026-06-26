@@ -154,6 +154,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       {};
   final Map<String, String> _serverCodexCollaborationMode = {};
   final Map<String, BackendInstallState> _backendInstallStates = {};
+  final Map<String, Timer> _backendInstallAckTimers = {};
+  final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
   String? _activeSessionBackend;
@@ -266,6 +268,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _pendingSdkSessionsServerId;
   int _sdkSessionsRequestSeq = 0;
   Completer<Map<String, dynamic>>? _pendingVersionCheck;
+  String? _pendingVersionCheckServerId;
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
   Completer<Map<String, dynamic>?>? _pendingCodexStatus;
 
@@ -2598,8 +2601,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _pendingSdkSessionsServerId = null;
         break;
       case 'version_info':
+        if (_pendingVersionCheckServerId != null &&
+            serverId != null &&
+            serverId != _pendingVersionCheckServerId) {
+          break;
+        }
+        if (serverId != null) {
+          _captureServerRuntimeInfo(msg, serverId);
+        }
         _pendingVersionCheck?.complete(Map<String, dynamic>.from(msg));
         _pendingVersionCheck = null;
+        _pendingVersionCheckServerId = null;
         break;
       case 'update_result':
         _pendingForceUpdate?.complete(Map<String, dynamic>.from(msg));
@@ -2984,6 +2996,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 .map((e) => e.toString())
                 .toList();
           }
+          _captureServerRuntimeInfo(msg, serverId);
         }
         // Only process remaining status_sync fields from the active server
         if (serverId != null && serverId != _connMgr.activeServerId) break;
@@ -5826,6 +5839,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
     final key = _backendInstallKey(serverId, backend);
+    _backendInstallAckTimers.remove(key)?.cancel();
     _backendInstallStates[key] = BackendInstallState(
       backend: backend,
       message: backend == 'codex'
@@ -5839,6 +5853,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'authenticate': authenticate,
       'requestId': 'backend_install_${DateTime.now().millisecondsSinceEpoch}',
     });
+    _backendInstallAckTimers[key] = Timer(const Duration(seconds: 15), () {
+      _backendInstallAckTimers.remove(key);
+      final state = _backendInstallStates[key];
+      if (state == null || !state.running) return;
+      _backendInstallStates[key] = BackendInstallState(
+        backend: backend,
+        phase: 'install',
+        status: 'failed',
+        running: false,
+        message:
+            'Server did not acknowledge the repair request. It may be running an older SocketAgent build or the server process may be wedged. Run Check for Updates / Update Now, then try again.',
+      );
+      notifyListeners();
+    });
     notifyListeners();
   }
 
@@ -5849,16 +5877,59 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (serverId == null || serverId.isEmpty) return;
     final backend = msg['backend'] as String? ?? 'codex';
     final key = _backendInstallKey(serverId, backend);
+    _backendInstallAckTimers.remove(key)?.cancel();
     final state =
         _backendInstallStates[key] ?? BackendInstallState(backend: backend);
     state.apply(msg);
     _backendInstallStates[key] = state;
 
     if (!state.running) {
+      _backendInstallAckTimers.remove(key)?.cancel();
       requestServerSettings(serverId: serverId);
       _connMgr.sendToServer(serverId, {'type': 'list_sessions'});
     }
     notifyListeners();
+  }
+
+  void _captureServerRuntimeInfo(Map<String, dynamic> msg, String serverId) {
+    final existing = Map<String, dynamic>.from(
+      _serverRuntimeInfo[serverId] ?? const <String, dynamic>{},
+    );
+
+    final running = msg['running'];
+    if (running is Map) {
+      existing.addAll(Map<String, dynamic>.from(running));
+    }
+
+    final version = msg['serverVersion'];
+    if (version != null) existing['hash'] = version.toString();
+
+    final startedAt = msg['serverStartedAt'];
+    if (startedAt != null) existing['startedAt'] = startedAt.toString();
+
+    final pid = msg['serverPid'];
+    if (pid != null) existing['pid'] = pid;
+
+    if (existing.isNotEmpty) {
+      _serverRuntimeInfo[serverId] = existing;
+    }
+  }
+
+  Map<String, dynamic> _attachServerRuntimeInfo(
+    Map<String, dynamic> info,
+    String? serverId,
+  ) {
+    if (serverId == null) return info;
+    final runtime = _serverRuntimeInfo[serverId];
+    if (runtime == null || runtime.isEmpty) return info;
+
+    final mergedRuntime = Map<String, dynamic>.from(runtime);
+    final returnedRuntime = info['running'];
+    if (returnedRuntime is Map) {
+      mergedRuntime.addAll(Map<String, dynamic>.from(returnedRuntime));
+    }
+
+    return {...info, 'running': mergedRuntime};
   }
 
   String preferredBackendForServer(String? serverId) {
@@ -6539,19 +6610,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Check server version and available updates.
   Future<Map<String, dynamic>> requestVersionCheck({String? serverId}) async {
-    _pendingVersionCheck = Completer<Map<String, dynamic>>();
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingVersionCheck = completer;
+    _pendingVersionCheckServerId = serverId;
     final msg = {'type': 'version_check'};
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
     } else {
       _ws.send(msg);
     }
-    return _pendingVersionCheck!.future.timeout(
+    final result = await completer.future.timeout(
       const Duration(seconds: 15),
       onTimeout: () => <String, dynamic>{
         'error': 'Timed out checking for updates',
       },
     );
+    if (identical(_pendingVersionCheck, completer)) {
+      _pendingVersionCheck = null;
+      _pendingVersionCheckServerId = null;
+    }
+    return _attachServerRuntimeInfo(result, serverId);
   }
 
   /// Force server to pull updates, compile, and restart.
@@ -7802,6 +7880,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _downloadWatchdogs.clear();
+    for (final timer in _backendInstallAckTimers.values) {
+      timer.cancel();
+    }
+    _backendInstallAckTimers.clear();
     _connMgr.dispose();
     _speech.dispose();
     _tts.dispose();

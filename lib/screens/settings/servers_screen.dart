@@ -35,6 +35,19 @@ class _ServersScreenState extends State<ServersScreen> {
     super.dispose();
   }
 
+  String _shortHash(Object? value) {
+    final text = value?.toString();
+    if (text == null || text.isEmpty) return '?';
+    return text.length <= 7 ? text : text.substring(0, 7);
+  }
+
+  bool _sameCommitish(Object? left, Object? right) {
+    final a = left?.toString();
+    final b = right?.toString();
+    if (a == null || b == null || a.isEmpty || b.isEmpty) return true;
+    return a.startsWith(b) || b.startsWith(a);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -1057,7 +1070,9 @@ class _ServersScreenState extends State<ServersScreen> {
     if (!context.mounted) return;
     Navigator.pop(context); // dismiss loading
 
-    if (info.containsKey('error') && info['local'] == null) {
+    if (info.containsKey('error') &&
+        info['local'] == null &&
+        info['running'] == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(info['error']?.toString() ?? 'Failed to check')),
       );
@@ -1066,9 +1081,31 @@ class _ServersScreenState extends State<ServersScreen> {
 
     final local = info['local'] as Map?;
     final remote = info['remote'] as Map?;
+    final running = info['running'] as Map?;
+    final localHash = local?['hash']?.toString();
+    final runningHash = running?['hash']?.toString();
     final updateAvailable = info['updateAvailable'] == true;
+    final runningStale =
+        localHash != null &&
+        runningHash != null &&
+        !_sameCommitish(localHash, runningHash);
+    final needsRestart = runningStale || info['needsRestart'] == true;
     final commitsBehind = info['commitsBehind'] as int? ?? 0;
     final fetchError = info['fetchError'] as String?;
+    final error = info['error'] as String?;
+    final title = needsRestart
+        ? 'Restart Needed'
+        : updateAvailable
+        ? 'Update Available'
+        : 'Up to Date';
+    final titleIcon = needsRestart
+        ? Icons.restart_alt
+        : updateAvailable
+        ? Icons.system_update
+        : Icons.check_circle;
+    final titleColor = needsRestart || updateAvailable
+        ? Colors.orange
+        : Colors.green;
 
     if (!context.mounted) return;
     showDialog(
@@ -1076,81 +1113,134 @@ class _ServersScreenState extends State<ServersScreen> {
       builder: (ctx) => AlertDialog(
         title: Row(
           children: [
-            Icon(
-              updateAvailable ? Icons.system_update : Icons.check_circle,
-              color: updateAvailable ? Colors.orange : Colors.green,
-            ),
+            Icon(titleIcon, color: titleColor),
             const SizedBox(width: 8),
-            Text(updateAvailable ? 'Update Available' : 'Up to Date'),
+            Text(title),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (local != null) ...[
-              Text(
-                'Current:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${(local['hash'] as String?)?.substring(0, 7) ?? '?'}  ${local['message'] ?? ''}',
-                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-              ),
-              Text(
-                local['date']?.toString() ?? '',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (running != null) ...[
+                Text(
+                  'Running process:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
-              ),
-            ],
-            if (remote != null && updateAvailable) ...[
-              const SizedBox(height: 12),
-              Text(
-                'Available:',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${(remote['hash'] as String?)?.substring(0, 7) ?? '?'}  ${remote['message'] ?? ''}',
-                style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-              ),
-              Text(
-                remote['date']?.toString() ?? '',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+                const SizedBox(height: 4),
+                Text(
+                  '${_shortHash(running['hash'])}  PID ${running['pid'] ?? '?'}',
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
                 ),
-              ),
-              if (commitsBehind > 0)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: Text(
-                    '$commitsBehind commit${commitsBehind == 1 ? '' : 's'} behind',
-                    style: TextStyle(fontSize: 12, color: Colors.orange),
+                if (running['startedAt'] != null)
+                  Text(
+                    running['startedAt'].toString(),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withAlpha(128),
+                    ),
+                  ),
+              ],
+              if (local != null) ...[
+                if (running != null) const SizedBox(height: 12),
+                Text(
+                  'Checkout:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_shortHash(local['hash'])}  ${local['message'] ?? ''}',
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                ),
+                Text(
+                  local['date']?.toString() ?? '',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withAlpha(128),
                   ),
                 ),
+              ] else ...[
+                if (running != null) const SizedBox(height: 12),
+                Text(
+                  info['gitAvailable'] == false
+                      ? 'This server was not installed from a git checkout, so in-app updates are unavailable.'
+                      : 'This server did not return git version details.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              if (runningStale) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'The checkout is newer than the running server process. Restart/update this server to load the current code.',
+                  style: const TextStyle(fontSize: 12, color: Colors.orange),
+                ),
+              ],
+              if (remote != null && updateAvailable) ...[
+                const SizedBox(height: 12),
+                Text(
+                  'Available:',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '${_shortHash(remote['hash'])}  ${remote['message'] ?? ''}',
+                  style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+                ),
+                Text(
+                  remote['date']?.toString() ?? '',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withAlpha(128),
+                  ),
+                ),
+                if (commitsBehind > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '$commitsBehind commit${commitsBehind == 1 ? '' : 's'} behind',
+                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                    ),
+                  ),
+              ],
+              if (fetchError != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  'Fetch error: $fetchError',
+                  style: const TextStyle(fontSize: 11, color: Colors.red),
+                ),
+              ],
+              if (error != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  error,
+                  style: const TextStyle(fontSize: 11, color: Colors.red),
+                ),
+              ],
             ],
-            if (fetchError != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Fetch error: $fetchError',
-                style: const TextStyle(fontSize: 11, color: Colors.red),
-              ),
-            ],
-          ],
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: const Text('Close'),
           ),
-          if (updateAvailable)
+          if (updateAvailable || needsRestart)
             FilledButton.icon(
-              icon: const Icon(Icons.download, size: 16),
-              label: const Text('Update Now'),
+              icon: Icon(
+                updateAvailable ? Icons.download : Icons.restart_alt,
+                size: 16,
+              ),
+              label: Text(updateAvailable ? 'Update Now' : 'Restart Now'),
               onPressed: () {
                 Navigator.pop(ctx);
                 _forceUpdate(context, provider, config);
