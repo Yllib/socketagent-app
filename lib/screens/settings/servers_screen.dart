@@ -641,11 +641,11 @@ class _ServersScreenState extends State<ServersScreen> {
     BuildContext context,
     ChatProvider provider,
   ) async {
-    final hasActiveSubscription =
-        provider.subscriberToken.isNotEmpty &&
-        await provider.checkSubscriptionStatus();
+    if (provider.hasCachedRelayAccess) {
+      provider.refreshSubscriptionStatusIfStale();
+      return true;
+    }
     if (!mounted || !context.mounted) return false;
-    if (hasActiveSubscription) return true;
 
     final signedIn = await Navigator.of(
       context,

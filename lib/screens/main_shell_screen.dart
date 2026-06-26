@@ -45,6 +45,7 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
         _showPaywall();
       });
       await provider.connectToServer();
+      provider.refreshSubscriptionStatusIfStale();
       provider.requestSessionList();
       // Silent app update check through the active SocketAgent connection.
       _checkForAppUpdate(provider);
@@ -119,8 +120,8 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   Future<bool> requireSubscription() async {
     final provider = context.read<ChatProvider>();
     if (provider.connectionMode != ConnectionMode.relay) return true;
-    if (provider.subscriberToken.isNotEmpty &&
-        await provider.checkSubscriptionStatus()) {
+    if (provider.hasCachedRelayAccess) {
+      provider.refreshSubscriptionStatusIfStale();
       return true;
     }
     return await _showPaywall();

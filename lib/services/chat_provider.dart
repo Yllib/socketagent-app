@@ -252,6 +252,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? _trialEnd;
   DateTime? _periodEnd;
   bool _cancelAtPeriodEnd = false;
+  DateTime? _subscriptionCheckedAt;
+  Future<bool>? _subscriptionCheckInFlight;
+  static const Duration _subscriptionRefreshInterval = Duration(hours: 6);
 
   final Completer<void> _settingsLoaded = Completer<void>();
   Completer<bool>? _pendingCwdCheck;
@@ -733,6 +736,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? get trialEnd => _trialEnd;
   DateTime? get periodEnd => _periodEnd;
   bool get cancelAtPeriodEnd => _cancelAtPeriodEnd;
+  bool get hasCachedRelayAccess =>
+      _subscriberToken.isNotEmpty &&
+      (!_subscriptionChecked || _subscriptionActive);
   Stream<void> get onSubscriptionRequired =>
       _subscriptionRequiredController.stream;
   String? get sessionModel => _sessionModel;
@@ -1636,11 +1642,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   SharedPreferences? _cachedPrefs;
 
-  /// Check subscription status via relay HTTP API (uses signed token)
-  Future<bool> checkSubscriptionStatus() async {
-    if (_subscriberToken.isEmpty) {
+  bool get _subscriptionRefreshDue {
+    if (_subscriberToken.isEmpty) return false;
+    if (_subscriptionCheckInFlight != null) return false;
+    if (!_subscriptionChecked) return true;
+    final checkedAt = _subscriptionCheckedAt;
+    if (checkedAt == null) return true;
+    return DateTime.now().difference(checkedAt) >= _subscriptionRefreshInterval;
+  }
+
+  void refreshSubscriptionStatusIfStale() {
+    if (!_subscriptionRefreshDue) return;
+    unawaited(checkSubscriptionStatus());
+  }
+
+  /// Check subscription status via relay HTTP API (uses signed token).
+  /// Calls are coalesced so several UI surfaces cannot stampede the relay.
+  Future<bool> checkSubscriptionStatus() {
+    final inFlight = _subscriptionCheckInFlight;
+    if (inFlight != null) return inFlight;
+
+    final future = _checkSubscriptionStatus();
+    _subscriptionCheckInFlight = future;
+    return future.whenComplete(() {
+      if (_subscriptionCheckInFlight == future) {
+        _subscriptionCheckInFlight = null;
+      }
+    });
+  }
+
+  Future<bool> _checkSubscriptionStatus() async {
+    final token = _subscriberToken;
+    if (token.isEmpty) {
       _subscriptionActive = false;
       _subscriptionChecked = true;
+      _subscriptionCheckedAt = DateTime.now();
       notifyListeners();
       return false;
     }
@@ -1650,15 +1686,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final httpUrl = _relayHttpUrl();
     if (httpUrl == null) {
       _subscriptionChecked = true;
+      _subscriptionCheckedAt = DateTime.now();
       notifyListeners();
       return false;
     }
 
     try {
       final uri = Uri.parse(
-        '$httpUrl/api/subscription-status?token=${Uri.encodeComponent(_subscriberToken)}',
+        '$httpUrl/api/subscription-status?token=${Uri.encodeComponent(token)}',
       );
       final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (_subscriberToken != token) return _subscriptionActive;
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         _subscriptionActive = data['active'] == true;
@@ -1686,7 +1724,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     } catch (e) {
       debugPrint('[Subscription] Status check error: $e');
-      if (_subscriberToken.isNotEmpty) {
+      if (_subscriberToken != token) return _subscriptionActive;
+      if (token.isNotEmpty) {
         _subscriptionActive = true;
         if (_subscriptionStatus.isEmpty) _subscriptionStatus = 'unknown';
       } else {
@@ -1699,6 +1738,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     _subscriptionChecked = true;
+    _subscriptionCheckedAt = DateTime.now();
     notifyListeners();
     return _subscriptionActive;
   }
@@ -1819,6 +1859,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _registerPushNotifications();
     _subscriptionActive = true;
     _subscriptionChecked = true;
+    _subscriptionCheckedAt = DateTime.now();
     notifyListeners();
   }
 
@@ -1828,6 +1869,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _subscriberEmail = '';
     _subscriptionActive = false;
     _subscriptionChecked = false;
+    _subscriptionCheckedAt = null;
+    _subscriptionCheckInFlight = null;
     await _secureStorage.deleteSubscriberToken();
     await _secureStorage.deleteSubscriberEmail();
     // Update subscriber token on all relay connections
@@ -1840,6 +1883,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void setSubscriptionActive(bool active) {
     _subscriptionActive = active;
     _subscriptionChecked = true;
+    _subscriptionCheckedAt = DateTime.now();
     notifyListeners();
   }
 
@@ -3386,6 +3430,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'subscription_required':
         _subscriptionActive = false;
         _subscriptionChecked = true;
+        _subscriptionCheckedAt = DateTime.now();
         _subscriptionRequiredController.add(null);
         notifyListeners();
         break;
