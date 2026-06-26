@@ -23,6 +23,7 @@ class _SessionsTabState extends State<SessionsTab>
     with TickerProviderStateMixin {
   TabController? _tabController;
   int _lastServerCount = 0;
+  String? _openingSessionKey;
 
   @override
   void dispose() {
@@ -59,71 +60,102 @@ class _SessionsTabState extends State<SessionsTab>
     String? backend,
     bool sdkSession = false,
   }) async {
+    final openKey = _openSessionKey(
+      sessionId: sessionId,
+      cwd: cwd,
+      serverId: serverId,
+      backend: backend,
+      sdkSession: sdkSession,
+    );
+    if (_openingSessionKey != null) return;
+    setState(() => _openingSessionKey = openKey);
     final provider = context.read<ChatProvider>();
-    if (sessionId != null) {
-      final session = provider.sessions
-          .where(
-            (session) =>
-                session.id == sessionId &&
-                (serverId == null ||
-                    serverId.isEmpty ||
-                    session.serverId == serverId),
-          )
-          .firstOrNull;
-      if (session != null && !provider.isSessionAvailable(session)) {
-        _showOfflineSessionSnack(context, session);
-        return;
-      }
-    }
-
-    if (!await _requireSubscription()) return;
-    if (!context.mounted) return;
-
-    if (sdkSession && sessionId != null && cwd != null) {
-      provider.resumeSdkSession(
-        sessionId,
-        cwd,
-        serverId: serverId,
-        backend: backend,
-      );
-    } else if (sessionId != null) {
-      provider.resumeSession(sessionId, serverId: serverId);
-    } else {
-      // The CWD picker now collects server + backend + cwd in one sheet,
-      // so backend usually arrives already chosen. Only show the fallback
-      // picker if backend is unset AND the upstream caller didn't pick
-      // (e.g., a code path that bypasses the CWD picker).
-      String? effectiveBackend = backend;
-      if (effectiveBackend == null) {
-        final needsServerPick =
-            serverId == null && provider.serverConfigs.length > 1;
-        final initialServer =
-            serverId ?? provider.serverConfigs.firstOrNull?.id;
-        final initialBackends = provider.backendsForServer(initialServer);
-        final needsBackendPick = needsServerPick || initialBackends.length > 1;
-        if (needsBackendPick) {
-          final result = await _pickServerAndBackend(
-            context,
-            provider,
-            presetServerId: serverId,
-          );
-          if (result == null || !context.mounted) return;
-          serverId = result.serverId;
-          effectiveBackend = result.backend;
-        } else if (initialBackends.isNotEmpty) {
-          effectiveBackend = provider.preferredBackendForServer(initialServer);
+    try {
+      if (sessionId != null) {
+        final session = provider.sessions
+            .where(
+              (session) =>
+                  session.id == sessionId &&
+                  (serverId == null ||
+                      serverId.isEmpty ||
+                      session.serverId == serverId),
+            )
+            .firstOrNull;
+        if (session != null && !provider.isSessionAvailable(session)) {
+          _showOfflineSessionSnack(context, session);
+          return;
         }
       }
-      provider.createNewSession(
-        cwd: cwd,
-        serverId: serverId,
-        backend: effectiveBackend,
-      );
-    }
 
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+      if (!await _requireSubscription()) return;
+      if (!context.mounted) return;
+
+      if (sdkSession && sessionId != null && cwd != null) {
+        provider.resumeSdkSession(
+          sessionId,
+          cwd,
+          serverId: serverId,
+          backend: backend,
+        );
+      } else if (sessionId != null) {
+        provider.resumeSession(sessionId, serverId: serverId);
+      } else {
+        // The CWD picker now collects server + backend + cwd in one sheet,
+        // so backend usually arrives already chosen. Only show the fallback
+        // picker if backend is unset AND the upstream caller didn't pick
+        // (e.g., a code path that bypasses the CWD picker).
+        String? effectiveBackend = backend;
+        if (effectiveBackend == null) {
+          final needsServerPick =
+              serverId == null && provider.serverConfigs.length > 1;
+          final initialServer =
+              serverId ?? provider.serverConfigs.firstOrNull?.id;
+          final initialBackends = provider.backendsForServer(initialServer);
+          final needsBackendPick =
+              needsServerPick || initialBackends.length > 1;
+          if (needsBackendPick) {
+            final result = await _pickServerAndBackend(
+              context,
+              provider,
+              presetServerId: serverId,
+            );
+            if (result == null || !context.mounted) return;
+            serverId = result.serverId;
+            effectiveBackend = result.backend;
+          } else if (initialBackends.isNotEmpty) {
+            effectiveBackend = provider.preferredBackendForServer(
+              initialServer,
+            );
+          }
+        }
+        provider.createNewSession(
+          cwd: cwd,
+          serverId: serverId,
+          backend: effectiveBackend,
+        );
+      }
+
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+    } finally {
+      if (mounted && _openingSessionKey == openKey) {
+        setState(() => _openingSessionKey = null);
+      }
+    }
+  }
+
+  String _openSessionKey({
+    String? sessionId,
+    String? cwd,
+    String? serverId,
+    String? backend,
+    bool sdkSession = false,
+  }) {
+    if (sessionId != null && sessionId.isNotEmpty) {
+      return 'session:${serverId ?? ''}:$sessionId';
+    }
+    return 'new:${serverId ?? ''}:${backend ?? ''}:${cwd ?? ''}:$sdkSession';
   }
 
   /// Combined server + backend picker. Server section is hidden when there's
@@ -2004,7 +2036,11 @@ class _SessionsTabState extends State<SessionsTab>
     final provider = context.read<ChatProvider>();
     final status = provider.sessionServerStatus(session);
     final isAvailable = provider.isSessionAvailable(session);
+    final openingThisSession =
+        _openingSessionKey ==
+        _openSessionKey(sessionId: session.id, serverId: session.serverId);
     final showRunning = session.running && isAvailable;
+    final showBusy = showRunning || openingThisSession;
     final timeDiff = DateTime.now().difference(session.lastActive);
     String timeAgo;
     if (timeDiff.inMinutes < 1) {
@@ -2032,7 +2068,7 @@ class _SessionsTabState extends State<SessionsTab>
 
     return Dismissible(
       key: Key('${session.serverId}:${session.id}'),
-      direction: isAvailable
+      direction: isAvailable && _openingSessionKey == null
           ? DismissDirection.horizontal
           : DismissDirection.none,
       background: Container(
@@ -2060,14 +2096,18 @@ class _SessionsTabState extends State<SessionsTab>
       },
       child: InkWell(
         onTap: isAvailable
-            ? () => _openSession(
-                context,
-                sessionId: session.id,
-                serverId: session.serverId,
-              )
+            ? _openingSessionKey == null
+                  ? () => _openSession(
+                      context,
+                      sessionId: session.id,
+                      serverId: session.serverId,
+                    )
+                  : null
             : () => _showOfflineSessionSnack(context, session),
         onLongPress: isAvailable
-            ? () => _showSessionContextMenu(context, session)
+            ? _openingSessionKey == null
+                  ? () => _showSessionContextMenu(context, session)
+                  : null
             : () => _showOfflineSessionSnack(context, session),
         child: Opacity(
           opacity: isAvailable ? 1 : 0.48,
@@ -2078,7 +2118,7 @@ class _SessionsTabState extends State<SessionsTab>
               children: [
                 Padding(
                   padding: const EdgeInsets.only(top: 2, right: 12),
-                  child: showRunning
+                  child: showBusy
                       ? SizedBox(
                           width: 20,
                           height: 20,
@@ -2143,10 +2183,14 @@ class _SessionsTabState extends State<SessionsTab>
                       Row(
                         children: [
                           Text(
-                            showRunning ? 'Working... · $timeAgo' : timeAgo,
+                            openingThisSession
+                                ? 'Opening... · $timeAgo'
+                                : showRunning
+                                ? 'Working... · $timeAgo'
+                                : timeAgo,
                             style: TextStyle(
                               fontSize: 11,
-                              color: showRunning
+                              color: showBusy
                                   ? theme.colorScheme.primary
                                   : theme.colorScheme.onSurface.withAlpha(128),
                             ),
@@ -2163,7 +2207,7 @@ class _SessionsTabState extends State<SessionsTab>
                                 color: session.serverColor != null
                                     ? Color(
                                         session.serverColor!,
-                                      ).withAlpha(showRunning ? 200 : 140)
+                                      ).withAlpha(showBusy ? 200 : 140)
                                     : theme.colorScheme.primaryContainer
                                           .withAlpha(120),
                                 borderRadius: BorderRadius.circular(4),
@@ -2248,7 +2292,9 @@ class _SessionsTabState extends State<SessionsTab>
                     minHeight: 32,
                   ),
                   onPressed: isAvailable
-                      ? () => _showSessionContextMenu(context, session)
+                      ? _openingSessionKey == null
+                            ? () => _showSessionContextMenu(context, session)
+                            : null
                       : () => _showOfflineSessionSnack(context, session),
                 ),
               ],
