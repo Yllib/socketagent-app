@@ -1,5 +1,6 @@
+// ignore_for_file: experimental_member_use
+
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -9,37 +10,145 @@ import 'tts_engine.dart';
 /// Kokoro voice definitions — shared across v0.19 and v1.0 models.
 /// These 11 voices exist in both models.
 const kokoroVoices = [
-  TtsEngineVoice(id: 'af_heart', name: 'Heart (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_bella', name: 'Bella (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_nicole', name: 'Nicole (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_sarah', name: 'Sarah (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_sky', name: 'Sky (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_adam', name: 'Adam (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_michael', name: 'Michael (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bf_emma', name: 'Emma (Female, British)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bf_isabella', name: 'Isabella (Female, British)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bm_george', name: 'George (Male, British)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bm_lewis', name: 'Lewis (Male, British)', engine: 'kokoro'),
+  TtsEngineVoice(
+    id: 'af_heart',
+    name: 'Heart (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_bella',
+    name: 'Bella (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_nicole',
+    name: 'Nicole (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_sarah',
+    name: 'Sarah (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_sky',
+    name: 'Sky (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_adam',
+    name: 'Adam (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_michael',
+    name: 'Michael (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bf_emma',
+    name: 'Emma (Female, British)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bf_isabella',
+    name: 'Isabella (Female, British)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bm_george',
+    name: 'George (Male, British)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bm_lewis',
+    name: 'Lewis (Male, British)',
+    engine: 'kokoro',
+  ),
 ];
 
 /// Additional English voices only available in v1.0 model.
 const kokoroV10ExtraVoices = [
-  TtsEngineVoice(id: 'af_alloy', name: 'Alloy (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_aoede', name: 'Aoede (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_jessica', name: 'Jessica (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_kore', name: 'Kore (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_nova', name: 'Nova (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'af_river', name: 'River (Female, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_echo', name: 'Echo (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_eric', name: 'Eric (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_fenrir', name: 'Fenrir (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_liam', name: 'Liam (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_onyx', name: 'Onyx (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'am_puck', name: 'Puck (Male, American)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bf_alice', name: 'Alice (Female, British)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bf_lily', name: 'Lily (Female, British)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bm_daniel', name: 'Daniel (Male, British)', engine: 'kokoro'),
-  TtsEngineVoice(id: 'bm_fable', name: 'Fable (Male, British)', engine: 'kokoro'),
+  TtsEngineVoice(
+    id: 'af_alloy',
+    name: 'Alloy (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_aoede',
+    name: 'Aoede (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_jessica',
+    name: 'Jessica (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_kore',
+    name: 'Kore (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_nova',
+    name: 'Nova (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'af_river',
+    name: 'River (Female, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_echo',
+    name: 'Echo (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_eric',
+    name: 'Eric (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_fenrir',
+    name: 'Fenrir (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_liam',
+    name: 'Liam (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_onyx',
+    name: 'Onyx (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'am_puck',
+    name: 'Puck (Male, American)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bf_alice',
+    name: 'Alice (Female, British)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bf_lily',
+    name: 'Lily (Female, British)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bm_daniel',
+    name: 'Daniel (Male, British)',
+    engine: 'kokoro',
+  ),
+  TtsEngineVoice(
+    id: 'bm_fable',
+    name: 'Fable (Male, British)',
+    engine: 'kokoro',
+  ),
 ];
 
 /// A StreamAudioSource that serves WAV bytes from memory.
@@ -56,9 +165,7 @@ class _WavAudioSource extends StreamAudioSource {
       sourceLength: _wavBytes.length,
       contentLength: effectiveEnd - effectiveStart,
       offset: effectiveStart,
-      stream: Stream.value(
-        _wavBytes.sublist(effectiveStart, effectiveEnd),
-      ),
+      stream: Stream.value(_wavBytes.sublist(effectiveStart, effectiveEnd)),
       contentType: 'audio/wav',
     );
   }

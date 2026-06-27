@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:isolate';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
@@ -10,7 +9,11 @@ import 'asr_model_manager.dart';
 /// Convert PCM16 little-endian bytes to Float32List normalized to [-1.0, 1.0].
 Float32List _pcm16ToFloat32(Uint8List bytes) {
   final values = Float32List(bytes.length ~/ 2);
-  final data = ByteData.view(bytes.buffer, bytes.offsetInBytes, bytes.lengthInBytes);
+  final data = ByteData.view(
+    bytes.buffer,
+    bytes.offsetInBytes,
+    bytes.lengthInBytes,
+  );
   for (var i = 0; i < bytes.length - 1; i += 2) {
     final short = data.getInt16(i, Endian.little);
     values[i ~/ 2] = short / 32768.0;
@@ -81,8 +84,10 @@ void _asrIsolateEntry(SendPort mainSendPort) {
           try {
             final punctConfig = sherpa.OnlinePunctuationConfig(
               model: sherpa.OnlinePunctuationModelConfig(
-                cnnBiLstm: '${message.punctDir}/${AsrModelManager.punctModelFile}',
-                bpeVocab: '${message.punctDir}/${AsrModelManager.punctVocabFile}',
+                cnnBiLstm:
+                    '${message.punctDir}/${AsrModelManager.punctModelFile}',
+                bpeVocab:
+                    '${message.punctDir}/${AsrModelManager.punctVocabFile}',
                 numThreads: 1,
                 provider: 'cpu',
                 debug: false,
@@ -118,7 +123,9 @@ void _asrIsolateEntry(SendPort mainSendPort) {
       if (recognizer!.isEndpoint(stream!)) {
         final hasNew = currentSegment.isNotEmpty;
         if (hasNew) {
-          rawText = rawText.isEmpty ? currentSegment : '$rawText $currentSegment';
+          rawText = rawText.isEmpty
+              ? currentSegment
+              : '$rawText $currentSegment';
         }
         recognizer!.reset(stream!);
         // Re-punctuate the entire accumulated text
@@ -129,7 +136,9 @@ void _asrIsolateEntry(SendPort mainSendPort) {
       } else {
         // For partial results, only send when there's active speech
         if (currentSegment.isNotEmpty) {
-          final fullRaw = rawText.isEmpty ? currentSegment : '$rawText $currentSegment';
+          final fullRaw = rawText.isEmpty
+              ? currentSegment
+              : '$rawText $currentSegment';
           // Re-punctuate everything including the partial segment
           final display = punctuation != null
               ? punctuation!.addPunct(fullRaw)
@@ -150,7 +159,9 @@ void _asrIsolateEntry(SendPort mainSendPort) {
         final result = recognizer!.getResult(stream!);
         final currentSegment = result.text.trim().toLowerCase();
         if (currentSegment.isNotEmpty) {
-          rawText = rawText.isEmpty ? currentSegment : '$rawText $currentSegment';
+          rawText = rawText.isEmpty
+              ? currentSegment
+              : '$rawText $currentSegment';
         }
         recognizer!.reset(stream!);
       }
@@ -167,7 +178,8 @@ void _asrIsolateEntry(SendPort mainSendPort) {
       }
     } else if (message is String && message.startsWith('setCommitted:')) {
       // Strip punctuation and lowercase so we can re-punctuate cleanly
-      rawText = message.substring('setCommitted:'.length)
+      rawText = message
+          .substring('setCommitted:'.length)
           .toLowerCase()
           .replaceAll(RegExp(r'[.,!?;:\-\u2014]'), '')
           .replaceAll(RegExp(r'\s+'), ' ')
@@ -240,7 +252,9 @@ class SherpaSpeechService {
           _isolateSendPort = message;
           // Send init with model dirs
           final initPort = ReceivePort();
-          _isolateSendPort!.send(_IsolateInit(initPort.sendPort, modelDir, punctDir));
+          _isolateSendPort!.send(
+            _IsolateInit(initPort.sendPort, modelDir, punctDir),
+          );
           initPort.listen((response) {
             if (response == 'ready') {
               _isInitialized = true;
@@ -281,7 +295,10 @@ class SherpaSpeechService {
     }
   }
 
-  Future<void> startListening({String existingText = '', bool pushToTalk = false}) async {
+  Future<void> startListening({
+    String existingText = '',
+    bool pushToTalk = false,
+  }) async {
     if (!_isInitialized) {
       final ok = await initialize();
       if (!ok) {
@@ -416,7 +433,9 @@ class SherpaSpeechService {
     _sessionActive = false;
     _silenceTimer?.cancel();
     _micSub?.cancel();
-    try { _recorder?.stop(); } catch (_) {}
+    try {
+      _recorder?.stop();
+    } catch (_) {}
     _recorder?.dispose();
     _isolateSendPort?.send('shutdown');
     _isolateResultSub?.cancel();

@@ -2704,12 +2704,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final progressSummary = msg['summary'] as String?;
         if (progressToolId != null &&
             _subagentTasks.containsKey(progressToolId)) {
-          if (progressSummary != null)
+          if (progressSummary != null) {
             _subagentTasks[progressToolId]!['progressSummary'] =
                 progressSummary;
+          }
           final lastTool = msg['lastToolName'] as String?;
-          if (lastTool != null)
+          if (lastTool != null) {
             _subagentTasks[progressToolId]!['lastToolName'] = lastTool;
+          }
           notifyListeners();
         }
         break;
@@ -4041,19 +4043,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _lastUsage = Map<String, dynamic>.from(msg['usage'] as Map);
       _lastUsage!['costUsd'] = msg['costUsd'];
       _lastUsage!['numTurns'] = msg['numTurns'];
-      if (msg['stopReason'] != null)
+      if (msg['stopReason'] != null) {
         _lastUsage!['stopReason'] = msg['stopReason'];
-      if (msg['resultSubtype'] != null)
+      }
+      if (msg['resultSubtype'] != null) {
         _lastUsage!['resultSubtype'] = msg['resultSubtype'];
+      }
       if (msg['errors'] != null) _lastUsage!['errors'] = msg['errors'];
-      if (msg['durationApiMs'] != null)
+      if (msg['durationApiMs'] != null) {
         _lastUsage!['durationApiMs'] = msg['durationApiMs'];
-      if (msg['permissionDenials'] != null)
+      }
+      if (msg['permissionDenials'] != null) {
         _lastUsage!['permissionDenials'] = msg['permissionDenials'];
-      if (msg['totalUsage'] != null)
+      }
+      if (msg['totalUsage'] != null) {
         _lastUsage!['totalUsage'] = Map<String, dynamic>.from(
           msg['totalUsage'] as Map,
         );
+      }
     }
     // Show error message for failed queries
     final subtype = msg['resultSubtype'] as String?;
@@ -4067,7 +4074,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Mark any tool calls that never got a result so spinners stop
     for (final m in _messages) {
       if (m.type == MessageType.toolCall) {
-        if (m.toolOutput == null) m.toolOutput = '';
+        m.toolOutput ??= '';
         m.toolStreaming = false;
       }
     }
@@ -4268,7 +4275,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (existing != null) {
       // Append new output to existing card
-      existing.toolOutput = (existing.toolOutput ?? '') + '\n' + content;
+      existing.toolOutput = '${existing.toolOutput ?? ''}\n$content';
       existing.textContent = desc;
     } else {
       // Create a new monitor output card
@@ -4724,7 +4731,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final loaded = <ChatMessage>[];
-    var _historyPrevTodos = <Map<String, dynamic>>[];
+    var historyPrevTodos = <Map<String, dynamic>>[];
 
     for (final entry in rawMessages) {
       final role = entry['role'] as String? ?? '';
@@ -5122,7 +5129,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
             if (existingMonitor != null) {
               existingMonitor.toolOutput =
-                  (existingMonitor.toolOutput ?? '') + '\n' + content;
+                  '${existingMonitor.toolOutput ?? ''}\n$content';
             } else {
               loaded.add(
                 ChatMessage(
@@ -5247,7 +5254,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           // Legacy: old history entries had inline todos diffs — skip them.
           // Current state is restored via the 'todos' field on session_history.
           try {
-            _historyPrevTodos = (jsonDecode(content) as List)
+            historyPrevTodos = (jsonDecode(content) as List)
                 .map((t) => Map<String, dynamic>.from(t as Map))
                 .toList();
           } catch (_) {}
@@ -5364,8 +5371,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _recountPendingInjectedMessages();
     // Fallback: if server didn't include 'todos' field (old server compat),
     // sync _todos from the last todos_update in history for dedup.
-    if (rawTodos == null && _historyPrevTodos.isNotEmpty) {
-      _todos = _historyPrevTodos;
+    if (rawTodos == null && historyPrevTodos.isNotEmpty) {
+      _todos = historyPrevTodos;
     }
     // Rebuild subagent tasks from loaded messages (for expandable Task cards)
     for (final m in _messages) {
@@ -6234,8 +6241,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void loadMoreHistory() {
-    if (_isLoadingMore || _historyOffset <= 0 || _activeSessionId == null)
+    if (_isLoadingMore || _historyOffset <= 0 || _activeSessionId == null) {
       return;
+    }
     _isLoadingMore = true;
     final limit = 50;
     final newOffset = (_historyOffset - limit).clamp(0, _historyOffset);
@@ -7125,8 +7133,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final config = _serverConfigs
           .where((c) => c.id == session.serverId)
           .firstOrNull;
-      if (config != null && config.systemPrompt.isNotEmpty)
+      if (config != null && config.systemPrompt.isNotEmpty) {
         return config.systemPrompt;
+      }
     }
     // Single server fallback
     if (_serverConfigs.length == 1 &&
@@ -7171,8 +7180,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (a.length != b.length) return false;
     for (int i = 0; i < a.length; i++) {
       if (a[i]['content'] != b[i]['content'] ||
-          a[i]['status'] != b[i]['status'])
+          a[i]['status'] != b[i]['status']) {
         return false;
+      }
     }
     return true;
   }
@@ -7418,8 +7428,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     KokoroModel model = KokoroModel.v019,
   ]) async {
     final server = _getDirectServer();
-    if (server == null)
+    if (server == null) {
       throw Exception('No direct server configured for model download');
+    }
     await _kokoroModelManager.downloadModel(
       serverHost: server.host,
       serverPort: server.port,

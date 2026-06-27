@@ -36,9 +36,9 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
         'TokenCapture',
         onMessageReceived: _onTokenCaptured,
       )
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageFinished: (_) => _injectTokenCapture(),
-      ))
+      ..setNavigationDelegate(
+        NavigationDelegate(onPageFinished: (_) => _injectTokenCapture()),
+      )
       ..loadRequest(Uri.parse('https://webmail.jci.com'));
   }
 
@@ -121,8 +121,12 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
       var payload = parts[1];
       // Add padding if needed
       switch (payload.length % 4) {
-        case 2: payload += '=='; break;
-        case 3: payload += '='; break;
+        case 2:
+          payload += '==';
+          break;
+        case 3:
+          payload += '=';
+          break;
       }
       final decoded = utf8.decode(base64Url.decode(payload));
       return jsonDecode(decoded) as Map<String, dynamic>;
@@ -135,15 +139,21 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
   List<String> _getTokenScopeList(Map<String, dynamic> tokenInfo) {
     // First check the captured scopes from OAuth response
     final oauthScopes = tokenInfo['scopes'] as String? ?? '';
-    if (oauthScopes.isNotEmpty) return oauthScopes.split(' ').where((s) => s.isNotEmpty).toList();
+    if (oauthScopes.isNotEmpty) {
+      return oauthScopes.split(' ').where((s) => s.isNotEmpty).toList();
+    }
     // Fall back to decoding the JWT
     final token = tokenInfo['token'] as String? ?? '';
     final claims = _decodeJwt(token);
     if (claims == null) return ['(unknown)'];
     final scp = claims['scp'] as String?;
-    if (scp != null && scp.isNotEmpty) return scp.split(' ').where((s) => s.isNotEmpty).toList();
+    if (scp != null && scp.isNotEmpty) {
+      return scp.split(' ').where((s) => s.isNotEmpty).toList();
+    }
     final roles = claims['roles'] as List?;
-    if (roles != null && roles.isNotEmpty) return roles.map((r) => r.toString()).toList();
+    if (roles != null && roles.isNotEmpty) {
+      return roles.map((r) => r.toString()).toList();
+    }
     return ['(no scopes)'];
   }
 
@@ -216,12 +226,21 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
               child: Column(
                 children: [
                   InkWell(
-                    onTap: () => setState(() => _tokenDetailsExpanded = !_tokenDetailsExpanded),
+                    onTap: () => setState(
+                      () => _tokenDetailsExpanded = !_tokenDetailsExpanded,
+                    ),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       child: Row(
                         children: [
-                          Icon(Icons.check_circle, size: 16, color: Colors.green.shade700),
+                          Icon(
+                            Icons.check_circle,
+                            size: 16,
+                            color: Colors.green.shade700,
+                          ),
                           const SizedBox(width: 8),
                           Expanded(
                             child: Text(
@@ -234,7 +253,9 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
                             ),
                           ),
                           Icon(
-                            _tokenDetailsExpanded ? Icons.expand_less : Icons.expand_more,
+                            _tokenDetailsExpanded
+                                ? Icons.expand_less
+                                : Icons.expand_more,
                             size: 20,
                             color: Colors.green.shade700,
                           ),
@@ -243,151 +264,216 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
                     ),
                   ),
                   if (_tokenDetailsExpanded)
-                    Builder(builder: (context) {
-                      final groups = _buildAudienceGroups();
-                      final hasMailScope = _accessTokens.any((t) =>
-                        (_getTokenScopeList(t)).any((s) => s.toLowerCase().contains('mail')));
-                      final hasDriveScope = _accessTokens.any((t) =>
-                        (_getTokenScopeList(t)).any((s) {
-                          final lower = s.toLowerCase();
-                          return lower.contains('files') || lower.contains('sites');
-                        }));
-                      bool _isHighlightedScope(String scope) {
-                        final lower = scope.toLowerCase();
-                        return lower.contains('mail') || lower.contains('files') || lower.contains('sites');
-                      }
-                      Color _scopeBg(String scope) {
-                        final lower = scope.toLowerCase();
-                        if (lower.contains('mail')) return Colors.blue.shade100;
-                        if (lower.contains('files') || lower.contains('sites')) return Colors.purple.shade50;
-                        return Colors.green.shade50;
-                      }
-                      Color _scopeBorder(String scope) {
-                        final lower = scope.toLowerCase();
-                        if (lower.contains('mail')) return Colors.blue.shade300;
-                        if (lower.contains('files') || lower.contains('sites')) return Colors.purple.shade200;
-                        return Colors.green.shade200;
-                      }
-                      Color _scopeText(String scope) {
-                        final lower = scope.toLowerCase();
-                        if (lower.contains('mail')) return Colors.blue.shade900;
-                        if (lower.contains('files') || lower.contains('sites')) return Colors.purple.shade900;
-                        return Colors.green.shade900;
-                      }
-                      return Container(
-                        width: double.infinity,
-                        constraints: const BoxConstraints(maxHeight: 300),
-                        child: SingleChildScrollView(
-                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              for (final warning in [
-                                if (!hasMailScope) 'No Mail scopes found — email access may fail',
-                                if (!hasDriveScope) 'No Files/Sites scopes found — OneDrive/SharePoint access may fail',
-                              ])
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.orange.shade100,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.warning_amber, size: 14, color: Colors.orange.shade800),
-                                      const SizedBox(width: 6),
-                                      Expanded(
-                                        child: Text(
-                                          warning,
-                                          style: TextStyle(fontSize: 11, color: Colors.orange.shade900, fontWeight: FontWeight.w500),
+                    Builder(
+                      builder: (context) {
+                        final groups = _buildAudienceGroups();
+                        final hasMailScope = _accessTokens.any(
+                          (t) => (_getTokenScopeList(
+                            t,
+                          )).any((s) => s.toLowerCase().contains('mail')),
+                        );
+                        final hasDriveScope = _accessTokens.any(
+                          (t) => (_getTokenScopeList(t)).any((s) {
+                            final lower = s.toLowerCase();
+                            return lower.contains('files') ||
+                                lower.contains('sites');
+                          }),
+                        );
+                        bool isHighlightedScope(String scope) {
+                          final lower = scope.toLowerCase();
+                          return lower.contains('mail') ||
+                              lower.contains('files') ||
+                              lower.contains('sites');
+                        }
+
+                        Color scopeBg(String scope) {
+                          final lower = scope.toLowerCase();
+                          if (lower.contains('mail')) {
+                            return Colors.blue.shade100;
+                          }
+                          if (lower.contains('files') ||
+                              lower.contains('sites')) {
+                            return Colors.purple.shade50;
+                          }
+                          return Colors.green.shade50;
+                        }
+
+                        Color scopeBorder(String scope) {
+                          final lower = scope.toLowerCase();
+                          if (lower.contains('mail')) {
+                            return Colors.blue.shade300;
+                          }
+                          if (lower.contains('files') ||
+                              lower.contains('sites')) {
+                            return Colors.purple.shade200;
+                          }
+                          return Colors.green.shade200;
+                        }
+
+                        Color scopeText(String scope) {
+                          final lower = scope.toLowerCase();
+                          if (lower.contains('mail')) {
+                            return Colors.blue.shade900;
+                          }
+                          if (lower.contains('files') ||
+                              lower.contains('sites')) {
+                            return Colors.purple.shade900;
+                          }
+                          return Colors.green.shade900;
+                        }
+
+                        return Container(
+                          width: double.infinity,
+                          constraints: const BoxConstraints(maxHeight: 300),
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                for (final warning in [
+                                  if (!hasMailScope)
+                                    'No Mail scopes found — email access may fail',
+                                  if (!hasDriveScope)
+                                    'No Files/Sites scopes found — OneDrive/SharePoint access may fail',
+                                ])
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange.shade100,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: Row(
+                                      children: [
+                                        Icon(
+                                          Icons.warning_amber,
+                                          size: 14,
+                                          color: Colors.orange.shade800,
                                         ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              for (final entry in groups.entries) ...[
-                                Container(
-                                  width: double.infinity,
-                                  margin: const EdgeInsets.only(bottom: 8),
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: Colors.green.shade100,
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Icon(Icons.language, size: 12, color: Colors.green.shade800),
-                                          const SizedBox(width: 4),
-                                          Expanded(
-                                            child: Text(
-                                              entry.key,
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w700,
-                                                color: Colors.green.shade900,
-                                              ),
+                                        const SizedBox(width: 6),
+                                        Expanded(
+                                          child: Text(
+                                            warning,
+                                            style: TextStyle(
+                                              fontSize: 11,
+                                              color: Colors.orange.shade900,
+                                              fontWeight: FontWeight.w500,
                                             ),
                                           ),
-                                          Text(
-                                            '${entry.value['tokenCount']} token(s)',
-                                            style: TextStyle(fontSize: 10, color: Colors.green.shade700),
-                                          ),
-                                        ],
-                                      ),
-                                      Padding(
-                                        padding: const EdgeInsets.only(top: 2, bottom: 4),
-                                        child: Text(
-                                          'expires: ${(entry.value['expiresIn'] as List<int>).map((e) => e >= 3600 ? '${(e / 3600).toStringAsFixed(1)}h' : '${e}s').join(', ')}',
-                                          style: TextStyle(fontSize: 10, color: Colors.green.shade700),
                                         ),
-                                      ),
-                                      Wrap(
-                                        spacing: 4,
-                                        runSpacing: 3,
-                                        children: [
-                                          for (final scope in (entry.value['scopes'] as Set<String>).toList()..sort())
-                                            Container(
-                                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                                              decoration: BoxDecoration(
-                                                color: _scopeBg(scope),
-                                                borderRadius: BorderRadius.circular(4),
-                                                border: Border.all(
-                                                  color: _scopeBorder(scope),
-                                                  width: 0.5,
-                                                ),
-                                              ),
+                                      ],
+                                    ),
+                                  ),
+                                for (final entry in groups.entries) ...[
+                                  Container(
+                                    width: double.infinity,
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: Colors.green.shade100,
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              Icons.language,
+                                              size: 12,
+                                              color: Colors.green.shade800,
+                                            ),
+                                            const SizedBox(width: 4),
+                                            Expanded(
                                               child: Text(
-                                                scope,
+                                                entry.key,
                                                 style: TextStyle(
-                                                  fontSize: 9,
-                                                  color: _scopeText(scope),
-                                                  fontWeight: _isHighlightedScope(scope)
-                                                      ? FontWeight.w600
-                                                      : FontWeight.normal,
+                                                  fontSize: 11,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: Colors.green.shade900,
                                                 ),
                                               ),
                                             ),
-                                        ],
-                                      ),
-                                    ],
+                                            Text(
+                                              '${entry.value['tokenCount']} token(s)',
+                                              style: TextStyle(
+                                                fontSize: 10,
+                                                color: Colors.green.shade700,
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        Padding(
+                                          padding: const EdgeInsets.only(
+                                            top: 2,
+                                            bottom: 4,
+                                          ),
+                                          child: Text(
+                                            'expires: ${(entry.value['expiresIn'] as List<int>).map((e) => e >= 3600 ? '${(e / 3600).toStringAsFixed(1)}h' : '${e}s').join(', ')}',
+                                            style: TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.green.shade700,
+                                            ),
+                                          ),
+                                        ),
+                                        Wrap(
+                                          spacing: 4,
+                                          runSpacing: 3,
+                                          children: [
+                                            for (final scope
+                                                in (entry.value['scopes']
+                                                        as Set<String>)
+                                                    .toList()
+                                                  ..sort())
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 5,
+                                                      vertical: 2,
+                                                    ),
+                                                decoration: BoxDecoration(
+                                                  color: scopeBg(scope),
+                                                  borderRadius:
+                                                      BorderRadius.circular(4),
+                                                  border: Border.all(
+                                                    color: scopeBorder(scope),
+                                                    width: 0.5,
+                                                  ),
+                                                ),
+                                                child: Text(
+                                                  scope,
+                                                  style: TextStyle(
+                                                    fontSize: 9,
+                                                    color: scopeText(scope),
+                                                    fontWeight:
+                                                        isHighlightedScope(
+                                                          scope,
+                                                        )
+                                                        ? FontWeight.w600
+                                                        : FontWeight.normal,
+                                                  ),
+                                                ),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      );
-                    }),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
-          Expanded(
-            child: WebViewWidget(controller: _controller),
-          ),
+          Expanded(child: WebViewWidget(controller: _controller)),
         ],
       ),
     );

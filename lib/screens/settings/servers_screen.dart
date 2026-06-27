@@ -569,6 +569,7 @@ class _ServersScreenState extends State<ServersScreen> {
                   if (existing != null) {
                     await provider.updateServer(config);
                     if (ctx.mounted) Navigator.pop(ctx);
+                    if (!context.mounted) return;
                     if (!config.isRelayPaired) {
                       _pairServerRelay(
                         context,
@@ -580,14 +581,13 @@ class _ServersScreenState extends State<ServersScreen> {
                   } else {
                     await provider.addServer(config);
                     if (ctx.mounted) Navigator.pop(ctx);
-                    if (mounted) {
-                      _pairServerRelay(
-                        context,
-                        provider,
-                        config,
-                        requireRelayAccess: false,
-                      );
-                    }
+                    if (!context.mounted) return;
+                    _pairServerRelay(
+                      context,
+                      provider,
+                      config,
+                      requireRelayAccess: false,
+                    );
                   }
                 }
               },

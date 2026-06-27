@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -9,8 +8,11 @@ enum KokoroModel {
   v019,
   v10;
 
-  String get dirName => this == v10 ? 'kokoro-multi-lang-v1_0' : 'kokoro-en-v0_19';
-  String get label => this == v10 ? 'v1.0 — 53 voices, multilingual' : 'v0.19 — 11 voices, English';
+  String get dirName =>
+      this == v10 ? 'kokoro-multi-lang-v1_0' : 'kokoro-en-v0_19';
+  String get label => this == v10
+      ? 'v1.0 — 53 voices, multilingual'
+      : 'v0.19 — 11 voices, English';
   String get shortLabel => this == v10 ? 'Kokoro v1.0' : 'Kokoro v0.19';
 }
 
@@ -37,11 +39,12 @@ class KokoroModelManager {
   Future<bool> isModelVersionInstalled(KokoroModel model) async {
     final dir = await modelDirFor(model);
     return File('$dir/model.onnx').existsSync() &&
-           File('$dir/voices.bin').existsSync();
+        File('$dir/voices.bin').existsSync();
   }
 
   /// Whether the active model is installed (backwards compat).
-  Future<bool> isModelInstalled() async => isModelVersionInstalled(await activeModel);
+  Future<bool> isModelInstalled() async =>
+      isModelVersionInstalled(await activeModel);
 
   /// The active model (user's selection).
   Future<KokoroModel> get activeModel async {
@@ -108,7 +111,8 @@ class KokoroModelManager {
       received += chunk.length;
       if (total > 0) {
         final fileProgress = (received / total).clamp(0.0, 1.0);
-        downloadProgress.value = progressStart + (progressEnd - progressStart) * fileProgress;
+        downloadProgress.value =
+            progressStart + (progressEnd - progressStart) * fileProgress;
       }
     }
     await sink.close();
@@ -137,38 +141,59 @@ class KokoroModelManager {
 
       // Download model.onnx (largest)
       await _downloadFile(
-        serverHost: serverHost, serverPort: serverPort, authToken: authToken,
-        fileName: 'model.onnx', savePath: '$dir/model.onnx',
+        serverHost: serverHost,
+        serverPort: serverPort,
+        authToken: authToken,
+        fileName: 'model.onnx',
+        savePath: '$dir/model.onnx',
         modelDirName: model.dirName,
-        progressStart: 0.0, progressEnd: 0.75,
+        progressStart: 0.0,
+        progressEnd: 0.75,
       );
 
       // Download voices.bin
       await _downloadFile(
-        serverHost: serverHost, serverPort: serverPort, authToken: authToken,
-        fileName: 'voices.bin', savePath: '$dir/voices.bin',
+        serverHost: serverHost,
+        serverPort: serverPort,
+        authToken: authToken,
+        fileName: 'voices.bin',
+        savePath: '$dir/voices.bin',
         modelDirName: model.dirName,
-        progressStart: 0.75, progressEnd: 0.88,
+        progressStart: 0.75,
+        progressEnd: 0.88,
       );
 
       // Download tokens.txt
       await _downloadFile(
-        serverHost: serverHost, serverPort: serverPort, authToken: authToken,
-        fileName: 'tokens.txt', savePath: '$dir/tokens.txt',
+        serverHost: serverHost,
+        serverPort: serverPort,
+        authToken: authToken,
+        fileName: 'tokens.txt',
+        savePath: '$dir/tokens.txt',
         modelDirName: model.dirName,
-        progressStart: 0.88, progressEnd: 0.89,
+        progressStart: 0.88,
+        progressEnd: 0.89,
       );
 
       // Download espeak-ng-data (tar.gz)
       final espeakTarPath = '$dir/espeak-ng-data.tar.gz';
       await _downloadFile(
-        serverHost: serverHost, serverPort: serverPort, authToken: authToken,
-        fileName: 'espeak-ng-data', savePath: espeakTarPath,
+        serverHost: serverHost,
+        serverPort: serverPort,
+        authToken: authToken,
+        fileName: 'espeak-ng-data',
+        savePath: espeakTarPath,
         modelDirName: model.dirName,
-        progressStart: 0.89, progressEnd: 0.93,
+        progressStart: 0.89,
+        progressEnd: 0.93,
       );
       downloadProgress.value = 0.93;
-      final result = await Process.run('tar', ['xzf', espeakTarPath, '-C', dir]);
+      final result = await Process.run('tar', [
+        'xzf',
+        espeakTarPath,
+        '-C',
+        dir,
+      ]);
       if (result.exitCode != 0) {
         throw Exception('espeak-ng-data extraction failed: ${result.stderr}');
       }
@@ -177,25 +202,42 @@ class KokoroModelManager {
       // v1.0 needs lexicon files and dict directory for multilingual support
       if (model == KokoroModel.v10) {
         // Download lexicon files
-        for (final lexFile in ['lexicon-us-en.txt', 'lexicon-gb-en.txt', 'lexicon-zh.txt']) {
+        for (final lexFile in [
+          'lexicon-us-en.txt',
+          'lexicon-gb-en.txt',
+          'lexicon-zh.txt',
+        ]) {
           await _downloadFile(
-            serverHost: serverHost, serverPort: serverPort, authToken: authToken,
-            fileName: lexFile, savePath: '$dir/$lexFile',
+            serverHost: serverHost,
+            serverPort: serverPort,
+            authToken: authToken,
+            fileName: lexFile,
+            savePath: '$dir/$lexFile',
             modelDirName: model.dirName,
-            progressStart: 0.93, progressEnd: 0.95,
+            progressStart: 0.93,
+            progressEnd: 0.95,
           );
         }
 
         // Download dict directory (tar.gz, for Chinese text segmentation)
         final dictTarPath = '$dir/dict.tar.gz';
         await _downloadFile(
-          serverHost: serverHost, serverPort: serverPort, authToken: authToken,
-          fileName: 'dict', savePath: dictTarPath,
+          serverHost: serverHost,
+          serverPort: serverPort,
+          authToken: authToken,
+          fileName: 'dict',
+          savePath: dictTarPath,
           modelDirName: model.dirName,
-          progressStart: 0.95, progressEnd: 0.98,
+          progressStart: 0.95,
+          progressEnd: 0.98,
         );
         downloadProgress.value = 0.98;
-        final dictResult = await Process.run('tar', ['xzf', dictTarPath, '-C', dir]);
+        final dictResult = await Process.run('tar', [
+          'xzf',
+          dictTarPath,
+          '-C',
+          dir,
+        ]);
         if (dictResult.exitCode != 0) {
           throw Exception('dict extraction failed: ${dictResult.stderr}');
         }
@@ -229,7 +271,9 @@ class KokoroModelManager {
     // If active model was deleted, switch to the other if available
     final active = await activeModel;
     if (active == model) {
-      final other = model == KokoroModel.v019 ? KokoroModel.v10 : KokoroModel.v019;
+      final other = model == KokoroModel.v019
+          ? KokoroModel.v10
+          : KokoroModel.v019;
       if (await isModelVersionInstalled(other)) {
         await setActiveModel(other);
       }

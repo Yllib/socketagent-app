@@ -206,34 +206,54 @@ class _SessionsTabState extends State<SessionsTab> {
                         style: Theme.of(context).textTheme.labelSmall,
                       ),
                     ),
-                    ...provider.serverConfigs.map((config) {
-                      final status = provider.connMgr.statusOf(config.id);
-                      final isConnected = status == ConnectionStatus.connected;
-                      return RadioListTile<String>(
-                        value: config.id,
-                        groupValue: selectedServer,
-                        onChanged: isConnected
-                            ? (v) => setState(() => selectedServer = v)
-                            : null,
-                        title: Text(config.name),
-                        subtitle: Text(
-                          config.useRelay
-                              ? 'Relay'
-                              : '${config.host}:${config.port}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withAlpha(128),
-                          ),
-                        ),
-                        secondary: Icon(
-                          isConnected ? Icons.cloud_done : Icons.cloud_off,
-                          color: isConnected ? Colors.green : Colors.grey,
-                        ),
-                        dense: true,
-                      );
-                    }),
+                    RadioGroup<String>(
+                      groupValue: selectedServer,
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => selectedServer = value);
+                        }
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final config in provider.serverConfigs)
+                            Builder(
+                              builder: (context) {
+                                final status = provider.connMgr.statusOf(
+                                  config.id,
+                                );
+                                final isConnected =
+                                    status == ConnectionStatus.connected;
+                                return RadioListTile<String>(
+                                  value: config.id,
+                                  enabled: isConnected,
+                                  title: Text(config.name),
+                                  subtitle: Text(
+                                    config.useRelay
+                                        ? 'Relay'
+                                        : '${config.host}:${config.port}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Theme.of(
+                                        context,
+                                      ).colorScheme.onSurface.withAlpha(128),
+                                    ),
+                                  ),
+                                  secondary: Icon(
+                                    isConnected
+                                        ? Icons.cloud_done
+                                        : Icons.cloud_off,
+                                    color: isConnected
+                                        ? Colors.green
+                                        : Colors.grey,
+                                  ),
+                                  dense: true,
+                                );
+                              },
+                            ),
+                        ],
+                      ),
+                    ),
                     const Divider(height: 1),
                   ],
                   if (showBackends) ...[
@@ -244,23 +264,32 @@ class _SessionsTabState extends State<SessionsTab> {
                         style: Theme.of(context).textTheme.labelSmall,
                       ),
                     ),
-                    ...supported.map(
-                      (b) => RadioListTile<String>(
-                        value: b,
-                        groupValue: selectedBackend,
-                        onChanged: (v) =>
-                            setState(() => selectedBackend = v ?? b),
-                        title: Text(_backendLabel(b)),
-                        subtitle: Text(
-                          _backendSubtitle(b),
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withAlpha(128),
-                          ),
-                        ),
-                        dense: true,
+                    RadioGroup<String>(
+                      groupValue: selectedBackend,
+                      onChanged: (value) {
+                        if (value != null) {
+                          setState(() => selectedBackend = value);
+                        }
+                      },
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final backend in supported)
+                            RadioListTile<String>(
+                              value: backend,
+                              title: Text(_backendLabel(backend)),
+                              subtitle: Text(
+                                _backendSubtitle(backend),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withAlpha(128),
+                                ),
+                              ),
+                              dense: true,
+                            ),
+                        ],
                       ),
                     ),
                     const Divider(height: 1),

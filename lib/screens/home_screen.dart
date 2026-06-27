@@ -369,8 +369,9 @@ class HomeScreenState extends State<HomeScreen> {
                             title.isNotEmpty &&
                             title != 'Untitled';
                         final flags = <String>[];
-                        if (provider.activeSessionBackend == 'codex')
+                        if (provider.activeSessionBackend == 'codex') {
                           flags.add('CODEX');
+                        }
                         if (provider.activeSessionBackend == 'codex' &&
                             provider.codexFastMode) {
                           flags.add('FAST');
@@ -1341,16 +1342,19 @@ class HomeScreenState extends State<HomeScreen> {
         segments.add(_BarSegment(name, tokens, Color(colorVal)));
       }
     } else {
-      if (cacheRead > 0)
+      if (cacheRead > 0) {
         segments.add(_BarSegment('Cached', cacheRead, const Color(0xFF89B4FA)));
-      if (cacheCreate > 0)
+      }
+      if (cacheCreate > 0) {
         segments.add(
           _BarSegment('New cache', cacheCreate, const Color(0xFFA6E3A1)),
         );
-      if (inputTokens > 0)
+      }
+      if (inputTokens > 0) {
         segments.add(
           _BarSegment('Uncached', inputTokens, const Color(0xFFF9E2AF)),
         );
+      }
     }
     if (freeTokens > 0) {
       segments.add(_BarSegment('Free', freeTokens, Colors.transparent));
@@ -1873,17 +1877,16 @@ class HomeScreenState extends State<HomeScreen> {
   ) async {
     // Ensure voices are loaded
     await provider.initTtsVoices();
+    if (!context.mounted) return;
+
     final voices = provider.ttsVoices;
     if (voices.isEmpty) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No voices available on this device')),
-        );
-      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No voices available on this device')),
+      );
       return;
     }
 
-    if (!mounted) return;
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,

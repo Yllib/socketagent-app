@@ -483,7 +483,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                       child: DropdownButtonFormField<String>(
-                        value: recurrenceType,
+                        initialValue: recurrenceType,
                         decoration: const InputDecoration(
                           labelText: 'Repeat',
                           border: OutlineInputBorder(),
@@ -1051,7 +1051,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
                       child: DropdownButtonFormField<String>(
-                        value: recurrenceType,
+                        initialValue: recurrenceType,
                         decoration: const InputDecoration(
                           labelText: 'Repeat',
                           border: OutlineInputBorder(),

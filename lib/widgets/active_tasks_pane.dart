@@ -33,12 +33,13 @@ class ActiveTasksPane extends StatefulWidget {
 
 class _ActiveTasksPaneState extends State<ActiveTasksPane> {
   final Set<String> _expandedIds = {};
-  final Set<String> _autoExpandedIds = {}; // track which have been auto-expanded
-  final Set<String> _userCollapsedIds = {}; // track which the user manually collapsed
+  final Set<String> _autoExpandedIds =
+      {}; // track which have been auto-expanded
+  final Set<String> _userCollapsedIds =
+      {}; // track which the user manually collapsed
   double _paneHeight = 160;
   static const double _minHeight = 60;
   static const double _maxHeight = 500;
-  static const double _headerHeight = 28;
 
   List<_TaskEntry> get _entries {
     final entries = <_TaskEntry>[];
@@ -51,7 +52,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
       String? output;
       if (!isMonitor && originToolUseId != null) {
         for (final m in widget.messages.reversed) {
-          if (m.type == MessageType.toolCall && m.toolUseId == originToolUseId) {
+          if (m.type == MessageType.toolCall &&
+              m.toolUseId == originToolUseId) {
             output = m.toolOutput;
             break;
           }
@@ -66,15 +68,17 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           }
         }
       }
-      entries.add(_TaskEntry(
-        id: e.key,
-        kind: isMonitor ? 'monitor' : 'bash',
-        description: e.value['summary'] as String? ?? 'Background task',
-        status: e.value['status'] as String? ?? 'running',
-        scrollToolUseId: originToolUseId ?? e.key,
-        stoppable: true,
-        bashOutput: output,
-      ));
+      entries.add(
+        _TaskEntry(
+          id: e.key,
+          kind: isMonitor ? 'monitor' : 'bash',
+          description: e.value['summary'] as String? ?? 'Background task',
+          status: e.value['status'] as String? ?? 'running',
+          scrollToolUseId: originToolUseId ?? e.key,
+          stoppable: true,
+          bashOutput: output,
+        ),
+      );
     }
 
     // Subagent tasks (running + completed)
@@ -95,18 +99,20 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           }
         }
       }
-      entries.add(_TaskEntry(
-        id: toolUseId,
-        kind: 'subagent',
-        description: e.value['description'] as String? ?? 'Sub agent',
-        prompt: e.value['prompt'] as String?,
-        subagentType: e.value['subagentType'] as String?,
-        status: status,
-        scrollToolUseId: toolUseId,
-        stoppable: false,
-        childMessages: children,
-        resultOutput: resultOutput,
-      ));
+      entries.add(
+        _TaskEntry(
+          id: toolUseId,
+          kind: 'subagent',
+          description: e.value['description'] as String? ?? 'Sub agent',
+          prompt: e.value['prompt'] as String?,
+          subagentType: e.value['subagentType'] as String?,
+          status: status,
+          scrollToolUseId: toolUseId,
+          stoppable: false,
+          childMessages: children,
+          resultOutput: resultOutput,
+        ),
+      );
     }
 
     return entries;
@@ -129,8 +135,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
             behavior: HitTestBehavior.opaque,
             onVerticalDragUpdate: (details) {
               setState(() {
-                _paneHeight = (_paneHeight - details.delta.dy)
-                    .clamp(_minHeight, _maxHeight);
+                _paneHeight = (_paneHeight - details.delta.dy).clamp(
+                  _minHeight,
+                  _maxHeight,
+                );
               });
             },
             child: Padding(
@@ -162,7 +170,9 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           decoration: BoxDecoration(
             color: Colors.blue.shade900.withAlpha(40),
             border: paneCollapsed
-                ? Border(top: BorderSide(color: Colors.blue.shade900.withAlpha(80)))
+                ? Border(
+                    top: BorderSide(color: Colors.blue.shade900.withAlpha(80)),
+                  )
                 : null,
           ),
           child: Column(
@@ -172,24 +182,36 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
               InkWell(
                 onTap: () => provider.taskPaneCollapsed = !paneCollapsed,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   child: Row(
                     children: [
                       if (entries.any((e) => e.status == 'running'))
                         SizedBox(
-                          width: 10, height: 10,
+                          width: 10,
+                          height: 10,
                           child: CircularProgressIndicator(
                             strokeWidth: 1.5,
                             color: Colors.blue.shade300,
                           ),
                         )
                       else
-                        Icon(Icons.check_circle, size: 12, color: Colors.green.shade400),
+                        Icon(
+                          Icons.check_circle,
+                          size: 12,
+                          color: Colors.green.shade400,
+                        ),
                       const SizedBox(width: 8),
                       Text(
                         () {
-                          final running = entries.where((e) => e.status == 'running').length;
-                          final done = entries.where((e) => e.status != 'running').length;
+                          final running = entries
+                              .where((e) => e.status == 'running')
+                              .length;
+                          final done = entries
+                              .where((e) => e.status != 'running')
+                              .length;
                           final parts = <String>[];
                           if (running > 0) parts.add('$running running');
                           if (done > 0) parts.add('$done done');
@@ -217,7 +239,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   child: ListView.builder(
                     padding: EdgeInsets.zero,
                     itemCount: entries.length,
-                    itemBuilder: (context, index) => _buildEntry(entries[index]),
+                    itemBuilder: (context, index) =>
+                        _buildEntry(entries[index]),
                   ),
                 ),
             ],
@@ -231,12 +254,15 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
     final isExpanded = _expandedIds.contains(entry.id);
     final isCompleted = entry.status == 'completed';
     final hasContent = entry.kind == 'subagent'
-        ? true  // subagents always expandable (prompt + children + result)
+        ? true // subagents always expandable (prompt + children + result)
         : (entry.bashOutput?.isNotEmpty ?? false) || entry.kind == 'monitor';
 
     // Auto-expand completed subagents that have results (only once, respect user collapse)
-    if (isCompleted && entry.resultOutput != null && entry.resultOutput!.isNotEmpty
-        && !_autoExpandedIds.contains(entry.id) && !_userCollapsedIds.contains(entry.id)) {
+    if (isCompleted &&
+        entry.resultOutput != null &&
+        entry.resultOutput!.isNotEmpty &&
+        !_autoExpandedIds.contains(entry.id) &&
+        !_userCollapsedIds.contains(entry.id)) {
       _autoExpandedIds.add(entry.id);
       _expandedIds.add(entry.id);
     }
@@ -278,14 +304,18 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                 const SizedBox(width: 4),
                 // Status icon
                 if (isCompleted)
-                  Icon(Icons.check_circle, size: 13, color: Colors.green.shade400)
+                  Icon(
+                    Icons.check_circle,
+                    size: 13,
+                    color: Colors.green.shade400,
+                  )
                 else
                   Icon(
                     entry.kind == 'monitor'
                         ? Icons.monitor_heart_outlined
                         : entry.kind == 'subagent'
-                            ? Icons.account_tree
-                            : Icons.terminal,
+                        ? Icons.account_tree
+                        : Icons.terminal,
                     size: 13,
                     color: entry.kind == 'monitor'
                         ? const Color(0xFF89B4FA)
@@ -293,9 +323,13 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   ),
                 const SizedBox(width: 6),
                 // Subagent type badge
-                if (entry.subagentType != null && entry.subagentType!.isNotEmpty) ...[
+                if (entry.subagentType != null &&
+                    entry.subagentType!.isNotEmpty) ...[
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 1,
+                    ),
                     decoration: BoxDecoration(
                       color: Colors.blue.shade800.withAlpha(100),
                       borderRadius: BorderRadius.circular(3),
@@ -314,7 +348,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                 // Description — tap to scroll to task in chat
                 Expanded(
                   child: GestureDetector(
-                    onTap: () => widget.onScrollToTask?.call(entry.scrollToolUseId),
+                    onTap: () =>
+                        widget.onScrollToTask?.call(entry.scrollToolUseId),
                     child: Text(
                       entry.description,
                       maxLines: 1,
@@ -399,9 +434,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: const BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: Color(0xFF313244)),
-              ),
+              border: Border(bottom: BorderSide(color: Color(0xFF313244))),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -432,9 +465,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: const BoxDecoration(
-              border: Border(
-                bottom: BorderSide(color: Color(0xFF313244)),
-              ),
+              border: Border(bottom: BorderSide(color: Color(0xFF313244))),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -461,8 +492,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
             ),
           ),
         // Child messages
-        ...(entry.childMessages ?? [])
-            .map((m) => _buildChildMessage(m)),
+        ...(entry.childMessages ?? []).map((m) => _buildChildMessage(m)),
       ],
     );
   }
@@ -474,7 +504,9 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') return SpeakCard(message: msg);
         if (msg.toolName == 'SendFile') return FileCard(message: msg);
-        if (msg.toolName == 'ScheduleReminder') return ReminderCard(message: msg);
+        if (msg.toolName == 'ScheduleReminder') {
+          return ReminderCard(message: msg);
+        }
         return ToolOutputBlock(message: msg);
       case MessageType.toolResult:
         return ToolOutputBlock(message: msg);

@@ -1,5 +1,6 @@
+// ignore_for_file: experimental_member_use
+
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:isolate';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -16,15 +17,21 @@ Uint8List _float32ToWav(Float32List samples, int sampleRate) {
   final buffer = ByteData(fileSize);
 
   // RIFF header
-  buffer.setUint8(0, 0x52); buffer.setUint8(1, 0x49);
-  buffer.setUint8(2, 0x46); buffer.setUint8(3, 0x46);
+  buffer.setUint8(0, 0x52);
+  buffer.setUint8(1, 0x49);
+  buffer.setUint8(2, 0x46);
+  buffer.setUint8(3, 0x46);
   buffer.setUint32(4, fileSize - 8, Endian.little);
-  buffer.setUint8(8, 0x57); buffer.setUint8(9, 0x41);
-  buffer.setUint8(10, 0x56); buffer.setUint8(11, 0x45);
+  buffer.setUint8(8, 0x57);
+  buffer.setUint8(9, 0x41);
+  buffer.setUint8(10, 0x56);
+  buffer.setUint8(11, 0x45);
 
   // fmt subchunk
-  buffer.setUint8(12, 0x66); buffer.setUint8(13, 0x6D);
-  buffer.setUint8(14, 0x74); buffer.setUint8(15, 0x20);
+  buffer.setUint8(12, 0x66);
+  buffer.setUint8(13, 0x6D);
+  buffer.setUint8(14, 0x74);
+  buffer.setUint8(15, 0x20);
   buffer.setUint32(16, 16, Endian.little);
   buffer.setUint16(20, 1, Endian.little);
   buffer.setUint16(22, 1, Endian.little);
@@ -34,8 +41,10 @@ Uint8List _float32ToWav(Float32List samples, int sampleRate) {
   buffer.setUint16(34, 16, Endian.little);
 
   // data subchunk
-  buffer.setUint8(36, 0x64); buffer.setUint8(37, 0x61);
-  buffer.setUint8(38, 0x74); buffer.setUint8(39, 0x61);
+  buffer.setUint8(36, 0x64);
+  buffer.setUint8(37, 0x61);
+  buffer.setUint8(38, 0x74);
+  buffer.setUint8(39, 0x61);
   buffer.setUint32(40, dataSize, Endian.little);
 
   int offset = 44;
@@ -70,20 +79,48 @@ class _WavAudioSource extends StreamAudioSource {
 
 // Voice name → speaker ID mappings per model version
 const _voiceIdsV019 = {
-  'af_heart': 0, 'af_bella': 1, 'af_nicole': 2, 'af_sarah': 3,
-  'af_sky': 4, 'am_adam': 5, 'am_michael': 6, 'bf_emma': 7,
-  'bf_isabella': 8, 'bm_george': 9, 'bm_lewis': 10,
+  'af_heart': 0,
+  'af_bella': 1,
+  'af_nicole': 2,
+  'af_sarah': 3,
+  'af_sky': 4,
+  'am_adam': 5,
+  'am_michael': 6,
+  'bf_emma': 7,
+  'bf_isabella': 8,
+  'bm_george': 9,
+  'bm_lewis': 10,
 };
 
 const _voiceIdsV10 = {
-  'af_alloy': 0, 'af_aoede': 1, 'af_bella': 2, 'af_heart': 3,
-  'af_jessica': 4, 'af_kore': 5, 'af_nicole': 6, 'af_nova': 7,
-  'af_river': 8, 'af_sarah': 9, 'af_sky': 10,
-  'am_adam': 11, 'am_echo': 12, 'am_eric': 13, 'am_fenrir': 14,
-  'am_liam': 15, 'am_michael': 16, 'am_onyx': 17, 'am_puck': 18,
+  'af_alloy': 0,
+  'af_aoede': 1,
+  'af_bella': 2,
+  'af_heart': 3,
+  'af_jessica': 4,
+  'af_kore': 5,
+  'af_nicole': 6,
+  'af_nova': 7,
+  'af_river': 8,
+  'af_sarah': 9,
+  'af_sky': 10,
+  'am_adam': 11,
+  'am_echo': 12,
+  'am_eric': 13,
+  'am_fenrir': 14,
+  'am_liam': 15,
+  'am_michael': 16,
+  'am_onyx': 17,
+  'am_puck': 18,
   'am_santa': 19,
-  'bf_alice': 20, 'bf_emma': 21, 'bf_isabella': 22, 'bf_lily': 23,
-  'bm_daniel': 24, 'bm_fable': 25, 'bm_george': 26, 'bm_lewis': 27,
+  'bf_alice': 20,
+  'bf_emma': 21,
+  'bf_isabella': 22,
+  'bf_lily': 23,
+  'bm_daniel': 24,
+  'bm_fable': 25,
+  'bm_george': 26,
+  'bm_lewis': 27,
 };
 
 /// Message types for the persistent TTS isolate.
@@ -318,7 +355,9 @@ class KokoroDeviceEngine extends TtsEngine {
 
     final voiceMap = _isV10 ? _voiceIdsV10 : _voiceIdsV019;
     final sid = voiceMap[_selectedVoice.id] ?? 0;
-    debugPrint('[KokoroDevice] Speaking: "${text.substring(0, text.length.clamp(0, 60))}..."');
+    debugPrint(
+      '[KokoroDevice] Speaking: "${text.substring(0, text.length.clamp(0, 60))}..."',
+    );
 
     try {
       _isSpeaking = true;
@@ -336,20 +375,24 @@ class KokoroDeviceEngine extends TtsEngine {
       // The isolate pipelines: generating paragraph N+1 while the player
       // is still speaking paragraph N, eliminating inter-paragraph gaps.
       final paragraphs = text.split(RegExp(r'\n\s*\n'));
-      _isolateSendPort!.send(_GenerateRequest(paragraphs, sid, 1.0, currentGenId));
+      _isolateSendPort!.send(
+        _GenerateRequest(paragraphs, sid, 1.0, currentGenId),
+      );
 
       var genDone = false;
       var playbackStarted = false;
       final bufferedChunks = <_WavAudioSource>[];
 
       // Start playback once we have enough buffered audio.
-      Future<void> _startPlayback() async {
+      Future<void> startPlayback() async {
         if (playbackStarted) return;
         if (bufferedChunks.isEmpty) return;
         if (bufferedChunks.length < 2 && !genDone) return;
 
         playbackStarted = true;
-        debugPrint('[KokoroDevice] Starting playback with ${bufferedChunks.length} buffered chunks');
+        debugPrint(
+          '[KokoroDevice] Starting playback with ${bufferedChunks.length} buffered chunks',
+        );
 
         // setAudioSources replaces any existing source and preloads by default.
         // Returns only when audio is fully loaded (processingState == ready).
@@ -364,20 +407,22 @@ class KokoroDeviceEngine extends TtsEngine {
           // Ignore chunks from a previous/stale generation
           if (message.genId != currentGenId) return;
 
-          debugPrint('[KokoroDevice] Chunk ${message.index} ready (${(message.wavBytes.length / 1024).toStringAsFixed(0)} KB)');
+          debugPrint(
+            '[KokoroDevice] Chunk ${message.index} ready (${(message.wavBytes.length / 1024).toStringAsFixed(0)} KB)',
+          );
 
           final source = _WavAudioSource(message.wavBytes);
 
           if (!playbackStarted) {
             bufferedChunks.add(source);
-            _startPlayback();
+            startPlayback();
           } else {
             // Playback already started — append to the live playlist
             _player.addAudioSource(source).then((_) async {
               if (_player.processingState == ProcessingState.completed) {
                 // Player ran out of chunks and stopped — seek to the new chunk
                 // and resume playback.
-                final count = _player.sequence?.length ?? 0;
+                final count = _player.sequence.length;
                 if (count > 0) {
                   await _player.seek(Duration.zero, index: count - 1);
                   _player.play();
@@ -389,12 +434,12 @@ class KokoroDeviceEngine extends TtsEngine {
           if (message.genId != currentGenId) return;
           debugPrint('[KokoroDevice] Generation complete');
           genDone = true;
-          _startPlayback();
+          startPlayback();
           if (!completer.isCompleted) completer.complete();
         } else if (message is String && message.startsWith('error:')) {
           debugPrint('[KokoroDevice] Error: $message');
           genDone = true;
-          _startPlayback();
+          startPlayback();
           if (!completer.isCompleted) completer.complete();
         }
       });
@@ -406,7 +451,8 @@ class KokoroDeviceEngine extends TtsEngine {
       _chunkController = null;
 
       // Wait for playback to finish (player may still be playing the last chunks)
-      if (playbackStarted && _player.processingState != ProcessingState.completed) {
+      if (playbackStarted &&
+          _player.processingState != ProcessingState.completed) {
         await _player.processingStateStream.firstWhere(
           (state) => state == ProcessingState.completed,
         );

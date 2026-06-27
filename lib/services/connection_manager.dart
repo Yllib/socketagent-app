@@ -28,7 +28,7 @@ class ConnectionManager {
   final Map<String, StreamSubscription> _messageSubs = {};
   final Map<String, StreamSubscription> _statusSubs = {};
 
-  String? _activeServerId;
+  String? activeServerId;
   String _subscriberToken = '';
 
   final _messageController = StreamController<ServerMessage>.broadcast();
@@ -40,21 +40,18 @@ class ConnectionManager {
   /// Per-server status updates.
   Stream<ServerStatusUpdate> get statusStream => _statusController.stream;
 
-  /// The currently active server ID (the one the active session is on).
-  String? get activeServerId => _activeServerId;
-  set activeServerId(String? id) => _activeServerId = id;
-
   /// The active server's WebSocketService, or null if none.
   WebSocketService? get active =>
-      _activeServerId != null ? _connections[_activeServerId] : null;
+      activeServerId != null ? _connections[activeServerId] : null;
 
   /// The active server's config, or null.
   ServerConfig? get activeConfig =>
-      _activeServerId != null ? _configs[_activeServerId] : null;
+      activeServerId != null ? _configs[activeServerId] : null;
 
   /// All configured server configs.
-  List<ServerConfig> get configs => _configs.values.toList()
-    ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
+  List<ServerConfig> get configs =>
+      _configs.values.toList()
+        ..sort((a, b) => a.sortOrder.compareTo(b.sortOrder));
 
   /// Connection status for a specific server.
   ConnectionStatus statusOf(String serverId) =>
@@ -114,13 +111,14 @@ class ConnectionManager {
     }
 
     // Auto-select active server if none set or current was removed
-    if (_activeServerId == null || !newIds.contains(_activeServerId)) {
-      _activeServerId = serverConfigs.isNotEmpty ? serverConfigs.first.id : null;
+    if (activeServerId == null || !newIds.contains(activeServerId)) {
+      activeServerId = serverConfigs.isNotEmpty ? serverConfigs.first.id : null;
     }
   }
 
   /// Update relay config for a specific server (e.g. after pairing).
-  Future<void> configureServerRelay(String serverId, {
+  Future<void> configureServerRelay(
+    String serverId, {
     required String relayUrl,
     required String pairingToken,
     required String serverPubkey,

@@ -4,7 +4,6 @@ import '../../services/chat_provider.dart';
 import '../../services/tts_engine.dart';
 import '../../services/kokoro_server_engine.dart';
 import '../../services/kokoro_model_manager.dart';
-import '../../services/kokoro_device_engine.dart';
 
 class VoiceSpeechScreen extends StatelessWidget {
   const VoiceSpeechScreen({super.key});
@@ -12,9 +11,7 @@ class VoiceSpeechScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Voice & Speech'),
-      ),
+      appBar: AppBar(title: const Text('Voice & Speech')),
       body: Consumer<ChatProvider>(
         builder: (context, provider, _) {
           return ListView(
@@ -29,7 +26,9 @@ class VoiceSpeechScreen extends StatelessWidget {
               _buildAsrSection(context, provider),
               SwitchListTile(
                 title: const Text('Push to talk'),
-                subtitle: const Text('Hold mic button to record, release to stop'),
+                subtitle: const Text(
+                  'Hold mic button to record, release to stop',
+                ),
                 value: provider.pushToTalk,
                 onChanged: (v) => provider.pushToTalk = v,
               ),
@@ -71,11 +70,14 @@ class VoiceSpeechScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             DropdownButtonFormField<TtsEngineMode>(
-              value: provider.ttsEngineMode,
+              initialValue: provider.ttsEngineMode,
               decoration: const InputDecoration(
                 labelText: 'TTS Engine',
                 border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                contentPadding: EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 14,
+                ),
               ),
               items: const [
                 DropdownMenuItem(
@@ -129,8 +131,12 @@ class VoiceSpeechScreen extends StatelessWidget {
         }
         return FutureBuilder<List<dynamic>>(
           future: Future.wait([
-            provider.kokoroModelManager.isModelVersionInstalled(KokoroModel.v019),
-            provider.kokoroModelManager.isModelVersionInstalled(KokoroModel.v10),
+            provider.kokoroModelManager.isModelVersionInstalled(
+              KokoroModel.v019,
+            ),
+            provider.kokoroModelManager.isModelVersionInstalled(
+              KokoroModel.v10,
+            ),
             provider.kokoroModelManager.activeModel,
           ]),
           builder: (context, snapshot) {
@@ -142,13 +148,22 @@ class VoiceSpeechScreen extends StatelessWidget {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Model', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                const Text(
+                  'Model',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                ),
                 const SizedBox(height: 6),
                 for (final model in KokoroModel.values)
                   _KokoroModelTile(
                     model: model,
-                    isInstalled: model == KokoroModel.v019 ? v019Installed : v10Installed,
-                    isActive: active == model && (model == KokoroModel.v019 ? v019Installed : v10Installed),
+                    isInstalled: model == KokoroModel.v019
+                        ? v019Installed
+                        : v10Installed,
+                    isActive:
+                        active == model &&
+                        (model == KokoroModel.v019
+                            ? v019Installed
+                            : v10Installed),
                     onSelect: () => provider.setKokoroModel(model),
                     onDelete: () => provider.deleteKokoroModelVersion(model),
                   ),
@@ -198,9 +213,9 @@ class VoiceSpeechScreen extends StatelessWidget {
                 await provider.previewKokoroVoice(voice);
               } catch (e) {
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('$e')),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text('$e')));
                 }
               }
             },
@@ -241,16 +256,26 @@ class VoiceSpeechScreen extends StatelessWidget {
                     if (installed) {
                       return Row(
                         children: [
-                          Icon(Icons.check_circle, size: 18, color: Colors.green.shade400),
+                          Icon(
+                            Icons.check_circle,
+                            size: 18,
+                            color: Colors.green.shade400,
+                          ),
                           const SizedBox(width: 8),
                           const Expanded(
-                            child: Text('ASR model installed', style: TextStyle(fontSize: 13)),
+                            child: Text(
+                              'ASR model installed',
+                              style: TextStyle(fontSize: 13),
+                            ),
                           ),
                           TextButton(
                             onPressed: () async {
                               await provider.asrModelManager.deleteModel();
                             },
-                            child: const Text('Delete', style: TextStyle(fontSize: 12)),
+                            child: const Text(
+                              'Delete',
+                              style: TextStyle(fontSize: 12),
+                            ),
                           ),
                         ],
                       );
@@ -321,16 +346,25 @@ class _KokoroModelTile extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
             border: isActive
-                ? Border.all(color: Theme.of(context).colorScheme.primary, width: 1.5)
+                ? Border.all(
+                    color: Theme.of(context).colorScheme.primary,
+                    width: 1.5,
+                  )
                 : Border.all(color: Colors.grey.shade700, width: 0.5),
-            color: isActive ? Theme.of(context).colorScheme.primary.withOpacity(0.08) : null,
+            color: isActive
+                ? Theme.of(context).colorScheme.primary.withValues(alpha: 0.08)
+                : null,
           ),
           child: Row(
             children: [
               if (isActive)
                 Icon(Icons.check_circle, size: 18, color: Colors.green.shade400)
               else if (isInstalled)
-                Icon(Icons.circle_outlined, size: 18, color: Colors.grey.shade500)
+                Icon(
+                  Icons.circle_outlined,
+                  size: 18,
+                  color: Colors.grey.shade500,
+                )
               else
                 const Icon(Icons.download, size: 18),
               const SizedBox(width: 8),
@@ -344,14 +378,24 @@ class _KokoroModelTile extends StatelessWidget {
                 ),
               ),
               if (!isInstalled)
-                const Text('Tap to download', style: TextStyle(fontSize: 11, color: Colors.grey))
+                const Text(
+                  'Tap to download',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                )
               else if (!isActive)
-                const Text('Tap to activate', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                const Text(
+                  'Tap to activate',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
               if (isInstalled && !isActive) ...[
                 const SizedBox(width: 8),
                 GestureDetector(
                   onTap: onDelete,
-                  child: Icon(Icons.delete_outline, size: 16, color: Colors.grey.shade500),
+                  child: Icon(
+                    Icons.delete_outline,
+                    size: 16,
+                    color: Colors.grey.shade500,
+                  ),
                 ),
               ],
             ],

@@ -43,7 +43,9 @@ class SpeechService {
           }
         },
         onError: (error) {
-          debugPrint('[Speech] error: ${error.errorMsg} permanent=${error.permanent}');
+          debugPrint(
+            '[Speech] error: ${error.errorMsg} permanent=${error.permanent}',
+          );
           if (error.permanent) {
             _isInitialized = false;
             _sessionActive = false;
@@ -85,7 +87,9 @@ class SpeechService {
 
   Future<void> _startRecognizer() async {
     if (!_sessionActive) return;
-    debugPrint('[Speech] starting recognizer (committed: "${_committedText.length} chars")...');
+    debugPrint(
+      '[Speech] starting recognizer (committed: "${_committedText.length} chars")...',
+    );
     await _speech.listen(
       onResult: (SpeechRecognitionResult result) {
         final currentSegment = result.recognizedWords;
@@ -93,7 +97,9 @@ class SpeechService {
         final fullText = _committedText.isEmpty
             ? currentSegment
             : '$_committedText $currentSegment';
-        debugPrint('[Speech] result: "$currentSegment" final=${result.finalResult} full="${fullText.length} chars"');
+        debugPrint(
+          '[Speech] result: "$currentSegment" final=${result.finalResult} full="${fullText.length} chars"',
+        );
         _resultController.add(fullText);
 
         // When this segment finalizes, commit it
@@ -106,8 +112,10 @@ class SpeechService {
       },
       listenFor: const Duration(seconds: 120),
       pauseFor: const Duration(seconds: 5),
-      partialResults: true,
-      listenMode: ListenMode.dictation,
+      listenOptions: SpeechListenOptions(
+        partialResults: true,
+        listenMode: ListenMode.dictation,
+      ),
     );
     _isListening = true;
     _statusController.add(true);
