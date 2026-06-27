@@ -47,15 +47,13 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
       await provider.connectToServer();
       provider.refreshSubscriptionStatusIfStale();
       provider.requestSessionList();
-      // Silent app update check through the active SocketAgent connection.
-      _checkForAppUpdate(provider);
+      // App release metadata is public on GitHub; do not depend on a server.
+      _checkForAppUpdate();
     });
   }
 
-  Future<void> _checkForAppUpdate(ChatProvider provider) async {
-    final versionInfo = await provider.requestVersionCheck();
-    if (!mounted) return;
-    await _updateService.applyVersionInfo(versionInfo);
+  Future<void> _checkForAppUpdate() async {
+    await _updateService.checkForUpdate();
   }
 
   void _onUpdateChange() {
