@@ -19,31 +19,20 @@ class SessionsTab extends StatefulWidget {
   State<SessionsTab> createState() => _SessionsTabState();
 }
 
-class _SessionsTabState extends State<SessionsTab>
-    with TickerProviderStateMixin {
-  TabController? _tabController;
-  int _lastServerCount = 0;
+class _SessionsTabState extends State<SessionsTab> {
   String? _openingSessionKey;
+  String? _selectedServerFilterId;
+  bool _connectedOnlyFilter = false;
+  String? _backendFilter;
+  bool _runningOnlyFilter = false;
+  bool _searchOpen = false;
+  String _searchQuery = '';
+  final TextEditingController _searchController = TextEditingController();
 
   @override
   void dispose() {
-    _tabController?.dispose();
+    _searchController.dispose();
     super.dispose();
-  }
-
-  void _ensureTabController(int serverCount) {
-    if (serverCount <= 1) {
-      // Single server — no tabs needed
-      _tabController?.dispose();
-      _tabController = null;
-      _lastServerCount = serverCount;
-      return;
-    }
-    if (_tabController == null || _lastServerCount != serverCount) {
-      _tabController?.dispose();
-      _tabController = TabController(length: 1 + serverCount, vsync: this);
-      _lastServerCount = serverCount;
-    }
   }
 
   Future<bool> _requireSubscription() async {
@@ -359,14 +348,11 @@ class _SessionsTabState extends State<SessionsTab>
     }
   }
 
-  String? _serverIdForCurrentTab(
-    ChatProvider provider,
-    List<ServerConfig> tabConfigs,
-  ) {
-    final controller = _tabController;
-    if (controller != null && controller.index > 0) {
-      final idx = controller.index - 1;
-      if (idx >= 0 && idx < tabConfigs.length) return tabConfigs[idx].id;
+  String? _serverIdForNewSession(ChatProvider provider) {
+    final selected = _selectedServerFilterId;
+    if (selected != null &&
+        provider.serverConfigs.any((c) => c.id == selected)) {
+      return selected;
     }
 
     final activeServerId = provider.activeServerId;
@@ -374,7 +360,14 @@ class _SessionsTabState extends State<SessionsTab>
         provider.serverConfigs.any((c) => c.id == activeServerId)) {
       return activeServerId;
     }
-    return null;
+
+    final connected = provider.serverConfigs
+        .where(
+          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+        )
+        .toList();
+    if (connected.isNotEmpty) return connected.first.id;
+    return provider.serverConfigs.firstOrNull?.id;
   }
 
   String? _initialCwdPickerServerId(
@@ -1095,12 +1088,12 @@ class _SessionsTabState extends State<SessionsTab>
     );
   }
 
-  List<ServerConfig> _configsForSessionTabs(ChatProvider provider) {
+  List<ServerConfig> _sortedServerConfigs(ChatProvider provider) {
     final sorted = [...provider.serverConfigs];
     sorted.sort((a, b) {
-      final statusCmp = _tabStatusRank(
+      final statusCmp = _serverStatusRank(
         provider.connMgr.statusOf(a.id),
-      ).compareTo(_tabStatusRank(provider.connMgr.statusOf(b.id)));
+      ).compareTo(_serverStatusRank(provider.connMgr.statusOf(b.id)));
       if (statusCmp != 0) return statusCmp;
       final orderCmp = a.sortOrder.compareTo(b.sortOrder);
       if (orderCmp != 0) return orderCmp;
@@ -1109,7 +1102,7 @@ class _SessionsTabState extends State<SessionsTab>
     return sorted;
   }
 
-  int _tabStatusRank(ConnectionStatus status) {
+  int _serverStatusRank(ConnectionStatus status) {
     switch (status) {
       case ConnectionStatus.connected:
         return 0;
@@ -1147,39 +1140,388 @@ class _SessionsTabState extends State<SessionsTab>
     }
   }
 
-  Widget _buildServerTab(
-    BuildContext context,
-    ChatProvider provider,
-    ServerConfig config,
-  ) {
-    final status = provider.connMgr.statusOf(config.id);
-    final color = _serverStatusColor(status);
-    return Tab(
-      child: Tooltip(
-        message: '${config.name}: ${_serverStatusLabel(status)}',
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: color,
-                boxShadow: [
-                  if (status == ConnectionStatus.connected)
-                    BoxShadow(
-                      color: color.withAlpha(90),
-                      blurRadius: 4,
-                      spreadRadius: 1,
+  String _sessionKey(Session session) => '${session.serverId}:${session.id}';
+
+  String _projectLabelForCwd(String cwd) {
+    final parts = cwd
+        .split(RegExp(r'[\\/]'))
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) return cwd.isEmpty ? 'Untitled' : cwd;
+    return parts.last;
+  }
+
+  String _backendLabelForFilter(String? backend) {
+    if (backend == null) return 'All backends';
+    return _backendLabel(backend);
+  }
+
+  String _serverFilterLabel(ChatProvider provider) {
+    if (_connectedOnlyFilter) return 'Connected only';
+    final selected = _selectedServerFilterId;
+    if (selected == null) return 'All servers';
+    return provider.serverConfigs
+            .where((config) => config.id == selected)
+            .firstOrNull
+            ?.name ??
+        'All servers';
+  }
+
+  bool _matchesSessionFilters(ChatProvider provider, Session session) {
+    if (_selectedServerFilterId != null &&
+        session.serverId != _selectedServerFilterId) {
+      return false;
+    }
+    if (_connectedOnlyFilter && !provider.isSessionAvailable(session)) {
+      return false;
+    }
+    final backend = session.backend ?? 'claude';
+    if (_backendFilter != null && backend != _backendFilter) return false;
+    if (_runningOnlyFilter && !session.running) return false;
+
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return true;
+    return session.title.toLowerCase().contains(query) ||
+        session.cwd.toLowerCase().contains(query) ||
+        session.messagePreview.toLowerCase().contains(query) ||
+        session.serverName.toLowerCase().contains(query) ||
+        backend.toLowerCase().contains(query);
+  }
+
+  List<Session> _filteredSessions(ChatProvider provider) {
+    return provider.sessions
+        .where((session) => _matchesSessionFilters(provider, session))
+        .toList();
+  }
+
+  void _showServerFilterSheet(BuildContext context, ChatProvider provider) {
+    final sortedServers = _sortedServerConfigs(provider);
+    final sessions = provider.sessions;
+    final connectedCount = provider.serverConfigs
+        .where(
+          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+        )
+        .length;
+
+    int sessionCountFor(String serverId) =>
+        sessions.where((session) => session.serverId == serverId).length;
+
+    int runningCountFor(String serverId) => sessions
+        .where((session) => session.serverId == serverId && session.running)
+        .length;
+
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.all_inbox),
+                title: const Text('All servers'),
+                subtitle: Text('${sessions.length} sessions'),
+                selected:
+                    _selectedServerFilterId == null && !_connectedOnlyFilter,
+                onTap: () {
+                  setState(() {
+                    _selectedServerFilterId = null;
+                    _connectedOnlyFilter = false;
+                  });
+                  Navigator.pop(ctx);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.cloud_done),
+                title: const Text('Connected only'),
+                subtitle: Text(
+                  '$connectedCount/${provider.serverConfigs.length} online',
+                ),
+                selected: _connectedOnlyFilter,
+                onTap: () {
+                  setState(() {
+                    _selectedServerFilterId = null;
+                    _connectedOnlyFilter = true;
+                  });
+                  Navigator.pop(ctx);
+                },
+              ),
+              const Divider(height: 1),
+              ...sortedServers.map((config) {
+                final status = provider.connMgr.statusOf(config.id);
+                final sessionCount = sessionCountFor(config.id);
+                final runningCount = runningCountFor(config.id);
+                final statusColor = _serverStatusColor(status);
+                return ListTile(
+                  leading: Container(
+                    width: 12,
+                    height: 12,
+                    decoration: BoxDecoration(
+                      color: statusColor,
+                      shape: BoxShape.circle,
                     ),
-                ],
+                  ),
+                  title: Text(config.name),
+                  subtitle: Text(
+                    [
+                      _serverStatusLabel(status),
+                      '$sessionCount session${sessionCount == 1 ? '' : 's'}',
+                      if (runningCount > 0) '$runningCount running',
+                    ].join(' · '),
+                  ),
+                  trailing: _selectedServerFilterId == config.id
+                      ? const Icon(Icons.check)
+                      : null,
+                  selected: _selectedServerFilterId == config.id,
+                  onTap: () {
+                    setState(() {
+                      _selectedServerFilterId = config.id;
+                      _connectedOnlyFilter = false;
+                    });
+                    Navigator.pop(ctx);
+                  },
+                );
+              }),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildFilterChipBar(BuildContext context, ChatProvider provider) {
+    final theme = Theme.of(context);
+    final activeFilters =
+        _selectedServerFilterId != null ||
+        _connectedOnlyFilter ||
+        _backendFilter != null ||
+        _runningOnlyFilter ||
+        _searchQuery.trim().isNotEmpty;
+
+    return Material(
+      color: theme.colorScheme.surface,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+            child: Row(
+              children: [
+                ActionChip(
+                  avatar: Icon(
+                    _connectedOnlyFilter
+                        ? Icons.cloud_done
+                        : _selectedServerFilterId == null
+                        ? Icons.all_inbox
+                        : Icons.dns,
+                    size: 18,
+                  ),
+                  label: Text(_serverFilterLabel(provider)),
+                  onPressed: () => _showServerFilterSheet(context, provider),
+                ),
+                const SizedBox(width: 8),
+                PopupMenuButton<String>(
+                  tooltip: 'Backend filter',
+                  initialValue: _backendFilter ?? 'all',
+                  onSelected: (value) {
+                    setState(() {
+                      _backendFilter = value == 'all' ? null : value;
+                    });
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'all', child: Text('All backends')),
+                    PopupMenuItem(value: 'codex', child: Text('Codex')),
+                    PopupMenuItem(value: 'claude', child: Text('Claude')),
+                  ],
+                  child: Chip(
+                    avatar: Icon(
+                      _backendFilter == 'codex'
+                          ? Icons.code
+                          : _backendFilter == 'claude'
+                          ? Icons.psychology_alt
+                          : Icons.hub,
+                      size: 18,
+                    ),
+                    label: Text(_backendLabelForFilter(_backendFilter)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilterChip(
+                  avatar: const Icon(Icons.sync, size: 18),
+                  label: const Text('Running'),
+                  selected: _runningOnlyFilter,
+                  onSelected: (selected) {
+                    setState(() => _runningOnlyFilter = selected);
+                  },
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  icon: Icon(_searchOpen ? Icons.search_off : Icons.search),
+                  tooltip: _searchOpen ? 'Hide search' : 'Search sessions',
+                  onPressed: () {
+                    setState(() {
+                      _searchOpen = !_searchOpen;
+                      if (!_searchOpen) {
+                        _searchQuery = '';
+                        _searchController.clear();
+                      }
+                    });
+                  },
+                ),
+                if (activeFilters)
+                  IconButton(
+                    icon: const Icon(Icons.clear_all),
+                    tooltip: 'Clear filters',
+                    onPressed: () {
+                      setState(() {
+                        _selectedServerFilterId = null;
+                        _connectedOnlyFilter = false;
+                        _backendFilter = null;
+                        _runningOnlyFilter = false;
+                        _searchQuery = '';
+                        _searchController.clear();
+                      });
+                    },
+                  ),
+              ],
+            ),
+          ),
+          if (_searchOpen)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: TextField(
+                controller: _searchController,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'Search title, path, preview, server...',
+                  prefixIcon: const Icon(Icons.search),
+                  suffixIcon: _searchQuery.isEmpty
+                      ? null
+                      : IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () {
+                            setState(() {
+                              _searchQuery = '';
+                              _searchController.clear();
+                            });
+                          },
+                        ),
+                  isDense: true,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                onChanged: (value) => setState(() => _searchQuery = value),
               ),
             ),
-            const SizedBox(width: 8),
-            Text(config.name, overflow: TextOverflow.ellipsis),
-          ],
+          Divider(
+            height: 1,
+            color: theme.colorScheme.outlineVariant.withAlpha(80),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionedSessionList(
+    BuildContext context,
+    ChatProvider provider,
+    List<Session> sessions,
+  ) {
+    if (sessions.isEmpty) {
+      return Center(
+        child: Text(
+          provider.sessions.isEmpty
+              ? 'No sessions yet'
+              : 'No matching sessions',
+          style: TextStyle(
+            fontSize: 14,
+            color: Theme.of(context).colorScheme.outline,
+          ),
         ),
+      );
+    }
+
+    final seen = <String>{};
+    List<Session> take(bool Function(Session session) predicate) {
+      final result = <Session>[];
+      for (final session in sessions) {
+        final key = _sessionKey(session);
+        if (seen.contains(key) || !predicate(session)) continue;
+        seen.add(key);
+        result.add(session);
+      }
+      return result;
+    }
+
+    final working = take(
+      (session) => session.running && provider.isSessionAvailable(session),
+    );
+    final pinned = take((session) => provider.isSessionPinned(session.id));
+    final recent = take((session) => provider.isSessionAvailable(session));
+    final offline = take((session) => !provider.isSessionAvailable(session));
+
+    final children = <Widget>[];
+    void addSection(String title, List<Session> sectionSessions) {
+      if (sectionSessions.isEmpty) return;
+      children.add(
+        _buildSessionSectionHeader(context, title, sectionSessions.length),
+      );
+      for (var i = 0; i < sectionSessions.length; i++) {
+        children.add(_buildSessionTile(context, sectionSessions[i]));
+        if (i != sectionSessions.length - 1) {
+          children.add(
+            Divider(
+              height: 1,
+              indent: 48,
+              color: Theme.of(context).colorScheme.outlineVariant.withAlpha(80),
+            ),
+          );
+        }
+      }
+    }
+
+    addSection('Working', working);
+    addSection('Pinned', pinned);
+    addSection('Recent', recent);
+    addSection('Offline servers', offline);
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 80),
+      children: children,
+    );
+  }
+
+  Widget _buildSessionSectionHeader(
+    BuildContext context,
+    String title,
+    int count,
+  ) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+              color: theme.colorScheme.onSurface.withAlpha(140),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            '$count',
+            style: TextStyle(
+              fontSize: 11,
+              color: theme.colorScheme.onSurface.withAlpha(100),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1195,12 +1537,12 @@ class _SessionsTabState extends State<SessionsTab>
           return const OnboardingScreen();
         }
 
-        final multiServer = configs.length > 1;
-        _ensureTabController(configs.length);
-        final tabConfigs = _configsForSessionTabs(provider);
-
-        final pinned = provider.pinnedSessions;
-        final unpinned = provider.unpinnedSessions;
+        if (_selectedServerFilterId != null &&
+            !configs.any((config) => config.id == _selectedServerFilterId)) {
+          _selectedServerFilterId = null;
+          _connectedOnlyFilter = false;
+        }
+        final filteredSessions = _filteredSessions(provider);
 
         return Scaffold(
           appBar: AppBar(
@@ -1215,53 +1557,21 @@ class _SessionsTabState extends State<SessionsTab>
               ),
               _buildConnectionIndicator(provider),
             ],
-            bottom: multiServer && _tabController != null
-                ? TabBar(
-                    controller: _tabController,
-                    isScrollable: true,
-                    tabAlignment: TabAlignment.start,
-                    tabs: [
-                      const Tab(text: 'All'),
-                      ...tabConfigs.map(
-                        (c) => _buildServerTab(context, provider, c),
-                      ),
-                    ],
-                  )
-                : null,
           ),
           body: Column(
             children: [
               _buildUpdateBanner(context),
+              _buildFilterChipBar(context, provider),
               if (provider.sessions.isEmpty)
                 Expanded(child: _buildEmptyState(context))
-              else ...[
-                if (pinned.isNotEmpty)
-                  _buildPinnedSection(context, provider, pinned),
+              else
                 Expanded(
-                  child: multiServer && _tabController != null
-                      ? TabBarView(
-                          controller: _tabController,
-                          children: [
-                            _buildFilteredSessionList(
-                              context,
-                              provider,
-                              unpinned,
-                            ),
-                            ...tabConfigs.map((c) {
-                              final serverSessions = unpinned
-                                  .where((s) => s.serverId == c.id)
-                                  .toList();
-                              return _buildFilteredSessionList(
-                                context,
-                                provider,
-                                serverSessions,
-                              );
-                            }),
-                          ],
-                        )
-                      : _buildFilteredSessionList(context, provider, unpinned),
+                  child: _buildSectionedSessionList(
+                    context,
+                    provider,
+                    filteredSessions,
+                  ),
                 ),
-              ],
             ],
           ),
           // Single entry point for new sessions: the CWD picker. The picker
@@ -1274,7 +1584,7 @@ class _SessionsTabState extends State<SessionsTab>
               borderRadius: BorderRadius.circular(20),
               onTap: () => _showCwdPicker(
                 context,
-                initialServerId: _serverIdForCurrentTab(provider, tabConfigs),
+                initialServerId: _serverIdForNewSession(provider),
               ),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
@@ -1400,7 +1710,7 @@ class _SessionsTabState extends State<SessionsTab>
           ),
           const SizedBox(height: 8),
           Text(
-            'Tap "New Session" to start',
+            'Choose a directory to start',
             style: TextStyle(
               fontSize: 14,
               color: Theme.of(context).colorScheme.outline.withAlpha(178),
@@ -1408,84 +1718,6 @@ class _SessionsTabState extends State<SessionsTab>
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildPinnedSection(
-    BuildContext context,
-    ChatProvider provider,
-    List<Session> pinned,
-  ) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.colorScheme.outlineVariant.withAlpha(80),
-          ),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.push_pin,
-                  size: 14,
-                  color: theme.colorScheme.onSurface.withAlpha(128),
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  'Pinned',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface.withAlpha(128),
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          ...pinned.map((session) => _buildSessionTile(context, session)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFilteredSessionList(
-    BuildContext context,
-    ChatProvider provider,
-    List<Session> sessions,
-  ) {
-    if (sessions.isEmpty) {
-      return Center(
-        child: Text(
-          'No sessions',
-          style: TextStyle(
-            fontSize: 14,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-        ),
-      );
-    }
-    return ListView.separated(
-      padding: const EdgeInsets.only(bottom: 80),
-      itemCount: sessions.length,
-      separatorBuilder: (_, __) => Divider(
-        height: 1,
-        indent: 48,
-        color: Theme.of(context).colorScheme.outlineVariant.withAlpha(80),
-      ),
-      itemBuilder: (context, index) {
-        return _buildSessionTile(context, sessions[index]);
-      },
     );
   }
 
@@ -2062,9 +2294,19 @@ class _SessionsTabState extends State<SessionsTab>
       displayCwd = '~';
     }
 
-    // Use title as primary, fall back to CWD if title is empty/Untitled
+    // Use title as primary, fall back to the project folder if title is unset.
     final hasTitle = session.title.isNotEmpty && session.title != 'Untitled';
-    final primaryText = hasTitle ? session.title : displayCwd;
+    final primaryText = hasTitle
+        ? session.title
+        : _projectLabelForCwd(displayCwd);
+    final statusText = openingThisSession
+        ? 'Opening...'
+        : showRunning
+        ? 'Working...'
+        : timeAgo;
+    final metaText = displayCwd.isEmpty
+        ? statusText
+        : '$statusText · $displayCwd';
 
     return Dismissible(
       key: Key('${session.serverId}:${session.id}'),
@@ -2143,7 +2385,7 @@ class _SessionsTabState extends State<SessionsTab>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Line 1: Title (or CWD if no title)
+                      // Line 1: title, or project folder if no title.
                       Text(
                         primaryText,
                         maxLines: 1,
@@ -2154,19 +2396,7 @@ class _SessionsTabState extends State<SessionsTab>
                           color: theme.colorScheme.onSurface,
                         ),
                       ),
-                      // Line 2: CWD (if title was shown) or message preview
-                      if (hasTitle) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          displayCwd,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: theme.colorScheme.onSurface.withAlpha(140),
-                          ),
-                        ),
-                      ] else if (session.messagePreview.isNotEmpty) ...[
+                      if (session.messagePreview.isNotEmpty) ...[
                         const SizedBox(height: 3),
                         Text(
                           session.messagePreview,
@@ -2178,21 +2408,23 @@ class _SessionsTabState extends State<SessionsTab>
                           ),
                         ),
                       ],
-                      // Line 3: Time ago + server badge
+                      // Line 3: status/time, path, and compact badges.
                       const SizedBox(height: 3),
                       Row(
                         children: [
-                          Text(
-                            openingThisSession
-                                ? 'Opening... · $timeAgo'
-                                : showRunning
-                                ? 'Working... · $timeAgo'
-                                : timeAgo,
-                            style: TextStyle(
-                              fontSize: 11,
-                              color: showBusy
-                                  ? theme.colorScheme.primary
-                                  : theme.colorScheme.onSurface.withAlpha(128),
+                          Flexible(
+                            child: Text(
+                              metaText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: showBusy
+                                    ? theme.colorScheme.primary
+                                    : theme.colorScheme.onSurface.withAlpha(
+                                        128,
+                                      ),
+                              ),
                             ),
                           ),
                           if (session.serverName.isNotEmpty &&
