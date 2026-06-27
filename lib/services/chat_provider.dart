@@ -170,6 +170,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _pushToTalk = false;
   bool _isProcessing = false;
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
+  DateTime? _currentPromptStartedAt;
+  Timer? _promptRuntimeTimer;
   bool _isCompacting = false;
   bool _requiresAction = false; // SDK says session needs user input
   String?
@@ -451,6 +453,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool get isProcessing => _isProcessing;
+  Duration? get currentPromptElapsed {
+    final startedAt = _currentPromptStartedAt;
+    if (!_isProcessing || startedAt == null) return null;
+    final elapsed = DateTime.now().difference(startedAt);
+    return elapsed.isNegative ? Duration.zero : elapsed;
+  }
+
   bool get isCompacting => _isCompacting;
   bool get requiresAction => _requiresAction;
   String? get permissionMode => _permissionMode;
@@ -468,6 +477,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final serverId = _connMgr.activeServerId ?? _serverConfigs.firstOrNull?.id;
     if (serverId == null) return 'default';
     return _serverCodexCollaborationMode[serverId] ?? 'default';
+  }
+
+  void _startPromptRuntime({DateTime? startedAt}) {
+    _currentPromptStartedAt ??= startedAt ?? DateTime.now();
+    _promptRuntimeTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!_isProcessing || _currentPromptStartedAt == null) {
+        _stopPromptRuntime();
+        return;
+      }
+      notifyListeners();
+    });
+  }
+
+  void _stopPromptRuntime() {
+    _processingSetAt = null;
+    _currentPromptStartedAt = null;
+    _promptRuntimeTimer?.cancel();
+    _promptRuntimeTimer = null;
   }
 
   List<Map<String, dynamic>> get codexCollaborationModes {
@@ -2821,9 +2848,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (sessionState == 'running') {
           _isProcessing = true;
           _processingSetAt = null; // server confirmed
+          _startPromptRuntime();
         } else if (sessionState == 'idle') {
           _isProcessing = false;
           _processingSetAt = null;
+          _stopPromptRuntime();
           _currentStreamingMessage = null;
         }
         // requires_action keeps _isProcessing true (still mid-query)
@@ -2973,11 +3002,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _isProcessing = msg['running'] == true || serverSaysCompacting;
         if (!_isProcessing) {
           _isCompacting = false;
+          _stopPromptRuntime();
           _currentStreamingMessage = null;
         } else {
           // Restore compacting state on resume. Compacting is active work even
           // if the agent turn itself is between running status updates.
           _isCompacting = serverSaysCompacting;
+          _startPromptRuntime();
         }
         // Restore permission mode (e.g., plan mode) on session resume
         final resumePermMode = msg['permissionMode'] as String?;
@@ -3072,6 +3103,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           } else {
             _isProcessing = false;
             _processingSetAt = null;
+            _stopPromptRuntime();
           }
         } else {
           _isProcessing = serverSaysRunning;
@@ -3079,9 +3111,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         if (!_isProcessing) {
           _isCompacting = false;
+          _stopPromptRuntime();
           _currentStreamingMessage = null;
         } else {
           _isCompacting = serverSaysCompacting;
+          _startPromptRuntime();
         }
         // Reconcile background tasks — remove any not reported by server
         final serverTaskIds =
@@ -3101,6 +3135,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'error':
         _messages.add(ChatMessage.error(msg['message'] ?? 'Unknown error'));
         _isProcessing = false;
+        _stopPromptRuntime();
         notifyListeners();
         break;
       case 'claude_auth':
@@ -3121,6 +3156,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ),
         );
         _isProcessing = false;
+        _stopPromptRuntime();
         notifyListeners();
         break;
       case 'claude_auth_result':
@@ -4017,6 +4053,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _currentStreamingMessage = null;
     _closeThinkingMessage();
     _isProcessing = false;
+    _stopPromptRuntime();
     _isCompacting = false;
     _isRateLimited = false;
     _isRetrying = false;
@@ -4519,6 +4556,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
       _isProcessing = false;
+      _stopPromptRuntime();
       _currentStreamingMessage = null;
       _messages.add(
         ChatMessage(
@@ -4555,6 +4593,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (success && newSessionId != null && newSessionId.isNotEmpty) {
       _activeSessionId = newSessionId;
       _isProcessing = false;
+      _stopPromptRuntime();
       _currentStreamingMessage = null;
       notifyListeners();
       requestSessionList();
@@ -5553,7 +5592,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // (before the user message). It gets cleared by _handleResult when the
     // turn ends, so the response to the injected message starts fresh.
     _isProcessing = true;
-    _processingSetAt = DateTime.now();
+    final promptStartedAt = DateTime.now();
+    _processingSetAt = promptStartedAt;
+    _startPromptRuntime(startedAt: promptStartedAt);
     _promptSuggestions = [];
 
     // Drop the input-area chip now — the file is committed to this bubble.
@@ -5600,6 +5641,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         userMsg.uploadProgress = null;
         _messages.add(ChatMessage.error('Upload failed: $e'));
         _isProcessing = false;
+        _stopPromptRuntime();
         notifyListeners();
         return;
       }
@@ -5760,6 +5802,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _currentStreamingMessage = null;
     _closeThinkingMessage();
     _isProcessing = false;
+    _stopPromptRuntime();
     _isCompacting = false;
     // Stop spinners on any tool cards that never got a result
     for (final m in _messages) {
@@ -5853,6 +5896,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _currentThinkingMessage = null;
     _isProcessing = false;
     _processingSetAt = null;
+    _stopPromptRuntime();
     _isCompacting = false;
     _permissionMode = null;
     _historyOffset = 0;
@@ -6195,6 +6239,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _currentThinkingMessage = null;
     _isProcessing = false;
     _processingSetAt = null;
+    _stopPromptRuntime();
     _permissionMode = null;
     _isCompacting = false;
     _isLoadingHistory = true;
@@ -6775,6 +6820,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
     _isLoadingHistory = true;
     _isProcessing = false;
+    _stopPromptRuntime();
     _isCompacting = false;
     _currentStreamingMessage = null;
     _promptSuggestions = [];
@@ -7394,6 +7440,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _activeSessionId = null;
     _currentStreamingMessage = null;
     _isProcessing = false;
+    _stopPromptRuntime();
     _pendingLocalUserMessageIds.clear();
     _ws.sendForkSession(sessionId);
     notifyListeners();
@@ -8151,6 +8198,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     PushNotificationService.onTokenRefresh = null;
+    _promptRuntimeTimer?.cancel();
     _foregroundResumeTimer?.cancel();
     _messageSub?.cancel();
     _statusSub?.cancel();

@@ -25,6 +25,7 @@ import 'codex_command_card.dart';
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final bool isProcessing;
+  final Duration? processingElapsed;
   final bool isCompacting;
   final bool isLoadingHistory;
   final bool isLoadingMore;
@@ -47,6 +48,7 @@ class ChatView extends StatefulWidget {
     super.key,
     required this.messages,
     required this.isProcessing,
+    this.processingElapsed,
     this.isCompacting = false,
     this.isLoadingHistory = false,
     this.isLoadingMore = false,
@@ -438,7 +440,11 @@ class ChatViewState extends State<ChatView> {
 
   Widget _buildThinkingIndicator(BuildContext context) {
     final theme = Theme.of(context);
-    final label = widget.isCompacting ? 'Compacting context...' : 'Working...';
+    final elapsed = widget.processingElapsed;
+    final labelBase = widget.isCompacting ? 'Compacting context' : 'Working';
+    final label = elapsed == null
+        ? '$labelBase...'
+        : '$labelBase - ${_formatElapsed(elapsed)}';
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -478,6 +484,19 @@ class ChatViewState extends State<ChatView> {
         ),
       ),
     );
+  }
+
+  String _formatElapsed(Duration duration) {
+    final totalSeconds = duration.inSeconds;
+    final hours = totalSeconds ~/ 3600;
+    final minutes = (totalSeconds % 3600) ~/ 60;
+    final seconds = totalSeconds % 60;
+    final secondsText = seconds.toString().padLeft(2, '0');
+    if (hours > 0) {
+      final minutesText = minutes.toString().padLeft(2, '0');
+      return '$hours:$minutesText:$secondsText';
+    }
+    return '$minutes:$secondsText';
   }
 
   Widget _buildTaskNotification(ChatMessage msg) {

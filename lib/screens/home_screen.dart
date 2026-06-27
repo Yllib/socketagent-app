@@ -475,6 +475,7 @@ class HomeScreenState extends State<HomeScreen> {
                     key: _chatViewKey,
                     messages: provider.filteredMessages,
                     isProcessing: provider.isProcessing,
+                    processingElapsed: provider.currentPromptElapsed,
                     isCompacting: provider.isCompacting,
                     isLoadingHistory: provider.isLoadingHistory,
                     isLoadingMore: provider.isLoadingMore,
