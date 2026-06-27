@@ -6460,6 +6460,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     notifyListeners();
 
+    final usedHttp = await _tryHttpFileDownload(
+      fileId: fileId,
+      serverPath: path,
+      fileName: fileName,
+      serverId: serverId,
+    );
+    if (usedHttp) {
+      _fileManagerOperationCompleters.remove(requestId);
+      return;
+    }
+
     final msg = {
       'type': 'file_manager_download',
       'requestId': requestId,
@@ -7471,6 +7482,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Get a direct server's connection details for HTTP model downloads.
   ({String host, int port, String token})? _getDirectServer() {
+    return _getDirectServerFor();
+  }
+
+  ({String host, int port, String token})? _getDirectServerFor([
+    String? serverId,
+  ]) {
+    if (serverId != null && serverId.isNotEmpty) {
+      final config = _serverConfigs.where((c) => c.id == serverId).firstOrNull;
+      if (config != null && !config.useRelay && config.host.isNotEmpty) {
+        return (host: config.host, port: config.port, token: config.token);
+      }
+      return null;
+    }
+
+    final activeServerId = _connMgr.activeServerId;
+    if (activeServerId != null && activeServerId.isNotEmpty) {
+      final config = _serverConfigs
+          .where((c) => c.id == activeServerId)
+          .firstOrNull;
+      if (config != null && !config.useRelay && config.host.isNotEmpty) {
+        return (host: config.host, port: config.port, token: config.token);
+      }
+    }
+
     if (_serverHost.isNotEmpty) {
       return (host: _serverHost, port: _serverPort, token: _authToken);
     }
@@ -7664,7 +7699,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Request file data from server (user tapped download).
-  /// All app-server file bytes move over the connected socket.
+  /// Direct/manual servers use HTTP for large-file speed; relay falls back to
+  /// the encrypted socket chunk path.
   void requestFile(String fileId) {
     final serverPath = _serverFiles[fileId];
     if (serverPath == null) return;
@@ -7674,11 +7710,151 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _downloadProgress[fileId] = 0;
     _armDownloadWatchdog(fileId);
     notifyListeners();
-    _ws.send({
-      'type': 'request_file',
-      'filePath': serverPath,
-      'fileId': fileId,
-    });
+    final fileName = _serverFileNames[fileId] ?? serverPath.split('/').last;
+    unawaited(
+      _tryHttpFileDownload(
+        fileId: fileId,
+        serverPath: serverPath,
+        fileName: fileName,
+      ).then((usedHttp) {
+        if (usedHttp || !_downloadingFiles.contains(fileId)) return;
+        _ws.send({
+          'type': 'request_file',
+          'filePath': serverPath,
+          'fileId': fileId,
+        });
+      }),
+    );
+  }
+
+  Future<bool> _tryHttpFileDownload({
+    required String fileId,
+    required String serverPath,
+    required String fileName,
+    String? serverId,
+  }) async {
+    final server = _getDirectServerFor(serverId);
+    if (server == null) return false;
+
+    final uri = Uri(
+      scheme: 'http',
+      host: server.host,
+      port: server.port,
+      path: '/download-file',
+      queryParameters: {'token': server.token, 'path': serverPath},
+    );
+
+    final safeName = fileName
+        .split('/')
+        .last
+        .split('\\')
+        .last
+        .replaceAll('..', '');
+    final downloadsDir = Directory('/storage/emulated/0/Download');
+    final safeId = _safeDownloadTempId(fileId);
+    final tempPath = '${downloadsDir.path}/.$safeId.http.tmp';
+    final tempFile = File(tempPath);
+    IOSink? sink;
+
+    try {
+      if (!downloadsDir.existsSync()) {
+        downloadsDir.createSync(recursive: true);
+      }
+      if (tempFile.existsSync()) await tempFile.delete();
+      _downloadTempPaths[fileId] = tempPath;
+
+      final client = http.Client();
+      try {
+        final request = http.Request('GET', uri);
+        final response = await client
+            .send(request)
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode != 200) {
+          _downloadTempPaths.remove(fileId);
+          try {
+            if (tempFile.existsSync()) await tempFile.delete();
+          } catch (_) {}
+          return false;
+        }
+
+        final total = response.contentLength;
+        var received = 0;
+        sink = tempFile.openWrite();
+
+        await for (final chunk in response.stream) {
+          sink.add(chunk);
+          received += chunk.length;
+          if (total != null && total > 0) {
+            final progress = (received / total).clamp(0.0, 1.0);
+            final last = _lastNotifiedProgress[fileId] ?? -1.0;
+            if (progress >= 1.0 || progress - last >= 0.01) {
+              _downloadProgress[fileId] = progress;
+              _lastNotifiedProgress[fileId] = progress;
+              _downloadErrors.remove(fileId);
+              _armDownloadWatchdog(fileId);
+              notifyListeners();
+            }
+          } else {
+            _armDownloadWatchdog(fileId);
+          }
+        }
+      } finally {
+        client.close();
+      }
+
+      await sink.flush();
+      await sink.close();
+      sink = null;
+
+      var targetFile = File(
+        '${downloadsDir.path}/${safeName.isEmpty ? 'file' : safeName}',
+      );
+      var counter = 1;
+      while (targetFile.existsSync()) {
+        final name = safeName.isEmpty ? 'file' : safeName;
+        final ext = name.contains('.') ? '.${name.split('.').last}' : '';
+        final base = name.contains('.')
+            ? name.substring(0, name.lastIndexOf('.'))
+            : name;
+        targetFile = File('${downloadsDir.path}/$base ($counter)$ext');
+        counter++;
+      }
+
+      try {
+        await tempFile.rename(targetFile.path);
+      } catch (_) {
+        await tempFile.copy(targetFile.path);
+        await tempFile.delete();
+      }
+
+      _downloadTempPaths.remove(fileId);
+      _lastNotifiedProgress.remove(fileId);
+      _cancelDownloadWatchdog(fileId);
+      _receivedFiles[fileId] = targetFile.path;
+      _downloadingFiles.remove(fileId);
+      _downloadProgress.remove(fileId);
+      _downloadErrors.remove(fileId);
+      debugPrint(
+        '[File] HTTP download complete: ${targetFile.path} (fileId=$fileId)',
+      );
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('[File] HTTP download failed, falling back to socket: $e');
+      try {
+        await sink?.flush();
+        await sink?.close();
+      } catch (_) {}
+      _downloadTempPaths.remove(fileId);
+      _lastNotifiedProgress.remove(fileId);
+      _downloadProgress[fileId] = 0;
+      try {
+        if (tempFile.existsSync()) await tempFile.delete();
+      } catch (_) {}
+      _armDownloadWatchdog(fileId);
+      notifyListeners();
+      return false;
+    }
   }
 
   /// Handle file data response from server (legacy non-chunked)
