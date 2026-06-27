@@ -24,7 +24,6 @@ class _SessionsTabState extends State<SessionsTab> {
   String? _selectedServerFilterId;
   bool _connectedOnlyFilter = false;
   String? _backendFilter;
-  bool _runningOnlyFilter = false;
   bool _searchOpen = false;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
@@ -1177,7 +1176,6 @@ class _SessionsTabState extends State<SessionsTab> {
     }
     final backend = session.backend ?? 'claude';
     if (_backendFilter != null && backend != _backendFilter) return false;
-    if (_runningOnlyFilter && !session.running) return false;
 
     final query = _searchQuery.trim().toLowerCase();
     if (query.isEmpty) return true;
@@ -1296,7 +1294,6 @@ class _SessionsTabState extends State<SessionsTab> {
         _selectedServerFilterId != null ||
         _connectedOnlyFilter ||
         _backendFilter != null ||
-        _runningOnlyFilter ||
         _searchQuery.trim().isNotEmpty;
 
     return Material(
@@ -1347,15 +1344,6 @@ class _SessionsTabState extends State<SessionsTab> {
                     label: Text(_backendLabelForFilter(_backendFilter)),
                   ),
                 ),
-                const SizedBox(width: 8),
-                FilterChip(
-                  avatar: const Icon(Icons.sync, size: 18),
-                  label: const Text('Running'),
-                  selected: _runningOnlyFilter,
-                  onSelected: (selected) {
-                    setState(() => _runningOnlyFilter = selected);
-                  },
-                ),
                 const SizedBox(width: 4),
                 IconButton(
                   icon: Icon(_searchOpen ? Icons.search_off : Icons.search),
@@ -1379,7 +1367,6 @@ class _SessionsTabState extends State<SessionsTab> {
                         _selectedServerFilterId = null;
                         _connectedOnlyFilter = false;
                         _backendFilter = null;
-                        _runningOnlyFilter = false;
                         _searchQuery = '';
                         _searchController.clear();
                       });
