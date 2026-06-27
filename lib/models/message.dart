@@ -396,6 +396,7 @@ class Session {
   final DateTime createdAt;
   final DateTime lastActive;
   final String messagePreview;
+  final int turnCount;
   final bool running;
   final String serverId;
   final String serverName;
@@ -412,6 +413,7 @@ class Session {
     required this.createdAt,
     required this.lastActive,
     required this.messagePreview,
+    this.turnCount = 0,
     this.running = false,
     this.serverId = '',
     this.serverName = '',
@@ -428,6 +430,7 @@ class Session {
       createdAt: DateTime.tryParse(json['createdAt'] ?? '') ?? DateTime.now(),
       lastActive: DateTime.tryParse(json['lastActive'] ?? '') ?? DateTime.now(),
       messagePreview: json['messagePreview'] ?? '',
+      turnCount: (json['turnCount'] as num?)?.toInt() ?? 0,
       running: json['running'] == true,
       serverId: json['serverId'] ?? '',
       serverName: json['serverName'] ?? '',
@@ -444,6 +447,7 @@ class Session {
     'createdAt': createdAt.toIso8601String(),
     'lastActive': lastActive.toIso8601String(),
     'messagePreview': messagePreview,
+    'turnCount': turnCount,
     'running': running,
     'serverId': serverId,
     'serverName': serverName,
@@ -459,6 +463,7 @@ class Session {
     DateTime? createdAt,
     DateTime? lastActive,
     String? messagePreview,
+    int? turnCount,
     bool? running,
     String? serverId,
     String? serverName,
@@ -473,6 +478,7 @@ class Session {
       createdAt: createdAt ?? this.createdAt,
       lastActive: lastActive ?? this.lastActive,
       messagePreview: messagePreview ?? this.messagePreview,
+      turnCount: turnCount ?? this.turnCount,
       running: running ?? this.running,
       serverId: serverId ?? this.serverId,
       serverName: serverName ?? this.serverName,
@@ -494,6 +500,7 @@ class Session {
       createdAt: createdAt,
       lastActive: lastActive,
       messagePreview: messagePreview,
+      turnCount: turnCount,
       running: running,
       serverId: serverId,
       serverName: serverName,

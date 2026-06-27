@@ -2312,9 +2312,14 @@ class _SessionsTabState extends State<SessionsTab> {
         : showRunning
         ? 'Working...'
         : timeAgo;
-    final metaText = displayCwd.isEmpty
-        ? statusText
-        : '$statusText · $displayCwd';
+    final turnCountText = session.turnCount > 0
+        ? '${session.turnCount} turn${session.turnCount == 1 ? '' : 's'}'
+        : '';
+    final metaText = [
+      if (turnCountText.isNotEmpty) turnCountText,
+      statusText,
+      if (displayCwd.isNotEmpty) displayCwd,
+    ].join(' · ');
 
     return Dismissible(
       key: Key('${session.serverId}:${session.id}'),

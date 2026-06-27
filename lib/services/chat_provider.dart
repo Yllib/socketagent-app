@@ -2834,18 +2834,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final idx = _sessions.indexWhere((s) => s.id == _activeSessionId);
           if (idx >= 0) {
             final old = _sessions[idx];
-            _sessions[idx] = Session(
-              id: old.id,
-              title: old.title,
-              cwd: newCwd,
-              createdAt: old.createdAt,
-              lastActive: old.lastActive,
-              messagePreview: old.messagePreview,
-              running: old.running,
-              serverId: old.serverId,
-              serverName: old.serverName,
-              serverColor: old.serverColor,
-            );
+            _sessions[idx] = old.copyWith(cwd: newCwd);
           }
           notifyListeners();
         }
