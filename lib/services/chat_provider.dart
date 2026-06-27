@@ -184,6 +184,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _taskPaneCollapsed = false;
   List<String> _pendingPrepends = [];
   int _pendingInjectedMessageCount = 0;
+  final Set<String> _pendingLocalUserMessageIds = {};
   final List<Map<String, String>> _pendingImageLoads =
       []; // {toolUseId, filePath}
   bool _isLoadingHistory = false;
@@ -3223,6 +3224,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (clearedId == _activeSessionId) {
           _messages.clear();
           _pendingInjectedMessageCount = 0;
+          _pendingLocalUserMessageIds.clear();
           _todos.clear();
           _currentStreamingMessage = null;
           _lastUsage = null;
@@ -4574,6 +4576,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleUserMessageUuid(Map<String, dynamic> msg) {
     final uuid = msg['uuid'] as String?;
     if (uuid == null || uuid.isEmpty) return;
+    final clientMessageId = msg['clientMessageId'] as String?;
+    if (clientMessageId != null && clientMessageId.isNotEmpty) {
+      final idx = _messages.indexWhere((m) => m.id == clientMessageId);
+      if (idx >= 0) {
+        _messages[idx].uuid = uuid;
+        _pendingLocalUserMessageIds.remove(clientMessageId);
+        if (_isPendingInjectedMessage(_messages[idx]) &&
+            _pendingInjectedMessageCount > 0) {
+          _pendingInjectedMessageCount--;
+          _messages[idx].isPending = false;
+          _messages[idx].injectionPriority = null;
+        }
+        notifyListeners();
+        return;
+      }
+      _pendingLocalUserMessageIds.remove(clientMessageId);
+    }
     // Find the most recent user text message without a UUID and assign it
     for (int i = _messages.length - 1; i >= 0; i--) {
       final m = _messages[i];
@@ -4582,6 +4601,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               m.type == MessageType.skillInvocation) &&
           m.uuid == null) {
         m.uuid = uuid;
+        _pendingLocalUserMessageIds.remove(m.id);
         notifyListeners();
         return;
       }
@@ -5350,6 +5370,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Initial load — replace
       _currentStreamingMessage = null;
       _currentStreamingStreamId = null;
+      final localPendingUserPrompts = _messages
+          .where(_isPendingLocalUserPrompt)
+          .where((m) => !_hasEquivalentUserMessage(loaded, m))
+          .toList();
+      for (final m in _messages.where(_isPendingLocalUserPrompt)) {
+        if (_hasEquivalentUserMessage(loaded, m)) {
+          _pendingLocalUserMessageIds.remove(m.id);
+        }
+      }
       final localOnlyCards = _messages.where((m) {
         if (m.type != MessageType.toolCall || m.toolUseId == null) return false;
         final isLocalOnly =
@@ -5363,7 +5392,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               l.toolInput.toString() == m.toolInput.toString(),
         );
       }).toList();
-      _messages = [...loaded, ...localOnlyCards];
+      _messages = [...loaded, ...localPendingUserPrompts, ...localOnlyCards];
       _backgroundTasks.clear();
       _subagentTasks.clear();
       _isLoadingHistory = false;
@@ -5401,6 +5430,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   String _normalizeHistoryText(String text) {
     return text.trim().replaceAll(RegExp(r'\s+'), ' ');
+  }
+
+  bool _isPendingLocalUserPrompt(ChatMessage message) {
+    return _pendingLocalUserMessageIds.contains(message.id) &&
+        message.sender == MessageSender.user &&
+        (message.type == MessageType.text ||
+            message.type == MessageType.skillInvocation);
+  }
+
+  bool _hasEquivalentUserMessage(
+    List<ChatMessage> messages,
+    ChatMessage target,
+  ) {
+    final normalized = _normalizeHistoryText(target.textContent);
+    if (normalized.isEmpty) return false;
+    return messages.any(
+      (m) =>
+          m.sender == MessageSender.user &&
+          (m.type == MessageType.text ||
+              m.type == MessageType.skillInvocation) &&
+          _normalizeHistoryText(m.textContent) == normalized,
+    );
   }
 
   /// Fetch image files from the server for tool_image history entries
@@ -5482,6 +5533,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ? '📎 ${attachName ?? "file"}'
         : text;
     final userMsg = _buildUserDisplayMessage(displayText);
+    _pendingLocalUserMessageIds.add(userMsg.id);
     // Mark as pending if injecting with non-immediate priority OR if we're
     // about to spend time uploading. The bubble renders pending state with
     // reduced opacity + a progress indicator while the file streams up.
@@ -5543,6 +5595,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _messages.add(uploadCard);
         }
       } catch (e) {
+        _pendingLocalUserMessageIds.remove(userMsg.id);
         userMsg.isPending = false;
         userMsg.uploadProgress = null;
         _messages.add(ChatMessage.error('Upload failed: $e'));
@@ -5593,6 +5646,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_pendingInjectedMessageCount > 0) {
       _pendingInjectedMessageCount--;
     }
+    _pendingLocalUserMessageIds.remove(messageId);
     _ws.sendRetractQueuedPrompt(messageId);
     notifyListeners();
     return text;
@@ -5788,6 +5842,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void createNewSession({String? cwd, String? serverId, String? backend}) {
     _messages = [];
     _pendingInjectedMessageCount = 0;
+    _pendingLocalUserMessageIds.clear();
     _todos = [];
     _lastUsage = null;
     _activeSessionId = null;
@@ -6130,6 +6185,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void resumeSession(String sessionId, {String? serverId}) {
     _messages = [];
     _pendingInjectedMessageCount = 0;
+    _pendingLocalUserMessageIds.clear();
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
@@ -6701,6 +6757,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     _messages = [];
     _pendingInjectedMessageCount = 0;
+    _pendingLocalUserMessageIds.clear();
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
@@ -6954,6 +7011,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSessionId == sessionId) {
       _messages.clear();
       _pendingInjectedMessageCount = 0;
+      _pendingLocalUserMessageIds.clear();
       _todos.clear();
       _currentStreamingMessage = null;
       _lastUsage = null;
@@ -7325,6 +7383,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _activeSessionId = null;
     _currentStreamingMessage = null;
     _isProcessing = false;
+    _pendingLocalUserMessageIds.clear();
     _ws.sendForkSession(sessionId);
     notifyListeners();
   }
