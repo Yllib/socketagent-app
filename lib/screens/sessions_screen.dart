@@ -345,18 +345,21 @@ class _SessionsTabState extends State<SessionsTab> {
       return;
     }
 
+    final canCreate = _canCreateCwd(provider.lastCwdCheck);
     final create = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Directory not found'),
-        content: Text('$path does not exist.\n\nCreate it?'),
+        content: SingleChildScrollView(
+          child: Text(_formatCwdCheckFailure(provider, path, serverId)),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancel'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: canCreate ? () => Navigator.pop(ctx, true) : null,
             child: const Text('Create'),
           ),
         ],
@@ -369,11 +372,88 @@ class _SessionsTabState extends State<SessionsTab> {
       if (created) {
         _openSession(context, cwd: path, serverId: serverId, backend: backend);
       } else {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to create $path')));
+        final detail = _shortCwdFailure(provider.lastCwdCheck);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to create $path$detail')),
+        );
       }
     }
+  }
+
+  String _formatCwdCheckFailure(
+    ChatProvider provider,
+    String path,
+    String? serverId,
+  ) {
+    final check = provider.lastCwdCheck;
+    final exists = check?['exists'] == true;
+    final isDirectory = check?['isDirectory'] == true;
+    final timedOut = check?['error'] == 'Timed out waiting for server';
+    final firstLine = timedOut
+        ? '$path could not be checked.'
+        : exists && !isDirectory
+        ? '$path exists, but it is not a directory.'
+        : '$path does not exist.';
+    final lines = <String>[firstLine];
+    final server = provider.serverConfigs
+        .where((config) => config.id == serverId)
+        .firstOrNull;
+    final serverName = server?.name ?? provider.connMgr.activeConfig?.name;
+    if (serverName != null && serverName.isNotEmpty) {
+      lines.add('');
+      lines.add('Server: $serverName');
+    }
+    if (check != null) {
+      final resolved = check['resolvedPath'] as String?;
+      final expanded = check['expandedPath'] as String?;
+      final user = check['user'] as String?;
+      final home = check['home'] as String?;
+      final platform = check['platform'] as String?;
+      final errorCode = check['errorCode'] as String?;
+      final error = check['error'] as String?;
+
+      if (resolved != null && resolved.isNotEmpty && resolved != path) {
+        lines.add('Resolved: $resolved');
+      }
+      if (expanded != null &&
+          expanded.isNotEmpty &&
+          expanded != path &&
+          expanded != resolved) {
+        lines.add('Expanded: $expanded');
+      }
+      if (user != null && user.isNotEmpty) lines.add('Server user: $user');
+      if (home != null && home.isNotEmpty) lines.add('Server home: $home');
+      if (platform != null && platform.isNotEmpty) {
+        lines.add('Platform: $platform');
+      }
+      if ((errorCode != null && errorCode.isNotEmpty) ||
+          (error != null && error.isNotEmpty)) {
+        lines.add(
+          'Error: ${[if (errorCode != null && errorCode.isNotEmpty) errorCode, if (error != null && error.isNotEmpty) error].join(' - ')}',
+        );
+      }
+    }
+    lines.add('');
+    lines.add(
+      _canCreateCwd(check) ? 'Create it?' : 'Choose another directory.',
+    );
+    return lines.join('\n');
+  }
+
+  bool _canCreateCwd(Map<String, dynamic>? check) {
+    if (check == null) return true;
+    return check['exists'] != true;
+  }
+
+  String _shortCwdFailure(Map<String, dynamic>? check) {
+    if (check == null) return '';
+    final errorCode = check['errorCode'] as String?;
+    final error = check['error'] as String?;
+    final detail = [
+      if (errorCode != null && errorCode.isNotEmpty) errorCode,
+      if (error != null && error.isNotEmpty) error,
+    ].join(': ');
+    return detail.isEmpty ? '' : ': $detail';
   }
 
   String? _serverIdForNewSession(ChatProvider provider) {

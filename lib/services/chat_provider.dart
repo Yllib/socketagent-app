@@ -260,7 +260,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const Duration _subscriptionRefreshInterval = Duration(hours: 6);
 
   final Completer<void> _settingsLoaded = Completer<void>();
-  Completer<bool>? _pendingCwdCheck;
+  Completer<Map<String, dynamic>>? _pendingCwdCheck;
+  String? _pendingCwdCheckRequestId;
+  String? _pendingCwdCheckServerId;
+  Map<String, dynamic>? _lastCwdCheck;
   Completer<Map<String, dynamic>>? _pendingDirList;
   Completer<List<Map<String, dynamic>>>? _pendingSdkSessions;
   final Map<String, Completer<FileManagerListing>> _fileManagerListCompleters =
@@ -708,6 +711,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ConnectionManager get connMgr => _connMgr;
   List<ServerConfig> get serverConfigs => _serverConfigs;
   String? get activeServerId => _connMgr.activeServerId;
+  Map<String, dynamic>? get lastCwdCheck => _lastCwdCheck;
 
   ConnectionStatus sessionServerStatus(Session session) {
     if (session.serverId.isNotEmpty) {
@@ -2580,9 +2584,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _restoreSdkEvents(msg['events'] as List? ?? []);
         break;
       case 'cwd_check':
-        final exists = msg['exists'] == true;
-        _pendingCwdCheck?.complete(exists);
-        _pendingCwdCheck = null;
+        final result = Map<String, dynamic>.from(msg);
+        if (serverId != null && serverId.isNotEmpty) {
+          result['serverId'] = serverId;
+        }
+        _lastCwdCheck = result;
+        final requestId = result['requestId'] as String?;
+        final responseServerId = result['serverId'] as String?;
+        final serverMatches =
+            _pendingCwdCheckServerId == null ||
+            responseServerId == null ||
+            responseServerId == _pendingCwdCheckServerId;
+        if (_pendingCwdCheck != null &&
+            serverMatches &&
+            (_pendingCwdCheckRequestId == null ||
+                requestId == null ||
+                requestId == _pendingCwdCheckRequestId)) {
+          _pendingCwdCheck?.complete(result);
+          _pendingCwdCheck = null;
+          _pendingCwdCheckRequestId = null;
+          _pendingCwdCheckServerId = null;
+        }
         break;
       case 'directory_listing':
         _pendingDirList?.complete(Map<String, dynamic>.from(msg));
@@ -6359,32 +6381,74 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Check if a path exists on the server. Returns true if it exists.
   Future<bool> checkCwd(String path, {String? serverId}) async {
-    _pendingCwdCheck = Completer<bool>();
-    final msg = {'type': 'check_cwd', 'path': path};
+    final completer = Completer<Map<String, dynamic>>();
+    final requestId = 'cwd_${DateTime.now().microsecondsSinceEpoch}';
+    _pendingCwdCheck = completer;
+    _pendingCwdCheckRequestId = requestId;
+    _pendingCwdCheckServerId = serverId;
+    final msg = {'type': 'check_cwd', 'path': path, 'requestId': requestId};
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
     } else {
       _ws.send(msg);
     }
-    return _pendingCwdCheck!.future.timeout(
+    final result = await completer.future.timeout(
       const Duration(seconds: 5),
-      onTimeout: () => false,
+      onTimeout: () {
+        if (_pendingCwdCheck == completer) {
+          _pendingCwdCheck = null;
+          _pendingCwdCheckRequestId = null;
+          _pendingCwdCheckServerId = null;
+        }
+        final timeout = <String, dynamic>{
+          'type': 'cwd_check',
+          'path': path,
+          'exists': false,
+          'isDirectory': false,
+          'serverId': serverId,
+          'error': 'Timed out waiting for server',
+        };
+        _lastCwdCheck = timeout;
+        return timeout;
+      },
     );
+    return result['exists'] == true && result['isDirectory'] != false;
   }
 
   /// Ask the server to create a directory. Returns true if successful.
   Future<bool> createCwd(String path, {String? serverId}) async {
-    _pendingCwdCheck = Completer<bool>();
-    final msg = {'type': 'create_cwd', 'path': path};
+    final completer = Completer<Map<String, dynamic>>();
+    final requestId = 'cwd_${DateTime.now().microsecondsSinceEpoch}';
+    _pendingCwdCheck = completer;
+    _pendingCwdCheckRequestId = requestId;
+    _pendingCwdCheckServerId = serverId;
+    final msg = {'type': 'create_cwd', 'path': path, 'requestId': requestId};
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
     } else {
       _ws.send(msg);
     }
-    return _pendingCwdCheck!.future.timeout(
+    final result = await completer.future.timeout(
       const Duration(seconds: 5),
-      onTimeout: () => false,
+      onTimeout: () {
+        if (_pendingCwdCheck == completer) {
+          _pendingCwdCheck = null;
+          _pendingCwdCheckRequestId = null;
+          _pendingCwdCheckServerId = null;
+        }
+        final timeout = <String, dynamic>{
+          'type': 'cwd_check',
+          'path': path,
+          'exists': false,
+          'isDirectory': false,
+          'serverId': serverId,
+          'error': 'Timed out waiting for server',
+        };
+        _lastCwdCheck = timeout;
+        return timeout;
+      },
     );
+    return result['exists'] == true && result['isDirectory'] != false;
   }
 
   /// List subdirectories of a path on a specific server.
