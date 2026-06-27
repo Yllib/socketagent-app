@@ -2294,11 +2294,19 @@ class _SessionsTabState extends State<SessionsTab> {
       displayCwd = '~';
     }
 
-    // Use title as primary, fall back to the project folder if title is unset.
+    // Lead with recent conversation text; keep title/project as context.
     final hasTitle = session.title.isNotEmpty && session.title != 'Untitled';
-    final primaryText = hasTitle
+    final previewText = session.messagePreview.trim();
+    final titleOrProject = hasTitle
         ? session.title
         : _projectLabelForCwd(displayCwd);
+    final primaryText = previewText.isNotEmpty ? previewText : titleOrProject;
+    final secondaryText = previewText.isNotEmpty
+        ? (hasTitle ? session.title : displayCwd)
+        : '';
+    final showSecondaryText =
+        secondaryText.trim().isNotEmpty &&
+        secondaryText.trim() != primaryText.trim();
     final statusText = openingThisSession
         ? 'Opening...'
         : showRunning
@@ -2396,15 +2404,15 @@ class _SessionsTabState extends State<SessionsTab> {
                           color: theme.colorScheme.onSurface,
                         ),
                       ),
-                      if (session.messagePreview.isNotEmpty) ...[
+                      if (showSecondaryText) ...[
                         const SizedBox(height: 3),
                         Text(
-                          session.messagePreview,
+                          secondaryText,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 13,
-                            color: theme.colorScheme.onSurface.withAlpha(178),
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurface.withAlpha(140),
                           ),
                         ),
                       ],
