@@ -160,6 +160,14 @@ class _ServersScreenState extends State<ServersScreen> {
                         : isConnected
                         ? 'Notifications not registered'
                         : 'Notifications will register when connected';
+                    final backendWarning = provider.backendWarningForServer(
+                      config.id,
+                    );
+                    final backendWarningLabel = backendWarning == null
+                        ? null
+                        : backendWarning['severity'] == 'error'
+                        ? 'Backend error'
+                        : 'Backend warning';
                     return ListTile(
                       leading: Icon(
                         transportIcon,
@@ -175,7 +183,11 @@ class _ServersScreenState extends State<ServersScreen> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       subtitle: Text(
-                        '$transportLabel • $notificationsLabel',
+                        [
+                          transportLabel,
+                          notificationsLabel,
+                          if (backendWarningLabel != null) backendWarningLabel,
+                        ].join(' • '),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
@@ -188,6 +200,24 @@ class _ServersScreenState extends State<ServersScreen> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
+                          if (backendWarning != null)
+                            IconButton(
+                              icon: Icon(
+                                backendWarning['severity'] == 'error'
+                                    ? Icons.error_outline
+                                    : Icons.warning_amber_outlined,
+                                size: 20,
+                                color: backendWarning['severity'] == 'error'
+                                    ? Colors.red.shade600
+                                    : Colors.orange.shade700,
+                              ),
+                              tooltip: 'Backend status',
+                              onPressed: () => _showBackendHealthDialog(
+                                context,
+                                provider,
+                                config,
+                              ),
+                            ),
                           if (config.useRelay)
                             IconButton(
                               icon: Icon(
@@ -688,6 +718,181 @@ class _ServersScreenState extends State<ServersScreen> {
               : 'Could not register notifications for ${config.name}',
         ),
         backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  String _backendHealthTitle(Map<String, dynamic> entry) {
+    final backend = entry['backend']?.toString() ?? 'backend';
+    return backend == 'codex' ? 'Codex' : 'Claude';
+  }
+
+  IconData _backendHealthIcon(Map<String, dynamic> entry) {
+    switch (entry['severity']) {
+      case 'error':
+        return Icons.error_outline;
+      case 'warning':
+        return Icons.warning_amber_outlined;
+      case 'disabled':
+        return Icons.block;
+      default:
+        return Icons.check_circle_outline;
+    }
+  }
+
+  Color _backendHealthColor(BuildContext context, Map<String, dynamic> entry) {
+    switch (entry['severity']) {
+      case 'error':
+        return Colors.red.shade600;
+      case 'warning':
+        return Colors.orange.shade700;
+      case 'disabled':
+        return Theme.of(context).colorScheme.outline;
+      default:
+        return Colors.green.shade600;
+    }
+  }
+
+  Widget _backendHealthDetail(
+    BuildContext context,
+    String label,
+    Object? value, {
+    bool selectable = false,
+  }) {
+    final text = value?.toString();
+    if (text == null || text.isEmpty) return const SizedBox.shrink();
+    final style = TextStyle(
+      fontSize: 12,
+      color: Theme.of(context).colorScheme.onSurface.withAlpha(170),
+    );
+    final child = selectable
+        ? SelectableText('$label: $text', style: style)
+        : Text('$label: $text', style: style);
+    return Padding(padding: const EdgeInsets.only(top: 4), child: child);
+  }
+
+  Widget _backendHealthEntry(BuildContext context, Map<String, dynamic> entry) {
+    final reason = entry['reason']?.toString();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            _backendHealthIcon(entry),
+            color: _backendHealthColor(context, entry),
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _backendHealthTitle(entry),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                if (reason != null && reason.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(reason),
+                  ),
+                _backendHealthDetail(context, 'Source', entry['source']),
+                _backendHealthDetail(context, 'Version', entry['version']),
+                _backendHealthDetail(
+                  context,
+                  'Install root',
+                  entry['installRoot'],
+                  selectable: true,
+                ),
+                _backendHealthDetail(
+                  context,
+                  'Command',
+                  entry['command'],
+                  selectable: true,
+                ),
+                _backendHealthDetail(
+                  context,
+                  'Detail',
+                  entry['detail'],
+                  selectable: true,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showBackendHealthDialog(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) {
+    final rootContext = context;
+    showDialog(
+      context: context,
+      builder: (dialogContext) => Consumer<ChatProvider>(
+        builder: (context, currentProvider, _) {
+          final entries = currentProvider.backendHealthForServer(config.id);
+          final codexNeedsRepair = entries.any((entry) {
+            final backend = entry['backend']?.toString();
+            final severity = entry['severity']?.toString();
+            return backend == 'codex' &&
+                (severity == 'error' || severity == 'warning');
+          });
+
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.health_and_safety_outlined, size: 22),
+                SizedBox(width: 10),
+                Expanded(child: Text('Backend Status')),
+              ],
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: entries.isEmpty
+                  ? const Text('No backend health details are available yet.')
+                  : SingleChildScrollView(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final entry in entries)
+                            _backendHealthEntry(context, entry),
+                        ],
+                      ),
+                    ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('Close'),
+              ),
+              if (codexNeedsRepair)
+                FilledButton.icon(
+                  icon: const Icon(Icons.build, size: 18),
+                  label: const Text('Repair Codex'),
+                  onPressed: () {
+                    Navigator.pop(dialogContext);
+                    currentProvider.repairBackend(
+                      config.id,
+                      backend: 'codex',
+                      reinstall: true,
+                      authenticate: true,
+                    );
+                    _showBackendRepairDialog(
+                      rootContext,
+                      currentProvider,
+                      config,
+                      'codex',
+                    );
+                  },
+                ),
+            ],
+          );
+        },
       ),
     );
   }

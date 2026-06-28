@@ -160,6 +160,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _serverCodexCollaborationMode = {};
   final Map<String, BackendInstallState> _backendInstallStates = {};
   final Map<String, Timer> _backendInstallAckTimers = {};
+  final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
@@ -538,6 +539,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get isRetrying => _isRetrying;
   String? get activeHookName => _activeHookName;
   List<String> serverPlugins(String serverId) => _serverPlugins[serverId] ?? [];
+  List<Map<String, dynamic>> backendHealthForServer(String serverId) =>
+      _serverBackendHealth[serverId] ?? const <Map<String, dynamic>>[];
+
+  Map<String, dynamic>? backendWarningForServer(String serverId) {
+    final health = backendHealthForServer(serverId);
+    for (final item in health) {
+      final severity = item['severity'] as String?;
+      if (severity == 'error') return item;
+    }
+    for (final item in health) {
+      final severity = item['severity'] as String?;
+      if (severity == 'warning') return item;
+    }
+    return null;
+  }
+
   Map<String, dynamic>? get contextUsage => _contextUsage;
   List<String> get promptSuggestions => _promptSuggestions;
   List<dynamic>? get supportedCommands => _supportedCommands;
@@ -6609,6 +6626,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final rawModes = msg['codexCollaborationModes'];
     if (rawModes is List) {
       _serverCodexCollaborationModes[serverId] = rawModes
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+    }
+
+    final rawHealth = msg['backendHealth'];
+    if (rawHealth is List) {
+      _serverBackendHealth[serverId] = rawHealth
           .whereType<Map>()
           .map((m) => Map<String, dynamic>.from(m))
           .toList();
