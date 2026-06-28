@@ -654,6 +654,11 @@ class HomeScreenState extends State<HomeScreen> {
           case 'codex_fast_mode':
             provider.setCodexFastMode(!provider.codexFastMode);
             break;
+          case 'claude_auto_compact':
+            provider.setClaudeAutoCompactEnabled(
+              !provider.claudeAutoCompactEnabled,
+            );
+            break;
         }
       },
       tooltip: 'Session options',
@@ -772,6 +777,50 @@ class HomeScreenState extends State<HomeScreen> {
                       : Icons.toggle_off_outlined,
                   size: 34,
                   color: provider.codexFastMode
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
+        if (provider.activeSessionBackend != 'codex')
+          PopupMenuItem(
+            value: 'claude_auto_compact',
+            child: Row(
+              children: [
+                Icon(
+                  provider.claudeAutoCompactEnabled
+                      ? Icons.memory_outlined
+                      : Icons.memory,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Auto compact'),
+                      Text(
+                        provider.claudeAutoCompactEnabled
+                            ? 'On for this Claude session'
+                            : 'Off for this Claude session',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(140),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  provider.claudeAutoCompactEnabled
+                      ? Icons.toggle_on_outlined
+                      : Icons.toggle_off_outlined,
+                  size: 34,
+                  color: provider.claudeAutoCompactEnabled
                       ? Theme.of(context).colorScheme.primary
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),

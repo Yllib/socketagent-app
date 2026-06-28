@@ -199,12 +199,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _ttsEnabled = false;
   String _effort = 'high';
   bool _codexFastMode = false;
+  bool _claudeAutoCompactEnabled = true;
   Map<String, dynamic> _thinking = {'type': 'adaptive'};
   List<String> _availableTools = [];
   // Per-session disallowed tools and system prompt caches
   final Map<String, List<String>> _sessionDisallowedTools = {};
   final Map<String, String> _sessionSystemPrompts = {};
   final Map<String, bool> _sessionCodexFastModes = {};
+  final Map<String, bool> _sessionClaudeAutoCompact = {};
   final Set<String> _locallyClearedSessions = {};
   // Background tasks: taskId → {status, summary, outputFile}
   final Map<String, Map<String, dynamic>> _backgroundTasks = {};
@@ -672,6 +674,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get ttsEnabled => _ttsEnabled;
   String get effort => _effort;
   bool get codexFastMode => _codexFastMode;
+  bool get claudeAutoCompactEnabled => _claudeAutoCompactEnabled;
   Map<String, dynamic> get thinking => _thinking;
   Map<String, Map<String, dynamic>> get backgroundTasks => _backgroundTasks;
   Map<String, Map<String, dynamic>> get subagentTasks => _subagentTasks;
@@ -1550,6 +1553,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     sendTo({'type': 'set_effort', 'effort': _effort});
     if (_activeSessionBackend == 'codex') {
       sendTo({'type': 'set_codex_fast_mode', 'enabled': _codexFastMode});
+    } else {
+      sendTo({
+        'type': 'set_claude_auto_compact',
+        'enabled': _claudeAutoCompactEnabled,
+      });
     }
     sendTo({'type': 'set_thinking', 'thinking': _thinking});
 
@@ -4832,9 +4840,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final backend = msg['backend'] as String?;
     if (backend != null) _activeSessionBackend = backend;
     if (sessionId != null && sessionId.isNotEmpty) {
+      final wasPendingNewSession =
+          _activeSessionId == null || _activeSessionId!.isEmpty;
       _activeSessionId = sessionId;
       if (_activeSessionBackend == 'codex') {
         _sessionCodexFastModes[sessionId] = _codexFastMode;
+      } else {
+        _sessionClaudeAutoCompact.putIfAbsent(
+          sessionId,
+          () => _claudeAutoCompactEnabled,
+        );
+        if (wasPendingNewSession) {
+          SharedPreferences.getInstance().then((prefs) {
+            prefs.setBool(
+              'claude_auto_compact_$sessionId',
+              _claudeAutoCompactEnabled,
+            );
+          });
+        }
       }
       _loadPrepends();
     }
@@ -5981,6 +6004,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final effectiveBackend = backend ?? preferredBackendForServer(serverId);
     _activeSessionBackend = effectiveBackend;
     _codexFastMode = false;
+    _claudeAutoCompactEnabled = true;
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
     _isProcessing = false;
@@ -6362,6 +6386,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _lastUsage = null;
     _activeSessionId = sessionId;
     _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
+    _claudeAutoCompactEnabled = _sessionClaudeAutoCompact[sessionId] ?? true;
     _loadPrepends();
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
@@ -6449,6 +6474,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (dt != null) _sessionDisallowedTools[sessionId] = dt;
       final sp = prefs.getString('system_prompt_$sessionId');
       if (sp != null) _sessionSystemPrompts[sessionId] = sp;
+      final autoCompact = prefs.getBool('claude_auto_compact_$sessionId');
+      if (autoCompact != null) {
+        _sessionClaudeAutoCompact[sessionId] = autoCompact;
+        if (_activeSessionId == sessionId) {
+          _claudeAutoCompactEnabled = autoCompact;
+        }
+      }
+      if (_activeSessionId == sessionId) {
+        _sendSessionSettings(sessionId);
+        notifyListeners();
+      }
     });
   }
 
@@ -6457,6 +6493,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.send({
         'type': 'set_codex_fast_mode',
         'enabled': _sessionCodexFastModes[sessionId] ?? _codexFastMode,
+      });
+    } else {
+      _connMgr.send({
+        'type': 'set_claude_auto_compact',
+        'enabled':
+            _sessionClaudeAutoCompact[sessionId] ?? _claudeAutoCompactEnabled,
       });
     }
     final dt = _sessionDisallowedTools[sessionId];
@@ -6988,6 +7030,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _lastUsage = null;
     _activeSessionId = sessionId;
     _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
+    _claudeAutoCompactEnabled = _sessionClaudeAutoCompact[sessionId] ?? true;
     _isLoadingHistory = true;
     _isProcessing = false;
     _stopPromptRuntime();
@@ -7000,6 +7043,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // before session_created comes back; falls through to whatever the
     // server confirms on the SessionInfo write-through.
     _activeSessionBackend = backend;
+    _loadSessionSettings(sessionId);
 
     final msg = {
       'type': 'resume_session',
@@ -7379,6 +7423,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _sessionCodexFastModes[_activeSessionId!] = enabled;
     }
     _connMgr.send({'type': 'set_codex_fast_mode', 'enabled': enabled});
+    notifyListeners();
+  }
+
+  void setClaudeAutoCompactEnabled(bool enabled) {
+    _claudeAutoCompactEnabled = enabled;
+    final sessionId = _activeSessionId;
+    if (sessionId != null) {
+      _sessionClaudeAutoCompact[sessionId] = enabled;
+      SharedPreferences.getInstance().then((prefs) {
+        prefs.setBool('claude_auto_compact_$sessionId', enabled);
+      });
+    }
+    _connMgr.send({'type': 'set_claude_auto_compact', 'enabled': enabled});
     notifyListeners();
   }
 
