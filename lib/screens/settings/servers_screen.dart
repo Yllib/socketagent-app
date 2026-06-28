@@ -133,13 +133,23 @@ class _ServersScreenState extends State<ServersScreen> {
                     final status = provider.connMgr.statusOf(config.id);
                     final isConnected = status == ConnectionStatus.connected;
                     final isConnecting = status == ConnectionStatus.connecting;
+                    final transportIcon = config.useRelay
+                        ? (isConnected
+                              ? Icons.cloud_done
+                              : isConnecting
+                              ? Icons.cloud_sync
+                              : Icons.cloud_off)
+                        : (isConnected
+                              ? Icons.dns
+                              : isConnecting
+                              ? Icons.sync
+                              : Icons.dns_outlined);
+                    final transportLabel = config.useRelay
+                        ? 'Relay ${config.isRelayPaired ? 'paired' : 'not paired'}'
+                        : 'Direct ${config.host}:${config.port}';
                     return ListTile(
                       leading: Icon(
-                        isConnected
-                            ? Icons.cloud_done
-                            : isConnecting
-                            ? Icons.cloud_sync
-                            : Icons.cloud_off,
+                        transportIcon,
                         color: isConnected
                             ? Colors.green
                             : isConnecting
@@ -152,9 +162,7 @@ class _ServersScreenState extends State<ServersScreen> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       subtitle: Text(
-                        config.useRelay
-                            ? 'Relay${config.isRelayPaired ? '' : ' (not paired)'}'
-                            : '${config.host}:${config.port}',
+                        transportLabel,
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(
@@ -165,20 +173,23 @@ class _ServersScreenState extends State<ServersScreen> {
                       trailing: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            icon: Icon(
-                              config.isRelayPaired
-                                  ? Icons.link
-                                  : Icons.qr_code_scanner,
-                              size: 20,
-                              color: config.isRelayPaired ? Colors.green : null,
+                          if (config.useRelay)
+                            IconButton(
+                              icon: Icon(
+                                config.isRelayPaired
+                                    ? Icons.link
+                                    : Icons.qr_code_scanner,
+                                size: 20,
+                                color: config.isRelayPaired
+                                    ? Colors.green
+                                    : null,
+                              ),
+                              tooltip: config.isRelayPaired
+                                  ? 'Re-pair relay'
+                                  : 'Pair relay',
+                              onPressed: () =>
+                                  _pairServerRelay(context, provider, config),
                             ),
-                            tooltip: config.isRelayPaired
-                                ? 'Re-pair relay'
-                                : 'Pair relay',
-                            onPressed: () =>
-                                _pairServerRelay(context, provider, config),
-                          ),
                           IconButton(
                             icon: const Icon(Icons.delete_outline, size: 20),
                             onPressed: () =>
@@ -220,8 +231,6 @@ class _ServersScreenState extends State<ServersScreen> {
     int? selectedColor = existing?.colorValue;
     bool useRelay =
         existing?.useRelay ?? true; // Default to relay for new servers
-    // For existing direct servers, auto-expand the advanced section
-    bool advancedExpanded = existing != null && !existing.useRelay;
 
     showDialog(
       context: context,
@@ -389,108 +398,110 @@ class _ServersScreenState extends State<ServersScreen> {
                     ),
                   ],
                 ),
-                // Relay section (default, primary action)
-                if (!advancedExpanded) ...[
-                  const SizedBox(height: 16),
-                  if (existing != null && existing.isRelayPaired)
-                    Text(
-                      'This server is paired via relay.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withAlpha(160),
-                      ),
-                    )
-                  else if (existing == null)
-                    Text(
-                      'After adding, scan the QR code shown on the server to pair.',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withAlpha(160),
+                const SizedBox(height: 16),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Row(
+                      children: [
+                        Icon(Icons.route, size: 20),
+                        SizedBox(width: 12),
+                        Text('Connection Mode'),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: SegmentedButton<bool>(
+                        showSelectedIcon: false,
+                        selected: {useRelay},
+                        segments: const [
+                          ButtonSegment<bool>(
+                            value: true,
+                            icon: Icon(Icons.cloud, size: 18),
+                            label: Text('Relay'),
+                          ),
+                          ButtonSegment<bool>(
+                            value: false,
+                            icon: Icon(Icons.dns, size: 18),
+                            label: Text('Direct'),
+                          ),
+                        ],
+                        onSelectionChanged: (values) =>
+                            setDialogState(() => useRelay = values.first),
                       ),
                     ),
-                ],
-                // Advanced: Direct connection (collapsed by default)
-                const SizedBox(height: 8),
-                Theme(
-                  data: Theme.of(
-                    context,
-                  ).copyWith(dividerColor: Colors.transparent),
-                  child: ExpansionTile(
-                    initiallyExpanded: advancedExpanded,
-                    tilePadding: EdgeInsets.zero,
-                    title: Text(
-                      'Advanced: Direct connection',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withAlpha(140),
-                      ),
-                    ),
-                    subtitle: Text(
-                      'For manual port forwarding',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withAlpha(100),
-                      ),
-                    ),
-                    onExpansionChanged: (expanded) {
-                      setDialogState(() {
-                        advancedExpanded = expanded;
-                        useRelay = !expanded;
-                      });
-                    },
+                  ],
+                ),
+                const SizedBox(height: 12),
+                if (useRelay) ...[
+                  Row(
                     children: [
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: hostCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Host',
-                          hintText: '192.168.1.100',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.dns),
-                        ),
+                      Icon(
+                        existing?.isRelayPaired == true
+                            ? Icons.link
+                            : Icons.qr_code_scanner,
+                        size: 20,
+                        color: existing?.isRelayPaired == true
+                            ? Colors.green
+                            : null,
                       ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: portCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'Port',
-                          hintText: '8085',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.numbers),
-                        ),
-                        keyboardType: TextInputType.number,
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: tokenCtrl,
-                        obscureText: !tokenVis,
-                        decoration: InputDecoration(
-                          labelText: 'Auth Token',
-                          hintText: 'Paste from server console',
-                          border: const OutlineInputBorder(),
-                          prefixIcon: const Icon(Icons.key),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              tokenVis
-                                  ? Icons.visibility_off
-                                  : Icons.visibility,
-                            ),
-                            onPressed: () =>
-                                setDialogState(() => tokenVis = !tokenVis),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          existing?.isRelayPaired == true
+                              ? 'Relay pairing is saved for this server.'
+                              : 'Scan the server QR code to pair this relay connection.',
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurface.withAlpha(160),
                           ),
                         ),
                       ),
                     ],
                   ),
-                ),
+                ] else ...[
+                  TextField(
+                    controller: hostCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Host',
+                      hintText: '192.168.1.100',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.dns),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: portCtrl,
+                    decoration: const InputDecoration(
+                      labelText: 'Port',
+                      hintText: '8085',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.numbers),
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: tokenCtrl,
+                    obscureText: !tokenVis,
+                    decoration: InputDecoration(
+                      labelText: 'Auth Token',
+                      hintText: 'Paste from socketagent token',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.key),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          tokenVis ? Icons.visibility_off : Icons.visibility,
+                        ),
+                        onPressed: () =>
+                            setDialogState(() => tokenVis = !tokenVis),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -512,7 +523,14 @@ class _ServersScreenState extends State<ServersScreen> {
                   final host = hostCtrl.text.trim();
                   final port = int.tryParse(portCtrl.text.trim()) ?? 8085;
                   final token = tokenCtrl.text.trim();
-                  if (host.isEmpty) return;
+                  if (host.isEmpty) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content: Text('Enter a host for direct connection'),
+                      ),
+                    );
+                    return;
+                  }
 
                   final config = ServerConfig(
                     id: existing?.id ?? ServerConfig.generateId(),
@@ -523,6 +541,9 @@ class _ServersScreenState extends State<ServersScreen> {
                     useRelay: false,
                     sortOrder:
                         existing?.sortOrder ?? provider.serverConfigs.length,
+                    relayUrl: existing?.relayUrl ?? '',
+                    pairingToken: existing?.pairingToken ?? '',
+                    serverPubkey: existing?.serverPubkey ?? '',
                     defaultCwd: cwdCtrl.text.trim(),
                     colorValue: selectedColor,
                     systemPrompt: sysPromptCtrl.text.trim(),
@@ -552,9 +573,12 @@ class _ServersScreenState extends State<ServersScreen> {
                   final config = ServerConfig(
                     id: existing?.id ?? ServerConfig.generateId(),
                     name: name,
-                    host: existing?.host ?? '',
-                    port: existing?.port ?? 8085,
-                    token: existing?.token ?? '',
+                    host: existing?.host ?? hostCtrl.text.trim(),
+                    port:
+                        existing?.port ??
+                        int.tryParse(portCtrl.text.trim()) ??
+                        8085,
+                    token: existing?.token ?? tokenCtrl.text.trim(),
                     useRelay: true,
                     sortOrder:
                         existing?.sortOrder ?? provider.serverConfigs.length,
@@ -822,6 +846,50 @@ class _ServersScreenState extends State<ServersScreen> {
                   'Not connected',
                   style: TextStyle(color: Colors.grey),
                 ),
+              ),
+            if (config.useRelay && config.host.isNotEmpty)
+              ListTile(
+                leading: const Icon(Icons.dns),
+                title: const Text('Use Direct Connection'),
+                subtitle: Text(
+                  '${config.host}:${config.port}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await provider.updateServer(config.copyWith(useRelay: false));
+                },
+              ),
+            if (!config.useRelay && config.isRelayPaired)
+              ListTile(
+                leading: const Icon(Icons.cloud),
+                title: const Text('Use Relay Connection'),
+                subtitle: const Text(
+                  'Switch this server back to relay',
+                  style: TextStyle(fontSize: 12),
+                ),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final hasRelayAccess = await _ensureRelayAccess(
+                    context,
+                    provider,
+                  );
+                  if (!mounted || !context.mounted || !hasRelayAccess) return;
+                  await provider.updateServer(config.copyWith(useRelay: true));
+                },
+              ),
+            if (!config.useRelay && !config.isRelayPaired)
+              ListTile(
+                leading: const Icon(Icons.qr_code_scanner),
+                title: const Text('Pair Relay Connection'),
+                subtitle: const Text(
+                  'Scan a relay QR for this server',
+                  style: TextStyle(fontSize: 12),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pairServerRelay(context, provider, config);
+                },
               ),
             ListTile(
               leading: const Icon(Icons.edit),
