@@ -75,6 +75,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
   static const String _sessionCachePrefsKey = 'cached_session_lists_v1';
+  static const String _pushRegisteredServersPrefsKey =
+      'push_registered_server_ids';
 
   final ConnectionManager _connMgr = ConnectionManager();
 
@@ -141,6 +143,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       {};
   // Per-session notification toggles
   Set<String> _notifMutedSessions = {};
+  final Set<String> _pushRegisteredServers = {};
   // Pinned sessions
   Set<String> _pinnedSessionIds = {};
   final Map<String, Session> _pendingArchivedSessions = {};
@@ -152,8 +155,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // ['claude']). Populated from the server_capabilities message; UI consults
   // this to gate the codex option in the new-session sheet.
   final Map<String, List<String>> _serverBackends = {};
-  final Map<String, String> _serverCodexDrivers = {};
-  final Map<String, List<String>> _serverCodexDriversAvailable = {};
   final Map<String, List<Map<String, dynamic>>> _serverCodexCollaborationModes =
       {};
   final Map<String, String> _serverCodexCollaborationMode = {};
@@ -286,6 +287,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _pendingVersionCheckServerId;
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
   Completer<Map<String, dynamic>?>? _pendingCodexStatus;
+  final Map<String, Completer<bool>> _pushRegistrationCompleters = {};
 
   StreamSubscription? _messageSub;
   StreamSubscription? _statusSub;
@@ -312,6 +314,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Session notifications
   bool isNotifEnabled(String sessionId) =>
       !_notifMutedSessions.contains(sessionId);
+
+  bool isPushRegisteredForServer(String serverId) =>
+      _pushRegisteredServers.contains(serverId);
+
+  int get pushRegisteredServerCount => _pushRegisteredServers.length;
 
   void toggleSessionNotifications(String sessionId) {
     if (_notifMutedSessions.contains(sessionId)) {
@@ -880,7 +887,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _kokoroDeviceEngine = KokoroDeviceEngine(_kokoroModelManager);
     _kokoroServerEngine.sendToServer = (msg) => _connMgr.send(msg);
     WidgetsBinding.instance.addObserver(this);
-    PushNotificationService.onTokenRefresh = _registerPushNotifications;
+    PushNotificationService.onTokenRefresh = _handlePushTokenRefresh;
     _loadSettings();
     _setupListeners();
   }
@@ -1057,6 +1064,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     await _loadSessionCache(prefs);
+    _pushRegisteredServers
+      ..clear()
+      ..addAll(
+        prefs.getStringList(_pushRegisteredServersPrefsKey) ?? const <String>[],
+      );
+    _pushRegisteredServers.retainAll(_serverConfigs.map((c) => c.id).toSet());
 
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
@@ -1149,8 +1162,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _secureStorage.setServerConfigs(json);
   }
 
-  Future<bool> _registerPushNotifications({String? serverId}) async {
-    final token = await PushNotificationService().getFcmToken();
+  Future<void> _savePushRegisteredServers() async {
+    final prefs = _cachedPrefs ?? await SharedPreferences.getInstance();
+    _cachedPrefs = prefs;
+    await prefs.setStringList(
+      _pushRegisteredServersPrefsKey,
+      _pushRegisteredServers.toList(),
+    );
+  }
+
+  void _markPushRegistered(String? serverId) {
+    if (serverId == null || serverId.isEmpty) return;
+    final completer = _pushRegistrationCompleters.remove(serverId);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(true);
+    }
+    if (_pushRegisteredServers.add(serverId)) {
+      unawaited(_savePushRegisteredServers());
+      notifyListeners();
+    }
+  }
+
+  void _handlePushTokenRefresh(String token) {
+    if (_pushRegisteredServers.isNotEmpty) {
+      _pushRegisteredServers.clear();
+      unawaited(_savePushRegisteredServers());
+      notifyListeners();
+    }
+    unawaited(_registerPushNotifications(fcmToken: token));
+  }
+
+  Future<bool> _registerPushNotifications({
+    String? serverId,
+    String? fcmToken,
+  }) async {
+    final token = fcmToken ?? await PushNotificationService().getFcmToken();
     if (token == null || token.isEmpty) return false;
     final message = {
       'type': 'register_push_token',
@@ -1158,7 +1204,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'platform': 'android',
     };
     if (serverId != null) {
-      _connMgr.sendToServer(serverId, {...message, 'appServerId': serverId});
+      final ws = _connMgr.getConnection(serverId);
+      if (ws?.status != ConnectionStatus.connected) return false;
+      ws!.send({...message, 'appServerId': serverId});
       return true;
     }
     var sent = false;
@@ -1173,6 +1221,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> registerPushNotificationsNow() => _registerPushNotifications();
+
+  Future<bool> registerPushNotificationsForServer(String serverId) async {
+    if (_pushRegisteredServers.contains(serverId)) return true;
+
+    _pushRegistrationCompleters.remove(serverId)?.complete(false);
+    final completer = Completer<bool>();
+    _pushRegistrationCompleters[serverId] = completer;
+
+    final sent = await _registerPushNotifications(serverId: serverId);
+    if (!sent) {
+      _pushRegistrationCompleters.remove(serverId);
+      if (!completer.isCompleted) completer.complete(false);
+      return false;
+    }
+
+    return completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        if (_pushRegistrationCompleters[serverId] == completer) {
+          _pushRegistrationCompleters.remove(serverId);
+        }
+        return _pushRegisteredServers.contains(serverId);
+      },
+    );
+  }
 
   Future<void> _captureRelayPairingFromCapabilities(
     String serverId,
@@ -1275,7 +1348,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> removeServer(String serverId) async {
     _serverConfigs.removeWhere((c) => c.id == serverId);
     _perServerSessions.remove(serverId);
+    final removedPushRegistration = _pushRegisteredServers.remove(serverId);
     await _saveServerConfigs();
+    if (removedPushRegistration) {
+      await _savePushRegisteredServers();
+    }
     await _saveSessionCache();
     await _connMgr.setServers(_serverConfigs);
     await _registerPushNotifications();
@@ -1617,8 +1694,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
       if (serverId == _connMgr.activeServerId) {
         _connMgr.sendToServer(serverId, {'type': 'skills_list'});
-        if (_activeSessionBackend == 'codex' &&
-            codexDriverForServer(serverId) == 'app-server') {
+        if (_activeSessionBackend == 'codex') {
           _connMgr.sendToServer(serverId, {
             'type': 'codex_collaboration_modes',
           });
@@ -2428,6 +2504,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'file_data',
       'file_chunk',
       'file_complete',
+      'push_token_registered',
     };
 
     // Route: only process non-global messages from the active server
@@ -2545,6 +2622,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'terminal_error':
         _handleTerminalMessage(msg, serverId);
         break;
+      case 'push_token_registered':
+        {
+          final appServerId = msg['appServerId'];
+          _markPushRegistered(
+            serverId ?? (appServerId is String ? appServerId : null),
+          );
+          break;
+        }
       case 'codex_collaboration_modes':
         {
           final key = serverId ?? _connMgr.activeServerId;
@@ -6505,20 +6590,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _captureCodexDriverSettings(Map<String, dynamic> msg, String serverId) {
-    final driver = msg['codexDriver'];
-    if (driver == 'exec' || driver == 'app-server') {
-      _serverCodexDrivers[serverId] = driver as String;
-    }
-
-    final rawDrivers = msg['codexDriversAvailable'];
-    if (rawDrivers is List) {
-      final drivers = rawDrivers
-          .whereType<String>()
-          .where((d) => d == 'exec' || d == 'app-server')
-          .toList();
-      _serverCodexDriversAvailable[serverId] = drivers;
-    }
-
     final currentMode = msg['codexCollaborationMode'] as String?;
     if (currentMode != null && currentMode.isNotEmpty) {
       _serverCodexCollaborationMode[serverId] = currentMode;
@@ -6544,24 +6615,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  String codexDriverForServer(String? serverId) {
-    final effectiveServerId =
-        serverId ?? _connMgr.activeServerId ?? _serverConfigs.firstOrNull?.id;
-    if (effectiveServerId == null) return 'exec';
-    return _serverCodexDrivers[effectiveServerId] ?? 'exec';
-  }
-
-  List<String> codexDriversAvailableForServer(String? serverId) {
-    final effectiveServerId =
-        serverId ?? _connMgr.activeServerId ?? _serverConfigs.firstOrNull?.id;
-    if (effectiveServerId == null) return const [];
-    final known = _serverCodexDriversAvailable[effectiveServerId];
-    if (known != null) return known;
-    return backendsForServer(effectiveServerId).contains('codex')
-        ? const ['exec']
-        : const [];
-  }
-
   void requestServerSettings({String? serverId}) {
     if (serverId != null) {
       _connMgr.sendToServer(serverId, {'type': 'get_server_settings'});
@@ -6580,19 +6633,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _requestActiveCodexMetadata() {
     if (_activeSessionBackend != 'codex') return;
     requestActiveSkills();
-    if (codexDriverForServer(null) == 'app-server') {
-      requestCodexCollaborationModes();
-    }
-  }
-
-  void setCodexDriverForServer(String serverId, String driver) {
-    if (driver != 'exec' && driver != 'app-server') return;
-    _serverCodexDrivers[serverId] = driver;
-    _connMgr.sendToServer(serverId, {
-      'type': 'set_codex_driver',
-      'driver': driver,
-    });
-    notifyListeners();
+    requestCodexCollaborationModes();
   }
 
   void _sendServerSettings(String serverId, {String? defaultCwd}) {

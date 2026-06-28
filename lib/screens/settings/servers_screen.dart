@@ -21,6 +21,8 @@ class ServersScreen extends StatefulWidget {
 }
 
 class _ServersScreenState extends State<ServersScreen> {
+  final Set<String> _registeringPushServerIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -133,6 +135,12 @@ class _ServersScreenState extends State<ServersScreen> {
                     final status = provider.connMgr.statusOf(config.id);
                     final isConnected = status == ConnectionStatus.connected;
                     final isConnecting = status == ConnectionStatus.connecting;
+                    final pushRegistered = provider.isPushRegisteredForServer(
+                      config.id,
+                    );
+                    final pushRegistering = _registeringPushServerIds.contains(
+                      config.id,
+                    );
                     final transportIcon = config.useRelay
                         ? (isConnected
                               ? Icons.cloud_done
@@ -147,6 +155,11 @@ class _ServersScreenState extends State<ServersScreen> {
                     final transportLabel = config.useRelay
                         ? 'Relay ${config.isRelayPaired ? 'paired' : 'not paired'}'
                         : 'Direct ${config.host}:${config.port}';
+                    final notificationsLabel = pushRegistered
+                        ? 'Notifications on'
+                        : isConnected
+                        ? 'Notifications not registered'
+                        : 'Notifications will register when connected';
                     return ListTile(
                       leading: Icon(
                         transportIcon,
@@ -162,7 +175,9 @@ class _ServersScreenState extends State<ServersScreen> {
                         style: const TextStyle(fontSize: 14),
                       ),
                       subtitle: Text(
-                        transportLabel,
+                        '$transportLabel • $notificationsLabel',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontSize: 12,
                           color: Theme.of(
@@ -189,6 +204,38 @@ class _ServersScreenState extends State<ServersScreen> {
                                   : 'Pair relay',
                               onPressed: () =>
                                   _pairServerRelay(context, provider, config),
+                            ),
+                          if (pushRegistered)
+                            Tooltip(
+                              message: 'Notifications registered',
+                              child: Icon(
+                                Icons.notifications_active_outlined,
+                                size: 20,
+                                color: Colors.green.shade600,
+                              ),
+                            )
+                          else if (isConnected)
+                            IconButton(
+                              icon: pushRegistering
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(
+                                      Icons.notification_add_outlined,
+                                      size: 20,
+                                    ),
+                              tooltip: 'Register notifications',
+                              onPressed: pushRegistering
+                                  ? null
+                                  : () => _registerServerNotifications(
+                                      context,
+                                      provider,
+                                      config,
+                                    ),
                             ),
                           IconButton(
                             icon: const Icon(Icons.delete_outline, size: 20),
@@ -272,71 +319,6 @@ class _ServersScreenState extends State<ServersScreen> {
                     alignLabelWithHint: true,
                   ),
                 ),
-                if (existing != null &&
-                    provider.backendsForServer(existing.id).contains('codex') &&
-                    provider
-                        .codexDriversAvailableForServer(existing.id)
-                        .isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Row(
-                        children: [
-                          Icon(Icons.developer_board, size: 20),
-                          SizedBox(width: 12),
-                          Text('Codex Runtime'),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        width: double.infinity,
-                        child: SegmentedButton<String>(
-                          showSelectedIcon: false,
-                          selected: {
-                            provider
-                                    .codexDriversAvailableForServer(existing.id)
-                                    .contains(
-                                      provider.codexDriverForServer(
-                                        existing.id,
-                                      ),
-                                    )
-                                ? provider.codexDriverForServer(existing.id)
-                                : provider
-                                      .codexDriversAvailableForServer(
-                                        existing.id,
-                                      )
-                                      .first,
-                          },
-                          segments: provider
-                              .codexDriversAvailableForServer(existing.id)
-                              .map(
-                                (driver) => ButtonSegment<String>(
-                                  value: driver,
-                                  label: Text(
-                                    driver == 'app-server'
-                                        ? 'App Server'
-                                        : 'Exec',
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                          onSelectionChanged:
-                              provider.connMgr.statusOf(existing.id) ==
-                                  ConnectionStatus.connected
-                              ? (values) {
-                                  provider.setCodexDriverForServer(
-                                    existing.id,
-                                    values.first,
-                                  );
-                                  setDialogState(() {});
-                                }
-                              : null,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
                 const SizedBox(height: 12),
                 // Badge color picker
                 Column(
@@ -687,6 +669,29 @@ class _ServersScreenState extends State<ServersScreen> {
     return true;
   }
 
+  Future<void> _registerServerNotifications(
+    BuildContext context,
+    ChatProvider provider,
+    ServerConfig config,
+  ) async {
+    if (_registeringPushServerIds.contains(config.id)) return;
+    setState(() => _registeringPushServerIds.add(config.id));
+    final ok = await provider.registerPushNotificationsForServer(config.id);
+    if (!mounted) return;
+    setState(() => _registeringPushServerIds.remove(config.id));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok
+              ? 'Notifications registered for ${config.name}'
+              : 'Could not register notifications for ${config.name}',
+        ),
+        backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
   void _showServerMenu(
     BuildContext context,
     ChatProvider provider,
@@ -696,6 +701,8 @@ class _ServersScreenState extends State<ServersScreen> {
         provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
     final plugins = provider.serverPlugins(config.id);
     final hasOutlookAuth = plugins.contains('outlook-auth');
+    final pushRegistered = provider.isPushRegisteredForServer(config.id);
+    final pushRegistering = _registeringPushServerIds.contains(config.id);
 
     showModalBottomSheet(
       context: context,
@@ -713,6 +720,40 @@ class _ServersScreenState extends State<ServersScreen> {
                 ),
               ),
             ),
+            if (isConnected)
+              ListTile(
+                leading: Icon(
+                  pushRegistered
+                      ? Icons.notifications_active_outlined
+                      : Icons.notification_add_outlined,
+                  color: pushRegistered ? Colors.green : null,
+                ),
+                title: Text(
+                  pushRegistered
+                      ? 'Notifications Registered'
+                      : 'Register Notifications',
+                ),
+                subtitle: Text(
+                  pushRegistered
+                      ? 'This phone is registered for ${config.name}'
+                      : 'Register this phone for ${config.name}',
+                  style: const TextStyle(fontSize: 12),
+                ),
+                enabled: !pushRegistered && !pushRegistering,
+                trailing: pushRegistering
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : null,
+                onTap: pushRegistered || pushRegistering
+                    ? null
+                    : () {
+                        Navigator.pop(ctx);
+                        _registerServerNotifications(context, provider, config);
+                      },
+              ),
             if (isConnected)
               ListTile(
                 leading: const Icon(Icons.system_update),
@@ -778,67 +819,6 @@ class _ServersScreenState extends State<ServersScreen> {
                   _startOutlookAuth(context, provider, config);
                 },
               ),
-            Consumer<ChatProvider>(
-              builder: (context, currentProvider, _) {
-                final backends = currentProvider.backendsForServer(config.id);
-                final drivers = currentProvider.codexDriversAvailableForServer(
-                  config.id,
-                );
-                if (!backends.contains('codex') || drivers.isEmpty) {
-                  return const SizedBox.shrink();
-                }
-                final selected =
-                    drivers.contains(
-                      currentProvider.codexDriverForServer(config.id),
-                    )
-                    ? currentProvider.codexDriverForServer(config.id)
-                    : drivers.first;
-                final canChange = isConnected && drivers.length > 1;
-                return Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 8,
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.developer_board, size: 22),
-                      const SizedBox(width: 16),
-                      const Expanded(
-                        child: Text(
-                          'Codex Runtime',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                      ),
-                      SegmentedButton<String>(
-                        showSelectedIcon: false,
-                        selected: {selected},
-                        segments: drivers
-                            .map(
-                              (driver) => ButtonSegment<String>(
-                                value: driver,
-                                label: Text(
-                                  driver == 'app-server'
-                                      ? 'App Server'
-                                      : 'Exec',
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onSelectionChanged: canChange
-                            ? (values) {
-                                final next = values.first;
-                                currentProvider.setCodexDriverForServer(
-                                  config.id,
-                                  next,
-                                );
-                              }
-                            : null,
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
             if (!isConnected)
               const ListTile(
                 leading: Icon(Icons.cloud_off, color: Colors.grey),

@@ -149,7 +149,6 @@ class _SignedInCard extends StatefulWidget {
 class _SignedInCardState extends State<_SignedInCard> {
   bool _detailsLoaded = false;
   bool _loading = false;
-  bool _registeringPush = false;
 
   @override
   void initState() {
@@ -213,23 +212,6 @@ class _SignedInCardState extends State<_SignedInCard> {
         .then((_) => _loadDetails());
   }
 
-  Future<void> _registerPushNotifications() async {
-    if (_registeringPush) return;
-    setState(() => _registeringPush = true);
-    final ok = await widget.provider.registerPushNotificationsNow();
-    if (!mounted) return;
-    setState(() => _registeringPush = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ok
-              ? 'Push notifications registered for connected servers'
-              : 'Could not register push notifications',
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -285,19 +267,6 @@ class _SignedInCardState extends State<_SignedInCard> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    TextButton.icon(
-                      onPressed: _registeringPush
-                          ? null
-                          : _registerPushNotifications,
-                      icon: _registeringPush
-                          ? const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.notifications_active_outlined),
-                      label: const Text('Register Notifications'),
-                    ),
                     if (!isOwner)
                       TextButton(
                         onPressed: _openBillingPortal,

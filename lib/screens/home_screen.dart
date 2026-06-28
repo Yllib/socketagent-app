@@ -777,9 +777,7 @@ class HomeScreenState extends State<HomeScreen> {
 
   Widget _buildSessionMoreChip(ChatProvider provider) {
     final projectPath = _projectFilesPath(provider);
-    final showCodexMode =
-        provider.activeSessionBackend == 'codex' &&
-        provider.codexDriverForServer(null) == 'app-server';
+    final showCodexMode = provider.activeSessionBackend == 'codex';
     return PopupMenuButton<String>(
       onOpened: () {
         if (showCodexMode) {

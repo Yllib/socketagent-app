@@ -1821,10 +1821,6 @@ class _SessionsTabState extends State<SessionsTab> {
     final provider = context.read<ChatProvider>();
     final notifEnabled = provider.isNotifEnabled(session.id);
     final isPinned = provider.isSessionPinned(session.id);
-    final codexDriver =
-        session.codexDriver ?? provider.codexDriverForServer(session.serverId);
-    final canForkSession =
-        session.backend != 'codex' || codexDriver == 'app-server';
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -1869,24 +1865,22 @@ class _SessionsTabState extends State<SessionsTab> {
                   provider.toggleSessionNotifications(session.id);
                 },
               ),
-              if (canForkSession)
-                ListTile(
-                  leading: const Icon(Icons.fork_right),
-                  title: Text(
-                    session.backend == 'codex' ? 'Fork Thread' : 'Fork Session',
-                  ),
-                  subtitle: Text(
-                    session.backend == 'codex'
-                        ? 'Create a copy of this Codex thread'
-                        : 'Create a copy of this conversation',
-                  ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _forkSession(context, session);
-                  },
+              ListTile(
+                leading: const Icon(Icons.fork_right),
+                title: Text(
+                  session.backend == 'codex' ? 'Fork Thread' : 'Fork Session',
                 ),
-              if (session.backend == 'codex' &&
-                  codexDriver == 'app-server') ...[
+                subtitle: Text(
+                  session.backend == 'codex'
+                      ? 'Create a copy of this Codex thread'
+                      : 'Create a copy of this conversation',
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _forkSession(context, session);
+                },
+              ),
+              if (session.backend == 'codex') ...[
                 ListTile(
                   leading: const Icon(Icons.compress),
                   title: const Text('Compact Thread'),

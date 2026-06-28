@@ -36,7 +36,7 @@ class PushNotificationService {
   StreamSubscription<RemoteMessage>? _openedSub;
 
   static void Function(String? payload)? onNotificationTap;
-  static void Function()? onTokenRefresh;
+  static void Function(String token)? onTokenRefresh;
 
   String? takeLaunchPayload() {
     final payload = _launchPayload;
@@ -55,8 +55,8 @@ class PushNotificationService {
       );
       await messaging.requestPermission(alert: true, badge: true, sound: true);
       _launchPayload = _payloadFor(await messaging.getInitialMessage());
-      _tokenRefreshSub = messaging.onTokenRefresh.listen((_) {
-        onTokenRefresh?.call();
+      _tokenRefreshSub = messaging.onTokenRefresh.listen((token) {
+        onTokenRefresh?.call(token);
       });
       _messageSub = FirebaseMessaging.onMessage.listen((message) {
         final title = message.notification?.title ?? message.data['title'];
