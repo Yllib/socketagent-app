@@ -7,6 +7,7 @@ import '../services/tts_engine.dart';
 import '../services/kokoro_server_engine.dart';
 import '../services/websocket_service.dart';
 import 'file_manager_screen.dart';
+import 'terminal_screen.dart';
 import 'settings/voice_speech_screen.dart';
 import '../widgets/chat_view.dart';
 import '../widgets/active_tasks_pane.dart';
@@ -647,6 +648,9 @@ class HomeScreenState extends State<HomeScreen> {
           case 'project_files':
             _openProjectFiles(provider, projectPath);
             break;
+          case 'terminal':
+            _openTerminal(provider, projectPath);
+            break;
           case 'codex_fast_mode':
             provider.setCodexFastMode(!provider.codexFastMode);
             break;
@@ -692,6 +696,38 @@ class HomeScreenState extends State<HomeScreen> {
                           ).colorScheme.onSurface.withAlpha(140),
                         ),
                       ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'terminal',
+          enabled: provider.activeServerId != null,
+          child: Row(
+            children: [
+              const Icon(Icons.terminal, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Open terminal'),
+                    Text(
+                      projectPath != null && projectPath.isNotEmpty
+                          ? projectPath
+                          : 'Active server shell',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(140),
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -807,6 +843,21 @@ class HomeScreenState extends State<HomeScreen> {
         builder: (_) => FileManagerScreen(
           serverId: provider.activeServerId,
           initialPath: projectPath,
+        ),
+      ),
+    );
+  }
+
+  void _openTerminal(ChatProvider provider, String? projectPath) {
+    final serverId = provider.activeServerId;
+    if (serverId == null) return;
+    final serverName = provider.connMgr.activeConfig?.name;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => TerminalScreen(
+          serverId: serverId,
+          serverName: serverName,
+          initialCwd: projectPath,
         ),
       ),
     );

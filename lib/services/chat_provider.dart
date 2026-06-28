@@ -111,6 +111,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Completer<List<dynamic>>> _archiveHistoryCompleters = {};
   final StreamController<String> _archiveFeedback =
       StreamController.broadcast();
+  final StreamController<Map<String, dynamic>> _terminalEvents =
+      StreamController.broadcast();
+  String? _terminalServerId;
+  Map<String, dynamic>? _terminalStatus;
   Map<String, dynamic>? _lastUsage;
   Map<String, dynamic>? _codexStatus;
   // All file maps keyed on fileId (hash of path+mtime+size from server)
@@ -294,6 +298,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> get scheduledTasks => _scheduledTasks;
   List<ArchiveEntry> get archives => _archives;
   Stream<String> get archiveFeedback => _archiveFeedback.stream;
+  Stream<Map<String, dynamic>> get terminalEvents => _terminalEvents.stream;
+  Map<String, dynamic>? get terminalStatus => _terminalStatus;
+  String? get terminalServerId => _terminalServerId;
   Map<String, dynamic>? get lastUsage => _lastUsage;
   Map<String, dynamic>? get codexStatus => _codexStatus;
   String? get activeSessionId => _activeSessionId;
@@ -383,6 +390,56 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final key = sid ?? '';
     _recentCwds[key]?.remove(path);
     notifyListeners();
+  }
+
+  void attachTerminal({
+    String? serverId,
+    String? cwd,
+    int cols = 100,
+    int rows = 30,
+  }) {
+    final sid = serverId ?? _connMgr.activeServerId;
+    if (sid == null || sid.isEmpty) return;
+    _terminalServerId = sid;
+    _connMgr.sendToServer(sid, {
+      'type': 'terminal_attach',
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      'cols': cols,
+      'rows': rows,
+    });
+  }
+
+  void sendTerminalInput(String data, {String? serverId}) {
+    if (data.isEmpty) return;
+    final sid = serverId ?? _terminalServerId ?? _connMgr.activeServerId;
+    if (sid == null || sid.isEmpty) return;
+    _connMgr.sendToServer(sid, {'type': 'terminal_input', 'data': data});
+  }
+
+  void resizeTerminal({
+    required int cols,
+    required int rows,
+    String? serverId,
+  }) {
+    final sid = serverId ?? _terminalServerId ?? _connMgr.activeServerId;
+    if (sid == null || sid.isEmpty) return;
+    _connMgr.sendToServer(sid, {
+      'type': 'terminal_resize',
+      'cols': cols,
+      'rows': rows,
+    });
+  }
+
+  void detachTerminal({String? serverId}) {
+    final sid = serverId ?? _terminalServerId;
+    if (sid == null || sid.isEmpty) return;
+    _connMgr.sendToServer(sid, {'type': 'terminal_detach'});
+  }
+
+  void killTerminal({String? serverId}) {
+    final sid = serverId ?? _terminalServerId ?? _connMgr.activeServerId;
+    if (sid == null || sid.isEmpty) return;
+    _connMgr.sendToServer(sid, {'type': 'terminal_kill'});
   }
 
   void _maybeNotify({required String title, required String body}) {
@@ -2319,6 +2376,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'server_capabilities',
       'server_settings',
       'backend_install_progress',
+      'terminal_status',
+      'terminal_output',
+      'terminal_exited',
+      'terminal_error',
       'file_data',
       'file_chunk',
       'file_complete',
@@ -2426,6 +2487,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       case 'backend_install_progress':
         _handleBackendInstallProgress(msg, serverId);
+        break;
+      case 'terminal_status':
+      case 'terminal_output':
+      case 'terminal_exited':
+      case 'terminal_error':
+        _handleTerminalMessage(msg, serverId);
         break;
       case 'codex_collaboration_modes':
         {
@@ -6053,6 +6120,45 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  void _handleTerminalMessage(Map<String, dynamic> msg, String? serverId) {
+    if (_terminalServerId != null &&
+        serverId != null &&
+        serverId != _terminalServerId) {
+      return;
+    }
+
+    final enriched = <String, dynamic>{
+      ...msg,
+      if (serverId != null) '_serverId': serverId,
+    };
+    _terminalServerId ??= serverId;
+
+    switch (msg['type']) {
+      case 'terminal_status':
+        _terminalStatus = enriched;
+        break;
+      case 'terminal_exited':
+        _terminalStatus = {
+          ...?_terminalStatus,
+          'running': false,
+          'exitCode': msg['exitCode'],
+          if (msg['signal'] != null) 'signal': msg['signal'],
+          if (serverId != null) '_serverId': serverId,
+        };
+        break;
+      case 'terminal_error':
+        _terminalStatus = {
+          ...?_terminalStatus,
+          'error': msg['message'],
+          if (serverId != null) '_serverId': serverId,
+        };
+        break;
+    }
+
+    _terminalEvents.add(enriched);
+    notifyListeners();
+  }
+
   void _captureServerRuntimeInfo(Map<String, dynamic> msg, String serverId) {
     final existing = Map<String, dynamic>.from(
       _serverRuntimeInfo[serverId] ?? const <String, dynamic>{},
@@ -8280,6 +8386,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _speech.dispose();
     _tts.dispose();
     _subscriptionRequiredController.close();
+    _terminalEvents.close();
     super.dispose();
   }
 }
