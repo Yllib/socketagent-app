@@ -27,6 +27,17 @@ import 'push_notification_service.dart';
 import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 
+String _stripTerminalControl(String value) {
+  return value
+      .replaceAll(
+        RegExp(
+          r'(?:\x1B\[[0-?]*[ -/]*[@-~]|\x9B[0-?]*[ -/]*[@-~]|\x1B\][^\x07]*(?:\x07|\x1B\\))',
+        ),
+        '',
+      )
+      .replaceAll(RegExp(r'\[(?:\d{1,3}(?:;\d{1,3})*)m'), '');
+}
+
 class BackendInstallState {
   BackendInstallState({
     required this.backend,
@@ -51,14 +62,23 @@ class BackendInstallState {
   void apply(Map<String, dynamic> msg) {
     phase = msg['phase'] as String? ?? phase;
     status = msg['status'] as String? ?? status;
-    message = msg['message'] as String? ?? message;
-    authUrl = msg['authUrl'] as String? ?? authUrl;
-    authCode = msg['authCode'] as String? ?? authCode;
+    final rawMessage = msg['message'] as String?;
+    if (rawMessage != null) {
+      message = _stripTerminalControl(rawMessage).trimRight();
+    }
+    final rawAuthUrl = msg['authUrl'] as String?;
+    if (rawAuthUrl != null) {
+      authUrl = _stripTerminalControl(rawAuthUrl).trim();
+    }
+    final rawAuthCode = msg['authCode'] as String?;
+    if (rawAuthCode != null) {
+      authCode = _stripTerminalControl(rawAuthCode).trim();
+    }
 
     final rawOutput = msg['output'] as String?;
     if (rawOutput != null && rawOutput.trim().isNotEmpty) {
       final lines = const LineSplitter()
-          .convert(rawOutput.replaceAll('\r\n', '\n'))
+          .convert(_stripTerminalControl(rawOutput).replaceAll('\r\n', '\n'))
           .map((line) => line.trimRight())
           .where((line) => line.trim().isNotEmpty);
       output.addAll(lines);
