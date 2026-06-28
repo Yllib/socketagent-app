@@ -5,6 +5,7 @@ enum MessageType {
   toolCall,
   toolResult,
   question,
+  secureInput,
   result,
   error,
   taskNotification,
@@ -229,6 +230,29 @@ class ChatMessage {
       questionId: questionId,
       questions: questions,
       emailPreview: emailPreview,
+    );
+  }
+
+  factory ChatMessage.secureInput({
+    required String requestId,
+    required String label,
+    String reason = '',
+    String envHint = '',
+    String scope = 'session',
+  }) {
+    return ChatMessage(
+      id: 'secure_input_$requestId',
+      sender: MessageSender.assistant,
+      type: MessageType.secureInput,
+      timestamp: DateTime.now(),
+      questionId: requestId,
+      textContent: reason,
+      toolInput: {
+        'label': label,
+        'reason': reason,
+        'envHint': envHint,
+        'scope': scope,
+      },
     );
   }
 

@@ -632,27 +632,64 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return [...nativeCommands, ...skillCommands];
     }
 
+    final merged = <String, Map<String, dynamic>>{};
     final commands = _supportedCommands ?? const [];
-    return commands
-        .map((cmd) {
-          if (cmd is Map) {
-            final mapped = Map<String, dynamic>.from(cmd);
-            return {
-              ...mapped,
-              'name': _cleanSlashName((mapped['name'] ?? '').toString()),
-              'kind': 'command',
-              'agent': 'claude',
-            };
-          }
+    for (final command
+        in commands
+            .map((cmd) {
+              if (cmd is Map) {
+                final mapped = Map<String, dynamic>.from(cmd);
+                return {
+                  ...mapped,
+                  'name': _cleanSlashName((mapped['name'] ?? '').toString()),
+                  'kind': 'command',
+                  'agent': 'claude',
+                };
+              }
+              return {
+                'name': _cleanSlashName(cmd.toString()),
+                'description': '',
+                'kind': 'command',
+                'agent': 'claude',
+              };
+            })
+            .where((cmd) => (cmd['name'] as String? ?? '').isNotEmpty)) {
+      merged[(command['name'] as String).toLowerCase()] = command;
+    }
+
+    final serverId = _connMgr.activeServerId;
+    final skills = serverId == null
+        ? const <Map<String, dynamic>>[]
+        : _skillsByServer[serverId] ?? const <Map<String, dynamic>>[];
+    final localClaudeCommands = skills
+        .where(
+          (skill) =>
+              skill['agent'] == 'claude' &&
+              (skill['name'] as String? ?? '').isNotEmpty,
+        )
+        .map((skill) {
+          final cleanName = _cleanSlashName(skill['name'] as String? ?? '');
           return {
-            'name': _cleanSlashName(cmd.toString()),
-            'description': '',
-            'kind': 'command',
+            ...skill,
+            'name': cleanName,
+            'kind': skill['format'] == 'skill' ? 'skill' : 'command',
             'agent': 'claude',
           };
         })
-        .where((cmd) => (cmd['name'] as String? ?? '').isNotEmpty)
-        .toList();
+        .where((cmd) => (cmd['name'] as String? ?? '').isNotEmpty);
+    for (final command in localClaudeCommands) {
+      merged.putIfAbsent(
+        (command['name'] as String).toLowerCase(),
+        () => command,
+      );
+    }
+
+    final result = merged.values.toList();
+    result.sort(
+      (a, b) =>
+          (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? ''),
+    );
+    return result;
   }
 
   bool get taskPaneCollapsed => _taskPaneCollapsed;
@@ -2453,6 +2490,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'question':
         _handleQuestion(msg);
         break;
+      case 'secure_input_request':
+        _handleSecureInputRequest(msg);
+        break;
+      case 'secure_input_saved':
+        _handleSecureInputSaved(msg);
+        break;
       case 'result':
         _handleResult(msg);
         break;
@@ -3735,6 +3778,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
     final streamId = msg['streamId'] as String?;
+    final isReplay = msg['replay'] == true;
+
+    if (isReplay) {
+      final existing = _findReplayedAssistantMessage(content);
+      if (existing != null) {
+        if (content.length > existing.textContent.length &&
+            content.startsWith(existing.textContent)) {
+          existing.textContent = content;
+        }
+        _currentStreamingMessage = existing;
+        _currentStreamingStreamId = streamId;
+        notifyListeners();
+        return;
+      }
+    }
 
     if (_currentStreamingMessage != null &&
         streamId != null &&
@@ -3826,6 +3884,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleThinkingMessage(Map<String, dynamic> msg) {
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
+    final isReplay = msg['replay'] == true;
+    if (isReplay) {
+      final existing = _findReplayedThinkingMessage(content);
+      if (existing != null) {
+        if (content.length > existing.textContent.length &&
+            content.startsWith(existing.textContent)) {
+          existing.textContent = content;
+        }
+        existing.toolStreaming = true;
+        _currentThinkingMessage = existing;
+        notifyListeners();
+        return;
+      }
+    }
     if (_currentThinkingMessage == null) {
       _currentThinkingMessage = ChatMessage.thinking();
       _currentThinkingMessage!.parentToolUseId =
@@ -4143,6 +4215,63 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _maybeNotify(title: _sessionTitle(), body: questionBody);
+    notifyListeners();
+  }
+
+  void _handleSecureInputRequest(Map<String, dynamic> msg) {
+    _currentStreamingMessage = null;
+    final requestId = msg['requestId'] as String? ?? '';
+    if (requestId.isEmpty) return;
+    final existingIdx = _messages.indexWhere(
+      (m) => m.type == MessageType.secureInput && m.questionId == requestId,
+    );
+    if (existingIdx >= 0) {
+      _messages[existingIdx].answered = false;
+      notifyListeners();
+      return;
+    }
+    final label = msg['label'] as String? ?? 'Secret';
+    final reason = msg['reason'] as String? ?? '';
+    final envHint = msg['envHint'] as String? ?? '';
+    final scope = msg['scope'] as String? ?? 'session';
+    _messages.add(
+      ChatMessage.secureInput(
+        requestId: requestId,
+        label: label,
+        reason: reason,
+        envHint: envHint,
+        scope: scope,
+      ),
+    );
+    _maybeNotify(
+      title: _sessionTitle(),
+      body: 'Secure input requested: $label',
+    );
+    notifyListeners();
+  }
+
+  void _handleSecureInputSaved(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String? ?? '';
+    final label = msg['label'] as String? ?? 'Secret';
+    final filePath = msg['filePath'] as String? ?? '';
+    if (requestId.isNotEmpty) {
+      final idx = _messages.indexWhere(
+        (m) => m.type == MessageType.secureInput && m.questionId == requestId,
+      );
+      if (idx >= 0) _messages[idx].answered = true;
+    }
+    _messages.add(
+      ChatMessage(
+        id: 'secure_saved_${DateTime.now().microsecondsSinceEpoch}',
+        sender: MessageSender.system,
+        type: MessageType.taskNotification,
+        timestamp: DateTime.now(),
+        textContent: filePath.isNotEmpty
+            ? 'Secure input saved: $label\n$filePath'
+            : 'Secure input saved: $label',
+        toolName: 'secure_input_saved',
+      ),
+    );
     notifyListeners();
   }
 
@@ -4478,13 +4607,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleSupportedModels(Map<String, dynamic> msg) {
     final models = msg['models'] as List?;
     if (models != null) {
-      _supportedModels = models
-          .map(
-            (m) => m is Map
-                ? Map<String, dynamic>.from(m)
-                : <String, dynamic>{'id': m.toString()},
-          )
-          .toList();
+      _supportedModels = models.map((m) {
+        final model = m is Map
+            ? Map<String, dynamic>.from(m)
+            : <String, dynamic>{'value': m.toString()};
+        final value = (model['value'] ?? model['id'] ?? '').toString();
+        if (value.isNotEmpty) {
+          model['value'] = value;
+          model.putIfAbsent('id', () => value);
+        }
+        return model;
+      }).toList();
+      final currentModel = msg['currentModel'] as String?;
+      if (currentModel != null && currentModel.isNotEmpty) {
+        _sessionModel = currentModel;
+      } else if (_sessionModel == null || _sessionModel!.isEmpty) {
+        for (final model in _supportedModels) {
+          if (model['current'] == true) {
+            final value = (model['value'] ?? model['id'] ?? '').toString();
+            if (value.isNotEmpty) {
+              _sessionModel = value;
+              break;
+            }
+          }
+        }
+      }
       notifyListeners();
     }
   }
@@ -4562,7 +4709,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setModel(String? model) {
-    _ws.sendSetModel(model);
+    _connMgr.send({'type': 'set_model', if (model != null) 'model': model});
     if (model != null) _sessionModel = model;
     notifyListeners();
   }
@@ -4901,7 +5048,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _promptSuggestions = [suggestion];
     }
 
-    final loaded = <ChatMessage>[];
+    var loaded = <ChatMessage>[];
     var historyPrevTodos = <Map<String, dynamic>>[];
 
     for (final entry in rawMessages) {
@@ -5478,6 +5625,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         m.toolOutput = '';
       }
     }
+    loaded = _dedupeLoadedHistory(loaded);
 
     _historyOffset = offset;
 
@@ -5583,6 +5731,80 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return text.trim().replaceAll(RegExp(r'\s+'), ' ');
   }
 
+  List<ChatMessage> _dedupeLoadedHistory(List<ChatMessage> messages) {
+    final deduped = <ChatMessage>[];
+    final seenMessageKeys = <String>{};
+    for (final msg in messages) {
+      final uuid = msg.uuid;
+      if (uuid != null && uuid.isNotEmpty) {
+        final key = '${msg.sender.name}:${msg.type.name}:$uuid';
+        if (!seenMessageKeys.add(key)) continue;
+      }
+      if ((msg.sender == MessageSender.user ||
+              msg.sender == MessageSender.assistant) &&
+          msg.type == MessageType.text) {
+        final normalized = _normalizeHistoryText(msg.textContent);
+        if (normalized.isNotEmpty && deduped.isNotEmpty) {
+          final previous = deduped.last;
+          if (previous.sender == msg.sender &&
+              previous.type == MessageType.text &&
+              _normalizeHistoryText(previous.textContent) == normalized) {
+            continue;
+          }
+        }
+      }
+      deduped.add(msg);
+    }
+    return deduped;
+  }
+
+  ChatMessage? _findReplayedAssistantMessage(String content) {
+    final normalized = _normalizeHistoryText(content);
+    if (normalized.isEmpty) return null;
+    final lastUserIndex = _messages.lastIndexWhere(
+      (m) =>
+          m.sender == MessageSender.user &&
+          (m.type == MessageType.text || m.type == MessageType.skillInvocation),
+    );
+    for (var i = _messages.length - 1; i > lastUserIndex; i--) {
+      final candidate = _messages[i];
+      if (candidate.sender != MessageSender.assistant ||
+          candidate.type != MessageType.text) {
+        continue;
+      }
+      final candidateText = _normalizeHistoryText(candidate.textContent);
+      if (candidateText.isEmpty) continue;
+      if (candidateText == normalized ||
+          candidateText.startsWith(normalized) ||
+          normalized.startsWith(candidateText)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
+  ChatMessage? _findReplayedThinkingMessage(String content) {
+    final normalized = _normalizeHistoryText(content);
+    if (normalized.isEmpty) return null;
+    final lastUserIndex = _messages.lastIndexWhere(
+      (m) =>
+          m.sender == MessageSender.user &&
+          (m.type == MessageType.text || m.type == MessageType.skillInvocation),
+    );
+    for (var i = _messages.length - 1; i > lastUserIndex; i--) {
+      final candidate = _messages[i];
+      if (candidate.type != MessageType.thinking) continue;
+      final candidateText = _normalizeHistoryText(candidate.textContent);
+      if (candidateText.isEmpty) continue;
+      if (candidateText == normalized ||
+          candidateText.startsWith(normalized) ||
+          normalized.startsWith(candidateText)) {
+        return candidate;
+      }
+    }
+    return null;
+  }
+
   bool _isPendingLocalUserPrompt(ChatMessage message) {
     return _pendingLocalUserMessageIds.contains(message.id) &&
         message.sender == MessageSender.user &&
@@ -5596,13 +5818,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ) {
     final normalized = _normalizeHistoryText(target.textContent);
     if (normalized.isEmpty) return false;
-    return messages.any(
-      (m) =>
-          m.sender == MessageSender.user &&
-          (m.type == MessageType.text ||
-              m.type == MessageType.skillInvocation) &&
-          _normalizeHistoryText(m.textContent) == normalized,
-    );
+    return messages.any((m) {
+      if (m.sender != MessageSender.user ||
+          (m.type != MessageType.text &&
+              m.type != MessageType.skillInvocation)) {
+        return false;
+      }
+      final candidate = _normalizeHistoryText(m.textContent);
+      return candidate == normalized ||
+          candidate.endsWith(normalized) ||
+          normalized.endsWith(candidate);
+    });
   }
 
   /// Fetch image files from the server for tool_image history entries
@@ -5974,6 +6200,55 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _ws.sendAnswer(questionId, answers);
     notifyListeners();
+  }
+
+  void submitSecureInput(String requestId, String value) {
+    if (requestId.isEmpty || value.isEmpty) return;
+    final idx = _messages.indexWhere(
+      (m) => m.type == MessageType.secureInput && m.questionId == requestId,
+    );
+    if (idx >= 0) _messages[idx].answered = true;
+    _connMgr.send({
+      'type': 'secure_input_response',
+      'requestId': requestId,
+      'value': value,
+    });
+    notifyListeners();
+  }
+
+  void cancelSecureInput(String requestId) {
+    if (requestId.isEmpty) return;
+    final idx = _messages.indexWhere(
+      (m) => m.type == MessageType.secureInput && m.questionId == requestId,
+    );
+    if (idx >= 0) {
+      _messages[idx].answered = true;
+    }
+    _connMgr.send({
+      'type': 'secure_input_response',
+      'requestId': requestId,
+      'cancelled': true,
+    });
+    notifyListeners();
+  }
+
+  void storeSecureInput({
+    required String label,
+    required String value,
+    String scope = 'session',
+    String? envHint,
+  }) {
+    if (label.trim().isEmpty || value.isEmpty) return;
+    _connMgr.send({
+      'type': 'secure_input_store',
+      'label': label.trim(),
+      'value': value,
+      'scope': scope,
+      if (envHint != null && envHint.trim().isNotEmpty)
+        'envHint': envHint.trim(),
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+      if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
+    });
   }
 
   /// Clear file attachment state (without notifyListeners)

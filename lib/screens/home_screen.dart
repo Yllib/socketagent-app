@@ -62,9 +62,7 @@ class HomeScreenState extends State<HomeScreen> {
       // Show/hide slash command picker.
       final text = _textController.text;
       final shouldShow = _isSlashCommandPrefix(text);
-      if (shouldShow &&
-          provider.activeSessionBackend == 'codex' &&
-          provider.slashCommands.isEmpty) {
+      if (shouldShow && provider.slashCommands.isEmpty) {
         provider.requestActiveSkills();
       }
       final filter = shouldShow ? text.substring(1).toLowerCase() : '';
@@ -303,6 +301,160 @@ class HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  void _showAttachmentMenu(ChatProvider provider) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.attach_file),
+                title: const Text('File'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  provider.pickFile();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.lock_outline),
+                title: const Text('Secure input'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _showSecureInputDialog(provider);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showSecureInputDialog(ChatProvider provider) async {
+    final labelController = TextEditingController();
+    final envController = TextEditingController();
+    final valueController = TextEditingController();
+    String scope = 'session';
+    bool obscure = true;
+
+    try {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) {
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.lock_outline, size: 20),
+                    SizedBox(width: 8),
+                    Text('Secure input'),
+                  ],
+                ),
+                content: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      TextField(
+                        controller: labelController,
+                        decoration: const InputDecoration(
+                          labelText: 'Label',
+                          hintText: 'OPENAI_API_KEY',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: envController,
+                        decoration: const InputDecoration(
+                          labelText: 'Env var hint',
+                          hintText: 'OPENAI_API_KEY',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: scope,
+                        decoration: const InputDecoration(labelText: 'Scope'),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'session',
+                            child: Text('Current session'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'project',
+                            child: Text('Current project'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'global',
+                            child: Text('This server'),
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setDialogState(() => scope = value);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: valueController,
+                        obscureText: obscure,
+                        enableSuggestions: false,
+                        autocorrect: false,
+                        decoration: InputDecoration(
+                          labelText: 'Secret value',
+                          suffixIcon: IconButton(
+                            tooltip: obscure ? 'Show' : 'Hide',
+                            icon: Icon(
+                              obscure
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
+                            ),
+                            onPressed: () {
+                              setDialogState(() => obscure = !obscure);
+                            },
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton.icon(
+                    icon: const Icon(Icons.lock_outline, size: 18),
+                    label: const Text('Save'),
+                    onPressed: () {
+                      final label = labelController.text.trim();
+                      final value = valueController.text;
+                      if (label.isEmpty || value.isEmpty) return;
+                      provider.storeSecureInput(
+                        label: label,
+                        value: value,
+                        scope: scope,
+                        envHint: envController.text,
+                      );
+                      valueController.clear();
+                      Navigator.of(dialogContext).pop();
+                    },
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      labelController.dispose();
+      envController.dispose();
+      valueController.dispose();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -483,6 +635,8 @@ class HomeScreenState extends State<HomeScreen> {
                     hasMoreHistory: provider.hasMoreHistory,
                     todos: provider.todos,
                     onAnswer: provider.answerQuestion,
+                    onSecureInputSubmit: provider.submitSecureInput,
+                    onSecureInputCancel: provider.cancelSecureInput,
                     onLoadMore: provider.loadMoreHistory,
                     onStopTask: provider.stopTask,
                     onDismissTodos: provider.dismissTodos,
@@ -565,11 +719,6 @@ class HomeScreenState extends State<HomeScreen> {
                   _buildThinkingChip(provider),
                   const SizedBox(width: 6),
                 ],
-                _buildTtsChip(provider),
-                if (provider.activeSessionId != null) ...[
-                  const SizedBox(width: 6),
-                  _buildNotificationChip(provider),
-                ],
                 if (provider.rawMode) ...[
                   const SizedBox(width: 6),
                   _buildChipBody(
@@ -650,6 +799,26 @@ class HomeScreenState extends State<HomeScreen> {
             break;
           case 'terminal':
             _openTerminal(provider, projectPath);
+            break;
+          case 'tts_toggle':
+            provider.setTtsEnabled(!provider.ttsEnabled);
+            break;
+          case 'tts_voice':
+            Future.microtask(() {
+              if (!mounted) return;
+              if (provider.ttsEngineMode == TtsEngineMode.kokoroServer ||
+                  provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
+                _showKokoroVoicePicker(context, provider);
+              } else {
+                _showVoicePicker(context, provider);
+              }
+            });
+            break;
+          case 'notifications_toggle':
+            final sessionId = provider.activeSessionId;
+            if (sessionId != null) {
+              provider.toggleSessionNotifications(sessionId);
+            }
             break;
           case 'codex_fast_mode':
             provider.setCodexFastMode(!provider.codexFastMode);
@@ -739,6 +908,119 @@ class HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        const PopupMenuDivider(),
+        PopupMenuItem(
+          value: 'tts_toggle',
+          child: Row(
+            children: [
+              Icon(
+                provider.ttsEnabled ? Icons.volume_up : Icons.volume_off,
+                size: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Text to speech'),
+                    Text(
+                      provider.ttsEnabled ? 'On' : 'Off',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(140),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                provider.ttsEnabled
+                    ? Icons.toggle_on_outlined
+                    : Icons.toggle_off_outlined,
+                size: 34,
+                color: provider.ttsEnabled
+                    ? Theme.of(context).colorScheme.primary
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'tts_voice',
+          child: Row(
+            children: [
+              const Icon(Icons.record_voice_over_outlined, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Voice'),
+                    Text(
+                      _selectedVoiceLabel(provider),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.onSurface.withAlpha(140),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        if (provider.activeSessionId != null)
+          PopupMenuItem(
+            value: 'notifications_toggle',
+            child: Row(
+              children: [
+                Icon(
+                  provider.isNotifEnabled(provider.activeSessionId!)
+                      ? Icons.notifications_active
+                      : Icons.notifications_off_outlined,
+                  size: 18,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Notifications'),
+                      Text(
+                        provider.isNotifEnabled(provider.activeSessionId!)
+                            ? 'On for this session'
+                            : 'Muted for this session',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(140),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Icon(
+                  provider.isNotifEnabled(provider.activeSessionId!)
+                      ? Icons.toggle_on_outlined
+                      : Icons.toggle_off_outlined,
+                  size: 34,
+                  color: provider.isNotifEnabled(provider.activeSessionId!)
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ],
+            ),
+          ),
         if (provider.activeSessionBackend == 'codex')
           PopupMenuItem(
             value: 'codex_fast_mode',
@@ -914,7 +1196,9 @@ class HomeScreenState extends State<HomeScreen> {
 
   Widget _buildModelChip(ChatProvider provider) {
     final currentModel = provider.sessionModel ?? '';
-    final name = currentModel.isEmpty ? 'Model' : _modelName(currentModel);
+    final name = currentModel.isEmpty
+        ? 'Model'
+        : _modelDisplayName(provider, currentModel);
 
     return PopupMenuButton<String>(
       onSelected: (value) => provider.setModel(value),
@@ -923,8 +1207,8 @@ class HomeScreenState extends State<HomeScreen> {
       position: PopupMenuPosition.under,
       child: _buildChipBody(Icons.smart_toy, name),
       itemBuilder: (context) => provider.supportedModels.map((model) {
-        final value = model['value'] as String? ?? '';
-        final modelName = _modelName(value);
+        final value = (model['value'] ?? model['id'] ?? '').toString();
+        final modelName = _modelDisplayNameForEntry(model, value);
         final description = model['description'] as String? ?? '';
         final isSelected = value == currentModel;
         return PopupMenuItem(
@@ -971,6 +1255,28 @@ class HomeScreenState extends State<HomeScreen> {
         );
       }).toList(),
     );
+  }
+
+  String _selectedVoiceLabel(ChatProvider provider) {
+    if (provider.ttsEngineMode == TtsEngineMode.kokoroServer ||
+        provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
+      return provider.selectedTtsEngineVoice?.name ?? 'Default voice';
+    }
+    return provider.selectedTtsVoice?.name ?? 'System voice';
+  }
+
+  String _modelDisplayName(ChatProvider provider, String modelId) {
+    for (final model in provider.supportedModels) {
+      final value = (model['value'] ?? model['id'] ?? '').toString();
+      if (value == modelId) return _modelDisplayNameForEntry(model, modelId);
+    }
+    return _modelName(modelId);
+  }
+
+  String _modelDisplayNameForEntry(Map<String, dynamic> model, String value) {
+    final displayName = model['displayName'] ?? model['label'] ?? model['name'];
+    final text = displayName?.toString().trim() ?? '';
+    return text.isNotEmpty ? text : _modelName(value);
   }
 
   Widget _buildEffortChip(ChatProvider provider) {
@@ -1266,41 +1572,6 @@ class HomeScreenState extends State<HomeScreen> {
           );
         }).toList();
       },
-    );
-  }
-
-  Widget _buildTtsChip(ChatProvider provider) {
-    final enabled = provider.ttsEnabled;
-    return GestureDetector(
-      onTap: () => provider.setTtsEnabled(!enabled),
-      onLongPress: () {
-        if (provider.ttsEngineMode == TtsEngineMode.kokoroServer ||
-            provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
-          _showKokoroVoicePicker(context, provider);
-        } else {
-          _showVoicePicker(context, provider);
-        }
-      },
-      child: _buildChipBody(
-        enabled ? Icons.volume_up : Icons.volume_off,
-        'TTS',
-        iconColor: enabled ? Theme.of(context).colorScheme.primary : null,
-        active: enabled,
-      ),
-    );
-  }
-
-  Widget _buildNotificationChip(ChatProvider provider) {
-    final enabled = provider.isNotifEnabled(provider.activeSessionId!);
-    return GestureDetector(
-      onTap: () =>
-          provider.toggleSessionNotifications(provider.activeSessionId!),
-      child: _buildChipBody(
-        enabled ? Icons.notifications_active : Icons.notifications_off_outlined,
-        enabled ? 'Notif' : 'Muted',
-        iconColor: enabled ? Theme.of(context).colorScheme.primary : null,
-        active: enabled,
-      ),
     );
   }
 
@@ -2544,7 +2815,7 @@ class HomeScreenState extends State<HomeScreen> {
                       color: theme.colorScheme.onSurface.withAlpha(178),
                       size: 22,
                     ),
-                    onPressed: () => provider.pickFile(),
+                    onPressed: () => _showAttachmentMenu(provider),
                     padding: const EdgeInsets.all(8),
                     constraints: const BoxConstraints(
                       minWidth: 40,

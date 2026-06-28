@@ -21,6 +21,7 @@ import 'elicitation_card.dart';
 import 'monitor_card.dart';
 import 'codex_plan_card.dart';
 import 'codex_command_card.dart';
+import 'secure_input_card.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -32,6 +33,8 @@ class ChatView extends StatefulWidget {
   final bool hasMoreHistory;
   final List<Map<String, dynamic>> todos;
   final void Function(String questionId, Map<String, String> answers) onAnswer;
+  final void Function(String requestId, String value) onSecureInputSubmit;
+  final void Function(String requestId) onSecureInputCancel;
   final VoidCallback? onLoadMore;
   final void Function(String taskId)? onStopTask;
   final VoidCallback? onDismissTodos;
@@ -55,6 +58,8 @@ class ChatView extends StatefulWidget {
     this.hasMoreHistory = false,
     required this.todos,
     required this.onAnswer,
+    required this.onSecureInputSubmit,
+    required this.onSecureInputCancel,
     this.onLoadMore,
     this.onStopTask,
     this.onDismissTodos,
@@ -384,6 +389,12 @@ class ChatViewState extends State<ChatView> {
           return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);
         }
         return QuestionCard(message: msg, onAnswer: widget.onAnswer);
+      case MessageType.secureInput:
+        return SecureInputCard(
+          message: msg,
+          onSubmit: widget.onSecureInputSubmit,
+          onCancel: widget.onSecureInputCancel,
+        );
       case MessageType.result:
         return MessageBubble(message: msg);
       case MessageType.error:
