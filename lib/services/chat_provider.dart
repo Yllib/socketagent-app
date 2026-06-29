@@ -609,8 +609,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _serverCodexCollaborationMode[serverId] ?? 'default';
   }
 
-  void _startPromptRuntime({DateTime? startedAt}) {
-    _currentPromptStartedAt ??= startedAt ?? DateTime.now();
+  DateTime? _parseServerDateTime(dynamic value) {
+    if (value is! String || value.isEmpty) return null;
+    return DateTime.tryParse(value)?.toLocal();
+  }
+
+  DateTime? _activeStartedAtFromStatusSync(Map<String, dynamic> msg) {
+    final sessionId = _activeSessionId;
+    final values = msg['sessionActiveStartedAt'];
+    if (sessionId == null || values is! Map) return null;
+    return _parseServerDateTime(values[sessionId]);
+  }
+
+  void _startPromptRuntime({DateTime? startedAt, bool replace = false}) {
+    final effectiveStartedAt = startedAt ?? DateTime.now();
+    if (replace || _currentPromptStartedAt == null) {
+      _currentPromptStartedAt = effectiveStartedAt;
+    }
     _promptRuntimeTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_isProcessing || _currentPromptStartedAt == null) {
         _stopPromptRuntime();
@@ -3145,12 +3160,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'session_state_changed':
         final sessionState = msg['state'] as String? ?? 'idle';
+        final serverActiveStartedAt = _parseServerDateTime(
+          msg['activeStartedAt'],
+        );
         _requiresAction = sessionState == 'requires_action';
         // Use SDK state as authoritative source for running status
         if (sessionState == 'running') {
           _isProcessing = true;
           _processingSetAt = null; // server confirmed
-          _startPromptRuntime();
+          _startPromptRuntime(
+            startedAt: serverActiveStartedAt,
+            replace: serverActiveStartedAt != null,
+          );
         } else if (sessionState == 'idle') {
           _isProcessing = false;
           _processingSetAt = null;
@@ -3301,6 +3322,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'status':
         final serverSaysCompacting = msg['compacting'] == true;
+        final serverActiveStartedAt = _parseServerDateTime(
+          msg['activeStartedAt'],
+        );
         _isProcessing = msg['running'] == true || serverSaysCompacting;
         if (!_isProcessing) {
           _isCompacting = false;
@@ -3310,7 +3334,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           // Restore compacting state on resume. Compacting is active work even
           // if the agent turn itself is between running status updates.
           _isCompacting = serverSaysCompacting;
-          _startPromptRuntime();
+          _processingSetAt = null; // server confirmed
+          _startPromptRuntime(
+            startedAt: serverActiveStartedAt,
+            replace: serverActiveStartedAt != null,
+          );
         }
         // Restore permission mode (e.g., plan mode) on session resume
         final resumePermMode = msg['permissionMode'] as String?;
@@ -3376,6 +3404,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final compactingSessions = (msg['compactingSessions'] as List?)
             ?.map((e) => e.toString())
             .toSet();
+        final serverActiveStartedAt = _activeStartedAtFromStatusSync(msg);
         final serverSaysCompacting =
             compactingSessions != null &&
             _activeSessionId != null &&
@@ -3417,7 +3446,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _currentStreamingMessage = null;
         } else {
           _isCompacting = serverSaysCompacting;
-          _startPromptRuntime();
+          _startPromptRuntime(
+            startedAt: serverActiveStartedAt,
+            replace: serverActiveStartedAt != null,
+          );
         }
         // Reconcile background tasks — remove any not reported by server
         final serverTaskIds =

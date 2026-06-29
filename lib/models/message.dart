@@ -422,6 +422,7 @@ class Session {
   final String messagePreview;
   final int turnCount;
   final bool running;
+  final String? activeStartedAt;
   final String serverId;
   final String serverName;
   final int? serverColor;
@@ -439,6 +440,7 @@ class Session {
     required this.messagePreview,
     this.turnCount = 0,
     this.running = false,
+    this.activeStartedAt,
     this.serverId = '',
     this.serverName = '',
     this.serverColor,
@@ -456,6 +458,7 @@ class Session {
       messagePreview: json['messagePreview'] ?? '',
       turnCount: (json['turnCount'] as num?)?.toInt() ?? 0,
       running: json['running'] == true,
+      activeStartedAt: json['activeStartedAt'] as String?,
       serverId: json['serverId'] ?? '',
       serverName: json['serverName'] ?? '',
       serverColor: json['serverColor'] as int?,
@@ -473,6 +476,7 @@ class Session {
     'messagePreview': messagePreview,
     'turnCount': turnCount,
     'running': running,
+    'activeStartedAt': activeStartedAt,
     'serverId': serverId,
     'serverName': serverName,
     'serverColor': serverColor,
@@ -489,6 +493,7 @@ class Session {
     String? messagePreview,
     int? turnCount,
     bool? running,
+    String? activeStartedAt,
     String? serverId,
     String? serverName,
     int? serverColor,
@@ -504,6 +509,8 @@ class Session {
       messagePreview: messagePreview ?? this.messagePreview,
       turnCount: turnCount ?? this.turnCount,
       running: running ?? this.running,
+      activeStartedAt:
+          activeStartedAt ?? (running == false ? null : this.activeStartedAt),
       serverId: serverId ?? this.serverId,
       serverName: serverName ?? this.serverName,
       serverColor: serverColor ?? this.serverColor,
@@ -526,6 +533,7 @@ class Session {
       messagePreview: messagePreview,
       turnCount: turnCount,
       running: running,
+      activeStartedAt: activeStartedAt,
       serverId: serverId,
       serverName: serverName,
       serverColor: serverColor,
