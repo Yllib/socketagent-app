@@ -964,6 +964,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final resumed = state == AppLifecycleState.resumed;
     _appInForeground = resumed;
     if (resumed) {
+      requestServerSettings();
       _resumeActiveSessionAfterForeground();
     } else {
       _backgroundedAt ??= DateTime.now();
@@ -6494,6 +6495,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       backend: backend,
       message: backend == 'codex'
           ? 'Starting Codex repair...'
+          : backend == 'claude'
+          ? 'Starting Claude repair...'
           : 'Starting backend repair...',
     );
     _connMgr.sendToServer(serverId, {
@@ -6653,10 +6656,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final rawHealth = msg['backendHealth'];
     if (rawHealth is List) {
-      _serverBackendHealth[serverId] = rawHealth
+      final health = rawHealth
           .whereType<Map>()
           .map((m) => Map<String, dynamic>.from(m))
           .toList();
+      _serverBackendHealth[serverId] = health;
+
+      for (final entry in health) {
+        final backend = entry['backend']?.toString();
+        final severity = entry['severity']?.toString();
+        if (backend == null || backend.isEmpty || severity != 'ok') continue;
+
+        final key = _backendInstallKey(serverId, backend);
+        final state = _backendInstallStates[key];
+        if (state == null) continue;
+
+        _backendInstallAckTimers.remove(key)?.cancel();
+        state.phase = 'probe';
+        state.status = 'completed';
+        state.running = false;
+        state.message = backend == 'codex'
+            ? 'Codex backend is available.'
+            : 'Backend is available.';
+        state.authUrl = null;
+        state.authCode = null;
+      }
     }
   }
 

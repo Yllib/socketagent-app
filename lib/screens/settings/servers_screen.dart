@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -753,6 +754,20 @@ class _ServersScreenState extends State<ServersScreen> {
     }
   }
 
+  bool _backendIsHealthy(
+    ChatProvider provider,
+    String serverId,
+    String backend,
+  ) {
+    for (final entry in provider.backendHealthForServer(serverId)) {
+      if (entry['backend']?.toString() == backend &&
+          entry['severity']?.toString() == 'ok') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Widget _backendHealthDetail(
     BuildContext context,
     String label,
@@ -836,12 +851,12 @@ class _ServersScreenState extends State<ServersScreen> {
       builder: (dialogContext) => Consumer<ChatProvider>(
         builder: (context, currentProvider, _) {
           final entries = currentProvider.backendHealthForServer(config.id);
-          final codexNeedsRepair = entries.any((entry) {
+          final repairEntries = entries.where((entry) {
             final backend = entry['backend']?.toString();
             final severity = entry['severity']?.toString();
-            return backend == 'codex' &&
+            return (backend == 'codex' || backend == 'claude') &&
                 (severity == 'error' || severity == 'warning');
-          });
+          }).toList();
 
           return AlertDialog(
             title: const Row(
@@ -870,23 +885,24 @@ class _ServersScreenState extends State<ServersScreen> {
                 onPressed: () => Navigator.pop(dialogContext),
                 child: const Text('Close'),
               ),
-              if (codexNeedsRepair)
+              for (final entry in repairEntries)
                 FilledButton.icon(
                   icon: const Icon(Icons.build, size: 18),
-                  label: const Text('Repair Codex'),
+                  label: Text('Repair ${_backendHealthTitle(entry)}'),
                   onPressed: () {
+                    final backend = entry['backend']?.toString() ?? 'codex';
                     Navigator.pop(dialogContext);
                     currentProvider.repairBackend(
                       config.id,
-                      backend: 'codex',
+                      backend: backend,
                       reinstall: true,
-                      authenticate: true,
+                      authenticate: backend == 'codex',
                     );
                     _showBackendRepairDialog(
                       rootContext,
                       currentProvider,
                       config,
-                      'codex',
+                      backend,
                     );
                   },
                 ),
@@ -971,41 +987,39 @@ class _ServersScreenState extends State<ServersScreen> {
             if (isConnected)
               Consumer<ChatProvider>(
                 builder: (context, currentProvider, _) {
-                  final state = currentProvider.backendInstallState(
+                  final entries = currentProvider.backendHealthForServer(
                     config.id,
-                    'codex',
                   );
-                  final running = state?.running == true;
+                  final warning = currentProvider.backendWarningForServer(
+                    config.id,
+                  );
+                  final severity = warning?['severity']?.toString();
+                  final label = warning == null
+                      ? entries.isEmpty
+                            ? 'Backend details not loaded yet'
+                            : 'All reported backends are OK'
+                      : '${_backendHealthTitle(warning)} ${severity == 'error' ? 'error' : 'warning'}';
                   return ListTile(
                     leading: Icon(
-                      running ? Icons.sync : Icons.build_circle_outlined,
+                      warning == null
+                          ? Icons.health_and_safety_outlined
+                          : severity == 'error'
+                          ? Icons.error_outline
+                          : Icons.warning_amber_outlined,
+                      color: warning == null
+                          ? null
+                          : severity == 'error'
+                          ? Colors.red.shade600
+                          : Colors.orange.shade700,
                     ),
-                    title: Text(
-                      running
-                          ? 'Repairing Codex Backend'
-                          : 'Install / Repair Codex',
-                    ),
-                    subtitle: Text(
-                      running
-                          ? state?.message ?? 'Repair running...'
-                          : 'Reinstall Codex and run device-code login',
-                      style: const TextStyle(fontSize: 12),
-                    ),
+                    title: const Text('Backend Status'),
+                    subtitle: Text(label, style: const TextStyle(fontSize: 12)),
                     onTap: () {
                       Navigator.pop(ctx);
-                      if (!running) {
-                        currentProvider.repairBackend(
-                          config.id,
-                          backend: 'codex',
-                          reinstall: true,
-                          authenticate: true,
-                        );
-                      }
-                      _showBackendRepairDialog(
+                      _showBackendHealthDialog(
                         context,
                         currentProvider,
                         config,
-                        'codex',
                       );
                     },
                   );
@@ -1105,6 +1119,14 @@ class _ServersScreenState extends State<ServersScreen> {
     ServerConfig config,
     String backend,
   ) {
+    final rootContext = context;
+    final backendName = backend == 'codex' ? 'Codex' : 'Claude';
+    var dismissedAfterSuccess = false;
+    provider.requestServerSettings(serverId: config.id);
+    final pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      provider.requestServerSettings(serverId: config.id);
+    });
+
     showDialog(
       context: context,
       builder: (dialogContext) => Consumer<ChatProvider>(
@@ -1112,10 +1134,36 @@ class _ServersScreenState extends State<ServersScreen> {
           final state = currentProvider.backendInstallState(config.id, backend);
           final running = state?.running == true;
           final failed = state?.status == 'failed';
+          final completed =
+              state?.running == false && state?.status == 'completed';
+          final healthy = _backendIsHealthy(
+            currentProvider,
+            config.id,
+            backend,
+          );
           final authUrl = state?.authUrl;
           final authCode = state?.authCode;
           final output = state?.output ?? const <String>[];
-          final title = backend == 'codex' ? 'Codex Backend' : 'Backend';
+          final title = backend == 'codex' ? 'Codex Backend' : 'Claude Backend';
+
+          if (!dismissedAfterSuccess && (completed || healthy)) {
+            dismissedAfterSuccess = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              pollTimer.cancel();
+              if (dialogContext.mounted &&
+                  Navigator.of(dialogContext).canPop()) {
+                Navigator.of(dialogContext).pop();
+              }
+              if (rootContext.mounted) {
+                ScaffoldMessenger.of(rootContext).showSnackBar(
+                  SnackBar(
+                    content: Text('$backendName backend is ready.'),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            });
+          }
 
           return AlertDialog(
             title: Row(
@@ -1265,7 +1313,7 @@ class _ServersScreenState extends State<ServersScreen> {
           );
         },
       ),
-    );
+    ).whenComplete(pollTimer.cancel);
   }
 
   Future<void> _startOutlookAuth(
