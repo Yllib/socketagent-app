@@ -56,6 +56,8 @@ String _normalizeRelayUrl(String value) {
 class BackendInstallState {
   BackendInstallState({
     required this.backend,
+    required this.requestId,
+    this.operation = 'repair',
     this.phase = 'install',
     this.status = 'running',
     this.message = '',
@@ -66,6 +68,8 @@ class BackendInstallState {
   }) : output = output ?? <String>[];
 
   final String backend;
+  final String requestId;
+  String operation;
   String phase;
   String status;
   String message;
@@ -75,6 +79,7 @@ class BackendInstallState {
   final List<String> output;
 
   void apply(Map<String, dynamic> msg) {
+    operation = msg['operation'] as String? ?? operation;
     phase = msg['phase'] as String? ?? phase;
     status = msg['status'] as String? ?? status;
     final rawMessage = msg['message'] as String?;
@@ -6325,11 +6330,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void submitAuthCode(String code, {String? serverId}) {
+  void submitAuthCode(
+    String code, {
+    String? serverId,
+    String? authRequestId,
+  }) {
     final msg = {
       'type': 'auth_code',
       'code': code,
       'sessionId': _activeSessionId,
+      if (authRequestId != null && authRequestId.isNotEmpty)
+        'authRequestId': authRequestId,
     };
     if (serverId != null && serverId.isNotEmpty) {
       _connMgr.sendToServer(serverId, msg);
@@ -6516,29 +6527,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _backendInstallStates[_backendInstallKey(serverId, backend)];
   }
 
-  void repairBackend(
+  void _runBackendOperation(
     String serverId, {
     String backend = 'codex',
-    bool reinstall = true,
-    bool authenticate = true,
+    required bool reinstall,
+    required bool authenticate,
+    required String operation,
   }) {
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
     final key = _backendInstallKey(serverId, backend);
+    final requestId =
+        'backend_${operation}_${backend}_${DateTime.now().millisecondsSinceEpoch}';
+    final backendName = backend == 'codex'
+        ? 'Codex'
+        : backend == 'claude'
+        ? 'Claude'
+        : 'Backend';
+    final operationName = operation == 'auth' ? 'sign-in' : 'repair';
     _backendInstallAckTimers.remove(key)?.cancel();
     _backendInstallStates[key] = BackendInstallState(
       backend: backend,
-      message: backend == 'codex'
-          ? 'Starting Codex repair...'
-          : backend == 'claude'
-          ? 'Starting Claude repair...'
-          : 'Starting backend repair...',
+      requestId: requestId,
+      operation: operation,
+      phase: operation == 'auth' ? 'auth' : 'install',
+      message: 'Starting $backendName $operationName...',
     );
     _connMgr.sendToServer(serverId, {
       'type': 'backend_install',
       'backend': backend,
       'reinstall': reinstall,
       'authenticate': authenticate,
-      'requestId': 'backend_install_${DateTime.now().millisecondsSinceEpoch}',
+      'operation': operation,
+      'requestId': requestId,
     });
     _backendInstallAckTimers[key] = Timer(const Duration(seconds: 15), () {
       _backendInstallAckTimers.remove(key);
@@ -6546,15 +6566,44 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (state == null || !state.running) return;
       _backendInstallStates[key] = BackendInstallState(
         backend: backend,
-        phase: 'install',
+        requestId: requestId,
+        operation: operation,
+        phase: operation == 'auth' ? 'auth' : 'install',
         status: 'failed',
         running: false,
         message:
-            'Server did not acknowledge the repair request. It may be running an older SocketAgent build or the server process may be wedged. Run Check for Updates / Update Now, then try again.',
+            'Server did not acknowledge the $operationName request. It may be running an older SocketAgent build or the server process may be wedged. Run Check for Updates / Update Now, then try again.',
       );
       notifyListeners();
     });
     notifyListeners();
+  }
+
+  void repairBackend(
+    String serverId, {
+    String backend = 'codex',
+    bool reinstall = true,
+  }) {
+    _runBackendOperation(
+      serverId,
+      backend: backend,
+      reinstall: reinstall,
+      authenticate: false,
+      operation: 'repair',
+    );
+  }
+
+  void authenticateBackend(
+    String serverId, {
+    String backend = 'codex',
+  }) {
+    _runBackendOperation(
+      serverId,
+      backend: backend,
+      reinstall: false,
+      authenticate: true,
+      operation: 'auth',
+    );
   }
 
   void _handleBackendInstallProgress(
@@ -6566,7 +6615,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final key = _backendInstallKey(serverId, backend);
     _backendInstallAckTimers.remove(key)?.cancel();
     final state =
-        _backendInstallStates[key] ?? BackendInstallState(backend: backend);
+        _backendInstallStates[key] ??
+        BackendInstallState(
+          backend: backend,
+          requestId:
+              msg['requestId'] as String? ??
+              'backend_${DateTime.now().millisecondsSinceEpoch}',
+          operation: msg['operation'] as String? ?? 'repair',
+        );
     state.apply(msg);
     _backendInstallStates[key] = state;
 
@@ -6611,17 +6667,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final key = _backendInstallKey(serverId, backend);
     final state = _backendInstallStates[key];
     if (state?.running != true && backend == 'codex') {
-      repairBackend(
+      authenticateBackend(
         serverId,
         backend: backend,
-        reinstall: false,
-        authenticate: true,
       );
     }
 
     _messages.add(
       ChatMessage.error(
-        '$message I started Codex sign-in repair for this server. Open Settings > Servers > Backend Status to enter the device code.',
+        '$message I started Codex sign-in for this server. Open Settings > Servers > Backend Status to enter the device code.',
       ),
     );
     _isProcessing = false;

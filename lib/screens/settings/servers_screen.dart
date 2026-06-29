@@ -851,11 +851,9 @@ class _ServersScreenState extends State<ServersScreen> {
       builder: (dialogContext) => Consumer<ChatProvider>(
         builder: (context, currentProvider, _) {
           final entries = currentProvider.backendHealthForServer(config.id);
-          final repairEntries = entries.where((entry) {
+          final backendEntries = entries.where((entry) {
             final backend = entry['backend']?.toString();
-            final severity = entry['severity']?.toString();
-            return (backend == 'codex' || backend == 'claude') &&
-                (severity == 'error' || severity == 'warning');
+            return backend == 'codex' || backend == 'claude';
           }).toList();
 
           return AlertDialog(
@@ -885,7 +883,26 @@ class _ServersScreenState extends State<ServersScreen> {
                 onPressed: () => Navigator.pop(dialogContext),
                 child: const Text('Close'),
               ),
-              for (final entry in repairEntries)
+              for (final entry in backendEntries)
+                TextButton.icon(
+                  icon: const Icon(Icons.login, size: 18),
+                  label: Text('Sign in ${_backendHealthTitle(entry)}'),
+                  onPressed: () {
+                    final backend = entry['backend']?.toString() ?? 'codex';
+                    Navigator.pop(dialogContext);
+                    currentProvider.authenticateBackend(
+                      config.id,
+                      backend: backend,
+                    );
+                    _showBackendRepairDialog(
+                      rootContext,
+                      currentProvider,
+                      config,
+                      backend,
+                    );
+                  },
+                ),
+              for (final entry in backendEntries)
                 FilledButton.icon(
                   icon: const Icon(Icons.build, size: 18),
                   label: Text('Repair ${_backendHealthTitle(entry)}'),
@@ -896,7 +913,6 @@ class _ServersScreenState extends State<ServersScreen> {
                       config.id,
                       backend: backend,
                       reinstall: true,
-                      authenticate: backend == 'codex',
                     );
                     _showBackendRepairDialog(
                       rootContext,
@@ -1121,6 +1137,7 @@ class _ServersScreenState extends State<ServersScreen> {
   ) {
     final rootContext = context;
     final backendName = backend == 'codex' ? 'Codex' : 'Claude';
+    final claudeAuthCodeCtrl = TextEditingController();
     var dismissedAfterSuccess = false;
     provider.requestServerSettings(serverId: config.id);
     final pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
@@ -1145,8 +1162,12 @@ class _ServersScreenState extends State<ServersScreen> {
           final authCode = state?.authCode;
           final output = state?.output ?? const <String>[];
           final title = backend == 'codex' ? 'Codex Backend' : 'Claude Backend';
+          final operation = state?.operation ?? 'repair';
+          final isAuthOperation = operation == 'auth';
+          final operationTitle = isAuthOperation ? 'Sign-In' : 'Repair';
+          final shouldDismiss = isAuthOperation ? completed : (completed || healthy);
 
-          if (!dismissedAfterSuccess && (completed || healthy)) {
+          if (!dismissedAfterSuccess && shouldDismiss) {
             dismissedAfterSuccess = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               pollTimer.cancel();
@@ -1157,7 +1178,11 @@ class _ServersScreenState extends State<ServersScreen> {
               if (rootContext.mounted) {
                 ScaffoldMessenger.of(rootContext).showSnackBar(
                   SnackBar(
-                    content: Text('$backendName backend is ready.'),
+                    content: Text(
+                      isAuthOperation
+                          ? '$backendName sign-in completed.'
+                          : '$backendName backend is ready.',
+                    ),
                     backgroundColor: Colors.green,
                   ),
                 );
@@ -1177,7 +1202,7 @@ class _ServersScreenState extends State<ServersScreen> {
                   size: 22,
                 ),
                 const SizedBox(width: 10),
-                Expanded(child: Text('$title Repair')),
+                Expanded(child: Text('$title $operationTitle')),
               ],
             ),
             content: SizedBox(
@@ -1186,7 +1211,12 @@ class _ServersScreenState extends State<ServersScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(state?.message ?? 'Starting repair...'),
+                  Text(
+                    state?.message ??
+                        (isAuthOperation
+                            ? 'Starting sign-in...'
+                            : 'Starting repair...'),
+                  ),
                   if (authUrl != null || authCode != null) ...[
                     const SizedBox(height: 12),
                     DecoratedBox(
@@ -1252,7 +1282,58 @@ class _ServersScreenState extends State<ServersScreen> {
                                     }
                                   },
                                   icon: const Icon(Icons.open_in_browser),
-                                  label: const Text('Open Device Page'),
+                                  label: Text(
+                                    backend == 'claude'
+                                        ? 'Open Login Page'
+                                        : 'Open Device Page',
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (backend == 'claude' &&
+                                isAuthOperation &&
+                                authUrl != null &&
+                                authUrl.isNotEmpty) ...[
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: claudeAuthCodeCtrl,
+                                decoration: const InputDecoration(
+                                  labelText: 'Claude auth code',
+                                  hintText: 'Paste copied code',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                minLines: 1,
+                                maxLines: 3,
+                                onSubmitted: (_) {
+                                  final code = claudeAuthCodeCtrl.text.trim();
+                                  final requestId = state?.requestId ?? '';
+                                  if (code.isEmpty || requestId.isEmpty) return;
+                                  currentProvider.submitAuthCode(
+                                    code,
+                                    serverId: config.id,
+                                    authRequestId: requestId,
+                                  );
+                                },
+                              ),
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: FilledButton.icon(
+                                  icon: const Icon(Icons.check),
+                                  label: const Text('Submit Code'),
+                                  onPressed: () {
+                                    final code = claudeAuthCodeCtrl.text.trim();
+                                    final requestId = state?.requestId ?? '';
+                                    if (code.isEmpty || requestId.isEmpty) {
+                                      return;
+                                    }
+                                    currentProvider.submitAuthCode(
+                                      code,
+                                      serverId: config.id,
+                                      authRequestId: requestId,
+                                    );
+                                  },
                                 ),
                               ),
                             ],
@@ -1300,12 +1381,18 @@ class _ServersScreenState extends State<ServersScreen> {
               if (failed)
                 FilledButton(
                   onPressed: () {
-                    currentProvider.repairBackend(
-                      config.id,
-                      backend: backend,
-                      reinstall: true,
-                      authenticate: true,
-                    );
+                    if (isAuthOperation) {
+                      currentProvider.authenticateBackend(
+                        config.id,
+                        backend: backend,
+                      );
+                    } else {
+                      currentProvider.repairBackend(
+                        config.id,
+                        backend: backend,
+                        reinstall: true,
+                      );
+                    }
                   },
                   child: const Text('Retry'),
                 ),
@@ -1313,7 +1400,10 @@ class _ServersScreenState extends State<ServersScreen> {
           );
         },
       ),
-    ).whenComplete(pollTimer.cancel);
+    ).whenComplete(() {
+      pollTimer.cancel();
+      claudeAuthCodeCtrl.dispose();
+    });
   }
 
   Future<void> _startOutlookAuth(
