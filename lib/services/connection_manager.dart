@@ -107,6 +107,7 @@ class ConnectionManager {
         ws.setMode(ConnectionMode.relay);
       } else {
         ws.configure(host: config.host, port: config.port, token: config.token);
+        ws.setMode(ConnectionMode.direct);
       }
     }
 

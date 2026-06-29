@@ -38,6 +38,21 @@ String _stripTerminalControl(String value) {
       .replaceAll(RegExp(r'\[(?:\d{1,3}(?:;\d{1,3})*)m'), '');
 }
 
+bool _isLocalRelayUrl(String value) {
+  final uri = Uri.tryParse(value.trim());
+  if (uri == null) return false;
+  final host = uri.host.toLowerCase();
+  return host == 'localhost' || host == '127.0.0.1' || host == '::1';
+}
+
+String _normalizeRelayUrl(String value) {
+  final trimmed = value.trim();
+  if (trimmed == 'ws://jarofdirt.info:9988' || _isLocalRelayUrl(trimmed)) {
+    return 'wss://relay.jarofdirt.info';
+  }
+  return trimmed;
+}
+
 class BackendInstallState {
   BackendInstallState({
     required this.backend,
@@ -1068,12 +1083,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       } catch (_) {
         _serverConfigs = [];
       }
-      // Migrate old relay URLs to wss://
+      // Migrate relay URLs that cannot work from the phone.
       bool relayMigrated = false;
       _serverConfigs = _serverConfigs.map((c) {
-        if (c.relayUrl == 'ws://jarofdirt.info:9988') {
+        final normalizedRelayUrl = _normalizeRelayUrl(c.relayUrl);
+        if (normalizedRelayUrl != c.relayUrl) {
           relayMigrated = true;
-          return c.copyWith(relayUrl: 'wss://relay.jarofdirt.info');
+          return c.copyWith(relayUrl: normalizedRelayUrl);
         }
         return c;
       }).toList();
@@ -1082,7 +1098,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Migrate old single-server config if no multi-server configs exist
     if (_serverConfigs.isEmpty && _serverHost.isNotEmpty) {
       // Migrate global relay pairing data into the server config
-      final relayUrl = prefs.getString('relay_url') ?? '';
+      final relayUrl = _normalizeRelayUrl(prefs.getString('relay_url') ?? '');
       final pairingToken = prefs.getString('pairing_token') ?? '';
       final serverPubkey = prefs.getString('server_pubkey') ?? '';
       final useRelay = prefs.getBool('use_relay') ?? false;
@@ -1291,7 +1307,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ) async {
     final relay = msg['relayPairing'];
     if (relay is! Map) return;
-    final relayUrl = relay['relayUrl'] as String? ?? '';
+    final rawRelayUrl = relay['relayUrl'] as String? ?? '';
+    final relayUrl = _normalizeRelayUrl(rawRelayUrl);
     final pairingToken = relay['pairingToken'] as String? ?? '';
     final serverPubkey = relay['serverPubkey'] as String? ?? '';
     if (relayUrl.isEmpty || pairingToken.isEmpty || serverPubkey.isEmpty) {
@@ -1301,14 +1318,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (idx < 0) return;
     final existing = _serverConfigs[idx];
-    if (existing.relayUrl == relayUrl &&
+    final effectiveRelayUrl =
+        _isLocalRelayUrl(rawRelayUrl) &&
+            existing.relayUrl.isNotEmpty &&
+            !_isLocalRelayUrl(existing.relayUrl)
+        ? existing.relayUrl
+        : relayUrl;
+    if (existing.relayUrl == effectiveRelayUrl &&
         existing.pairingToken == pairingToken &&
         existing.serverPubkey == serverPubkey) {
       return;
     }
 
     _serverConfigs[idx] = existing.copyWith(
-      relayUrl: relayUrl,
+      relayUrl: effectiveRelayUrl,
       pairingToken: pairingToken,
       serverPubkey: serverPubkey,
     );
@@ -1763,24 +1786,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? serverId,
   }) async {
     if (serverId != null) {
-      final ws = _connMgr.getConnection(serverId);
-      ws?.setMode(mode);
       final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
       if (idx >= 0) {
         _serverConfigs[idx] = _serverConfigs[idx].copyWith(
           useRelay: mode == ConnectionMode.relay,
         );
         await _saveServerConfigs();
+        await _connMgr.setServers(_serverConfigs);
       }
     } else {
       // Legacy: find first relay server
-      for (final config in _serverConfigs) {
+      for (var i = 0; i < _serverConfigs.length; i++) {
+        final config = _serverConfigs[i];
         if (config.useRelay || config.isRelayPaired) {
-          final ws = _connMgr.getConnection(config.id);
-          ws?.setMode(mode);
+          _serverConfigs[i] = config.copyWith(
+            useRelay: mode == ConnectionMode.relay,
+          );
           break;
         }
       }
+      await _saveServerConfigs();
+      await _connMgr.setServers(_serverConfigs);
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('use_relay', mode == ConnectionMode.relay);
     }
