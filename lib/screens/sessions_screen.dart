@@ -2384,16 +2384,14 @@ class _SessionsTabState extends State<SessionsTab> {
       displayCwd = '~';
     }
 
-    // Lead with recent conversation text; keep title/project as context.
+    // Lead with the stable session name; keep recent conversation text as context.
     final hasTitle = session.title.isNotEmpty && session.title != 'Untitled';
     final previewText = session.messagePreview.trim();
     final titleOrProject = hasTitle
         ? session.title
         : _projectLabelForCwd(displayCwd);
-    final primaryText = previewText.isNotEmpty ? previewText : titleOrProject;
-    final secondaryText = previewText.isNotEmpty
-        ? (hasTitle ? session.title : displayCwd)
-        : '';
+    final primaryText = titleOrProject;
+    final secondaryText = previewText;
     final showSecondaryText =
         secondaryText.trim().isNotEmpty &&
         secondaryText.trim() != primaryText.trim();
@@ -2494,9 +2492,13 @@ class _SessionsTabState extends State<SessionsTab> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontWeight: FontWeight.w500,
-                          fontSize: 14,
-                          color: theme.colorScheme.onSurface,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 15.5,
+                          color: Color.lerp(
+                            theme.colorScheme.onSurface,
+                            theme.colorScheme.primary,
+                            0.18,
+                          ),
                         ),
                       ),
                       if (showSecondaryText) ...[
@@ -2506,8 +2508,8 @@ class _SessionsTabState extends State<SessionsTab> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 12,
-                            color: theme.colorScheme.onSurface.withAlpha(140),
+                            fontSize: 11.5,
+                            color: theme.colorScheme.onSurface.withAlpha(132),
                           ),
                         ),
                       ],
