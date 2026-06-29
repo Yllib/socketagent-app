@@ -136,6 +136,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final CryptoService _crypto = CryptoService();
   final SecureStorageService _secureStorage = SecureStorageService();
   final _subscriptionRequiredController = StreamController<void>.broadcast();
+  final _backendAuthRequiredController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   List<ChatMessage> _messages = [];
   List<Session> _sessions = [];
@@ -339,6 +341,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<ArchiveEntry> get archives => _archives;
   Stream<String> get archiveFeedback => _archiveFeedback.stream;
   Stream<Map<String, dynamic>> get terminalEvents => _terminalEvents.stream;
+  Stream<Map<String, dynamic>> get backendAuthRequiredEvents =>
+      _backendAuthRequiredController.stream;
   Map<String, dynamic>? get terminalStatus => _terminalStatus;
   String? get terminalServerId => _terminalServerId;
   Map<String, dynamic>? get lastUsage => _lastUsage;
@@ -2561,6 +2565,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'server_capabilities',
       'server_settings',
       'backend_install_progress',
+      'backend_auth_required',
       'terminal_status',
       'terminal_output',
       'terminal_exited',
@@ -2679,6 +2684,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       case 'backend_install_progress':
         _handleBackendInstallProgress(msg, serverId);
+        break;
+      case 'backend_auth_required':
+        _handleBackendAuthRequired(msg, serverId);
         break;
       case 'terminal_status':
       case 'terminal_output':
@@ -6570,6 +6578,63 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  void _handleBackendAuthRequired(Map<String, dynamic> msg, String? serverId) {
+    if (serverId == null || serverId.isEmpty) return;
+    final backend = msg['backend'] as String? ?? 'codex';
+    final backendName = backend == 'codex' ? 'Codex' : 'Backend';
+    final message =
+        msg['message'] as String? ??
+        '$backendName authentication is invalid or expired.';
+    final detail = msg['detail'] as String?;
+
+    final existingHealth = List<Map<String, dynamic>>.from(
+      _serverBackendHealth[serverId] ?? const <Map<String, dynamic>>[],
+    );
+    final healthEntry = <String, dynamic>{
+      'backend': backend,
+      'enabled': true,
+      'available': false,
+      'severity': 'error',
+      'reason': '$backendName authentication is invalid or expired.',
+      if (detail != null && detail.isNotEmpty) 'detail': detail,
+    };
+    final idx = existingHealth.indexWhere(
+      (entry) => entry['backend']?.toString() == backend,
+    );
+    if (idx >= 0) {
+      existingHealth[idx] = {...existingHealth[idx], ...healthEntry};
+    } else {
+      existingHealth.add(healthEntry);
+    }
+    _serverBackendHealth[serverId] = existingHealth;
+
+    final key = _backendInstallKey(serverId, backend);
+    final state = _backendInstallStates[key];
+    if (state?.running != true && backend == 'codex') {
+      repairBackend(
+        serverId,
+        backend: backend,
+        reinstall: false,
+        authenticate: true,
+      );
+    }
+
+    _messages.add(
+      ChatMessage.error(
+        '$message I started Codex sign-in repair for this server. Open Settings > Servers > Backend Status to enter the device code.',
+      ),
+    );
+    _isProcessing = false;
+    _stopPromptRuntime();
+    _backendAuthRequiredController.add({
+      'serverId': serverId,
+      'backend': backend,
+      'message': message,
+    });
+    requestServerSettings(serverId: serverId);
+    notifyListeners();
+  }
+
   void _handleTerminalMessage(Map<String, dynamic> msg, String? serverId) {
     if (_terminalServerId != null &&
         serverId != null &&
@@ -8854,6 +8919,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _speech.dispose();
     _tts.dispose();
     _subscriptionRequiredController.close();
+    _backendAuthRequiredController.close();
     _terminalEvents.close();
     super.dispose();
   }

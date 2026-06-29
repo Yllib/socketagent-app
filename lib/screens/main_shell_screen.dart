@@ -20,6 +20,7 @@ class MainShellScreen extends StatefulWidget {
 class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   int _currentIndex = 0;
   StreamSubscription? _subRequiredSub;
+  StreamSubscription? _backendAuthRequiredSub;
   Future<bool>? _paywallFuture;
   final UpdateService _updateService = UpdateService();
   bool _updateBannerDismissed = false;
@@ -43,6 +44,25 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
           return;
         }
         _showPaywall();
+      });
+      _backendAuthRequiredSub = provider.backendAuthRequiredEvents.listen((
+        event,
+      ) {
+        if (!mounted) return;
+        final backend = event['backend']?.toString() == 'codex'
+            ? 'Codex'
+            : 'Backend';
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('$backend sign-in required'),
+            action: SnackBarAction(
+              label: 'Settings',
+              onPressed: () {
+                if (mounted) setState(() => _currentIndex = 2);
+              },
+            ),
+          ),
+        );
       });
       await provider.connectToServer();
       provider.refreshSubscriptionStatusIfStale();
@@ -72,6 +92,7 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   @override
   void dispose() {
     _subRequiredSub?.cancel();
+    _backendAuthRequiredSub?.cancel();
     _updateService.removeListener(_onUpdateChange);
     routeObserver.unsubscribe(this);
     super.dispose();
