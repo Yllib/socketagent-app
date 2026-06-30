@@ -642,6 +642,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<String> serverPlugins(String serverId) => _serverPlugins[serverId] ?? [];
   List<Map<String, dynamic>> backendHealthForServer(String serverId) =>
       _serverBackendHealth[serverId] ?? const <Map<String, dynamic>>[];
+  Map<String, dynamic> serverRuntimeInfo(String serverId) =>
+      Map.unmodifiable(_serverRuntimeInfo[serverId] ?? const {});
 
   Map<String, dynamic>? backendWarningForServer(String serverId) {
     final health = backendHealthForServer(serverId);

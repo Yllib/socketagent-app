@@ -357,6 +357,7 @@ class _SettingsV2ServerDetailScreenState
         final connected = status == ConnectionStatus.connected;
         final health = provider.backendHealthForServer(config.id);
         final plugins = provider.serverPlugins(config.id);
+        final runtime = provider.serverRuntimeInfo(config.id);
 
         return Scaffold(
           appBar: AppBar(
@@ -442,6 +443,31 @@ class _SettingsV2ServerDetailScreenState
                     onTap: () =>
                         _showServerDialog(context, provider, existing: config),
                   ),
+                ],
+              ),
+              _SettingsGroup(
+                title: 'Version & Updates',
+                children: [
+                  _NavTile(
+                    icon: Icons.system_update,
+                    title: 'Server updates',
+                    subtitle: _serverVersionSubtitle(runtime, connected),
+                    trailing: connected ? Icons.chevron_right : null,
+                    onTap: connected
+                        ? () => _showVersionCheck(context, provider, config)
+                        : null,
+                  ),
+                  if (runtime.isNotEmpty)
+                    _DetailRow(
+                      icon: Icons.memory_outlined,
+                      title: 'Running process',
+                      subtitle: [
+                        if (runtime['pid'] != null) 'PID ${runtime['pid']}',
+                        if (runtime['startedAt'] != null)
+                          'Started ${runtime['startedAt']}',
+                      ].join(' · '),
+                      trailing: _shortHash(runtime['hash']),
+                    ),
                 ],
               ),
               _SettingsGroup(
@@ -1539,6 +1565,50 @@ class _DetailRow extends StatelessWidget {
   }
 }
 
+class _VersionBlock extends StatelessWidget {
+  const _VersionBlock({
+    required this.title,
+    required this.primary,
+    this.secondary,
+    this.topPadding = false,
+  });
+
+  final String title;
+  final String primary;
+  final String? secondary;
+  final bool topPadding;
+
+  @override
+  Widget build(BuildContext context) {
+    final secondaryText = secondary;
+    return Padding(
+      padding: EdgeInsets.only(top: topPadding ? 12 : 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            primary,
+            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+          ),
+          if (secondaryText != null && secondaryText.isNotEmpty)
+            Text(
+              secondaryText,
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ButtonRow extends StatelessWidget {
   const _ButtonRow({
     required this.primaryLabel,
@@ -2125,6 +2195,211 @@ Future<void> _pairServerRelay(
   ).showSnackBar(SnackBar(content: Text('Relay paired for ${config.name}')));
 }
 
+Future<void> _showVersionCheck(
+  BuildContext context,
+  ChatProvider provider,
+  ServerConfig config,
+) async {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const AlertDialog(
+      content: Row(
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 20),
+          Text('Checking for updates...'),
+        ],
+      ),
+    ),
+  );
+
+  final info = await provider.requestVersionCheck(serverId: config.id);
+
+  if (!context.mounted) return;
+  Navigator.pop(context);
+
+  if (info.containsKey('error') &&
+      info['local'] == null &&
+      info['running'] == null) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(info['error']?.toString() ?? 'Failed to check')),
+    );
+    return;
+  }
+
+  final local = info['local'] as Map?;
+  final remote = info['remote'] as Map?;
+  final running = info['running'] as Map?;
+  final localHash = local?['hash']?.toString();
+  final runningHash = running?['hash']?.toString();
+  final updateAvailable = info['updateAvailable'] == true;
+  final runningStale =
+      localHash != null &&
+      runningHash != null &&
+      !_sameCommitish(localHash, runningHash);
+  final needsRestart = runningStale || info['needsRestart'] == true;
+  final commitsBehind = info['commitsBehind'] as int? ?? 0;
+  final fetchError = info['fetchError'] as String?;
+  final error = info['error'] as String?;
+  final title = needsRestart
+      ? 'Restart Needed'
+      : updateAvailable
+      ? 'Update Available'
+      : 'Up to Date';
+  final titleIcon = needsRestart
+      ? Icons.restart_alt
+      : updateAvailable
+      ? Icons.system_update
+      : Icons.check_circle;
+  final titleColor = needsRestart || updateAvailable
+      ? Colors.orange
+      : Colors.green;
+
+  if (!context.mounted) return;
+  showDialog(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Row(
+        children: [
+          Icon(titleIcon, color: titleColor),
+          const SizedBox(width: 8),
+          Text(title),
+        ],
+      ),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (running != null)
+              _VersionBlock(
+                title: 'Running process',
+                primary:
+                    '${_shortHash(running['hash'])}  PID ${running['pid'] ?? '?'}',
+                secondary: running['startedAt']?.toString(),
+              ),
+            if (local != null)
+              _VersionBlock(
+                title: 'Checkout',
+                primary:
+                    '${_shortHash(local['hash'])}  ${local['message'] ?? ''}',
+                secondary: local['date']?.toString(),
+                topPadding: running != null,
+              )
+            else
+              Padding(
+                padding: EdgeInsets.only(top: running != null ? 12 : 0),
+                child: Text(
+                  info['gitAvailable'] == false
+                      ? 'This server was not installed from a git checkout, so in-app updates are unavailable.'
+                      : 'This server did not return git version details.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            if (runningStale) ...[
+              const SizedBox(height: 12),
+              const Text(
+                'The checkout is newer than the running server process. Restart/update this server to load the current code.',
+                style: TextStyle(fontSize: 12, color: Colors.orange),
+              ),
+            ],
+            if (remote != null && updateAvailable)
+              _VersionBlock(
+                title: 'Available',
+                primary:
+                    '${_shortHash(remote['hash'])}  ${remote['message'] ?? ''}',
+                secondary: remote['date']?.toString(),
+                topPadding: true,
+              ),
+            if (commitsBehind > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  '$commitsBehind commit${commitsBehind == 1 ? '' : 's'} behind',
+                  style: const TextStyle(fontSize: 12, color: Colors.orange),
+                ),
+              ),
+            if (fetchError != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Fetch error: $fetchError',
+                style: const TextStyle(fontSize: 11, color: Colors.red),
+              ),
+            ],
+            if (error != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                error,
+                style: const TextStyle(fontSize: 11, color: Colors.red),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Close'),
+        ),
+        if (updateAvailable || needsRestart)
+          FilledButton.icon(
+            icon: Icon(
+              updateAvailable ? Icons.download : Icons.restart_alt,
+              size: 16,
+            ),
+            label: Text(updateAvailable ? 'Update Now' : 'Restart Now'),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _forceServerUpdate(context, provider, config);
+            },
+          ),
+      ],
+    ),
+  );
+}
+
+Future<void> _forceServerUpdate(
+  BuildContext context,
+  ChatProvider provider,
+  ServerConfig config,
+) async {
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const AlertDialog(
+      content: Row(
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 20),
+          Expanded(child: Text('Pulling, compiling, and restarting...')),
+        ],
+      ),
+    ),
+  );
+
+  final result = await provider.requestForceUpdate(serverId: config.id);
+
+  if (!context.mounted) return;
+  Navigator.pop(context);
+
+  final success = result['success'] == true;
+  final message =
+      result['message'] as String? ??
+      result['error'] as String? ??
+      'Unknown result';
+
+  ScaffoldMessenger.of(context).showSnackBar(
+    SnackBar(
+      content: Text(success ? message : 'Update failed: $message'),
+      backgroundColor: success ? Colors.green : Colors.red,
+    ),
+  );
+}
+
 void _confirmDeleteServer(
   BuildContext context,
   ChatProvider provider,
@@ -2189,6 +2464,31 @@ String _statusLabel(ConnectionStatus status) {
     ConnectionStatus.disconnected => 'Offline',
     ConnectionStatus.error => 'Error',
   };
+}
+
+String _shortHash(Object? value) {
+  final text = value?.toString();
+  if (text == null || text.isEmpty) return '?';
+  return text.length <= 7 ? text : text.substring(0, 7);
+}
+
+bool _sameCommitish(Object? left, Object? right) {
+  final a = left?.toString();
+  final b = right?.toString();
+  if (a == null || b == null || a.isEmpty || b.isEmpty) return true;
+  return a.startsWith(b) || b.startsWith(a);
+}
+
+String _serverVersionSubtitle(Map<String, dynamic> runtime, bool connected) {
+  if (!connected) return 'Connect to check server version and updates';
+  final hash = runtime['hash'];
+  if (hash == null || hash.toString().isEmpty) {
+    return 'Check current version and available updates';
+  }
+  final parts = <String>['Running ${_shortHash(hash)}'];
+  final pid = runtime['pid'];
+  if (pid != null) parts.add('PID $pid');
+  return '${parts.join(' · ')} · Check for updates';
 }
 
 List<String> _subscriptionLines(ChatProvider provider) {
