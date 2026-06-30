@@ -501,24 +501,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.sendToServer(sid, {'type': 'terminal_kill'});
   }
 
-  void _maybeNotify({
-    required String title,
-    required String body,
-    bool skipWhenBackgroundPushRegistered = false,
-  }) {
+  void _maybeNotify({required String title, required String body}) {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
     if (_notifMutedSessions.contains(sessionId)) return;
     if (_viewingSessionId == sessionId && _appInForeground) return;
 
     final serverId = _connMgr.activeServerId;
-    if (skipWhenBackgroundPushRegistered &&
-        !_appInForeground &&
-        serverId != null &&
-        _pushRegisteredServers.contains(serverId)) {
-      return;
-    }
-
     final notifId = NotificationService.stableId(sessionId);
     _notifications.showInstant(
       id: notifId,
@@ -4651,11 +4640,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
     }
-    _maybeNotify(
-      title: _sessionTitle(),
-      body: notifBody,
-      skipWhenBackgroundPushRegistered: true,
-    );
+    _maybeNotify(title: _sessionTitle(), body: notifBody);
     if (msg['usage'] != null) {
       _lastUsage = Map<String, dynamic>.from(msg['usage'] as Map);
       _lastUsage!['costUsd'] = msg['costUsd'];
