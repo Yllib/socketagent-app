@@ -516,6 +516,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  bool _shouldDisplayForegroundPushNotification(Map<String, dynamic> data) {
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null || sessionId.isEmpty) return true;
+    if (_notifMutedSessions.contains(sessionId)) return false;
+    if (_viewingSessionId == sessionId && _appInForeground) return false;
+    return true;
+  }
+
   String _sessionTitle() {
     for (final s in _sessions) {
       if (s.id == _activeSessionId) {
@@ -969,6 +977,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _kokoroServerEngine.sendToServer = (msg) => _connMgr.send(msg);
     WidgetsBinding.instance.addObserver(this);
     PushNotificationService.onTokenRefresh = _handlePushTokenRefresh;
+    PushNotificationService.shouldDisplayForegroundNotification =
+        _shouldDisplayForegroundPushNotification;
     _loadSettings();
     _setupListeners();
   }
@@ -9076,6 +9086,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     PushNotificationService.onTokenRefresh = null;
+    PushNotificationService.shouldDisplayForegroundNotification = null;
     _promptRuntimeTimer?.cancel();
     _foregroundResumeTimer?.cancel();
     _messageSub?.cancel();

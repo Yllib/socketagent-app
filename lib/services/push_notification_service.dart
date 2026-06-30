@@ -37,6 +37,8 @@ class PushNotificationService {
 
   static void Function(String? payload)? onNotificationTap;
   static void Function(String token)? onTokenRefresh;
+  static bool Function(Map<String, dynamic> data)?
+  shouldDisplayForegroundNotification;
 
   String? takeLaunchPayload() {
     final payload = _launchPayload;
@@ -62,6 +64,9 @@ class PushNotificationService {
         final title = message.notification?.title ?? message.data['title'];
         final body = message.notification?.body ?? message.data['body'];
         if (title is! String || title.trim().isEmpty) return;
+        final shouldDisplay =
+            shouldDisplayForegroundNotification?.call(message.data) ?? true;
+        if (!shouldDisplay) return;
         NotificationService().showInstant(
           id: notificationIdForData(message.data, title),
           title: title,
