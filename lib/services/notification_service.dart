@@ -13,6 +13,8 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
   String? _launchPayload;
+  final Map<int, DateTime> _lastShownAtById = {};
+  final Map<int, String> _lastShownSignatureById = {};
 
   /// Set this to handle notification taps (e.g., navigate to a session)
   static void Function(String? payload)? onNotificationTap;
@@ -31,8 +33,9 @@ class NotificationService {
     final timeZoneName = await FlutterTimezone.getLocalTimezone();
     tz.setLocalLocation(tz.getLocation(timeZoneName));
 
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const initSettings = InitializationSettings(android: androidSettings);
 
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
@@ -49,8 +52,10 @@ class NotificationService {
     );
 
     // Request permissions (Android 13+)
-    final androidPlugin = _plugin.resolvePlatformSpecificImplementation<
-        AndroidFlutterLocalNotificationsPlugin>();
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
     await androidPlugin?.requestNotificationsPermission();
     await androidPlugin?.requestExactAlarmsPermission();
 
@@ -71,7 +76,8 @@ class NotificationService {
       const AndroidNotificationChannel(
         'session_alerts',
         'Session Alerts',
-        description: 'Notifications when your agent completes a query or needs input',
+        description:
+            'Notifications when your agent completes a query or needs input',
         importance: Importance.high,
         playSound: true,
         enableVibration: true,
@@ -91,18 +97,27 @@ class NotificationService {
     if (!_isInitialized) await initialize();
 
     try {
+      final now = DateTime.now();
+      final signature = '$title\n$body\n${payload ?? ''}';
+      final lastShownAt = _lastShownAtById[id];
+      if (lastShownAt != null &&
+          now.difference(lastShownAt) < const Duration(seconds: 2) &&
+          _lastShownSignatureById[id] == signature) {
+        return true;
+      }
+      _lastShownAtById[id] = now;
+      _lastShownSignatureById[id] = signature;
+
       final androidDetails = AndroidNotificationDetails(
         'session_alerts',
         'Session Alerts',
-        channelDescription: 'Notifications when your agent completes a query or needs input',
+        channelDescription:
+            'Notifications when your agent completes a query or needs input',
         importance: Importance.high,
         priority: Priority.high,
         playSound: true,
         enableVibration: true,
-        styleInformation: BigTextStyleInformation(
-          body,
-          contentTitle: title,
-        ),
+        styleInformation: BigTextStyleInformation(body, contentTitle: title),
       );
       final details = NotificationDetails(android: androidDetails);
 
@@ -154,7 +169,8 @@ class NotificationService {
       );
 
       debugPrint(
-          '[Notification] scheduled: "$title" at $scheduledTime (id=$id)');
+        '[Notification] scheduled: "$title" at $scheduledTime (id=$id)',
+      );
       return true;
     } catch (e) {
       debugPrint('[Notification] schedule error: $e');

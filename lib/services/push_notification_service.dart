@@ -13,7 +13,7 @@ Future<void> socketAgentFirebaseBackgroundHandler(RemoteMessage message) async {
     if (title is! String || title.trim().isEmpty) return;
     final payload = PushNotificationService.payloadForData(message.data);
     await NotificationService().showInstant(
-      id: title.hashCode & 0x7FFFFFFF,
+      id: PushNotificationService.notificationIdForData(message.data, title),
       title: title,
       body: body is String ? body : '',
       payload: payload,
@@ -63,7 +63,7 @@ class PushNotificationService {
         final body = message.notification?.body ?? message.data['body'];
         if (title is! String || title.trim().isEmpty) return;
         NotificationService().showInstant(
-          id: title.hashCode & 0x7FFFFFFF,
+          id: notificationIdForData(message.data, title),
           title: title,
           body: body is String ? body : '',
           payload: _payloadFor(message),
@@ -97,6 +97,12 @@ class PushNotificationService {
     final serverId = data['serverId'] as String?;
     return 'session:${Uri.encodeComponent(sessionId)}'
         '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}';
+  }
+
+  static int notificationIdForData(Map<String, dynamic> data, String title) {
+    final sessionId = data['sessionId'] as String?;
+    final key = sessionId != null && sessionId.isNotEmpty ? sessionId : title;
+    return key.hashCode & 0x7FFFFFFF;
   }
 
   void dispose() {

@@ -7,7 +7,7 @@ import '../services/update_service.dart';
 import '../services/websocket_service.dart';
 import 'sessions_screen.dart';
 import 'scheduled_tasks_screen.dart';
-import 'settings/settings_hub.dart';
+import 'settings/settings_v2_screen.dart';
 import 'paywall_screen.dart';
 
 class MainShellScreen extends StatefulWidget {
@@ -170,10 +170,10 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
       child: Scaffold(
         body: IndexedStack(
           index: _currentIndex,
-          children: const [
-            SessionsTab(),
-            ScheduledTasksScreen(),
-            SettingsHub(),
+          children: [
+            const SessionsTab(),
+            const ScheduledTasksScreen(),
+            SettingsV2Screen(updateService: _updateService),
           ],
         ),
         bottomNavigationBar: Consumer<ChatProvider>(

@@ -107,7 +107,9 @@ class BackendInstallState {
       }
     }
 
-    running = status == 'running' || !(status == 'failed' || phase == 'probe');
+    running =
+        status == 'running' ||
+        !(status == 'failed' || status == 'cancelled' || phase == 'probe');
   }
 }
 
@@ -287,7 +289,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _authToken = '';
   String _defaultCwd = '';
   bool _autoVoiceOnAssist = true;
-  bool _colorfulCards = false;
+  bool _colorfulCards = true;
 
   // Multi-server
   List<ServerConfig> _serverConfigs = [];
@@ -503,11 +505,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_viewingSessionId == sessionId && _appInForeground) return;
 
     final notifId = sessionId.hashCode & 0x7FFFFFFF;
+    final serverId = _connMgr.activeServerId;
     _notifications.showInstant(
       id: notifId,
       title: title,
       body: body,
-      payload: 'session_$sessionId',
+      payload:
+          'session:${Uri.encodeComponent(sessionId)}'
+          '${serverId != null ? ':${Uri.encodeComponent(serverId)}' : ''}',
     );
   }
 
@@ -1089,7 +1094,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _defaultCwd = prefs.getString('default_cwd') ?? '';
     _autoVoiceOnAssist = prefs.getBool('auto_voice_on_assist') ?? true;
     _pushToTalk = prefs.getBool('push_to_talk') ?? false;
-    _colorfulCards = prefs.getBool('colorful_cards') ?? false;
+    _colorfulCards = true;
+    if (prefs.getBool('colorful_cards') != true) {
+      await prefs.setBool('colorful_cards', true);
+    }
 
     // Load sensitive credentials from SecureStorage
     _authToken = await _secureStorage.getAuthToken() ?? '';
@@ -1261,12 +1269,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _handlePushTokenRefresh(String token) {
-    if (_pushRegisteredServers.isNotEmpty) {
-      _pushRegisteredServers.clear();
+  void _markPushUnregistered(String? serverId) {
+    if (serverId == null || serverId.isEmpty) return;
+    final completer = _pushRegistrationCompleters.remove(serverId);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(true);
+    }
+    if (_pushRegisteredServers.remove(serverId)) {
       unawaited(_savePushRegisteredServers());
       notifyListeners();
     }
+  }
+
+  void _handlePushTokenRefresh(String token) {
     unawaited(_registerPushNotifications(fcmToken: token));
   }
 
@@ -1289,6 +1304,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     var sent = false;
     for (final config in _serverConfigs) {
+      if (!_pushRegisteredServers.contains(config.id)) continue;
       final ws = _connMgr.getConnection(config.id);
       if (ws?.status == ConnectionStatus.connected) {
         ws!.send({...message, 'appServerId': config.id});
@@ -1301,8 +1317,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<bool> registerPushNotificationsNow() => _registerPushNotifications();
 
   Future<bool> registerPushNotificationsForServer(String serverId) async {
-    if (_pushRegisteredServers.contains(serverId)) return true;
-
     _pushRegistrationCompleters.remove(serverId)?.complete(false);
     final completer = Completer<bool>();
     _pushRegistrationCompleters[serverId] = completer;
@@ -1323,6 +1337,56 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         return _pushRegisteredServers.contains(serverId);
       },
     );
+  }
+
+  Future<bool> unregisterPushNotificationsForServer(String serverId) async {
+    _pushRegistrationCompleters.remove(serverId)?.complete(false);
+    final completer = Completer<bool>();
+    _pushRegistrationCompleters[serverId] = completer;
+
+    final token = await PushNotificationService().getFcmToken();
+    final ws = _connMgr.getConnection(serverId);
+    if (token == null ||
+        token.isEmpty ||
+        ws?.status != ConnectionStatus.connected) {
+      _pushRegistrationCompleters.remove(serverId);
+      if (!completer.isCompleted) completer.complete(false);
+      return false;
+    }
+
+    ws!.send({
+      'type': 'unregister_push_token',
+      'fcmToken': token,
+      'appServerId': serverId,
+    });
+
+    return completer.future.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () {
+        if (_pushRegistrationCompleters[serverId] == completer) {
+          _pushRegistrationCompleters.remove(serverId);
+        }
+        return !_pushRegisteredServers.contains(serverId);
+      },
+    );
+  }
+
+  Future<void> _syncPushRegistrationForServer(String serverId) async {
+    final ws = _connMgr.getConnection(serverId);
+    if (ws?.status != ConnectionStatus.connected) return;
+
+    if (_pushRegisteredServers.contains(serverId)) {
+      await _registerPushNotifications(serverId: serverId);
+      return;
+    }
+
+    final token = await PushNotificationService().getFcmToken();
+    if (token == null || token.isEmpty) return;
+    ws!.send({
+      'type': 'get_push_registration',
+      'fcmToken': token,
+      'appServerId': serverId,
+    });
   }
 
   Future<void> _captureRelayPairingFromCapabilities(
@@ -1708,7 +1772,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Auto-sync state on every (re)connect for this server
       if (update.status == ConnectionStatus.connected) {
         _syncStateToServer(serverId: update.serverId);
-        unawaited(_registerPushNotifications(serverId: update.serverId));
+        unawaited(_syncPushRegistrationForServer(update.serverId));
       }
     });
 
@@ -2594,6 +2658,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'file_chunk',
       'file_complete',
       'push_token_registered',
+      'push_token_unregistered',
+      'push_registration_status',
     };
 
     // Route: only process non-global messages from the active server
@@ -2720,6 +2786,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _markPushRegistered(
             serverId ?? (appServerId is String ? appServerId : null),
           );
+          break;
+        }
+      case 'push_token_unregistered':
+        {
+          final appServerId = msg['appServerId'];
+          _markPushUnregistered(
+            serverId ?? (appServerId is String ? appServerId : null),
+          );
+          break;
+        }
+      case 'push_registration_status':
+        {
+          final appServerId = msg['appServerId'];
+          final effectiveServerId =
+              serverId ?? (appServerId is String ? appServerId : null);
+          if (msg['registered'] == true) {
+            _markPushRegistered(effectiveServerId);
+          } else {
+            _markPushUnregistered(effectiveServerId);
+          }
           break;
         }
       case 'codex_collaboration_modes':
@@ -3665,7 +3751,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final body = msg['body'] as String? ?? '';
         final sid = msg['sessionId'] as String? ?? '';
         _notifications.showInstant(
-          id: title.hashCode & 0x7FFFFFFF,
+          id: (sid.isNotEmpty ? sid : title).hashCode & 0x7FFFFFFF,
           title: title,
           body: body,
           payload: sid.isNotEmpty
@@ -6362,11 +6448,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void submitAuthCode(
-    String code, {
-    String? serverId,
-    String? authRequestId,
-  }) {
+  void submitAuthCode(String code, {String? serverId, String? authRequestId}) {
     final msg = {
       'type': 'auth_code',
       'code': code,
@@ -6625,10 +6707,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  void authenticateBackend(
-    String serverId, {
-    String backend = 'codex',
-  }) {
+  void authenticateBackend(String serverId, {String backend = 'codex'}) {
     _runBackendOperation(
       serverId,
       backend: backend,
@@ -6636,6 +6715,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       authenticate: true,
       operation: 'auth',
     );
+  }
+
+  void cancelBackendOperation(String serverId, {String backend = 'codex'}) {
+    final key = _backendInstallKey(serverId, backend);
+    final state = _backendInstallStates[key];
+    if (state == null || !state.running) return;
+    _connMgr.sendToServer(serverId, {
+      'type': 'backend_install_cancel',
+      'backend': backend,
+      'requestId': state.requestId,
+    });
+    state.message = 'Stopping backend operation...';
+    notifyListeners();
   }
 
   void _handleBackendInstallProgress(
@@ -6699,10 +6791,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final key = _backendInstallKey(serverId, backend);
     final state = _backendInstallStates[key];
     if (state?.running != true && backend == 'codex') {
-      authenticateBackend(
-        serverId,
-        backend: backend,
-      );
+      authenticateBackend(serverId, backend: backend);
     }
 
     _messages.add(
@@ -7963,10 +8052,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setColorfulCards(bool value) {
-    _colorfulCards = value;
+    _colorfulCards = true;
     notifyListeners();
     SharedPreferences.getInstance().then((prefs) {
-      prefs.setBool('colorful_cards', value);
+      prefs.setBool('colorful_cards', true);
     });
   }
 

@@ -51,25 +51,6 @@ class SettingsHub extends StatelessWidget {
                 ),
               ),
 
-              // Appearance — inline toggle, no sub-page
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SwitchListTile(
-                  secondary: Icon(
-                    Icons.palette_outlined,
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.onSurface.withAlpha(180),
-                  ),
-                  title: const Text('Colorful tool cards'),
-                  subtitle: const Text(
-                    'Each tool type gets a distinct accent color',
-                  ),
-                  value: provider.colorfulCards,
-                  onChanged: (val) => provider.setColorfulCards(val),
-                ),
-              ),
-
               // MCP Servers — only show when there are any
               if (provider.mcpServers.isNotEmpty)
                 _buildCategoryTile(
