@@ -403,6 +403,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void setViewingSession(String? sessionId) {
     _viewingSessionId = sessionId;
+    if (_appInForeground && sessionId != null) {
+      unawaited(_cancelSessionOngoingNotification(sessionId));
+    }
   }
 
   /// Get recent CWDs (server-side, keyed by serverId).
@@ -498,14 +501,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.sendToServer(sid, {'type': 'terminal_kill'});
   }
 
-  void _maybeNotify({required String title, required String body}) {
+  void _maybeNotify({
+    required String title,
+    required String body,
+    bool skipWhenBackgroundPushRegistered = false,
+  }) {
     final sessionId = _activeSessionId;
     if (sessionId == null) return;
     if (_notifMutedSessions.contains(sessionId)) return;
     if (_viewingSessionId == sessionId && _appInForeground) return;
 
-    final notifId = sessionId.hashCode & 0x7FFFFFFF;
     final serverId = _connMgr.activeServerId;
+    if (skipWhenBackgroundPushRegistered &&
+        !_appInForeground &&
+        serverId != null &&
+        _pushRegisteredServers.contains(serverId)) {
+      return;
+    }
+
+    final notifId = NotificationService.stableId(sessionId);
     _notifications.showInstant(
       id: notifId,
       title: title,
@@ -513,6 +527,36 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       payload:
           'session:${Uri.encodeComponent(sessionId)}'
           '${serverId != null ? ':${Uri.encodeComponent(serverId)}' : ''}',
+    );
+  }
+
+  String? _sessionNotificationPayload(String sessionId, {String? serverId}) {
+    return 'session:${Uri.encodeComponent(sessionId)}'
+        '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}';
+  }
+
+  Future<void> _cancelSessionOngoingNotification(String sessionId) {
+    return _notifications.cancel(NotificationService.stableId(sessionId));
+  }
+
+  void _showActiveSessionOngoingNotification() {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || !_isProcessing) return;
+    if (_notifMutedSessions.contains(sessionId)) return;
+    if (_appInForeground && _viewingSessionId == sessionId) return;
+    final startedAt = _currentPromptStartedAt;
+    unawaited(
+      _notifications.showOngoingProgress(
+        id: NotificationService.stableId(sessionId),
+        title: _sessionTitle(),
+        body: _isCompacting ? 'Compacting context' : 'Agent is working',
+        payload: _sessionNotificationPayload(
+          sessionId,
+          serverId: _connMgr.activeServerId,
+        ),
+        indeterminate: true,
+        startedAt: startedAt,
+      ),
     );
   }
 
@@ -646,13 +690,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       notifyListeners();
     });
+    if (!_appInForeground) {
+      _showActiveSessionOngoingNotification();
+    }
   }
 
   void _stopPromptRuntime() {
+    final sessionId = _activeSessionId;
     _processingSetAt = null;
     _currentPromptStartedAt = null;
     _promptRuntimeTimer?.cancel();
     _promptRuntimeTimer = null;
+    if (sessionId != null) {
+      unawaited(_cancelSessionOngoingNotification(sessionId));
+    }
   }
 
   List<Map<String, dynamic>> get codexCollaborationModes {
@@ -1018,10 +1069,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final resumed = state == AppLifecycleState.resumed;
     _appInForeground = resumed;
     if (resumed) {
+      final sessionId = _activeSessionId;
+      if (sessionId != null) {
+        unawaited(_cancelSessionOngoingNotification(sessionId));
+      }
       requestServerSettings();
       _resumeActiveSessionAfterForeground();
     } else {
       _backgroundedAt ??= DateTime.now();
+      _showActiveSessionOngoingNotification();
     }
   }
 
@@ -3761,7 +3817,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final body = msg['body'] as String? ?? '';
         final sid = msg['sessionId'] as String? ?? '';
         _notifications.showInstant(
-          id: (sid.isNotEmpty ? sid : title).hashCode & 0x7FFFFFFF,
+          id: NotificationService.stableId(sid.isNotEmpty ? sid : title),
           title: title,
           body: body,
           payload: sid.isNotEmpty
@@ -4593,7 +4649,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
     }
-    _maybeNotify(title: _sessionTitle(), body: notifBody);
+    _maybeNotify(
+      title: _sessionTitle(),
+      body: notifBody,
+      skipWhenBackgroundPushRegistered: true,
+    );
     if (msg['usage'] != null) {
       _lastUsage = Map<String, dynamic>.from(msg['usage'] as Map);
       _lastUsage!['costUsd'] = msg['costUsd'];
@@ -7357,8 +7417,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _serverFileNames[fileId] = fileName;
     _filePathToId[path] = fileId;
     _downloadingFiles.add(fileId);
+    _downloadProgress[fileId] = 0;
     _downloadErrors.remove(fileId);
     _armDownloadWatchdog(fileId);
+    _showDownloadProgressNotification(fileId, fileName, 0);
     if (showInChat) {
       final hasVisibleCard = _messages.any(
         (m) =>
@@ -8639,13 +8701,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void requestFile(String fileId) {
     final serverPath = _serverFiles[fileId];
     if (serverPath == null) return;
+    final fileName = _serverFileNames[fileId] ?? serverPath.split('/').last;
     _cleanupActiveDownload(fileId, deleteTemp: true);
     _downloadErrors.remove(fileId);
     _downloadingFiles.add(fileId);
     _downloadProgress[fileId] = 0;
     _armDownloadWatchdog(fileId);
+    _showDownloadProgressNotification(fileId, fileName, 0);
     notifyListeners();
-    final fileName = _serverFileNames[fileId] ?? serverPath.split('/').last;
     unawaited(
       _tryHttpFileDownload(
         fileId: fileId,
@@ -8727,10 +8790,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _lastNotifiedProgress[fileId] = progress;
               _downloadErrors.remove(fileId);
               _armDownloadWatchdog(fileId);
+              _showDownloadProgressNotification(fileId, fileName, progress);
               notifyListeners();
             }
           } else {
             _armDownloadWatchdog(fileId);
+            _showDownloadProgressNotification(fileId, fileName, null);
           }
         }
       } finally {
@@ -8769,6 +8834,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
       _downloadErrors.remove(fileId);
+      _showDownloadFinishedNotification(
+        fileId,
+        safeName.isEmpty ? 'file' : safeName,
+      );
       debugPrint(
         '[File] HTTP download complete: ${targetFile.path} (fileId=$fileId)',
       );
@@ -8814,6 +8883,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (base64Data.isEmpty) {
       _downloadErrors[fileId] = 'No file data returned';
+      _showDownloadFailedNotification(fileId, 'No file data returned');
       notifyListeners();
       return;
     }
@@ -8842,6 +8912,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       _receivedFiles[fileId] = targetFile.path;
       _downloadErrors.remove(fileId);
+      _showDownloadFinishedNotification(fileId, fileName);
       debugPrint(
         '[File] Saved: ${targetFile.path} (${(fileSize / 1024).toStringAsFixed(1)} KB)',
       );
@@ -8849,6 +8920,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } catch (e) {
       debugPrint('[File] Error saving file: $e');
       _downloadErrors[fileId] = e.toString();
+      _showDownloadFailedNotification(fileId, e.toString());
       notifyListeners();
     }
   }
@@ -8888,6 +8960,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadProgress[fileId] = (chunkIndex + 1) / totalChunks;
       _downloadErrors.remove(fileId);
       _armDownloadWatchdog(fileId);
+      _showDownloadProgressNotification(
+        fileId,
+        fileName,
+        _downloadProgress[fileId],
+      );
       notifyListeners();
     } catch (e) {
       debugPrint(
@@ -8926,6 +9003,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _downloadingFiles.remove(fileId);
         _downloadProgress.remove(fileId);
         _downloadErrors[fileId] = 'Transfer completed without a temp file';
+        _showDownloadFailedNotification(
+          fileId,
+          'Transfer completed without a temp file',
+        );
         notifyListeners();
         return;
       }
@@ -8936,6 +9017,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _downloadingFiles.remove(fileId);
         _downloadProgress.remove(fileId);
         _downloadErrors[fileId] = 'Downloaded temp file is missing';
+        _showDownloadFailedNotification(
+          fileId,
+          'Downloaded temp file is missing',
+        );
         notifyListeners();
         return;
       }
@@ -8967,6 +9052,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
       _downloadErrors.remove(fileId);
+      _showDownloadFinishedNotification(fileId, fileName);
       debugPrint(
         '[File] Chunked download complete: ${targetFile.path} (fileId=$fileId)',
       );
@@ -8979,6 +9065,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadProgress.remove(fileId);
       _downloadErrors[fileId] = e.toString();
       _cancelDownloadWatchdog(fileId);
+      _showDownloadFailedNotification(fileId, e.toString());
       notifyListeners();
     }
   }
@@ -8999,6 +9086,48 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       hash = (hash * 0x01000193) & 0xffffffff;
     }
     return hash.toRadixString(16).padLeft(8, '0');
+  }
+
+  int _downloadNotificationId(String fileId) {
+    return NotificationService.stableId('download:$fileId');
+  }
+
+  void _showDownloadProgressNotification(
+    String fileId,
+    String fileName,
+    double? progress,
+  ) {
+    unawaited(
+      _notifications.showOngoingProgress(
+        id: _downloadNotificationId(fileId),
+        title: 'Downloading $fileName',
+        body: progress == null
+            ? 'Download in progress'
+            : '${(progress.clamp(0.0, 1.0) * 100).round()}% complete',
+        progress: progress,
+        indeterminate: progress == null,
+      ),
+    );
+  }
+
+  void _showDownloadFinishedNotification(String fileId, String fileName) {
+    unawaited(
+      _notifications.showInstant(
+        id: _downloadNotificationId(fileId),
+        title: 'Download complete',
+        body: fileName,
+      ),
+    );
+  }
+
+  void _showDownloadFailedNotification(String fileId, String error) {
+    unawaited(
+      _notifications.showInstant(
+        id: _downloadNotificationId(fileId),
+        title: 'Download failed',
+        body: error,
+      ),
+    );
   }
 
   void _armDownloadWatchdog(String fileId) {
@@ -9038,6 +9167,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _failDownload(String fileId, String error) {
     _cleanupActiveDownload(fileId, deleteTemp: true);
     _downloadErrors[fileId] = error;
+    _showDownloadFailedNotification(fileId, error);
     notifyListeners();
   }
 

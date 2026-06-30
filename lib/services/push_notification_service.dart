@@ -8,15 +8,9 @@ import 'notification_service.dart';
 Future<void> socketAgentFirebaseBackgroundHandler(RemoteMessage message) async {
   try {
     await Firebase.initializeApp();
-    final title = message.data['title'];
-    final body = message.data['body'];
-    if (title is! String || title.trim().isEmpty) return;
-    final payload = PushNotificationService.payloadForData(message.data);
-    await NotificationService().showInstant(
-      id: PushNotificationService.notificationIdForData(message.data, title),
-      title: title,
-      body: body is String ? body : '',
-      payload: payload,
+    await PushNotificationService.handleRemoteMessage(
+      message,
+      foreground: false,
     );
   } catch (e) {
     debugPrint('[Push] Background notification failed: $e');
@@ -61,18 +55,7 @@ class PushNotificationService {
         onTokenRefresh?.call(token);
       });
       _messageSub = FirebaseMessaging.onMessage.listen((message) {
-        final title = message.notification?.title ?? message.data['title'];
-        final body = message.notification?.body ?? message.data['body'];
-        if (title is! String || title.trim().isEmpty) return;
-        final shouldDisplay =
-            shouldDisplayForegroundNotification?.call(message.data) ?? true;
-        if (!shouldDisplay) return;
-        NotificationService().showInstant(
-          id: notificationIdForData(message.data, title),
-          title: title,
-          body: body is String ? body : '',
-          payload: _payloadFor(message),
-        );
+        unawaited(handleRemoteMessage(message, foreground: true));
       });
       _openedSub = FirebaseMessaging.onMessageOpenedApp.listen((message) {
         onNotificationTap?.call(_payloadFor(message));
@@ -96,6 +79,63 @@ class PushNotificationService {
     return payloadForData(message.data);
   }
 
+  static Future<void> handleRemoteMessage(
+    RemoteMessage message, {
+    required bool foreground,
+  }) async {
+    final data = message.data;
+    final rawTitle = message.notification?.title ?? data['title'];
+    final rawBody = message.notification?.body ?? data['body'];
+    if (rawTitle is! String || rawTitle.trim().isEmpty) return;
+
+    final title = rawTitle.trim();
+    final body = rawBody is String ? rawBody : '';
+    final kind = data['kind'] as String? ?? '';
+    final id = notificationIdForData(data, title);
+    final payload = payloadForData(data);
+    final shouldDisplay = foreground
+        ? (shouldDisplayForegroundNotification?.call(data) ?? true)
+        : true;
+    final notifications = NotificationService();
+
+    if (kind == 'session_started') {
+      if (!shouldDisplay) {
+        await notifications.cancel(id);
+        return;
+      }
+      final startedAt = DateTime.tryParse(data['startedAt'] as String? ?? '');
+      await notifications.showOngoingProgress(
+        id: id,
+        title: title,
+        body: body.isEmpty ? 'Agent is working' : body,
+        payload: payload,
+        indeterminate: true,
+        startedAt: startedAt,
+      );
+      return;
+    }
+
+    if (kind == 'session_finished') {
+      await notifications.cancel(id);
+      if (!shouldDisplay) return;
+      await notifications.showInstant(
+        id: id,
+        title: title,
+        body: body,
+        payload: payload,
+      );
+      return;
+    }
+
+    if (!shouldDisplay) return;
+    await notifications.showInstant(
+      id: id,
+      title: title,
+      body: body,
+      payload: payload,
+    );
+  }
+
   static String? payloadForData(Map<String, dynamic> data) {
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null || sessionId.isEmpty) return null;
@@ -107,7 +147,7 @@ class PushNotificationService {
   static int notificationIdForData(Map<String, dynamic> data, String title) {
     final sessionId = data['sessionId'] as String?;
     final key = sessionId != null && sessionId.isNotEmpty ? sessionId : title;
-    return key.hashCode & 0x7FFFFFFF;
+    return NotificationService.stableId(key);
   }
 
   void dispose() {

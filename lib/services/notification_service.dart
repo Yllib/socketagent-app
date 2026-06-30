@@ -9,6 +9,15 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._();
 
+  static int stableId(String key) {
+    var hash = 0x811c9dc5;
+    for (final unit in key.codeUnits) {
+      hash ^= unit;
+      hash = (hash * 0x01000193) & 0xffffffff;
+    }
+    return hash & 0x7fffffff;
+  }
+
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
@@ -84,6 +93,17 @@ class NotificationService {
       ),
     );
 
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        'active_work',
+        'Active Work',
+        description: 'Ongoing session and download progress',
+        importance: Importance.low,
+        playSound: false,
+        enableVibration: false,
+      ),
+    );
+
     _isInitialized = true;
     debugPrint('[Notification] initialized, timezone=$timeZoneName');
   }
@@ -132,6 +152,68 @@ class NotificationService {
       return true;
     } catch (e) {
       debugPrint('[Notification] show error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> showOngoingProgress({
+    required int id,
+    required String title,
+    required String body,
+    String? payload,
+    double? progress,
+    bool indeterminate = false,
+    DateTime? startedAt,
+  }) async {
+    if (!_isInitialized) await initialize();
+
+    try {
+      final percent = progress == null
+          ? 0
+          : (progress.clamp(0.0, 1.0) * 100).round();
+      final androidDetails = AndroidNotificationDetails(
+        'active_work',
+        'Active Work',
+        channelDescription: 'Ongoing session and download progress',
+        importance: Importance.low,
+        priority: Priority.low,
+        playSound: false,
+        enableVibration: false,
+        ongoing: true,
+        autoCancel: false,
+        onlyAlertOnce: true,
+        showProgress: indeterminate || progress != null,
+        maxProgress: 100,
+        progress: percent,
+        indeterminate: indeterminate,
+        showWhen: startedAt != null,
+        when: startedAt?.millisecondsSinceEpoch,
+        usesChronometer: startedAt != null,
+        styleInformation: BigTextStyleInformation(body, contentTitle: title),
+      );
+      final details = NotificationDetails(android: androidDetails);
+      await _plugin.show(
+        id: id,
+        title: title,
+        body: body,
+        notificationDetails: details,
+        payload: payload,
+      );
+      return true;
+    } catch (e) {
+      debugPrint('[Notification] ongoing/progress show error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> cancel(int id) async {
+    if (!_isInitialized) await initialize();
+
+    try {
+      await _plugin.cancel(id: id);
+      return true;
+    } catch (e) {
+      debugPrint('[Notification] cancel error: $e');
       return false;
     }
   }
