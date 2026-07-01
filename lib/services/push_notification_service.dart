@@ -146,7 +146,10 @@ class PushNotificationService {
 
   static int notificationIdForData(Map<String, dynamic> data, String title) {
     final sessionId = data['sessionId'] as String?;
-    final key = sessionId != null && sessionId.isNotEmpty ? sessionId : title;
+    final serverId = data['serverId'] as String?;
+    final key = sessionId != null && sessionId.isNotEmpty
+        ? 'session:${serverId ?? ''}:$sessionId'
+        : title;
     return NotificationService.stableId(key);
   }
 

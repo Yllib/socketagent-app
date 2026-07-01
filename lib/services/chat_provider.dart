@@ -113,6 +113,24 @@ class BackendInstallState {
   }
 }
 
+class _RunningSessionInfo {
+  const _RunningSessionInfo({
+    required this.sessionId,
+    required this.serverId,
+    required this.serverName,
+    required this.title,
+    this.startedAt,
+    this.compacting = false,
+  });
+
+  final String sessionId;
+  final String serverId;
+  final String serverName;
+  final String title;
+  final DateTime? startedAt;
+  final bool compacting;
+}
+
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
@@ -206,10 +224,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Timer> _backendInstallAckTimers = {};
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
+  final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
+  final Set<String> _shownOngoingSessionNotificationKeys = {};
+  final Map<String, DateTime> _recentLocalInstantNotifications = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
   String? _activeSessionBackend;
   String? _viewingSessionId; // set by HomeScreen when user is on that screen
+  String? _viewingServerId;
   bool _appInForeground = true;
   // Per-session input drafts (sessionId → unsent text)
   final Map<String, String> _sessionDrafts = {};
@@ -376,6 +398,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     SharedPreferences.getInstance().then((prefs) {
       prefs.setStringList('notif_muted_sessions', _notifMutedSessions.toList());
     });
+    _syncOngoingSessionNotifications();
     notifyListeners();
   }
 
@@ -401,11 +424,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void setViewingSession(String? sessionId) {
+  void setViewingSession(String? sessionId, {String? serverId}) {
     _viewingSessionId = sessionId;
-    if (_appInForeground && sessionId != null) {
-      unawaited(_cancelSessionOngoingNotification(sessionId));
-    }
+    _viewingServerId = sessionId == null
+        ? null
+        : serverId ?? _connMgr.activeServerId;
+    _syncOngoingSessionNotifications();
   }
 
   /// Get recent CWDs (server-side, keyed by serverId).
@@ -501,21 +525,93 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.sendToServer(sid, {'type': 'terminal_kill'});
   }
 
-  void _maybeNotify({required String title, required String body}) {
-    final sessionId = _activeSessionId;
-    if (sessionId == null) return;
-    if (_notifMutedSessions.contains(sessionId)) return;
-    if (_viewingSessionId == sessionId && _appInForeground) return;
+  int _sessionNotificationId(String sessionId, {String? serverId}) {
+    return NotificationService.stableId('session:${serverId ?? ''}:$sessionId');
+  }
 
-    final serverId = _connMgr.activeServerId;
-    final notifId = NotificationService.stableId(sessionId);
+  String _localInstantKey(String kind, String sessionId, {String? serverId}) {
+    return '$kind\u0001${serverId ?? ''}\u0001$sessionId';
+  }
+
+  void _recordLocalInstantNotification(
+    String kind,
+    String sessionId, {
+    String? serverId,
+  }) {
+    final now = DateTime.now();
+    _recentLocalInstantNotifications.removeWhere(
+      (_, at) => now.difference(at) > const Duration(seconds: 10),
+    );
+    _recentLocalInstantNotifications[_localInstantKey(
+          kind,
+          sessionId,
+          serverId: serverId,
+        )] =
+        now;
+  }
+
+  bool _hasRecentLocalInstantNotification(
+    String kind,
+    String sessionId, {
+    String? serverId,
+  }) {
+    final at =
+        _recentLocalInstantNotifications[_localInstantKey(
+          kind,
+          sessionId,
+          serverId: serverId,
+        )];
+    return at != null &&
+        DateTime.now().difference(at) < const Duration(seconds: 5);
+  }
+
+  bool _isViewingSession(String sessionId, {String? serverId}) {
+    if (!_appInForeground || _viewingSessionId != sessionId) return false;
+    final viewingServerId = _viewingServerId;
+    if (serverId != null &&
+        serverId.isNotEmpty &&
+        viewingServerId != null &&
+        viewingServerId.isNotEmpty) {
+      return viewingServerId == serverId;
+    }
+    return true;
+  }
+
+  void _showSessionCompletionNotification(
+    String sessionId, {
+    String? serverId,
+    required String title,
+    required String body,
+  }) {
+    if (sessionId.isEmpty) return;
+    if (_notifMutedSessions.contains(sessionId)) return;
+    if (_isViewingSession(sessionId, serverId: serverId)) return;
+
+    final notifId = _sessionNotificationId(sessionId, serverId: serverId);
+    _recordLocalInstantNotification(
+      'session_finished',
+      sessionId,
+      serverId: serverId,
+    );
     _notifications.showInstant(
       id: notifId,
       title: title,
       body: body,
       payload:
           'session:${Uri.encodeComponent(sessionId)}'
-          '${serverId != null ? ':${Uri.encodeComponent(serverId)}' : ''}',
+          '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}',
+    );
+  }
+
+  void _maybeNotify({required String title, required String body}) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null) return;
+
+    _showSessionCompletionNotification(
+      sessionId,
+      serverId: _connMgr.activeServerId,
+      title: title,
+      body: body,
     );
   }
 
@@ -524,36 +620,172 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}';
   }
 
-  Future<void> _cancelSessionOngoingNotification(String sessionId) {
-    return _notifications.cancel(NotificationService.stableId(sessionId));
+  String _runningSessionKey(String serverId, String sessionId) {
+    return '$serverId\u0001$sessionId';
   }
 
-  void _showActiveSessionOngoingNotification() {
-    final sessionId = _activeSessionId;
-    if (sessionId == null || !_isProcessing) return;
-    if (_notifMutedSessions.contains(sessionId)) return;
-    if (_appInForeground && _viewingSessionId == sessionId) return;
-    final startedAt = _currentPromptStartedAt;
-    unawaited(
-      _notifications.showOngoingProgress(
-        id: NotificationService.stableId(sessionId),
-        title: _sessionTitle(),
-        body: _isCompacting ? 'Compacting context' : 'Agent is working',
-        payload: _sessionNotificationPayload(
-          sessionId,
-          serverId: _connMgr.activeServerId,
-        ),
-        indeterminate: true,
-        startedAt: startedAt,
-      ),
+  Future<void> _cancelSessionOngoingNotificationByKey(String key) {
+    final info = _runningSessionNotifications[key];
+    final parts = key.split('\u0001');
+    final sessionId = info?.sessionId ?? parts.last;
+    final serverId = info?.serverId ?? (parts.length > 1 ? parts.first : null);
+    if (sessionId.isEmpty) return Future.value();
+    return _notifications.cancel(
+      _sessionNotificationId(sessionId, serverId: serverId),
     );
+  }
+
+  bool _shouldShowOngoingSessionNotification(_RunningSessionInfo info) {
+    if (_notifMutedSessions.contains(info.sessionId)) return false;
+    if (_isViewingSession(info.sessionId, serverId: info.serverId)) {
+      return false;
+    }
+    return true;
+  }
+
+  void _syncOngoingSessionNotifications() {
+    final activeKeys = _runningSessionNotifications.keys.toSet();
+    final staleKeys = _shownOngoingSessionNotificationKeys
+        .difference(activeKeys)
+        .toList();
+    for (final key in staleKeys) {
+      _shownOngoingSessionNotificationKeys.remove(key);
+      unawaited(_cancelSessionOngoingNotificationByKey(key));
+    }
+
+    for (final entry in _runningSessionNotifications.entries) {
+      final key = entry.key;
+      final info = entry.value;
+      if (!_shouldShowOngoingSessionNotification(info)) {
+        if (_shownOngoingSessionNotificationKeys.remove(key)) {
+          unawaited(_cancelSessionOngoingNotificationByKey(key));
+        }
+        continue;
+      }
+
+      _shownOngoingSessionNotificationKeys.add(key);
+      unawaited(
+        _notifications.showOngoingProgress(
+          id: _sessionNotificationId(info.sessionId, serverId: info.serverId),
+          title: info.title.isEmpty ? 'Session' : info.title,
+          body: info.compacting
+              ? 'Compacting context'
+              : info.serverName.isEmpty
+              ? 'Agent is working'
+              : 'Agent is working on ${info.serverName}',
+          payload: _sessionNotificationPayload(
+            info.sessionId,
+            serverId: info.serverId,
+          ),
+          indeterminate: true,
+          startedAt: info.startedAt,
+        ),
+      );
+    }
+  }
+
+  String _sessionTitleFor(String sessionId, {String? serverId}) {
+    final exact = _sessions
+        .where(
+          (s) =>
+              s.id == sessionId &&
+              (serverId == null || serverId.isEmpty || s.serverId == serverId),
+        )
+        .firstOrNull;
+    if (exact != null) {
+      return exact.title.isNotEmpty ? exact.title : exact.cwd;
+    }
+    if (sessionId == _activeSessionId) return _sessionTitle();
+    return 'Session';
+  }
+
+  void _markSessionRunning(
+    String? sessionId, {
+    String? serverId,
+    DateTime? startedAt,
+    bool compacting = false,
+    bool sync = true,
+  }) {
+    if (sessionId == null || sessionId.isEmpty) return;
+    final sid = serverId ?? _connMgr.activeServerId ?? '';
+    final config = sid.isEmpty
+        ? null
+        : _serverConfigs.where((c) => c.id == sid).firstOrNull;
+    _runningSessionNotifications[_runningSessionKey(
+      sid,
+      sessionId,
+    )] = _RunningSessionInfo(
+      sessionId: sessionId,
+      serverId: sid,
+      serverName: config?.name ?? '',
+      title: _sessionTitleFor(sessionId, serverId: sid),
+      startedAt: startedAt,
+      compacting: compacting,
+    );
+    if (sync) _syncOngoingSessionNotifications();
+  }
+
+  void _markSessionIdle(String? sessionId, {String? serverId}) {
+    if (sessionId == null || sessionId.isEmpty) return;
+    final matchingKeys = _runningSessionNotifications.keys.where((key) {
+      final info = _runningSessionNotifications[key];
+      if (info == null || info.sessionId != sessionId) return false;
+      if (serverId == null || serverId.isEmpty) return true;
+      return info.serverId == serverId;
+    }).toList();
+    for (final key in matchingKeys) {
+      _runningSessionNotifications.remove(key);
+    }
+    _syncOngoingSessionNotifications();
+  }
+
+  void _replaceRunningSessionsForServer(
+    String? serverId,
+    Set<String> runningSessionIds,
+    Map<String, DateTime?> startedAtBySessionId, {
+    Set<String> compactingSessionIds = const <String>{},
+  }) {
+    final sid = serverId ?? '';
+    final prefix = '$sid\u0001';
+    _runningSessionNotifications.removeWhere(
+      (key, _) => key.startsWith(prefix),
+    );
+    for (final sessionId in runningSessionIds) {
+      _markSessionRunning(
+        sessionId,
+        serverId: sid,
+        startedAt: startedAtBySessionId[sessionId],
+        compacting: compactingSessionIds.contains(sessionId),
+        sync: false,
+      );
+    }
+    _syncOngoingSessionNotifications();
   }
 
   bool _shouldDisplayForegroundPushNotification(Map<String, dynamic> data) {
     final sessionId = data['sessionId'] as String?;
     if (sessionId == null || sessionId.isEmpty) return true;
+    final serverId = data['serverId'] as String?;
+    final kind = data['kind'] as String? ?? '';
     if (_notifMutedSessions.contains(sessionId)) return false;
-    if (_viewingSessionId == sessionId && _appInForeground) return false;
+    if (kind == 'session_finished' &&
+        _hasRecentLocalInstantNotification(
+          'session_finished',
+          sessionId,
+          serverId: serverId,
+        )) {
+      return false;
+    }
+    if (kind == 'tool_notification' &&
+        _hasRecentLocalInstantNotification(
+          'tool_notification',
+          sessionId,
+          serverId: serverId,
+        )) {
+      return false;
+    }
+    if (kind == 'tool_notification') return true;
+    if (_isViewingSession(sessionId, serverId: serverId)) return false;
     return true;
   }
 
@@ -681,20 +913,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       notifyListeners();
     });
-    if (!_appInForeground) {
-      _showActiveSessionOngoingNotification();
-    }
+    _markSessionRunning(
+      _activeSessionId,
+      serverId: _connMgr.activeServerId,
+      startedAt: _currentPromptStartedAt,
+      compacting: _isCompacting,
+    );
   }
 
   void _stopPromptRuntime() {
-    final sessionId = _activeSessionId;
     _processingSetAt = null;
     _currentPromptStartedAt = null;
     _promptRuntimeTimer?.cancel();
     _promptRuntimeTimer = null;
-    if (sessionId != null) {
-      unawaited(_cancelSessionOngoingNotification(sessionId));
-    }
   }
 
   List<Map<String, dynamic>> get codexCollaborationModes {
@@ -1060,15 +1291,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final resumed = state == AppLifecycleState.resumed;
     _appInForeground = resumed;
     if (resumed) {
-      final sessionId = _activeSessionId;
-      if (sessionId != null) {
-        unawaited(_cancelSessionOngoingNotification(sessionId));
-      }
+      _syncOngoingSessionNotifications();
       requestServerSettings();
       _resumeActiveSessionAfterForeground();
     } else {
       _backgroundedAt ??= DateTime.now();
-      _showActiveSessionOngoingNotification();
+      _syncOngoingSessionNotifications();
     }
   }
 
@@ -2676,6 +2904,76 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  String _resultNotificationBody(
+    Map<String, dynamic> msg,
+    String sessionId, {
+    String? serverId,
+  }) {
+    final errors = (msg['errors'] as List?)?.whereType<String>().toList() ?? [];
+    final errorText = errors.join('\n').trim();
+    if (errorText.isNotEmpty) {
+      return errorText.length > 200
+          ? '${errorText.substring(0, 200)}...'
+          : errorText;
+    }
+
+    final content = (msg['content'] as String? ?? '').trim();
+    if (content.isNotEmpty) {
+      return content.length > 200 ? '${content.substring(0, 200)}...' : content;
+    }
+
+    final session = _sessions
+        .where(
+          (s) =>
+              s.id == sessionId &&
+              (serverId == null || serverId.isEmpty || s.serverId == serverId),
+        )
+        .firstOrNull;
+    final preview = session?.messagePreview.trim() ?? '';
+    if (preview.isNotEmpty) {
+      return preview.length > 200 ? '${preview.substring(0, 200)}...' : preview;
+    }
+    return 'Query complete';
+  }
+
+  bool _handleNotificationOnlyServerMessage(
+    String type,
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) {
+    switch (type) {
+      case 'session_state_changed':
+        final sessionState = msg['state'] as String? ?? 'idle';
+        final stateSessionId = msg['sessionId'] as String? ?? '';
+        if (stateSessionId.isEmpty) return true;
+        final serverActiveStartedAt = _parseServerDateTime(
+          msg['activeStartedAt'],
+        );
+        if (sessionState == 'running') {
+          _markSessionRunning(
+            stateSessionId,
+            serverId: serverId,
+            startedAt: serverActiveStartedAt,
+          );
+        } else if (sessionState == 'idle') {
+          _markSessionIdle(stateSessionId, serverId: serverId);
+        }
+        return true;
+      case 'result':
+        final sessionId = msg['sessionId'] as String? ?? '';
+        if (sessionId.isEmpty) return true;
+        _markSessionIdle(sessionId, serverId: serverId);
+        _showSessionCompletionNotification(
+          sessionId,
+          serverId: serverId,
+          title: _sessionTitleFor(sessionId, serverId: serverId),
+          body: _resultNotificationBody(msg, sessionId, serverId: serverId),
+        );
+        return true;
+    }
+    return false;
+  }
+
   void _handleServerMessage(Map<String, dynamic> msg, [String? serverId]) {
     final type = msg['type'] as String?;
     if (type == null) return;
@@ -2717,13 +3015,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'push_token_registered',
       'push_token_unregistered',
       'push_registration_status',
+      'scheduled_task_notification',
+      'reminder',
     };
 
     // Route: only process non-global messages from the active server
-    if (!globalTypes.contains(type) &&
+    final fromInactiveServer =
+        !globalTypes.contains(type) &&
         serverId != null &&
         _connMgr.activeServerId != null &&
-        serverId != _connMgr.activeServerId) {
+        serverId != _connMgr.activeServerId;
+    if (fromInactiveServer) {
+      _handleNotificationOnlyServerMessage(type, msg, serverId);
       return;
     }
 
@@ -2736,8 +3039,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         messageSessionId != null &&
         messageSessionId.isNotEmpty) {
       if (_activeSessionId == null) {
-        if (type != 'session_created') return;
+        if (type != 'session_created') {
+          _handleNotificationOnlyServerMessage(type, msg, serverId);
+          return;
+        }
       } else if (messageSessionId != _activeSessionId) {
+        _handleNotificationOnlyServerMessage(type, msg, serverId);
         return;
       }
     }
@@ -3303,12 +3610,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'session_state_changed':
         final sessionState = msg['state'] as String? ?? 'idle';
+        final stateSessionId = msg['sessionId'] as String? ?? _activeSessionId;
         final serverActiveStartedAt = _parseServerDateTime(
           msg['activeStartedAt'],
         );
         _requiresAction = sessionState == 'requires_action';
         // Use SDK state as authoritative source for running status
         if (sessionState == 'running') {
+          _markSessionRunning(
+            stateSessionId,
+            serverId: serverId ?? _connMgr.activeServerId,
+            startedAt: serverActiveStartedAt,
+          );
           _isProcessing = true;
           _processingSetAt = null; // server confirmed
           _startPromptRuntime(
@@ -3316,6 +3629,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             replace: serverActiveStartedAt != null,
           );
         } else if (sessionState == 'idle') {
+          _markSessionIdle(
+            stateSessionId,
+            serverId: serverId ?? _connMgr.activeServerId,
+          );
           _isProcessing = false;
           _processingSetAt = null;
           _stopPromptRuntime();
@@ -3470,10 +3787,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
         _isProcessing = msg['running'] == true || serverSaysCompacting;
         if (!_isProcessing) {
+          _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
           _isCompacting = false;
           _stopPromptRuntime();
           _currentStreamingMessage = null;
         } else {
+          _markSessionRunning(
+            _activeSessionId,
+            serverId: _connMgr.activeServerId,
+            startedAt: serverActiveStartedAt,
+            compacting: serverSaysCompacting,
+          );
           // Restore compacting state on resume. Compacting is active work even
           // if the agent turn itself is between running status updates.
           _isCompacting = serverSaysCompacting;
@@ -3538,15 +3862,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           _captureServerRuntimeInfo(msg, serverId);
         }
-        // Only process remaining status_sync fields from the active server
-        if (serverId != null && serverId != _connMgr.activeServerId) break;
-        // Check if THIS session is running, not just any session
         final runningSessions = (msg['runningSessions'] as List?)
             ?.map((e) => e.toString())
             .toSet();
         final compactingSessions = (msg['compactingSessions'] as List?)
             ?.map((e) => e.toString())
             .toSet();
+        if (serverId != null && runningSessions != null) {
+          final rawStartedAt = msg['sessionActiveStartedAt'];
+          final startedAtBySession = <String, DateTime?>{};
+          if (rawStartedAt is Map) {
+            for (final entry in rawStartedAt.entries) {
+              startedAtBySession[entry.key.toString()] = _parseServerDateTime(
+                entry.value,
+              );
+            }
+          }
+          _replaceRunningSessionsForServer(
+            serverId,
+            runningSessions,
+            startedAtBySession,
+            compactingSessionIds: compactingSessions ?? const <String>{},
+          );
+        }
+        // Only process remaining status_sync fields from the active server
+        if (serverId != null && serverId != _connMgr.activeServerId) break;
+        // Check if THIS session is running, not just any session
         final serverActiveStartedAt = _activeStartedAtFromStatusSync(msg);
         final serverSaysCompacting =
             compactingSessions != null &&
@@ -3611,6 +3952,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'error':
         _messages.add(ChatMessage.error(msg['message'] ?? 'Unknown error'));
+        _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
         _isProcessing = false;
         _stopPromptRuntime();
         notifyListeners();
@@ -3807,13 +4149,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         final body = msg['body'] as String? ?? '';
         final sid = msg['sessionId'] as String? ?? '';
+        if (sid.isNotEmpty) {
+          _recordLocalInstantNotification(
+            'tool_notification',
+            sid,
+            serverId: serverId,
+          );
+        }
         _notifications.showInstant(
-          id: NotificationService.stableId(sid.isNotEmpty ? sid : title),
+          id: sid.isNotEmpty
+              ? _sessionNotificationId(sid, serverId: serverId)
+              : NotificationService.stableId(title),
           title: title,
           body: body,
           payload: sid.isNotEmpty
               ? 'session:${Uri.encodeComponent(sid)}'
-                    '${serverId != null ? ':${Uri.encodeComponent(serverId)}' : ''}'
+                    '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}'
               : null,
         );
         break;
@@ -4613,6 +4964,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleResult(Map<String, dynamic> msg) {
+    _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
     _currentStreamingMessage = null;
     _closeThinkingMessage();
     _isProcessing = false;
@@ -6217,6 +6569,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Store per-server and rebuild merged list
       _perServerSessions[serverId] = sessions;
       _rebuildSessionList();
+      _replaceRunningSessionsForServer(
+        serverId,
+        sessions.where((session) => session.running).map((s) => s.id).toSet(),
+        {
+          for (final session in sessions.where((session) => session.running))
+            session.id: _parseServerDateTime(session.activeStartedAt),
+        },
+      );
       _saveSessionCacheSoon();
     } else {
       // Legacy single-server path
