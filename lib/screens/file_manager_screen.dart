@@ -1459,7 +1459,7 @@ class _FileEntryTile extends StatelessWidget {
       ),
       subtitle: Text(
         isDownloading && downloadProgress != null
-            ? 'Downloading... ${(downloadProgress! * 100).toStringAsFixed(0)}%'
+            ? 'Downloading... ${(downloadProgress!.clamp(0.0, 1.0) * 100).floor()}%'
             : _subtitle(entry),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,

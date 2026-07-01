@@ -18,6 +18,16 @@ class NotificationService {
     return hash & 0x7fffffff;
   }
 
+  static int progressPercent(double? progress) {
+    if (progress == null || !progress.isFinite) return 0;
+    final clamped = progress.clamp(0.0, 1.0).toDouble();
+    if (clamped >= 1.0) return 100;
+    final percent = (clamped * 100).floor();
+    if (percent < 0) return 0;
+    if (percent > 99) return 99;
+    return percent;
+  }
+
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
@@ -27,6 +37,14 @@ class NotificationService {
 
   /// Set this to handle notification taps (e.g., navigate to a session)
   static void Function(String? payload)? onNotificationTap;
+
+  static String? payloadForResponse(NotificationResponse? response) {
+    if (response == null) return null;
+    final actionId = response.actionId;
+    final isAction = actionId != null && actionId.isNotEmpty;
+    if (!isAction) return response.payload;
+    return 'notification_action:${Uri.encodeComponent(actionId)}:${Uri.encodeComponent(response.payload ?? '')}';
+  }
 
   String? takeLaunchPayload() {
     final payload = _launchPayload;
@@ -49,14 +67,15 @@ class NotificationService {
 
     final launchDetails = await _plugin.getNotificationAppLaunchDetails();
     if (launchDetails?.didNotificationLaunchApp == true) {
-      _launchPayload = launchDetails?.notificationResponse?.payload;
+      _launchPayload = payloadForResponse(launchDetails?.notificationResponse);
     }
 
     await _plugin.initialize(
       settings: initSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        debugPrint('[Notification] tapped: ${response.payload}');
-        onNotificationTap?.call(response.payload);
+        final payload = payloadForResponse(response);
+        debugPrint('[Notification] tapped: $payload');
+        onNotificationTap?.call(payload);
       },
     );
 
@@ -113,6 +132,7 @@ class NotificationService {
     required String title,
     required String body,
     String? payload,
+    List<AndroidNotificationAction>? actions,
   }) async {
     if (!_isInitialized) await initialize();
 
@@ -138,6 +158,7 @@ class NotificationService {
         playSound: true,
         enableVibration: true,
         styleInformation: BigTextStyleInformation(body, contentTitle: title),
+        actions: actions,
       );
       final details = NotificationDetails(android: androidDetails);
 
@@ -164,13 +185,12 @@ class NotificationService {
     double? progress,
     bool indeterminate = false,
     DateTime? startedAt,
+    List<AndroidNotificationAction>? actions,
   }) async {
     if (!_isInitialized) await initialize();
 
     try {
-      final percent = progress == null
-          ? 0
-          : (progress.clamp(0.0, 1.0) * 100).round();
+      final percent = progressPercent(progress);
       final androidDetails = AndroidNotificationDetails(
         'active_work',
         'Active Work',
@@ -190,6 +210,7 @@ class NotificationService {
         when: startedAt?.millisecondsSinceEpoch,
         usesChronometer: startedAt != null,
         styleInformation: BigTextStyleInformation(body, contentTitle: title),
+        actions: actions,
       );
       final details = NotificationDetails(android: androidDetails);
       await _plugin.show(

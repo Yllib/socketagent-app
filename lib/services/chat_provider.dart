@@ -4,7 +4,9 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
+import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../models/archive_entry.dart';
@@ -133,12 +135,32 @@ class _RunningSessionInfo {
   final bool suppressOngoingNotification;
 }
 
+class _DownloadProgressNotification {
+  const _DownloadProgressNotification({
+    required this.fileId,
+    required this.fileName,
+    required this.progress,
+  });
+
+  final String fileId;
+  final String fileName;
+  final double? progress;
+}
+
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
   static const String _sessionCachePrefsKey = 'cached_session_lists_v1';
   static const String _pushRegisteredServersPrefsKey =
       'push_registered_server_ids';
+  static const Duration _downloadNotificationMinInterval = Duration(
+    milliseconds: 750,
+  );
+  static const String _downloadActionCancel = 'download_cancel';
+  static const String _downloadActionRetry = 'download_retry';
+  static const String _downloadActionDismiss = 'download_dismiss';
+  static const String _downloadActionOpenSession = 'download_open_session';
+  static const String _downloadActionOpenFile = 'download_open_file';
 
   final ConnectionManager _connMgr = ConnectionManager();
 
@@ -188,12 +210,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _serverFiles = {}; // fileId → server path
   final Map<String, String> _serverFileNames = {}; // fileId → display name
   final Map<String, String> _downloadServerIds = {}; // fileId → server id
+  final Map<String, String> _downloadSessionIds = {}; // fileId → session id
   final Set<String> _downloadingFiles = {}; // fileId set
+  final Set<String> _cancelledDownloads = {}; // fileId set
   final Map<String, double> _downloadProgress = {}; // fileId → progress
   final Map<String, String> _downloadErrors = {}; // fileId → error
   final Map<String, Timer> _downloadWatchdogs = {}; // fileId → watchdog timer
   final Map<String, int> _downloadRetryCounts = {}; // fileId → retry count
   final Map<String, double> _lastNotifiedProgress = {}; // throttle UI updates
+  final Map<String, Timer> _downloadNotificationTimers = {};
+  final Map<String, DateTime> _downloadNotificationLastShownAt = {};
+  final Map<String, _DownloadProgressNotification>
+  _pendingDownloadNotifications = {};
+  final Map<String, int> _downloadReceivedBytes = {}; // fileId → bytes saved
   final Map<String, IOSink> _activeDownloads = {}; // fileId → write sink
   final Map<String, String> _downloadTempPaths = {}; // fileId → temp path
   final Map<String, BytesBuilder> _fileBytesBuffers = {};
@@ -7818,8 +7847,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (serverId != null && serverId.isNotEmpty) {
       _downloadServerIds[fileId] = serverId;
     }
+    if (showInChat && _activeSessionId != null) {
+      _downloadSessionIds[fileId] = _activeSessionId!;
+    }
     _filePathToId[path] = fileId;
     _downloadRetryCounts[fileId] = 0;
+    _cancelledDownloads.remove(fileId);
     _downloadingFiles.add(fileId);
     _downloadProgress[fileId] = 0;
     _downloadErrors.remove(fileId);
@@ -9068,11 +9101,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (currentServerId != null && currentServerId.isNotEmpty) {
         _downloadServerIds[fileId] = currentServerId;
       }
+      final messageSessionId = msg['sessionId'] as String? ?? '';
+      if (messageSessionId.isNotEmpty) {
+        _downloadSessionIds[fileId] = messageSessionId;
+      }
       _filePathToId[filePath] = fileId;
       debugPrint(
         '[File] Available for download: $fileName (id=$fileId, path=$filePath)',
       );
-      final messageSessionId = msg['sessionId'] as String? ?? '';
       final belongsToActiveSession =
           messageSessionId.isEmpty ||
           _activeSessionId == null ||
@@ -9107,6 +9143,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  Future<void> cancelDownloadFromNotification(String fileId) async {
+    _cancelledDownloads.add(fileId);
+    await _cleanupActiveDownload(fileId, deleteTemp: true);
+    _downloadRetryCounts.remove(fileId);
+    _downloadErrors[fileId] = 'Download cancelled';
+    await _notifications.cancel(_downloadNotificationId(fileId));
+    notifyListeners();
+  }
+
+  void retryDownloadFromNotification(String fileId) {
+    if (!_serverFiles.containsKey(fileId)) return;
+    requestFile(fileId);
+  }
+
+  Future<void> dismissDownloadNotification(String fileId) async {
+    await _notifications.cancel(_downloadNotificationId(fileId));
+  }
+
+  Future<void> openDownloadedFileFromNotification(
+    String fileId, {
+    String? localPath,
+  }) async {
+    final path = localPath?.isNotEmpty == true
+        ? localPath!
+        : _receivedFiles[fileId];
+    if (path == null || path.isEmpty) return;
+    final result = await OpenFilex.open(path);
+    debugPrint(
+      '[File] Open downloaded file result: ${result.type} (${result.message}) path=$path',
+    );
+  }
+
   /// Request file data from server (user tapped download).
   /// Direct/manual servers use HTTP for large-file speed; relay falls back to
   /// the encrypted socket chunk path.
@@ -9117,6 +9185,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _cleanupActiveDownload(fileId, deleteTemp: false);
     _downloadErrors.remove(fileId);
     _downloadRetryCounts[fileId] = 0;
+    _cancelledDownloads.remove(fileId);
     final currentServerId = _connMgr.activeServerId;
     if (currentServerId != null && currentServerId.isNotEmpty) {
       _downloadServerIds[fileId] = currentServerId;
@@ -9230,9 +9299,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     int? total,
   ) {
     if (total != null && total > 0) {
-      final progress = (received / total).clamp(0.0, 1.0);
-      final last = _lastNotifiedProgress[fileId] ?? -1.0;
-      if (progress >= 1.0 || progress - last >= 0.01) {
+      final progress = (received / total).clamp(0.0, 1.0).toDouble();
+      final percent = NotificationService.progressPercent(progress);
+      final lastProgress = _lastNotifiedProgress[fileId];
+      final lastPercent = lastProgress == null
+          ? -1
+          : NotificationService.progressPercent(lastProgress);
+      if (progress >= 1.0 || percent > lastPercent) {
         _downloadProgress[fileId] = progress;
         _lastNotifiedProgress[fileId] = progress;
         _downloadErrors.remove(fileId);
@@ -9272,8 +9345,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final tempPath = '${downloadsDir.path}/.$safeId.http.tmp';
     final tempFile = File(tempPath);
     const maxAttempts = 5;
-    const connectTimeout = Duration(seconds: 12);
-    const idleTimeout = Duration(seconds: 25);
+    const connectTimeout = Duration(seconds: 10);
+    const idleTimeout = Duration(seconds: 15);
     var sawHttpResponse = false;
     Object? lastError;
 
@@ -9410,6 +9483,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final partialBytes = tempFile.existsSync()
               ? await tempFile.length()
               : 0;
+          if (_cancelledDownloads.remove(fileId)) {
+            _downloadTempPaths.remove(fileId);
+            _lastNotifiedProgress.remove(fileId);
+            _downloadProgress.remove(fileId);
+            _downloadErrors[fileId] = 'Download cancelled';
+            notifyListeners();
+            return true;
+          }
           if (attempt < maxAttempts && _downloadingFiles.contains(fileId)) {
             _downloadErrors[fileId] = partialBytes > 0
                 ? 'Connection interrupted, retrying from ${_formatDownloadBytes(partialBytes)}...'
@@ -9431,6 +9512,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
 
       final partialBytes = tempFile.existsSync() ? await tempFile.length() : 0;
+      if (_cancelledDownloads.remove(fileId)) {
+        _downloadTempPaths.remove(fileId);
+        _lastNotifiedProgress.remove(fileId);
+        _downloadProgress.remove(fileId);
+        _downloadErrors[fileId] = 'Download cancelled';
+        notifyListeners();
+        return true;
+      }
       if (partialBytes == 0 && !sawHttpResponse) {
         _downloadTempPaths.remove(fileId);
         return false;
@@ -9530,10 +9619,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final fileName = msg['fileName'] as String? ?? 'file';
     final chunkIndex = msg['chunkIndex'] as int? ?? 0;
     final totalChunks = msg['totalChunks'] as int? ?? 1;
+    final fileSize = (msg['fileSize'] as num?)?.toInt() ?? 0;
+    final chunkOffset = (msg['offsetBytes'] as num?)?.toInt();
     final base64Data = msg['data'] as String? ?? '';
 
     try {
-      final bytes = base64Decode(base64Data);
+      var bytes = base64Decode(base64Data);
       final byteCompleter = _fileBytesCompleters[fileId];
       if (byteCompleter != null) {
         _fileBytesBuffers[fileId]?.add(bytes);
@@ -9545,9 +9636,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final tempPath = _socketDownloadTempPath(fileId);
         final tempFile = File(tempPath);
         final shouldAppend = chunkIndex > 0 && tempFile.existsSync();
+        final existingBytes = shouldAppend ? tempFile.lengthSync() : 0;
         _activeDownloads[fileId] = tempFile.openWrite(
           mode: shouldAppend ? FileMode.append : FileMode.write,
         );
+        _downloadReceivedBytes[fileId] = existingBytes;
         _downloadTempPaths[fileId] = tempPath;
         _downloadingFiles.add(fileId);
         debugPrint(
@@ -9555,17 +9648,36 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
       }
 
-      _activeDownloads[fileId]!.add(bytes);
+      final savedBytes = _downloadReceivedBytes[fileId] ?? 0;
+      if (chunkOffset != null) {
+        if (chunkOffset < savedBytes) {
+          final overlap = savedBytes - chunkOffset;
+          if (overlap >= bytes.length) {
+            _armDownloadWatchdog(fileId);
+            return;
+          }
+          bytes = Uint8List.fromList(bytes.sublist(overlap));
+        } else if (chunkOffset > savedBytes) {
+          throw Exception(
+            'Transfer gap at ${_formatDownloadBytes(savedBytes)}; next chunk starts at ${_formatDownloadBytes(chunkOffset)}',
+          );
+        }
+      }
 
-      _downloadProgress[fileId] = (chunkIndex + 1) / totalChunks;
+      _activeDownloads[fileId]!.add(bytes);
+      final receivedBytes =
+          (_downloadReceivedBytes[fileId] ?? 0) + bytes.length;
+      _downloadReceivedBytes[fileId] = receivedBytes;
+
       _downloadErrors.remove(fileId);
       _armDownloadWatchdog(fileId);
-      _showDownloadProgressNotification(
-        fileId,
-        fileName,
-        _downloadProgress[fileId],
-      );
-      notifyListeners();
+      if (fileSize > 0) {
+        _setDownloadProgress(fileId, fileName, receivedBytes, fileSize);
+      } else {
+        final progress = (chunkIndex + 1) / totalChunks;
+        _setDownloadProgress(fileId, fileName, chunkIndex + 1, totalChunks);
+        _downloadProgress[fileId] = progress;
+      }
     } catch (e) {
       debugPrint(
         '[File] Error handling chunk $chunkIndex/$totalChunks for $fileName: $e',
@@ -9595,6 +9707,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await sink?.flush();
       await sink?.close();
       _lastNotifiedProgress.remove(fileId);
+      _downloadReceivedBytes.remove(fileId);
       _cancelDownloadWatchdog(fileId);
 
       final tempPath = _downloadTempPaths.remove(fileId);
@@ -9664,6 +9777,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
+      _downloadReceivedBytes.remove(fileId);
       _downloadErrors[fileId] = e.toString();
       _cancelDownloadWatchdog(fileId);
       _showDownloadFailedNotification(fileId, e.toString());
@@ -9693,47 +9807,154 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return NotificationService.stableId('download:$fileId');
   }
 
+  String _downloadNotificationPayload(String fileId) {
+    final payload = <String, String>{
+      'fileId': fileId,
+      if (_receivedFiles[fileId]?.isNotEmpty == true)
+        'localPath': _receivedFiles[fileId]!,
+      if (_serverFiles[fileId]?.isNotEmpty == true)
+        'serverPath': _serverFiles[fileId]!,
+      if (_serverFileNames[fileId]?.isNotEmpty == true)
+        'fileName': _serverFileNames[fileId]!,
+      if (_downloadSessionIds[fileId]?.isNotEmpty == true)
+        'sessionId': _downloadSessionIds[fileId]!,
+      if (_downloadServerIds[fileId]?.isNotEmpty == true)
+        'serverId': _downloadServerIds[fileId]!,
+    };
+    return 'download:${Uri.encodeComponent(jsonEncode(payload))}';
+  }
+
+  List<AndroidNotificationAction> _downloadProgressActions() {
+    return const [
+      AndroidNotificationAction(
+        _downloadActionCancel,
+        'Cancel',
+        showsUserInterface: true,
+        cancelNotification: true,
+      ),
+    ];
+  }
+
+  List<AndroidNotificationAction> _downloadFailedActions() {
+    return const [
+      AndroidNotificationAction(
+        _downloadActionRetry,
+        'Retry',
+        showsUserInterface: true,
+      ),
+      AndroidNotificationAction(
+        _downloadActionDismiss,
+        'Dismiss',
+        showsUserInterface: true,
+        cancelNotification: true,
+      ),
+    ];
+  }
+
+  List<AndroidNotificationAction> _downloadFinishedActions(String fileId) {
+    return [
+      if (_downloadSessionIds[fileId]?.isNotEmpty == true)
+        const AndroidNotificationAction(
+          _downloadActionOpenSession,
+          'Open session',
+          showsUserInterface: true,
+        ),
+      const AndroidNotificationAction(
+        _downloadActionOpenFile,
+        'Open file',
+        showsUserInterface: true,
+      ),
+    ];
+  }
+
   void _showDownloadProgressNotification(
     String fileId,
     String fileName,
     double? progress,
   ) {
+    _pendingDownloadNotifications[fileId] = _DownloadProgressNotification(
+      fileId: fileId,
+      fileName: fileName,
+      progress: progress,
+    );
+
+    final now = DateTime.now();
+    final lastShownAt = _downloadNotificationLastShownAt[fileId];
+    final shouldFlushNow =
+        lastShownAt == null ||
+        (progress != null && progress >= 1.0) ||
+        now.difference(lastShownAt) >= _downloadNotificationMinInterval;
+
+    if (shouldFlushNow) {
+      _flushDownloadProgressNotification(fileId);
+      return;
+    }
+
+    if (_downloadNotificationTimers.containsKey(fileId)) return;
+    final delay =
+        _downloadNotificationMinInterval - now.difference(lastShownAt);
+    _downloadNotificationTimers[fileId] = Timer(
+      delay.isNegative ? Duration.zero : delay,
+      () => _flushDownloadProgressNotification(fileId),
+    );
+  }
+
+  void _flushDownloadProgressNotification(String fileId) {
+    _downloadNotificationTimers.remove(fileId)?.cancel();
+    final update = _pendingDownloadNotifications.remove(fileId);
+    if (update == null) return;
+    _downloadNotificationLastShownAt[fileId] = DateTime.now();
+    final progress = update.progress;
     unawaited(
       _notifications.showOngoingProgress(
-        id: _downloadNotificationId(fileId),
-        title: 'Downloading $fileName',
+        id: _downloadNotificationId(update.fileId),
+        title: 'Downloading ${update.fileName}',
         body: progress == null
             ? 'Download in progress'
-            : '${(progress.clamp(0.0, 1.0) * 100).round()}% complete',
+            : '${NotificationService.progressPercent(progress)}% complete',
         progress: progress,
         indeterminate: progress == null,
+        payload: _downloadNotificationPayload(update.fileId),
+        actions: _downloadProgressActions(),
       ),
     );
   }
 
+  void _clearDownloadProgressNotification(String fileId) {
+    _downloadNotificationTimers.remove(fileId)?.cancel();
+    _pendingDownloadNotifications.remove(fileId);
+    _downloadNotificationLastShownAt.remove(fileId);
+  }
+
   void _showDownloadFinishedNotification(String fileId, String fileName) {
+    _clearDownloadProgressNotification(fileId);
     unawaited(
       _notifications.showInstant(
         id: _downloadNotificationId(fileId),
         title: 'Download complete',
         body: fileName,
+        payload: _downloadNotificationPayload(fileId),
+        actions: _downloadFinishedActions(fileId),
       ),
     );
   }
 
   void _showDownloadFailedNotification(String fileId, String error) {
+    _clearDownloadProgressNotification(fileId);
     unawaited(
       _notifications.showInstant(
         id: _downloadNotificationId(fileId),
         title: 'Download failed',
         body: error,
+        payload: _downloadNotificationPayload(fileId),
+        actions: _downloadFailedActions(),
       ),
     );
   }
 
   void _armDownloadWatchdog(String fileId) {
     _downloadWatchdogs[fileId]?.cancel();
-    _downloadWatchdogs[fileId] = Timer(const Duration(seconds: 45), () {
+    _downloadWatchdogs[fileId] = Timer(const Duration(seconds: 15), () {
       if (!_downloadingFiles.contains(fileId)) return;
       _retrySocketFileDownload(fileId, 'Transfer stalled.');
     });
@@ -9749,6 +9970,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     _cancelDownloadWatchdog(fileId);
     _lastNotifiedProgress.remove(fileId);
+    _clearDownloadProgressNotification(fileId);
+    _downloadReceivedBytes.remove(fileId);
     _downloadingFiles.remove(fileId);
     _downloadProgress.remove(fileId);
     final sink = _activeDownloads.remove(fileId);

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -197,6 +198,15 @@ class _AppLauncherState extends State<AppLauncher>
 
   void _handleNotificationPayload(String? payload) {
     if (!mounted || payload == null || payload.isEmpty) return;
+    if (payload.startsWith('notification_action:')) {
+      _handleNotificationAction(payload);
+      return;
+    }
+    final download = _parseDownloadPayload(payload);
+    if (download != null) {
+      _openDownloadDefault(download);
+      return;
+    }
     final parsed = _parseSessionPayload(payload);
     if (parsed == null) return;
 
@@ -206,6 +216,88 @@ class _AppLauncherState extends State<AppLauncher>
       serverId: parsed.serverId,
     );
     _navigateToHome(false);
+  }
+
+  void _handleNotificationAction(String payload) {
+    final parts = payload.split(':');
+    if (parts.length < 3) return;
+    final actionId = Uri.decodeComponent(parts[1]);
+    final actionPayload = Uri.decodeComponent(parts.sublist(2).join(':'));
+    final download = _parseDownloadPayload(actionPayload);
+    if (download == null) return;
+
+    final fileId = download['fileId'] ?? '';
+    if (fileId.isEmpty) return;
+    final provider = context.read<ChatProvider>();
+    switch (actionId) {
+      case 'download_cancel':
+        unawaited(provider.cancelDownloadFromNotification(fileId));
+        break;
+      case 'download_retry':
+        provider.retryDownloadFromNotification(fileId);
+        break;
+      case 'download_dismiss':
+        unawaited(provider.dismissDownloadNotification(fileId));
+        break;
+      case 'download_open_file':
+        _openDownloadFile(download);
+        break;
+      case 'download_open_session':
+        _openDownloadSession(download);
+        break;
+    }
+  }
+
+  void _openDownloadDefault(Map<String, String> download) {
+    if ((download['sessionId'] ?? '').isNotEmpty) {
+      _openDownloadSession(download);
+      return;
+    }
+    final fileId = download['fileId'] ?? '';
+    if (fileId.isEmpty) return;
+    _openDownloadFile(download);
+  }
+
+  void _openDownloadFile(Map<String, String> download) {
+    final fileId = download['fileId'] ?? '';
+    if (fileId.isEmpty) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(
+        context.read<ChatProvider>().openDownloadedFileFromNotification(
+          fileId,
+          localPath: download['localPath'],
+        ),
+      );
+    });
+  }
+
+  void _openDownloadSession(Map<String, String> download) {
+    final sessionId = download['sessionId'] ?? '';
+    if (sessionId.isEmpty) return;
+    final provider = context.read<ChatProvider>();
+    provider.resumeSessionFromNotification(
+      sessionId,
+      serverId: download['serverId'],
+    );
+    _navigateToHome(false);
+  }
+
+  Map<String, String>? _parseDownloadPayload(String payload) {
+    if (!payload.startsWith('download:')) return null;
+    try {
+      final jsonText = Uri.decodeComponent(
+        payload.substring('download:'.length),
+      );
+      final raw = jsonDecode(jsonText);
+      if (raw is! Map) return null;
+      return {
+        for (final entry in raw.entries)
+          if (entry.value != null) entry.key.toString(): entry.value.toString(),
+      };
+    } catch (_) {
+      return null;
+    }
   }
 
   _SessionNotificationPayload? _parseSessionPayload(String payload) {

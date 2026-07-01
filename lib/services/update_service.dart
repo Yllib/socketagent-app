@@ -163,8 +163,8 @@ class UpdateService extends ChangeNotifier {
     required File finalFile,
   }) async {
     const maxAttempts = 5;
-    const connectTimeout = Duration(seconds: 15);
-    const idleTimeout = Duration(seconds: 30);
+    const connectTimeout = Duration(seconds: 12);
+    const idleTimeout = Duration(seconds: 15);
     Object? lastError;
 
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
