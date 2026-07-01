@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -161,66 +162,120 @@ class UpdateService extends ChangeNotifier {
     required File partFile,
     required File finalFile,
   }) async {
-    var existingBytes = await partFile.exists() ? await partFile.length() : 0;
-    var request = http.Request('GET', Uri.parse(url));
-    if (existingBytes > 0) {
-      request.headers['Range'] = 'bytes=$existingBytes-';
-    }
+    const maxAttempts = 5;
+    const connectTimeout = Duration(seconds: 15);
+    const idleTimeout = Duration(seconds: 30);
+    Object? lastError;
 
-    var client = http.Client();
-    http.StreamedResponse response;
-    try {
-      response = await client.send(request);
-    } finally {
-      // The response stream owns the socket after send returns.
-    }
-
-    if (response.statusCode == 416 && existingBytes > 0) {
-      await _deleteIfExists(partFile);
-      existingBytes = 0;
-      client.close();
-      request = http.Request('GET', Uri.parse(url));
-      client = http.Client();
-      response = await client.send(request);
-    }
-
-    if (response.statusCode == 200 && existingBytes > 0) {
-      await _deleteIfExists(partFile);
-      existingBytes = 0;
-    } else if (response.statusCode != 200 && response.statusCode != 206) {
-      client.close();
-      throw Exception('Download failed (${response.statusCode})');
-    }
-
-    final contentLength = response.contentLength ?? 0;
-    final totalBytes = response.statusCode == 206
-        ? existingBytes + contentLength
-        : contentLength;
-    var receivedBytes = existingBytes;
-    _downloadProgress = totalBytes > 0 ? receivedBytes / totalBytes : null;
-    notifyListeners();
-
-    final sink = partFile.openWrite(mode: FileMode.append);
-    try {
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        receivedBytes += chunk.length;
-        if (totalBytes > 0) {
-          _downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
-          notifyListeners();
-        }
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      var existingBytes = await partFile.exists() ? await partFile.length() : 0;
+      final request = http.Request('GET', Uri.parse(url));
+      if (existingBytes > 0) {
+        request.headers['Range'] = 'bytes=$existingBytes-';
       }
-      await sink.close();
-      client.close();
-    } catch (_) {
-      await sink.close();
-      client.close();
-      rethrow;
+
+      final client = http.Client();
+      IOSink? sink;
+      try {
+        final response = await client.send(request).timeout(connectTimeout);
+
+        if (response.statusCode == 416 && existingBytes > 0) {
+          final serverSize = _contentRangeTotal(response.headers);
+          if (serverSize != null && serverSize == existingBytes) {
+            if (await finalFile.exists()) await finalFile.delete();
+            await partFile.rename(finalFile.path);
+            return true;
+          }
+          await _deleteIfExists(partFile);
+          throw Exception('Server rejected resume range');
+        }
+
+        var resume = false;
+        if (response.statusCode == 206) {
+          resume = existingBytes > 0;
+        } else if (response.statusCode == 200) {
+          if (existingBytes > 0) {
+            await _deleteIfExists(partFile);
+            existingBytes = 0;
+          }
+        } else {
+          throw Exception('Download failed (${response.statusCode})');
+        }
+
+        final contentLength = response.contentLength ?? 0;
+        final totalBytes = response.statusCode == 206
+            ? _contentRangeTotal(response.headers) ??
+                  existingBytes + contentLength
+            : contentLength;
+        var receivedBytes = resume ? existingBytes : 0;
+        _downloadProgress = totalBytes > 0 ? receivedBytes / totalBytes : null;
+        notifyListeners();
+
+        sink = partFile.openWrite(
+          mode: resume ? FileMode.append : FileMode.write,
+        );
+        await for (final chunk in response.stream.timeout(idleTimeout)) {
+          sink.add(chunk);
+          receivedBytes += chunk.length;
+          if (totalBytes > 0) {
+            _downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
+            notifyListeners();
+          }
+        }
+
+        await sink.flush();
+        await sink.close();
+        sink = null;
+
+        final savedBytes = await partFile.length();
+        if (totalBytes > 0 && savedBytes < totalBytes) {
+          throw Exception('Download ended early');
+        }
+
+        if (await finalFile.exists()) await finalFile.delete();
+        await partFile.rename(finalFile.path);
+        return true;
+      } catch (e) {
+        lastError = e;
+        try {
+          await sink?.flush();
+          await sink?.close();
+        } catch (_) {}
+        if (attempt >= maxAttempts) break;
+        final partialBytes = await partFile.exists()
+            ? await partFile.length()
+            : 0;
+        _error = partialBytes > 0
+            ? 'Download interrupted, retrying from ${_formatBytes(partialBytes)}...'
+            : 'Download interrupted, retrying...';
+        notifyListeners();
+        final retryDelaySeconds = attempt < 4 ? attempt * 2 : 8;
+        await Future.delayed(Duration(seconds: retryDelaySeconds));
+      } finally {
+        client.close();
+      }
     }
 
-    if (await finalFile.exists()) await finalFile.delete();
-    await partFile.rename(finalFile.path);
-    return true;
+    throw Exception(lastError ?? 'Download failed');
+  }
+
+  int? _contentRangeTotal(Map<String, String> headers) {
+    final value = headers['content-range'] ?? headers['Content-Range'];
+    if (value == null) return null;
+    final match = RegExp(r'bytes\s+\d+-\d+/(\d+|\*)').firstMatch(value);
+    final total = match?.group(1);
+    if (total == null || total == '*') return null;
+    return int.tryParse(total);
+  }
+
+  String _formatBytes(int bytes) {
+    if (bytes < 1024) return '$bytes B';
+    final kb = bytes / 1024;
+    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
+    final mb = kb / 1024;
+    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
+    final gb = mb / 1024;
+    return '${gb.toStringAsFixed(1)} GB';
   }
 
   Future<void> _deleteIfExists(File file) async {
