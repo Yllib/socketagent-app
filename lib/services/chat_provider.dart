@@ -209,6 +209,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _receivedFiles = {}; // fileId → local path
   final Map<String, String> _serverFiles = {}; // fileId → server path
   final Map<String, String> _serverFileNames = {}; // fileId → display name
+  final Map<String, int> _serverFileSizes = {}; // fileId → bytes
   final Map<String, String> _downloadServerIds = {}; // fileId → server id
   final Map<String, String> _downloadSessionIds = {}; // fileId → session id
   final Set<String> _downloadingFiles = {}; // fileId set
@@ -232,6 +233,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _authRequestServers = {};
   final Map<String, String> _authRequestSessions = {};
   String? _activeSessionId;
+  String? _activeSessionServerId;
   String? _activeSessionCwd;
   String? _activeSessionTitle;
   final Map<String, List<Map<String, dynamic>>> _skillsByServer = {};
@@ -3155,7 +3157,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _handleActiveSubagents(msg);
         break;
       case 'session_created':
-        _handleSessionCreated(msg);
+        _handleSessionCreated(msg, serverId);
         break;
       case 'session_history':
         _handleSessionHistory(msg);
@@ -3785,6 +3787,37 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             notifyListeners();
           }
         }
+        break;
+      case 'injection_failed':
+        final failedMsgId = msg['messageId'] as String? ?? '';
+        final reason = msg['message'] as String? ?? 'Message was not sent';
+        var removed = false;
+        if (failedMsgId.isNotEmpty) {
+          final idx = _messages.indexWhere(
+            (m) => m.id == failedMsgId && m.isPending,
+          );
+          if (idx >= 0) {
+            if (_isPendingInjectedMessage(_messages[idx]) &&
+                _pendingInjectedMessageCount > 0) {
+              _pendingInjectedMessageCount--;
+            }
+            _pendingLocalUserMessageIds.remove(failedMsgId);
+            _messages.removeAt(idx);
+            removed = true;
+          }
+        }
+        if (!removed) {
+          final idx = _messages.indexWhere(_isPendingInjectedMessage);
+          if (idx >= 0) {
+            if (_pendingInjectedMessageCount > 0) {
+              _pendingInjectedMessageCount--;
+            }
+            _pendingLocalUserMessageIds.remove(_messages[idx].id);
+            _messages.removeAt(idx);
+          }
+        }
+        _messages.add(ChatMessage.error('Message was not sent: $reason'));
+        notifyListeners();
         break;
       case 'supported_commands':
         _supportedCommands = msg['commands'] as List<dynamic>?;
@@ -5754,7 +5787,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return true;
   }
 
-  void _handleSessionCreated(Map<String, dynamic> msg) {
+  void _handleSessionCreated(Map<String, dynamic> msg, String? serverId) {
     final sessionId = msg['sessionId'] as String?;
     final backend = msg['backend'] as String?;
     if (backend != null) _activeSessionBackend = backend;
@@ -5762,6 +5795,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final wasPendingNewSession =
           _activeSessionId == null || _activeSessionId!.isEmpty;
       _activeSessionId = sessionId;
+      if (serverId != null && serverId.isNotEmpty) {
+        _activeSessionServerId = serverId;
+      } else {
+        _activeSessionServerId ??= _connMgr.activeServerId;
+      }
       if (_activeSessionBackend == 'codex') {
         _sessionCodexFastModes[sessionId] = _codexFastMode;
       } else {
@@ -6916,7 +6954,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void abortQuery() {
-    _ws.sendAbort(sessionId: _activeSessionId);
+    final msg = {
+      'type': 'abort',
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+    };
+    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
     _currentStreamingMessage = null;
     _closeThinkingMessage();
     _isProcessing = false;
@@ -7058,6 +7105,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _todos = [];
     _lastUsage = null;
     _activeSessionId = null;
+    _activeSessionServerId = null;
     final effectiveBackend = backend ?? preferredBackendForServer(serverId);
     _activeSessionBackend = effectiveBackend;
     _codexFastMode = false;
@@ -7089,6 +7137,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else if (_connMgr.activeServerId == null && _serverConfigs.isNotEmpty) {
       _connMgr.activeServerId = _serverConfigs.first.id;
     }
+    _activeSessionServerId = serverId ?? _connMgr.activeServerId;
     // Use per-server defaultCwd, falling back to global _defaultCwd for primary server.
     // If no default is configured, don't send cwd — server uses its own DEFAULT_CWD from .env.
     String? effectiveCwd = cwd;
@@ -7536,6 +7585,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
+    _activeSessionServerId = serverId;
     _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
     _claudeAutoCompactEnabled = _sessionClaudeAutoCompact[sessionId] ?? true;
     _loadPrepends();
@@ -7579,8 +7629,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeSessionTitle = session.title;
       _activeSessionCwd = session.cwd;
       _activeSessionBackend = session.backend;
+      _activeSessionServerId = session.serverId.isNotEmpty
+          ? session.serverId
+          : serverId ?? _connMgr.activeServerId;
     } else {
       _activeSessionBackend = null; // legacy session without backend tag
+      _activeSessionServerId = serverId ?? _connMgr.activeServerId;
     }
     if (session != null && session.serverId.isNotEmpty) {
       _connMgr.activeServerId = session.serverId;
@@ -7909,6 +7963,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _fileManagerOperationCompleters.remove(requestId);
       _serverFiles.remove(fileId);
       _serverFileNames.remove(fileId);
+      _serverFileSizes.remove(fileId);
       _downloadServerIds.remove(fileId);
       _downloadRetryCounts.remove(fileId);
       _filePathToId.remove(path);
@@ -8194,6 +8249,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _todos = [];
     _lastUsage = null;
     _activeSessionId = sessionId;
+    _activeSessionServerId = serverId ?? _connMgr.activeServerId;
     _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
     _claudeAutoCompactEnabled = _sessionClaudeAutoCompact[sessionId] ?? true;
     _isLoadingHistory = true;
@@ -8218,6 +8274,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     };
     if (serverId != null) {
       _connMgr.activeServerId = serverId;
+      _activeSessionServerId = serverId;
       _connMgr.sendToServer(serverId, msg);
     } else {
       _connMgr.send(msg);
@@ -8830,6 +8887,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void forkSession(String sessionId) {
     _activeSessionId = null;
+    _activeSessionServerId = null;
     _currentStreamingMessage = null;
     _isProcessing = false;
     _stopPromptRuntime();
@@ -9078,6 +9136,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Get server path for a file available for download by fileId
   String? getServerFilePath(String fileId) => _serverFiles[fileId];
 
+  /// Get advertised server file size by fileId, when provided by the server.
+  int? getServerFileSize(String fileId) => _serverFileSizes[fileId];
+
   /// Whether a file is currently being downloaded by fileId
   bool isDownloading(String fileId) => _downloadingFiles.contains(fileId);
 
@@ -9095,9 +9156,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     fileName = fileName.split('/').last.split('\\').last.replaceAll('..', '');
     if (fileName.isEmpty) fileName = 'file';
     final filePath = msg['filePath'] as String? ?? '';
+    final fileSize = (msg['fileSize'] as num?)?.toInt();
     if (filePath.isNotEmpty && fileId.isNotEmpty) {
       _serverFiles[fileId] = filePath;
       _serverFileNames[fileId] = fileName;
+      if (fileSize != null && fileSize > 0) {
+        _serverFileSizes[fileId] = fileSize;
+      }
       final currentServerId = _connMgr.activeServerId;
       if (currentServerId != null && currentServerId.isNotEmpty) {
         _downloadServerIds[fileId] = currentServerId;
@@ -9456,10 +9521,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
 
           _downloadTempPaths.remove(fileId);
-      _lastNotifiedProgress.remove(fileId);
-      _cancelDownloadWatchdog(fileId);
-      _downloadExpectedBytes.remove(fileId);
-      _receivedFiles[fileId] = targetFile.path;
+          _lastNotifiedProgress.remove(fileId);
+          _cancelDownloadWatchdog(fileId);
+          _downloadExpectedBytes.remove(fileId);
+          _receivedFiles[fileId] = targetFile.path;
           _downloadingFiles.remove(fileId);
           _downloadProgress.remove(fileId);
           _downloadErrors.remove(fileId);

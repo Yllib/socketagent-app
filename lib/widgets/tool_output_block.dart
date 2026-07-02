@@ -19,11 +19,14 @@ class _DiffStats {
 class ToolOutputBlock extends StatefulWidget {
   final ChatMessage message;
   final bool greenTheme;
+  final void Function(bool expanded, {required bool hasImage})?
+  onExpansionChanged;
 
   const ToolOutputBlock({
     super.key,
     required this.message,
     this.greenTheme = false,
+    this.onExpansionChanged,
   });
 
   @override
@@ -41,6 +44,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   bool get _hasImage =>
       widget.message.toolImageData != null &&
       widget.message.toolImageData!.isNotEmpty;
+
+  void _toggleExpanded() {
+    final nextExpanded = !_expanded;
+    setState(() => _expanded = nextExpanded);
+    widget.onExpansionChanged?.call(nextExpanded, hasImage: _hasImage);
+  }
 
   /// Parse TaskOutput XML-like result into structured fields
   Map<String, String>? get _parsedTaskOutput {
@@ -192,7 +201,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         children: [
           // Header
           InkWell(
-            onTap: () => setState(() => _expanded = !_expanded),
+            onTap: _toggleExpanded,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),

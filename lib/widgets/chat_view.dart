@@ -81,6 +81,8 @@ class ChatViewState extends State<ChatView> {
   bool _userScrolledUp = false;
   bool _isAutoScrolling = false;
   bool _userTouching = false;
+  bool _autoScrollHeldForInspection = false;
+  int _autoScrollGeneration = 0;
   int _lastKnownMessageCount = 0;
   String _lastKnownText = '';
   bool _lastKnownProcessing = false;
@@ -95,7 +97,11 @@ class ChatViewState extends State<ChatView> {
   void _onScroll() {
     if (!_scrollController.hasClients || _isAutoScrolling) return;
     final pos = _scrollController.position;
-    _userScrolledUp = pos.maxScrollExtent - pos.pixels > 150;
+    final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+    _userScrolledUp = distanceFromBottom > 150;
+    if (distanceFromBottom <= 80) {
+      _autoScrollHeldForInspection = false;
+    }
   }
 
   /// Scroll to a task card in the chat by its toolUseId
@@ -125,7 +131,11 @@ class ChatViewState extends State<ChatView> {
     // scroll away from the expanded image."
     if (_scrollController.hasClients && !_isAutoScrolling) {
       final pos = _scrollController.position;
-      _userScrolledUp = pos.maxScrollExtent - pos.pixels > 150;
+      final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+      _userScrolledUp = distanceFromBottom > 150;
+      if (distanceFromBottom <= 80) {
+        _autoScrollHeldForInspection = false;
+      }
     }
 
     // History just finished loading — jump to bottom unconditionally
@@ -175,8 +185,28 @@ class ChatViewState extends State<ChatView> {
     _lastKnownText = currentText;
     _lastKnownProcessing = currentProcessing;
 
-    if (hasNewContent && !_userScrolledUp && !_userTouching) {
+    if (hasNewContent &&
+        !_userScrolledUp &&
+        !_userTouching &&
+        !_autoScrollHeldForInspection) {
       _scrollToBottom();
+    }
+  }
+
+  void _handleToolExpansionChanged(bool expanded, {required bool hasImage}) {
+    if (!hasImage) return;
+    if (expanded) {
+      _autoScrollHeldForInspection = true;
+      _userScrolledUp = true;
+      _cancelAutoScroll();
+    }
+  }
+
+  void _cancelAutoScroll() {
+    _autoScrollGeneration++;
+    _isAutoScrolling = false;
+    if (_scrollController.hasClients) {
+      _scrollController.jumpTo(_scrollController.position.pixels);
     }
   }
 
@@ -220,12 +250,15 @@ class ChatViewState extends State<ChatView> {
             : const Duration(milliseconds: 180);
 
         _isAutoScrolling = true;
+        final generation = ++_autoScrollGeneration;
         _scrollController
             .animateTo(target, duration: duration, curve: Curves.easeOut)
             .then((_) {
+              if (generation != _autoScrollGeneration) return;
               _isAutoScrolling = false;
             })
             .catchError((_) {
+              if (generation != _autoScrollGeneration) return;
               _isAutoScrolling = false;
             });
       }
@@ -378,12 +411,21 @@ class ChatViewState extends State<ChatView> {
           _taskKeys.putIfAbsent(msg.toolUseId!, () => GlobalKey());
           return Container(
             key: _taskKeys[msg.toolUseId!],
-            child: ToolOutputBlock(message: msg),
+            child: ToolOutputBlock(
+              message: msg,
+              onExpansionChanged: _handleToolExpansionChanged,
+            ),
           );
         }
-        return ToolOutputBlock(message: msg);
+        return ToolOutputBlock(
+          message: msg,
+          onExpansionChanged: _handleToolExpansionChanged,
+        );
       case MessageType.toolResult:
-        return ToolOutputBlock(message: msg);
+        return ToolOutputBlock(
+          message: msg,
+          onExpansionChanged: _handleToolExpansionChanged,
+        );
       case MessageType.question:
         if (msg.emailPreview != null) {
           return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);

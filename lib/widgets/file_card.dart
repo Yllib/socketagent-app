@@ -19,6 +19,19 @@ class FileCard extends StatelessWidget {
     return _filePath.split('/').last;
   }
 
+  String _formatBytes(int bytes) {
+    if (bytes >= 1024 * 1024 * 1024) {
+      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+    }
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) {
+      return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    }
+    return '$bytes B';
+  }
+
   IconData _fileIcon(String name) {
     final lower = name.toLowerCase();
     if (lower.endsWith('.pdf')) return Icons.picture_as_pdf;
@@ -73,6 +86,9 @@ class FileCard extends StatelessWidget {
     final isDownloading = fileId != null && provider.isDownloading(fileId);
     final hasServerFile =
         fileId != null && provider.getServerFilePath(fileId) != null;
+    final serverFileSize = fileId != null
+        ? provider.getServerFileSize(fileId)
+        : null;
     final progress = fileId != null
         ? provider.getDownloadProgress(fileId)
         : null;
@@ -89,10 +105,12 @@ class FileCard extends StatelessWidget {
       subtitle = 'Downloading... ${(progress * 100).toInt()}%';
     } else if (isDownloading) {
       subtitle = 'Downloading...';
+    } else if (hasServerFile) {
+      subtitle = serverFileSize != null
+          ? 'Ready to download - ${_formatBytes(serverFileSize)}'
+          : 'Ready to download';
     } else if (toolOutput.isNotEmpty) {
       subtitle = toolOutput;
-    } else if (hasServerFile) {
-      subtitle = 'Tap download to save';
     } else {
       subtitle = _filePath;
     }

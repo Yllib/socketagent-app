@@ -11,6 +11,7 @@ import '../../services/chat_provider.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../file_manager_screen.dart';
+import '../ibs_auth_screen.dart';
 import '../outlook_auth_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
@@ -558,11 +559,16 @@ class _SettingsV2ServerDetailScreenState
                             : null,
                       ),
                     if (plugins.contains('ibs-auth'))
-                      const _DetailRow(
+                      _NavTile(
                         icon: Icons.business_center_outlined,
-                        title: 'IBS',
-                        subtitle: 'Available on this server',
-                        trailing: 'Ready',
+                        title: 'IBS Sign-In',
+                        subtitle: connected
+                            ? 'Refresh IBS session cookies'
+                            : 'Connect to refresh IBS session',
+                        trailing: connected ? Icons.open_in_new : null,
+                        onTap: connected
+                            ? () => _startIBSAuth(provider, config)
+                            : null,
                       ),
                   ],
                 ),
@@ -651,6 +657,30 @@ class _SettingsV2ServerDetailScreenState
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('Outlook tokens sent to ${config.name}'),
+        backgroundColor: Colors.green,
+      ),
+    );
+  }
+
+  Future<void> _startIBSAuth(ChatProvider provider, ServerConfig config) async {
+    final result = await Navigator.of(context).push<List<Map<String, String>>>(
+      MaterialPageRoute(builder: (_) => const IBSAuthScreen()),
+    );
+
+    if (result == null || result.isEmpty || !mounted) return;
+
+    final authRequestId =
+        'ibs_auth_${DateTime.now().millisecondsSinceEpoch}_manual';
+    provider.connMgr.sendToServer(config.id, {
+      'type': 'answer',
+      'questionId': authRequestId,
+      'answers': {'cookies': jsonEncode(result)},
+    });
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('IBS cookies sent to ${config.name}'),
         backgroundColor: Colors.green,
       ),
     );
