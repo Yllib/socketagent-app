@@ -223,6 +223,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, _DownloadProgressNotification>
   _pendingDownloadNotifications = {};
   final Map<String, int> _downloadReceivedBytes = {}; // fileId → bytes saved
+  final Map<String, int> _downloadExpectedBytes = {}; // fileId → expected size
   final Map<String, IOSink> _activeDownloads = {}; // fileId → write sink
   final Map<String, String> _downloadTempPaths = {}; // fileId → temp path
   final Map<String, BytesBuilder> _fileBytesBuffers = {};
@@ -9442,9 +9443,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           sink = null;
 
           final savedBytes = await tempFile.length();
-          if (total != null && total > 0 && savedBytes < total) {
+          if (total != null && total > 0 && savedBytes != total) {
             throw Exception(
-              'Connection closed early at ${_formatDownloadBytes(savedBytes)} / ${_formatDownloadBytes(total)}',
+              'Downloaded ${_formatDownloadBytes(savedBytes)} / ${_formatDownloadBytes(total)}',
             );
           }
 
@@ -9455,9 +9456,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
 
           _downloadTempPaths.remove(fileId);
-          _lastNotifiedProgress.remove(fileId);
-          _cancelDownloadWatchdog(fileId);
-          _receivedFiles[fileId] = targetFile.path;
+      _lastNotifiedProgress.remove(fileId);
+      _cancelDownloadWatchdog(fileId);
+      _downloadExpectedBytes.remove(fileId);
+      _receivedFiles[fileId] = targetFile.path;
           _downloadingFiles.remove(fileId);
           _downloadProgress.remove(fileId);
           _downloadErrors.remove(fileId);
@@ -9527,6 +9529,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       _lastNotifiedProgress.remove(fileId);
       _cancelDownloadWatchdog(fileId);
+      _downloadExpectedBytes.remove(fileId);
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
       _downloadRetryCounts.remove(fileId);
@@ -9541,6 +9544,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadTempPaths.remove(fileId);
       _lastNotifiedProgress.remove(fileId);
       _downloadProgress[fileId] = 0;
+      _downloadExpectedBytes.remove(fileId);
       _armDownloadWatchdog(fileId);
       notifyListeners();
       return false;
@@ -9625,9 +9629,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       var bytes = base64Decode(base64Data);
+      if (fileSize > 0) {
+        _downloadExpectedBytes[fileId] = fileSize;
+      }
       final byteCompleter = _fileBytesCompleters[fileId];
       if (byteCompleter != null) {
         _fileBytesBuffers[fileId]?.add(bytes);
+        return;
+      }
+      if (!_downloadingFiles.contains(fileId)) {
+        debugPrint('[File] Ignoring stale chunk for $fileId');
         return;
       }
 
@@ -9691,6 +9702,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final fileId =
         msg['fileId'] as String? ?? msg['fileName'] as String? ?? 'file';
     final fileName = msg['fileName'] as String? ?? 'file';
+    final fileSize = (msg['fileSize'] as num?)?.toInt();
 
     try {
       final byteCompleter = _fileBytesCompleters.remove(fileId);
@@ -9699,6 +9711,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (!byteCompleter.isCompleted) {
           byteCompleter.complete(bytes == null ? null : base64Encode(bytes));
         }
+        return;
+      }
+      if (!_downloadingFiles.contains(fileId)) {
+        debugPrint('[File] Ignoring stale completion for $fileId');
         return;
       }
 
@@ -9737,6 +9753,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         return;
       }
+      final expectedBytes = fileSize ?? _downloadExpectedBytes[fileId];
+      final savedBytes = await tempFile.length();
+      if (expectedBytes != null &&
+          expectedBytes > 0 &&
+          savedBytes != expectedBytes) {
+        debugPrint(
+          '[File] Error: size mismatch for $fileId ($savedBytes/$expectedBytes)',
+        );
+        try {
+          await tempFile.delete();
+        } catch (_) {}
+        _downloadingFiles.remove(fileId);
+        _downloadProgress.remove(fileId);
+        _downloadExpectedBytes.remove(fileId);
+        _downloadErrors[fileId] =
+            'Downloaded ${_formatDownloadBytes(savedBytes)} / ${_formatDownloadBytes(expectedBytes)}';
+        _showDownloadFailedNotification(fileId, _downloadErrors[fileId]!);
+        notifyListeners();
+        return;
+      }
 
       // Rename temp file to final name (handle duplicates)
       final downloadsDir = Directory('/storage/emulated/0/Download');
@@ -9766,6 +9802,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadProgress.remove(fileId);
       _downloadErrors.remove(fileId);
       _downloadRetryCounts.remove(fileId);
+      _downloadExpectedBytes.remove(fileId);
       _showDownloadFinishedNotification(fileId, fileName);
       debugPrint(
         '[File] Chunked download complete: ${targetFile.path} (fileId=$fileId)',
@@ -9778,6 +9815,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadingFiles.remove(fileId);
       _downloadProgress.remove(fileId);
       _downloadReceivedBytes.remove(fileId);
+      _downloadExpectedBytes.remove(fileId);
       _downloadErrors[fileId] = e.toString();
       _cancelDownloadWatchdog(fileId);
       _showDownloadFailedNotification(fileId, e.toString());
@@ -9972,6 +10010,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _lastNotifiedProgress.remove(fileId);
     _clearDownloadProgressNotification(fileId);
     _downloadReceivedBytes.remove(fileId);
+    _downloadExpectedBytes.remove(fileId);
     _downloadingFiles.remove(fileId);
     _downloadProgress.remove(fileId);
     final sink = _activeDownloads.remove(fileId);

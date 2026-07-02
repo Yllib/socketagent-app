@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -10,6 +11,7 @@ import '../../services/chat_provider.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../file_manager_screen.dart';
+import '../outlook_auth_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
 import '../paywall_screen.dart';
@@ -544,11 +546,16 @@ class _SettingsV2ServerDetailScreenState
                   title: 'Integrations',
                   children: [
                     if (plugins.contains('outlook-auth'))
-                      const _DetailRow(
+                      _NavTile(
                         icon: Icons.mail_lock_outlined,
-                        title: 'Outlook',
-                        subtitle: 'Available on this server',
-                        trailing: 'Ready',
+                        title: 'Outlook Sign-In',
+                        subtitle: connected
+                            ? 'Refresh email tokens'
+                            : 'Connect to refresh email tokens',
+                        trailing: connected ? Icons.open_in_new : null,
+                        onTap: connected
+                            ? () => _startOutlookAuth(provider, config)
+                            : null,
                       ),
                     if (plugins.contains('ibs-auth'))
                       const _DetailRow(
@@ -618,6 +625,33 @@ class _SettingsV2ServerDetailScreenState
               : 'Could not unenroll notifications for ${config.name}',
         ),
         backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  Future<void> _startOutlookAuth(
+    ChatProvider provider,
+    ServerConfig config,
+  ) async {
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
+      MaterialPageRoute(builder: (_) => const OutlookAuthScreen()),
+    );
+
+    if (result == null || !mounted) return;
+
+    final authRequestId =
+        'outlook_auth_${DateTime.now().millisecondsSinceEpoch}_manual';
+    provider.connMgr.sendToServer(config.id, {
+      'type': 'answer',
+      'questionId': authRequestId,
+      'answers': {'tokens': jsonEncode(result)},
+    });
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Outlook tokens sent to ${config.name}'),
+        backgroundColor: Colors.green,
       ),
     );
   }
