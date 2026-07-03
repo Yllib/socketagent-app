@@ -106,7 +106,22 @@ class ConnectionManager {
         );
         ws.setMode(ConnectionMode.relay);
       } else {
-        ws.configure(host: config.host, port: config.port, token: config.token);
+        CryptoService? crypto;
+        if (config.serverPubkey.isNotEmpty) {
+          crypto = _cryptoServices[config.id];
+          if (crypto == null) {
+            crypto = CryptoService();
+            _cryptoServices[config.id] = crypto;
+          }
+          await crypto.ensureKeyPair();
+          crypto.setServerPublicKey(config.serverPubkey);
+        }
+        ws.configure(
+          host: config.host,
+          port: config.port,
+          token: config.token,
+          cryptoService: crypto,
+        );
         ws.setMode(ConnectionMode.direct);
       }
     }

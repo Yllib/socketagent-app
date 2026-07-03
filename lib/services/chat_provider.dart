@@ -1733,37 +1733,59 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     Map<String, dynamic> msg,
   ) async {
     final relay = msg['relayPairing'];
-    if (relay is! Map) return;
-    final rawRelayUrl = relay['relayUrl'] as String? ?? '';
+    final directE2e = msg['directE2e'];
+    final rawRelayUrl = relay is Map ? relay['relayUrl'] as String? ?? '' : '';
     final relayUrl = _normalizeRelayUrl(rawRelayUrl);
-    final pairingToken = relay['pairingToken'] as String? ?? '';
-    final serverPubkey = relay['serverPubkey'] as String? ?? '';
-    if (relayUrl.isEmpty || pairingToken.isEmpty || serverPubkey.isEmpty) {
+    final pairingToken = relay is Map
+        ? relay['pairingToken'] as String? ?? ''
+        : '';
+    final relayServerPubkey = relay is Map
+        ? relay['serverPubkey'] as String? ?? ''
+        : '';
+    final directServerPubkey = directE2e is Map
+        ? directE2e['serverPubkey'] as String? ?? ''
+        : '';
+    final serverPubkey = relayServerPubkey.isNotEmpty
+        ? relayServerPubkey
+        : directServerPubkey;
+    if (serverPubkey.isEmpty) {
       return;
     }
 
     final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (idx < 0) return;
     final existing = _serverConfigs[idx];
-    final effectiveRelayUrl =
-        _isLocalRelayUrl(rawRelayUrl) &&
-            existing.relayUrl.isNotEmpty &&
-            !_isLocalRelayUrl(existing.relayUrl)
+    final effectiveRelayUrl = relayUrl.isEmpty
+        ? existing.relayUrl
+        : _isLocalRelayUrl(rawRelayUrl) &&
+              existing.relayUrl.isNotEmpty &&
+              !_isLocalRelayUrl(existing.relayUrl)
         ? existing.relayUrl
         : relayUrl;
+    final effectivePairingToken = pairingToken.isEmpty
+        ? existing.pairingToken
+        : pairingToken;
     if (existing.relayUrl == effectiveRelayUrl &&
-        existing.pairingToken == pairingToken &&
+        existing.pairingToken == effectivePairingToken &&
         existing.serverPubkey == serverPubkey) {
       return;
     }
+    final shouldReconnectForDirectE2e =
+        !existing.useRelay && existing.serverPubkey != serverPubkey;
 
     _serverConfigs[idx] = existing.copyWith(
       relayUrl: effectiveRelayUrl,
-      pairingToken: pairingToken,
+      pairingToken: effectivePairingToken,
       serverPubkey: serverPubkey,
     );
     await _saveServerConfigs();
+    if (shouldReconnectForDirectE2e) {
+      _connMgr.getConnection(serverId)?.disconnect();
+    }
     await _connMgr.setServers(_serverConfigs);
+    if (shouldReconnectForDirectE2e) {
+      _connMgr.getConnection(serverId)?.connect();
+    }
     await _registerPushNotifications();
     notifyListeners();
   }
@@ -9036,6 +9058,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return null;
   }
 
+  bool _directServerUsesEncryptedSocket([String? serverId]) {
+    if (serverId != null && serverId.isNotEmpty) {
+      final config = _serverConfigs.where((c) => c.id == serverId).firstOrNull;
+      return config != null &&
+          !config.useRelay &&
+          config.host.isNotEmpty &&
+          config.serverPubkey.isNotEmpty;
+    }
+
+    final activeServerId = _connMgr.activeServerId;
+    if (activeServerId != null && activeServerId.isNotEmpty) {
+      final config = _serverConfigs
+          .where((c) => c.id == activeServerId)
+          .firstOrNull;
+      if (config != null && !config.useRelay && config.host.isNotEmpty) {
+        return config.serverPubkey.isNotEmpty;
+      }
+    }
+
+    final direct = _serverConfigs
+        .where((c) => !c.useRelay && c.host.isNotEmpty)
+        .firstOrNull;
+    return direct?.serverPubkey.isNotEmpty ?? false;
+  }
+
   Future<void> downloadKokoroModel([
     KokoroModel model = KokoroModel.v019,
   ]) async {
@@ -9410,6 +9457,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String fileName,
     String? serverId,
   }) async {
+    if (_directServerUsesEncryptedSocket(serverId)) {
+      return false;
+    }
     final server = _getDirectServerFor(serverId);
     if (server == null) return false;
 

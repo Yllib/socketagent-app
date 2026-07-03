@@ -48,10 +48,12 @@ class WebSocketService {
     required String host,
     required int port,
     required String token,
+    CryptoService? cryptoService,
   }) {
     _host = host;
     _port = port;
     _token = token;
+    _cryptoService = cryptoService;
   }
 
   void configureRelay({
@@ -93,7 +95,15 @@ class WebSocketService {
         _encryptionReady = false;
         // DO NOT log the full URI - it contains pairing and subscriber tokens
       } else {
-        uri = Uri.parse('ws://$_host:$_port');
+        final encryptedDirect =
+            _cryptoService != null && _cryptoService!.isReady;
+        uri = Uri(
+          scheme: 'ws',
+          host: _host,
+          port: _port,
+          queryParameters: encryptedDirect ? {'e2e': '1'} : null,
+        );
+        _encryptionReady = false;
       }
 
       // Use the IOWebSocketChannel.connect factory so it builds the underlying
@@ -103,7 +113,9 @@ class WebSocketService {
       // would just hang forever instead of firing onDone.
       _channel = IOWebSocketChannel.connect(
         uri,
-        headers: _mode == ConnectionMode.direct
+        headers:
+            _mode == ConnectionMode.direct &&
+                !(_cryptoService != null && _cryptoService!.isReady)
             ? {'Authorization': 'Bearer $_token'}
             : null,
         pingInterval: const Duration(seconds: 20),
@@ -139,10 +151,30 @@ class WebSocketService {
         },
       );
 
-      // For direct mode, assume connected after a short delay
+      if (_mode == ConnectionMode.direct &&
+          _cryptoService != null &&
+          _cryptoService!.isReady) {
+        Future.delayed(const Duration(milliseconds: 100), () {
+          if (gen != _connectionGeneration) return;
+          _sendKeyExchange();
+        });
+        Future.delayed(const Duration(seconds: 5), () {
+          if (gen != _connectionGeneration) return;
+          if (_mode == ConnectionMode.direct &&
+              !_encryptionReady &&
+              _status == ConnectionStatus.connecting) {
+            debugPrint('[Direct E2E] Key exchange timed out');
+            _setStatus(ConnectionStatus.error);
+            _scheduleReconnect();
+          }
+        });
+      }
+
+      // For direct mode without crypto, assume connected after a short delay.
       if (_mode == ConnectionMode.direct) {
         Future.delayed(const Duration(milliseconds: 500), () {
           if (gen != _connectionGeneration) return;
+          if (_cryptoService != null && _cryptoService!.isReady) return;
           if (_status == ConnectionStatus.connecting) {
             _setStatus(ConnectionStatus.connected);
           }
@@ -217,7 +249,28 @@ class WebSocketService {
       return;
     }
 
-    // Direct mode — pass through. We also peek at server_capabilities to
+    // Direct mode with a server public key uses the same NaCl envelope as relay.
+    if (_mode == ConnectionMode.direct &&
+        _cryptoService != null &&
+        _cryptoService!.isReady) {
+      if (raw['type'] == 'key_exchange_ack') {
+        _onEncryptionEstablished();
+        return;
+      }
+
+      if (raw.containsKey('n') && raw.containsKey('c')) {
+        try {
+          final plaintext = _cryptoService!.decrypt(raw);
+          final msg = jsonDecode(plaintext) as Map<String, dynamic>;
+          _routeDecryptedMessage(msg);
+        } catch (e) {
+          debugPrint('[Direct E2E] Decryption failed: $e');
+        }
+        return;
+      }
+    }
+
+    // Direct legacy mode — pass through. We also peek at server_capabilities to
     // capture the binary-envelope flag (purely internal), then forward the
     // message so listeners can read fields like `backends`.
     if (raw['type'] == 'server_capabilities') {
@@ -248,7 +301,25 @@ class WebSocketService {
       }
       return;
     }
-    // Direct mode: server doesn't currently push binary frames. Ignore.
+    if (_mode == ConnectionMode.direct &&
+        _cryptoService != null &&
+        _cryptoService!.isReady) {
+      try {
+        final plaintext = _cryptoService!.decryptBinary(bytes);
+        if (plaintext.isEmpty) return;
+        final marker = plaintext[0];
+        if (marker == _binMarkerJson) {
+          final json = utf8.decode(plaintext.sublist(1));
+          final msg = jsonDecode(json) as Map<String, dynamic>;
+          _routeDecryptedMessage(msg);
+        }
+      } catch (e) {
+        debugPrint('[Direct E2E] Binary decryption failed: $e');
+      }
+      return;
+    }
+
+    // Direct legacy mode: server doesn't currently push binary frames. Ignore.
   }
 
   /// Common post-decrypt routing: surfaces the message to listeners and
@@ -272,7 +343,15 @@ class WebSocketService {
   void _onEncryptionEstablished() {
     _encryptionReady = true;
     _setStatus(ConnectionStatus.connected);
-    debugPrint('[Relay] Key exchange complete — encryption ready');
+    debugPrint(
+      _mode == ConnectionMode.relay
+          ? '[Relay] Key exchange complete — encryption ready'
+          : '[Direct E2E] Key exchange complete — encryption ready',
+    );
+    if (_mode == ConnectionMode.direct) {
+      send({'type': 'direct_auth', 'token': _token, 'binaryEnvelope': true});
+      return;
+    }
     // Announce that we can speak the binary wire format. Older servers will
     // ignore this message and we'll stay on the legacy JSON envelope.
     send({'type': 'client_capabilities', 'binaryEnvelope': true});
@@ -307,7 +386,8 @@ class WebSocketService {
   void send(Map<String, dynamic> message) {
     if (_channel == null) return;
 
-    if (_mode == ConnectionMode.relay &&
+    if ((_mode == ConnectionMode.relay ||
+            (_mode == ConnectionMode.direct && _cryptoService != null)) &&
         _encryptionReady &&
         _cryptoService != null) {
       final plaintext = jsonEncode(message);
@@ -324,7 +404,7 @@ class WebSocketService {
         final envelope = _cryptoService!.encrypt(plaintext);
         _channel!.sink.add(jsonEncode(envelope));
       }
-    } else if (_mode == ConnectionMode.direct) {
+    } else if (_mode == ConnectionMode.direct && _cryptoService == null) {
       _channel!.sink.add(jsonEncode(message));
     }
   }
@@ -336,8 +416,8 @@ class WebSocketService {
 
   /// Send a binary upload chunk. Builds the standard
   /// `[0x42][1 idLen][idBytes][4 chunkIdx BE][bytes]` plaintext payload and
-  /// either ships it as a raw binary frame (direct) or wraps it in a binary
-  /// envelope (relay).
+  /// ships it as a raw binary frame for legacy direct connections or wraps it
+  /// in the NaCl binary envelope for relay and encrypted direct connections.
   void sendUploadChunkBinary({
     required String uploadId,
     required int chunkIndex,
@@ -361,6 +441,10 @@ class WebSocketService {
 
     if (_mode == ConnectionMode.relay) {
       if (!_encryptionReady || _cryptoService == null) return;
+      final envelope = _cryptoService!.encryptBinary(payload);
+      _channel!.sink.add(envelope);
+    } else if (_mode == ConnectionMode.direct && _cryptoService != null) {
+      if (!_encryptionReady) return;
       final envelope = _cryptoService!.encryptBinary(payload);
       _channel!.sink.add(envelope);
     } else {
