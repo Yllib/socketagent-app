@@ -249,9 +249,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const Duration _archiveTombstoneTtl = Duration(seconds: 30);
   // Persistent recent CWDs per server (serverId → ordered list, most recent first)
   final Map<String, List<String>> _recentCwds = {};
-  // Backends each server can drive (serverId → ['claude','codex'] or just
-  // ['claude']). Populated from the server_capabilities message; UI consults
-  // this to gate the codex option in the new-session sheet.
+  // Backends each server supports. Health/auth state is tracked separately in
+  // _serverBackendHealth so unhealthy backends can remain visible and repairable.
   final Map<String, List<String>> _serverBackends = {};
   final Map<String, List<Map<String, dynamic>>> _serverCodexCollaborationModes =
       {};
@@ -7171,7 +7170,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Backends the given server can drive, ordered by UI preference. Defaults to ['claude'] when the
+  /// Backends the given server supports, ordered by UI preference. Defaults to ['claude'] when the
   /// capability message hasn't arrived yet (older servers won't send it at
   /// all, so legacy claude-only behavior is the safe default).
   List<String> backendsForServer(String? serverId) {
@@ -7441,7 +7440,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   String preferredBackendForServer(String? serverId) {
     final backends = backendsForServer(serverId);
-    return backends.firstOrNull ?? 'claude';
+    final effectiveServerId =
+        serverId ?? _connMgr.activeServerId ?? _serverConfigs.firstOrNull?.id;
+    if (effectiveServerId == null) return backends.firstOrNull ?? 'claude';
+
+    final health = _serverBackendHealth[effectiveServerId];
+    if (health == null || health.isEmpty) {
+      return backends.firstOrNull ?? 'claude';
+    }
+
+    bool isUsable(String backend) {
+      final entry = health
+          .where((item) => item['backend']?.toString() == backend)
+          .firstOrNull;
+      if (entry == null) return true;
+      return entry['available'] == true &&
+          entry['severity']?.toString() != 'error' &&
+          entry['severity']?.toString() != 'disabled';
+    }
+
+    return backends.firstWhere(
+      isUsable,
+      orElse: () => backends.firstOrNull ?? 'claude',
+    );
   }
 
   void _captureCodexDriverSettings(Map<String, dynamic> msg, String serverId) {
