@@ -110,11 +110,11 @@ class SpeechService {
         // Reset silence timer on any speech activity
         _resetSilenceTimer();
       },
-      listenFor: const Duration(seconds: 120),
-      pauseFor: const Duration(seconds: 5),
       listenOptions: SpeechListenOptions(
         partialResults: true,
         listenMode: ListenMode.dictation,
+        listenFor: Duration(seconds: 120),
+        pauseFor: Duration(seconds: 5),
       ),
     );
     _isListening = true;

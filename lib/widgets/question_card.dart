@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
 
@@ -60,8 +60,8 @@ class _QuestionCardState extends State<QuestionCard> {
         color: isAnswered
             ? theme.colorScheme.surfaceContainerHighest.withAlpha(128)
             : isPlan
-                ? theme.colorScheme.tertiaryContainer
-                : theme.colorScheme.secondaryContainer,
+            ? theme.colorScheme.tertiaryContainer
+            : theme.colorScheme.secondaryContainer,
         elevation: isAnswered ? 0 : 2,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         child: Padding(
@@ -90,8 +90,11 @@ class _QuestionCardState extends State<QuestionCard> {
                   ),
                   if (isAnswered) ...[
                     const SizedBox(width: 8),
-                    Icon(Icons.check_circle,
-                        size: 18, color: Colors.green.shade400),
+                    Icon(
+                      Icons.check_circle,
+                      size: 18,
+                      color: Colors.green.shade400,
+                    ),
                   ],
                 ],
               ),
@@ -156,50 +159,51 @@ class _QuestionCardState extends State<QuestionCard> {
               child: Scrollbar(
                 child: SingleChildScrollView(
                   child: MarkdownBody(
-                  data: question.question,
-                  styleSheet: MarkdownStyleSheet(
-                    p: TextStyle(
-                      fontSize: 13,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                    h1: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                    h2: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                    h3: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Theme.of(context).colorScheme.onSurface,
-                    ),
-                    code: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context).colorScheme.primary,
-                      backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-                    ),
-                    listBullet: TextStyle(
-                      fontSize: 13,
-                      color: Theme.of(context).colorScheme.onSurface,
+                    data: question.question,
+                    styleSheet: MarkdownStyleSheet(
+                      p: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      h1: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      h2: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      h3: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                      code: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.primary,
+                        backgroundColor: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
+                      ),
+                      listBullet: TextStyle(
+                        fontSize: 13,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
                     ),
                   ),
                 ),
               ),
             ),
-            ),
           )
         else
-          Text(
-            question.question,
-            style: const TextStyle(fontSize: 14),
-          ),
+          Text(question.question, style: const TextStyle(fontSize: 14)),
         const SizedBox(height: 8),
         if (!isAnswered) ...[
-          if (question.options.any((o) => o.preview != null && o.preview!.isNotEmpty))
+          if (question.options.any(
+            (o) => o.preview != null && o.preview!.isNotEmpty,
+          ))
             Column(
               children: [
                 for (final opt in question.options)
@@ -241,7 +245,8 @@ class _QuestionCardState extends State<QuestionCard> {
     QuestionOption option,
     bool multiSelect,
   ) {
-    final selected = _selectedOptions[questionKey]?.contains(option.label) ?? false;
+    final selected =
+        _selectedOptions[questionKey]?.contains(option.label) ?? false;
 
     // If option has a preview, render a richer card with markdown preview
     if (option.preview != null && option.preview!.isNotEmpty) {
@@ -315,7 +320,11 @@ class _QuestionCardState extends State<QuestionCard> {
                   if (selected)
                     Padding(
                       padding: const EdgeInsets.only(right: 6),
-                      child: Icon(Icons.check_circle, size: 16, color: theme.colorScheme.primary),
+                      child: Icon(
+                        Icons.check_circle,
+                        size: 16,
+                        color: theme.colorScheme.primary,
+                      ),
                     ),
                   Expanded(
                     child: Text(
@@ -353,7 +362,10 @@ class _QuestionCardState extends State<QuestionCard> {
               child: MarkdownBody(
                 data: option.preview!,
                 styleSheet: MarkdownStyleSheet(
-                  p: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface),
+                  p: TextStyle(
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurface,
+                  ),
                   code: TextStyle(
                     fontSize: 11,
                     color: theme.colorScheme.primary,
