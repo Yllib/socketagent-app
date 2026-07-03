@@ -93,9 +93,7 @@ class WebSocketService {
         _encryptionReady = false;
         // DO NOT log the full URI - it contains pairing and subscriber tokens
       } else {
-        uri = Uri.parse(
-          'ws://$_host:$_port?token=${Uri.encodeComponent(_token)}',
-        );
+        uri = Uri.parse('ws://$_host:$_port');
       }
 
       // Use the IOWebSocketChannel.connect factory so it builds the underlying
@@ -105,6 +103,9 @@ class WebSocketService {
       // would just hang forever instead of firing onDone.
       _channel = IOWebSocketChannel.connect(
         uri,
+        headers: _mode == ConnectionMode.direct
+            ? {'Authorization': 'Bearer $_token'}
+            : null,
         pingInterval: const Duration(seconds: 20),
       );
 
