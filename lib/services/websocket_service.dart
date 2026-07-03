@@ -29,6 +29,7 @@ class WebSocketService {
   String _subscriberToken = '';
   CryptoService? _cryptoService;
   bool _encryptionReady = false;
+  bool _requireTrustedDirectKey = true;
 
   // Wire-format flag — flips to true once the server replies to our
   // client_capabilities announcement. Until then we keep the legacy
@@ -49,11 +50,13 @@ class WebSocketService {
     required int port,
     required String token,
     CryptoService? cryptoService,
+    bool requireTrustedDirectKey = true,
   }) {
     _host = host;
     _port = port;
     _token = token;
     _cryptoService = cryptoService;
+    _requireTrustedDirectKey = requireTrustedDirectKey;
   }
 
   void configureRelay({
@@ -97,6 +100,13 @@ class WebSocketService {
       } else {
         final encryptedDirect =
             _cryptoService != null && _cryptoService!.isReady;
+        if (_requireTrustedDirectKey && !encryptedDirect) {
+          debugPrint(
+            '[Direct E2E] Direct connection blocked: missing trusted server public key',
+          );
+          _setStatus(ConnectionStatus.error);
+          return;
+        }
         uri = Uri(
           scheme: 'ws',
           host: _host,

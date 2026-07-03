@@ -205,7 +205,9 @@ class OnboardingScreen extends StatelessWidget {
     final hostCtrl = TextEditingController();
     final portCtrl = TextEditingController(text: '8085');
     final tokenCtrl = TextEditingController();
+    final pubkeyCtrl = TextEditingController();
     bool tokenVisible = false;
+    bool pubkeyVisible = false;
 
     showDialog(
       context: context,
@@ -264,6 +266,24 @@ class OnboardingScreen extends StatelessWidget {
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: pubkeyCtrl,
+                  obscureText: !pubkeyVisible,
+                  decoration: InputDecoration(
+                    labelText: 'Server Public Key',
+                    hintText: 'Paste from pairing QR',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.verified_user),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        pubkeyVisible ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setDialogState(() => pubkeyVisible = !pubkeyVisible),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -275,10 +295,15 @@ class OnboardingScreen extends StatelessWidget {
             FilledButton(
               onPressed: () async {
                 final host = hostCtrl.text.trim();
-                if (host.isEmpty) {
-                  ScaffoldMessenger.of(
-                    ctx,
-                  ).showSnackBar(const SnackBar(content: Text('Enter a host')));
+                final serverPubkey = pubkeyCtrl.text.trim();
+                if (host.isEmpty || serverPubkey.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'Enter a host and server public key for direct connection',
+                      ),
+                    ),
+                  );
                   return;
                 }
                 final port = int.tryParse(portCtrl.text.trim()) ?? 8085;
@@ -292,6 +317,7 @@ class OnboardingScreen extends StatelessWidget {
                   token: tokenCtrl.text.trim(),
                   useRelay: false,
                   sortOrder: provider.serverConfigs.length,
+                  serverPubkey: serverPubkey,
                 );
                 await provider.addServer(config);
                 provider.requestSessionList();
@@ -307,6 +333,7 @@ class OnboardingScreen extends StatelessWidget {
       hostCtrl.dispose();
       portCtrl.dispose();
       tokenCtrl.dispose();
+      pubkeyCtrl.dispose();
     });
   }
 }

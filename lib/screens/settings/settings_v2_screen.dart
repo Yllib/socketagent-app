@@ -406,7 +406,9 @@ class _SettingsV2ServerDetailScreenState
                         : '${config.host}:${config.port}',
                     trailing: connected ? 'Connected' : _statusLabel(status),
                   ),
-                  if (config.useRelay && config.host.isNotEmpty)
+                  if (config.useRelay &&
+                      config.host.isNotEmpty &&
+                      config.serverPubkey.isNotEmpty)
                     _ButtonRow(
                       primaryLabel: 'Use Direct',
                       primaryIcon: Icons.dns,
@@ -1881,7 +1883,9 @@ void _showServerDialog(
     text: existing?.port.toString() ?? '8085',
   );
   final tokenCtrl = TextEditingController(text: existing?.token ?? '');
+  final pubkeyCtrl = TextEditingController(text: existing?.serverPubkey ?? '');
   bool tokenVisible = false;
+  bool pubkeyVisible = false;
   int? selectedColor = existing?.colorValue;
   bool useRelay = existing?.useRelay ?? true;
 
@@ -2049,6 +2053,24 @@ void _showServerDialog(
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: pubkeyCtrl,
+                  obscureText: !pubkeyVisible,
+                  decoration: InputDecoration(
+                    labelText: 'Server Public Key',
+                    hintText: 'Paste from pairing QR',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.verified_user),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        pubkeyVisible ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      onPressed: () =>
+                          setDialogState(() => pubkeyVisible = !pubkeyVisible),
+                    ),
+                  ),
+                ),
               ],
             ],
           ),
@@ -2084,6 +2106,7 @@ void _showServerDialog(
                 host: hostCtrl.text.trim(),
                 port: int.tryParse(portCtrl.text.trim()) ?? 8085,
                 token: tokenCtrl.text.trim(),
+                serverPubkey: pubkeyCtrl.text.trim(),
                 useRelay: useRelay,
                 colorValue: selectedColor,
               );
@@ -2093,7 +2116,7 @@ void _showServerDialog(
                     content: Text(
                       useRelay
                           ? 'Enter a name for the server'
-                          : 'Enter a host for direct connection',
+                          : 'Enter a host and server public key for direct connection',
                     ),
                   ),
                 );
@@ -2140,6 +2163,7 @@ void _showServerDialog(
     hostCtrl.dispose();
     portCtrl.dispose();
     tokenCtrl.dispose();
+    pubkeyCtrl.dispose();
   });
 }
 
@@ -2181,11 +2205,13 @@ ServerConfig? _serverConfigFromInputs({
   required String host,
   required int port,
   required String token,
+  required String serverPubkey,
   required bool useRelay,
   required int? colorValue,
 }) {
   if (useRelay && name.isEmpty) return null;
   if (!useRelay && host.isEmpty) return null;
+  if (!useRelay && serverPubkey.isEmpty) return null;
 
   return ServerConfig(
     id: existing?.id ?? ServerConfig.generateId(),
@@ -2197,7 +2223,9 @@ ServerConfig? _serverConfigFromInputs({
     sortOrder: existing?.sortOrder ?? provider.serverConfigs.length,
     relayUrl: existing?.relayUrl ?? '',
     pairingToken: existing?.pairingToken ?? '',
-    serverPubkey: existing?.serverPubkey ?? '',
+    serverPubkey: serverPubkey.isNotEmpty
+        ? serverPubkey
+        : existing?.serverPubkey ?? '',
     defaultCwd: defaultCwd,
     colorValue: colorValue,
     systemPrompt: systemPrompt,

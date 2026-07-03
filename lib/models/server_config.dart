@@ -14,7 +14,8 @@ class ServerConfig {
   final String serverPubkey;
   final String defaultCwd;
   final int? colorValue; // ARGB color value for badge
-  final String systemPrompt; // Default system prompt append for all sessions on this server
+  final String
+  systemPrompt; // Default system prompt append for all sessions on this server
 
   ServerConfig({
     required this.id,
@@ -26,11 +27,11 @@ class ServerConfig {
     this.sortOrder = 0,
     this.relayUrl = '',
     this.pairingToken = '',
-    this.serverPubkey = '',
+    String serverPubkey = '',
     this.defaultCwd = '',
     this.colorValue,
     this.systemPrompt = '',
-  });
+  }) : serverPubkey = normalizeServerPubkey(serverPubkey);
 
   bool get isRelayPaired =>
       relayUrl.isNotEmpty && pairingToken.isNotEmpty && serverPubkey.isNotEmpty;
@@ -39,6 +40,15 @@ class ServerConfig {
     final now = DateTime.now().millisecondsSinceEpoch;
     final rand = Random().nextInt(0xFFFF).toRadixString(16).padLeft(4, '0');
     return 'srv_${now}_$rand';
+  }
+
+  static String normalizeServerPubkey(String value) {
+    final trimmed = value.trim();
+    final parts = trimmed.split('|');
+    if (parts.length == 3 && (parts[0] == 'SA' || parts[0] == 'SC')) {
+      return parts[2].trim();
+    }
+    return trimmed;
   }
 
   factory ServerConfig.fromJson(Map<String, dynamic> json) {

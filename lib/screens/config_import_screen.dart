@@ -34,27 +34,52 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       _error = null;
     });
 
+    var scannerPaused = false;
     try {
       if (!ConfigTransfer.isExportPayload(rawData)) {
         setState(() {
-          _error = 'Not a config export QR code.\nExpected SAX| format (not SA| pairing format).';
+          _error =
+              'Not a config export QR code.\nExpected SAXE| or SAX| format.';
           _processing = false;
         });
         return;
       }
 
-      final payload = ConfigTransfer.decode(rawData);
+      String? passphrase;
+      if (ConfigTransfer.isEncryptedExportPayload(rawData)) {
+        if (!_showManualInput) {
+          await _controller.stop();
+          scannerPaused = true;
+        }
+        if (!mounted) return;
+        passphrase = await _showPassphraseDialog();
+        if (passphrase == null) {
+          if (mounted) {
+            setState(() => _processing = false);
+            if (scannerPaused) await _controller.start();
+          }
+          return;
+        }
+      }
+
+      final payload = ConfigTransfer.decode(rawData, passphrase: passphrase);
       if (payload.servers.isEmpty) {
         setState(() {
           _error = 'No server configs found in QR code.';
           _processing = false;
         });
+        if (scannerPaused) {
+          await _controller.start();
+        }
         return;
       }
 
       if (!mounted) return;
       // Pause the scanner while showing confirmation
-      _controller.stop();
+      if (!_showManualInput) {
+        scannerPaused = true;
+        await _controller.stop();
+      }
       final imported = await _showConfirmDialog(payload.servers);
       if (imported != null && imported > 0 && mounted) {
         // Save subscriber token if present
@@ -69,19 +94,73 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       } else if (mounted) {
         // User cancelled, resume scanning
         setState(() => _processing = false);
-        _controller.start();
+        if (scannerPaused) {
+          await _controller.start();
+        }
       }
     } on FormatException catch (e) {
       setState(() {
         _error = 'Invalid QR data: ${e.message}';
         _processing = false;
       });
+      if (scannerPaused) {
+        await _controller.start();
+      }
     } catch (e) {
       setState(() {
         _error = 'Error: $e';
         _processing = false;
       });
+      if (scannerPaused) {
+        await _controller.start();
+      }
     }
+  }
+
+  Future<String?> _showPassphraseDialog() {
+    final passphraseCtrl = TextEditingController();
+    var visible = false;
+    return showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Unlock Export'),
+          content: TextField(
+            controller: passphraseCtrl,
+            autofocus: true,
+            obscureText: !visible,
+            decoration: InputDecoration(
+              labelText: 'Export Passphrase',
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.lock),
+              suffixIcon: IconButton(
+                icon: Icon(visible ? Icons.visibility_off : Icons.visibility),
+                tooltip: visible ? 'Hide' : 'Show',
+                onPressed: () => setDialogState(() => visible = !visible),
+              ),
+            ),
+            onSubmitted: (_) {
+              final value = passphraseCtrl.text.trim();
+              if (value.isNotEmpty) Navigator.of(ctx).pop(value);
+            },
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(null),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = passphraseCtrl.text.trim();
+                if (value.isNotEmpty) Navigator.of(ctx).pop(value);
+              },
+              child: const Text('Unlock'),
+            ),
+          ],
+        ),
+      ),
+    ).whenComplete(passphraseCtrl.dispose);
   }
 
   Future<int?> _showConfirmDialog(List<Map<String, dynamic>> configs) {
@@ -90,7 +169,9 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       barrierDismissible: false,
       builder: (ctx) {
         return AlertDialog(
-          title: Text('Import ${configs.length} Server${configs.length == 1 ? '' : 's'}?'),
+          title: Text(
+            'Import ${configs.length} Server${configs.length == 1 ? '' : 's'}?',
+          ),
           content: SizedBox(
             width: double.maxFinite,
             child: ListView.builder(
@@ -108,7 +189,10 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
                     color: isRelay ? Colors.blue : Colors.green,
                   ),
                   title: Text(name),
-                  subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+                  subtitle: Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 12),
+                  ),
                   dense: true,
                 );
               },
@@ -155,7 +239,8 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
           IconButton(
             icon: Icon(_showManualInput ? Icons.qr_code_scanner : Icons.edit),
             tooltip: _showManualInput ? 'Scan QR' : 'Paste manually',
-            onPressed: () => setState(() => _showManualInput = !_showManualInput),
+            onPressed: () =>
+                setState(() => _showManualInput = !_showManualInput),
           ),
         ],
       ),
@@ -187,7 +272,7 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
                         expands: true,
                         textAlignVertical: TextAlignVertical.top,
                         decoration: InputDecoration(
-                          hintText: 'SAX|1|...',
+                          hintText: 'SAXE|2|...',
                           border: const OutlineInputBorder(),
                           suffixIcon: IconButton(
                             icon: const Icon(Icons.paste),
@@ -195,7 +280,10 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
                             onPressed: _pasteFromClipboard,
                           ),
                         ),
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -232,7 +320,11 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
                   SizedBox(width: 12),
                   Text('Processing...'),
                 ],

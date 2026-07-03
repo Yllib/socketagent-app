@@ -305,7 +305,11 @@ class _ServersScreenState extends State<ServersScreen> {
       text: existing?.port.toString() ?? '8085',
     );
     final tokenCtrl = TextEditingController(text: existing?.token ?? '');
+    final pubkeyCtrl = TextEditingController(
+      text: existing?.serverPubkey ?? '',
+    );
     bool tokenVis = false;
+    bool pubkeyVis = false;
     int? selectedColor = existing?.colorValue;
     bool useRelay =
         existing?.useRelay ?? true; // Default to relay for new servers
@@ -514,6 +518,24 @@ class _ServersScreenState extends State<ServersScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: pubkeyCtrl,
+                    obscureText: !pubkeyVis,
+                    decoration: InputDecoration(
+                      labelText: 'Server Public Key',
+                      hintText: 'Paste from pairing QR',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.verified_user),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          pubkeyVis ? Icons.visibility_off : Icons.visibility,
+                        ),
+                        onPressed: () =>
+                            setDialogState(() => pubkeyVis = !pubkeyVis),
+                      ),
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -536,10 +558,13 @@ class _ServersScreenState extends State<ServersScreen> {
                   final host = hostCtrl.text.trim();
                   final port = int.tryParse(portCtrl.text.trim()) ?? 8085;
                   final token = tokenCtrl.text.trim();
-                  if (host.isEmpty) {
+                  final serverPubkey = pubkeyCtrl.text.trim();
+                  if (host.isEmpty || serverPubkey.isEmpty) {
                     ScaffoldMessenger.of(ctx).showSnackBar(
                       const SnackBar(
-                        content: Text('Enter a host for direct connection'),
+                        content: Text(
+                          'Enter a host and server public key for direct connection',
+                        ),
                       ),
                     );
                     return;
@@ -556,7 +581,7 @@ class _ServersScreenState extends State<ServersScreen> {
                         existing?.sortOrder ?? provider.serverConfigs.length,
                     relayUrl: existing?.relayUrl ?? '',
                     pairingToken: existing?.pairingToken ?? '',
-                    serverPubkey: existing?.serverPubkey ?? '',
+                    serverPubkey: serverPubkey,
                     defaultCwd: cwdCtrl.text.trim(),
                     colorValue: selectedColor,
                     systemPrompt: sysPromptCtrl.text.trim(),
@@ -641,7 +666,15 @@ class _ServersScreenState extends State<ServersScreen> {
           ],
         ),
       ),
-    );
+    ).whenComplete(() {
+      nameCtrl.dispose();
+      cwdCtrl.dispose();
+      sysPromptCtrl.dispose();
+      hostCtrl.dispose();
+      portCtrl.dispose();
+      tokenCtrl.dispose();
+      pubkeyCtrl.dispose();
+    });
   }
 
   Future<void> _pairServerRelay(
@@ -1062,7 +1095,9 @@ class _ServersScreenState extends State<ServersScreen> {
                   style: TextStyle(color: Colors.grey),
                 ),
               ),
-            if (config.useRelay && config.host.isNotEmpty)
+            if (config.useRelay &&
+                config.host.isNotEmpty &&
+                config.serverPubkey.isNotEmpty)
               ListTile(
                 leading: const Icon(Icons.dns),
                 title: const Text('Use Direct Connection'),
@@ -1165,7 +1200,9 @@ class _ServersScreenState extends State<ServersScreen> {
           final operation = state?.operation ?? 'repair';
           final isAuthOperation = operation == 'auth';
           final operationTitle = isAuthOperation ? 'Sign-In' : 'Repair';
-          final shouldDismiss = isAuthOperation ? completed : (completed || healthy);
+          final shouldDismiss = isAuthOperation
+              ? completed
+              : (completed || healthy);
 
           if (!dismissedAfterSuccess && shouldDismiss) {
             dismissedAfterSuccess = true;

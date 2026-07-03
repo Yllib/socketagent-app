@@ -1745,16 +1745,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final directServerPubkey = directE2e is Map
         ? directE2e['serverPubkey'] as String? ?? ''
         : '';
+    final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
+    if (idx < 0) return;
+    final existing = _serverConfigs[idx];
+    if (!existing.useRelay &&
+        existing.serverPubkey.isEmpty &&
+        directServerPubkey.isNotEmpty) {
+      debugPrint(
+        '[Direct E2E] Ignoring server public key learned over untrusted direct socket',
+      );
+      return;
+    }
     final serverPubkey = relayServerPubkey.isNotEmpty
         ? relayServerPubkey
         : directServerPubkey;
     if (serverPubkey.isEmpty) {
       return;
     }
-
-    final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
-    if (idx < 0) return;
-    final existing = _serverConfigs[idx];
     final effectiveRelayUrl = relayUrl.isEmpty
         ? existing.relayUrl
         : _isLocalRelayUrl(rawRelayUrl) &&

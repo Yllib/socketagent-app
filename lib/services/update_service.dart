@@ -6,16 +6,23 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:http/http.dart' as http;
+import 'package:crypto/crypto.dart' as crypto;
 
 class UpdateInfo {
   final String latestVersion;
   final String downloadUrl;
+  final String sha256;
+  final int? size;
+  final String signingCertSha256;
   final String currentVersion;
   final bool updateAvailable;
 
   UpdateInfo({
     required this.latestVersion,
     required this.downloadUrl,
+    required this.sha256,
+    this.size,
+    this.signingCertSha256 = '',
     required this.currentVersion,
     required this.updateAvailable,
   });
@@ -61,16 +68,28 @@ class UpdateService extends ChangeNotifier {
       final data = jsonDecode(response.body) as Map<String, dynamic>;
       final latestVersion = data['version'] as String? ?? currentVersion;
       final downloadUrl = data['url'] as String? ?? '';
+      final sha256 = _normalizeSha256(data['sha256'] as String? ?? '');
+      final size = data['size'] is int ? data['size'] as int : null;
+      final signingCertSha256 = (data['signingCertSha256'] as String? ?? '')
+          .trim();
+      final newer = _isNewer(latestVersion, currentVersion);
 
       debugPrint(
-        '[Update] current=$currentVersion latest=$latestVersion newer=${_isNewer(latestVersion, currentVersion)}',
+        '[Update] current=$currentVersion latest=$latestVersion newer=$newer sha256=${sha256.isNotEmpty}',
       );
+
+      if (newer && sha256.isEmpty) {
+        _error = 'Update metadata is missing APK SHA-256.';
+      }
 
       _updateInfo = UpdateInfo(
         latestVersion: latestVersion,
         downloadUrl: downloadUrl,
+        sha256: sha256,
+        size: size,
+        signingCertSha256: signingCertSha256,
         currentVersion: currentVersion,
-        updateAvailable: _isNewer(latestVersion, currentVersion),
+        updateAvailable: newer && sha256.isNotEmpty,
       );
       await _refreshDownloadedApkState();
       notifyListeners();
@@ -86,6 +105,11 @@ class UpdateService extends ChangeNotifier {
   Future<void> downloadAndInstall() async {
     if (_updateInfo == null || _updateInfo!.downloadUrl.isEmpty) return;
     if (_isDownloading) return;
+    if (_updateInfo!.sha256.isEmpty) {
+      _error = 'Update metadata is missing APK SHA-256.';
+      notifyListeners();
+      return;
+    }
     await _refreshDownloadedApkState();
     if (_hasDownloadedApk) {
       await installDownloaded();
@@ -122,6 +146,7 @@ class UpdateService extends ChangeNotifier {
       if (!result) {
         throw Exception('Download failed');
       }
+      await _verifyDownloadedApkOrThrow(apkFile, _updateInfo!);
 
       _isDownloading = false;
       _downloadProgress = null;
@@ -143,6 +168,16 @@ class UpdateService extends ChangeNotifier {
     final apkPath = _downloadedApkPath;
     if (apkPath == null || apkPath.isEmpty) {
       _error = 'No downloaded update found';
+      notifyListeners();
+      return;
+    }
+
+    try {
+      await _verifyDownloadedApkOrThrow(File(apkPath), _updateInfo!);
+    } catch (e) {
+      _hasDownloadedApk = false;
+      _downloadedApkPath = null;
+      _error = e.toString().replaceFirst('Exception: ', '');
       notifyListeners();
       return;
     }
@@ -294,6 +329,13 @@ class UpdateService extends ChangeNotifier {
     final path = await _apkPathForVersion(info.latestVersion);
     final file = File(path);
     _hasDownloadedApk = await file.exists() && await file.length() > 0;
+    if (_hasDownloadedApk && info.sha256.isNotEmpty) {
+      final verified = await _verifyDownloadedApk(file, info);
+      if (!verified) {
+        await _deleteIfExists(file);
+        _hasDownloadedApk = false;
+      }
+    }
     _downloadedApkPath = _hasDownloadedApk ? path : null;
     if (!_isDownloading) {
       await _updatePartialProgress();
@@ -325,6 +367,33 @@ class UpdateService extends ChangeNotifier {
   Future<String> _apkPathForVersion(String version) async {
     final updateDir = await _updatesDirectory();
     return '${updateDir.path}/socketagent-$version.apk';
+  }
+
+  static String _normalizeSha256(String value) {
+    return value.trim().toLowerCase().replaceAll(RegExp(r'[^a-f0-9]'), '');
+  }
+
+  Future<String> _fileSha256(File file) async {
+    final digest = await crypto.sha256.bind(file.openRead()).first;
+    return digest.toString();
+  }
+
+  Future<bool> _verifyDownloadedApk(File file, UpdateInfo info) async {
+    if (info.sha256.isEmpty) return false;
+    if (!await file.exists()) return false;
+    if (info.size != null && info.size! > 0) {
+      final actualSize = await file.length();
+      if (actualSize != info.size) return false;
+    }
+    final actual = await _fileSha256(file);
+    return actual == info.sha256;
+  }
+
+  Future<void> _verifyDownloadedApkOrThrow(File file, UpdateInfo info) async {
+    final ok = await _verifyDownloadedApk(file, info);
+    if (ok) return;
+    await _deleteIfExists(file);
+    throw Exception('Downloaded APK did not match release SHA-256.');
   }
 
   /// Compare semver strings. Returns true if latest > current.
