@@ -16,10 +16,15 @@ import '../outlook_auth_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
 import '../paywall_screen.dart';
+import 'adb_bridge_screen.dart';
 import 'about_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
 import 'voice_speech_screen.dart';
+
+const MethodChannel _settingsNativeChannel = MethodChannel(
+  'com.socketagent.app/intent',
+);
 
 class SettingsV2Screen extends StatelessWidget {
   const SettingsV2Screen({super.key, required this.updateService});
@@ -156,6 +161,17 @@ class SettingsV2Screen extends StatelessWidget {
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const ProtectedFilesScreen(),
+                      ),
+                    ),
+                  ),
+                  _NavTile(
+                    icon: Icons.usb,
+                    title: 'ADB Bridge',
+                    subtitle: 'Tunnel Android Wireless Debugging through relay',
+                    trailing: Icons.chevron_right,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const AdbBridgeScreen(),
                       ),
                     ),
                   ),
@@ -962,18 +978,31 @@ class _BackendDetailTile extends StatelessWidget {
               ].join(' · ');
 
         final canRun = connected;
-        void signIn() {
+        void showRunningOperation() {
+          _showBackendOperationDialog(
+            context,
+            provider,
+            serverId,
+            backend,
+            fallbackOperation: state?.operation ?? 'repair',
+          );
+        }
+
+        Future<void> signIn() async {
           if (running) {
-            _showForceStopBackendDialog(
-              context,
-              provider,
-              serverId,
-              backend,
-              backendName,
-            );
+            showRunningOperation();
             return;
           }
-          provider.authenticateBackend(serverId, backend: backend);
+          final force = ok
+              ? await _confirmBackendReauth(context, backendName: backendName)
+              : false;
+          if (!context.mounted) return;
+          if (ok && force != true) return;
+          provider.authenticateBackend(
+            serverId,
+            backend: backend,
+            force: force == true,
+          );
           _showBackendOperationDialog(
             context,
             provider,
@@ -985,13 +1014,7 @@ class _BackendDetailTile extends StatelessWidget {
 
         void repair() {
           if (running) {
-            _showForceStopBackendDialog(
-              context,
-              provider,
-              serverId,
-              backend,
-              backendName,
-            );
+            showRunningOperation();
             return;
           }
           provider.repairBackend(serverId, backend: backend, reinstall: true);
@@ -1072,39 +1095,281 @@ bool _backendIsHealthy(ChatProvider provider, String serverId, String backend) {
   return false;
 }
 
-Future<void> _showForceStopBackendDialog(
-  BuildContext context,
-  ChatProvider provider,
-  String serverId,
-  String backend,
-  String backendName,
-) async {
-  final state = provider.backendInstallState(serverId, backend);
-  final operation = state?.operation == 'auth' ? 'sign-in' : 'repair';
-  final stopped = await showDialog<bool>(
+Future<bool?> _confirmBackendReauth(
+  BuildContext context, {
+  required String backendName,
+}) {
+  return showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: Text('Stop $backendName $operation?'),
+      title: Text('$backendName is already signed in'),
       content: Text(
-        (state?.message.isNotEmpty ?? false)
-            ? state!.message
-            : 'A $backendName backend $operation is already running.',
+        'You can keep the current sign-in, or start a new $backendName sign-in and replace the existing authentication on this server.',
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(dialogContext, false),
-          child: const Text('Keep Running'),
+          child: const Text('Keep Current'),
         ),
         FilledButton(
           onPressed: () => Navigator.pop(dialogContext, true),
-          child: const Text('Force Stop'),
+          child: const Text('Sign In Again'),
         ),
       ],
     ),
   );
-  if (stopped == true) {
-    provider.cancelBackendOperation(serverId, backend: backend);
+}
+
+Future<void> _openBackendAuthPage(
+  BuildContext context, {
+  required String authUrl,
+  required String? authCode,
+  required String overlayTitle,
+}) async {
+  final hasCode = authCode != null && authCode.isNotEmpty;
+  if (authCode != null && authCode.isNotEmpty) {
+    await Clipboard.setData(ClipboardData(text: authCode));
   }
+  if (!context.mounted) return;
+  final uri = Uri.tryParse(authUrl);
+  if (uri == null) return;
+
+  if (hasCode) {
+    final overlayReady = await _ensureAuthCodeOverlayPermission(context);
+    if (!context.mounted || !overlayReady) return;
+    final shown = await _showAuthCodeOverlay(
+      title: overlayTitle,
+      code: authCode,
+    );
+    if (!context.mounted) return;
+    if (!shown) {
+      final openAnyway = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Code overlay did not appear'),
+          content: const Text(
+            'The code was copied, but Android did not allow SocketAgent to draw the overlay. You can open the browser anyway and paste the copied code.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Open Browser Anyway'),
+            ),
+          ],
+        ),
+      );
+      if (!context.mounted || openAnyway != true) return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          shown
+              ? 'Code copied and shown over browser'
+              : 'Code copied, but overlay could not be shown',
+        ),
+      ),
+    );
+  }
+  await launchUrl(uri, mode: LaunchMode.externalApplication);
+}
+
+Future<bool> _ensureAuthCodeOverlayPermission(BuildContext context) async {
+  bool allowed = false;
+  try {
+    allowed =
+        await _settingsNativeChannel.invokeMethod<bool>('canDrawOverlays') ??
+        false;
+  } catch (_) {}
+  if (allowed) return true;
+
+  if (!context.mounted) return false;
+  final openSettings = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('Allow code overlay?'),
+      content: const Text(
+        'SocketAgent needs Display over other apps permission to keep the device code visible while your browser is open.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Not Now'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(dialogContext, true),
+          child: const Text('Open Settings'),
+        ),
+      ],
+    ),
+  );
+  if (!context.mounted || openSettings != true) return false;
+  try {
+    await _settingsNativeChannel.invokeMethod('requestOverlayPermission');
+  } catch (_) {}
+  return false;
+}
+
+Future<void> _requestAuthCodeOverlayPermission(BuildContext context) async {
+  final allowed = await _ensureAuthCodeOverlayPermission(context);
+  if (!context.mounted) return;
+  if (allowed) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Code overlay is already enabled')),
+    );
+  }
+}
+
+Future<bool> _showAuthCodeOverlay({
+  required String title,
+  required String code,
+}) async {
+  try {
+    return await _settingsNativeChannel.invokeMethod<bool>(
+          'showAuthCodeOverlay',
+          {'title': title, 'code': code, 'timeoutSeconds': 900},
+        ) ??
+        false;
+  } catch (_) {
+    return false;
+  }
+}
+
+Widget _buildBackendDeviceAuthCard(
+  BuildContext context, {
+  required String backend,
+  required String backendName,
+  required String? authUrl,
+  required String? authCode,
+}) {
+  final theme = Theme.of(context);
+  final hasCode = authCode != null && authCode.isNotEmpty;
+  final hasUrl = authUrl != null && authUrl.isNotEmpty;
+  final waitingForCodexCode = backend == 'codex' && hasUrl && !hasCode;
+
+  return DecoratedBox(
+    decoration: BoxDecoration(
+      border: Border.all(color: theme.colorScheme.outlineVariant),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            backend == 'claude' ? '$backendName sign-in' : 'Device sign-in',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (hasCode) ...[
+            Text(
+              'Code',
+              style: theme.textTheme.labelMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: SelectableText(
+                      authCode,
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 1.2,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Copy code',
+                    icon: const Icon(Icons.copy, size: 20),
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: authCode));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Code copied')),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+          ] else if (waitingForCodexCode) ...[
+            Text(
+              'Waiting for Codex to print the device code...',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+          ],
+          if (hasUrl)
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: waitingForCodexCode
+                    ? null
+                    : () => _openBackendAuthPage(
+                        context,
+                        authUrl: authUrl,
+                        authCode: authCode,
+                        overlayTitle: '$backendName sign-in',
+                      ),
+                icon: const Icon(Icons.open_in_browser),
+                label: Text(
+                  waitingForCodexCode
+                      ? 'Waiting for Device Code'
+                      : hasCode
+                      ? 'Show Code & Open Browser'
+                      : 'Open Browser',
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+}
+
+Widget _buildBackendOutputBlock(BuildContext context, List<String> output) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('Output', style: Theme.of(context).textTheme.labelMedium),
+      const SizedBox(height: 6),
+      ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 220),
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surfaceContainer,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: SingleChildScrollView(
+            reverse: true,
+            padding: const EdgeInsets.all(10),
+            child: SelectableText(
+              output.join('\n'),
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
 }
 
 void _showBackendOperationDialog(
@@ -1132,6 +1397,9 @@ void _showBackendOperationDialog(
         final running = state?.running == true;
         final failed = state?.status == 'failed';
         final cancelled = state?.status == 'cancelled';
+        final alreadyRunningConflict =
+            failed &&
+            (state?.message.toLowerCase().contains('already running') ?? false);
         final completed =
             state?.running == false && state?.status == 'completed';
         final healthy = _backendIsHealthy(currentProvider, serverId, backend);
@@ -1140,6 +1408,10 @@ void _showBackendOperationDialog(
         final output = state?.output ?? const <String>[];
         final operation = state?.operation ?? fallbackOperation;
         final isAuthOperation = operation == 'auth';
+        final hasAuthUrl = authUrl != null && authUrl.isNotEmpty;
+        final hasAuthCode = authCode != null && authCode.isNotEmpty;
+        final showDeviceAuthCard =
+            isAuthOperation && (hasAuthUrl || hasAuthCode);
         final operationTitle = isAuthOperation ? 'Sign-In' : 'Repair';
         final shouldDismiss = isAuthOperation
             ? completed
@@ -1190,152 +1462,80 @@ void _showBackendOperationDialog(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    state?.message ??
-                        (isAuthOperation
-                            ? 'Starting sign-in...'
-                            : 'Starting repair...'),
+                    showDeviceAuthCard
+                        ? 'Finish $backendName sign-in in your browser, then return to SocketAgent.'
+                        : state?.message ??
+                              (isAuthOperation
+                                  ? 'Starting sign-in...'
+                                  : 'Starting repair...'),
                   ),
-                  if (authUrl != null || authCode != null) ...[
+                  if (showDeviceAuthCard) ...[
                     const SizedBox(height: 12),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
-                        borderRadius: BorderRadius.circular(8),
+                    _buildBackendDeviceAuthCard(
+                      context,
+                      backend: backend,
+                      backendName: backendName,
+                      authUrl: authUrl,
+                      authCode: authCode,
+                    ),
+                  ],
+                  if (isAuthOperation) ...[
+                    const SizedBox(height: 12),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.picture_in_picture_alt_outlined),
+                        label: const Text('Enable Code Overlay'),
+                        onPressed: () {
+                          _requestAuthCodeOverlayPermission(context);
+                        },
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (authCode != null && authCode.isNotEmpty) ...[
-                              const Text(
-                                'Device Code',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 6),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: SelectableText(
-                                      authCode,
-                                      style: const TextStyle(
-                                        fontSize: 20,
-                                        letterSpacing: 0,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Copy code',
-                                    icon: const Icon(Icons.copy, size: 20),
-                                    onPressed: () {
-                                      Clipboard.setData(
-                                        ClipboardData(text: authCode),
-                                      );
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Code copied'),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ],
-                            if (authUrl != null && authUrl.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  onPressed: () {
-                                    final uri = Uri.tryParse(authUrl);
-                                    if (uri != null) {
-                                      launchUrl(
-                                        uri,
-                                        mode: LaunchMode.externalApplication,
-                                      );
-                                    }
-                                  },
-                                  icon: const Icon(Icons.open_in_browser),
-                                  label: Text(
-                                    backend == 'claude'
-                                        ? 'Open Login Page'
-                                        : 'Open Device Page',
-                                  ),
-                                ),
-                              ),
-                            ],
-                            if (backend == 'claude' &&
-                                isAuthOperation &&
-                                authUrl != null &&
-                                authUrl.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: claudeAuthCodeCtrl,
-                                decoration: const InputDecoration(
-                                  labelText: 'Claude auth code',
-                                  hintText: 'Paste copied code',
-                                  border: OutlineInputBorder(),
-                                  isDense: true,
-                                ),
-                                minLines: 1,
-                                maxLines: 3,
-                                onSubmitted: (_) => _submitClaudeAuthCode(
-                                  currentProvider,
-                                  serverId,
-                                  state?.requestId,
-                                  claudeAuthCodeCtrl.text,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  icon: const Icon(Icons.check),
-                                  label: const Text('Submit Code'),
-                                  onPressed: () => _submitClaudeAuthCode(
-                                    currentProvider,
-                                    serverId,
-                                    state?.requestId,
-                                    claudeAuthCodeCtrl.text,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
+                    ),
+                  ],
+                  if (backend == 'claude' && isAuthOperation && hasAuthUrl) ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: claudeAuthCodeCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Claude auth code',
+                        hintText: 'Paste copied code',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      minLines: 1,
+                      maxLines: 3,
+                      onSubmitted: (_) => _submitClaudeAuthCode(
+                        currentProvider,
+                        serverId,
+                        state?.requestId,
+                        claudeAuthCodeCtrl.text,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        icon: const Icon(Icons.check),
+                        label: const Text('Submit Code'),
+                        onPressed: () => _submitClaudeAuthCode(
+                          currentProvider,
+                          serverId,
+                          state?.requestId,
+                          claudeAuthCodeCtrl.text,
                         ),
                       ),
                     ),
                   ],
-                  if (output.isNotEmpty) ...[
+                  if (output.isNotEmpty && !showDeviceAuthCard) ...[
                     const SizedBox(height: 12),
-                    Text(
-                      'Output',
-                      style: Theme.of(context).textTheme.labelMedium,
-                    ),
-                    const SizedBox(height: 6),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 220),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainer,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: SingleChildScrollView(
-                          reverse: true,
-                          padding: const EdgeInsets.all(10),
-                          child: SelectableText(
-                            output.join('\n'),
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ),
+                    _buildBackendOutputBlock(context, output),
+                  ],
+                  if (output.isNotEmpty && showDeviceAuthCard) ...[
+                    const SizedBox(height: 8),
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: const Text('Details'),
+                      children: [_buildBackendOutputBlock(context, output)],
                     ),
                   ],
                 ],
@@ -1347,12 +1547,13 @@ void _showBackendOperationDialog(
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('Close'),
             ),
-            if (running)
+            if (running || alreadyRunningConflict)
               TextButton(
                 onPressed: () {
                   currentProvider.cancelBackendOperation(
                     serverId,
                     backend: backend,
+                    force: alreadyRunningConflict,
                   );
                 },
                 child: const Text('Force Stop'),

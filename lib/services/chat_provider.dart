@@ -28,6 +28,7 @@ import 'notification_service.dart';
 import 'push_notification_service.dart';
 import 'crypto_service.dart';
 import 'secure_storage_service.dart';
+import 'adb_bridge_service.dart';
 
 String _stripTerminalControl(String value) {
   return value
@@ -38,6 +39,92 @@ String _stripTerminalControl(String value) {
         '',
       )
       .replaceAll(RegExp(r'\[(?:\d{1,3}(?:;\d{1,3})*)m'), '');
+}
+
+Map<String, String> _parseBackendDeviceAuth(String value) {
+  final parsed = <String, String>{};
+  final text = _stripTerminalControl(value);
+  final urlMatch = RegExp(r'https?://[^\s)]+')
+      .allMatches(text)
+      .map((m) => m.group(0) ?? '')
+      .firstWhere(
+        (candidate) =>
+            candidate.contains('/codex/device') || candidate.contains('device'),
+        orElse: () => '',
+      );
+  if (urlMatch.isNotEmpty) {
+    parsed['authUrl'] = urlMatch.replaceAll(RegExp(r'[,.]+$'), '');
+  }
+
+  final codeText = text.replaceAll(RegExp(r'https?://[^\s)]+'), ' ');
+  final lines = const LineSplitter().convert(codeText);
+  final contextRe = RegExp(
+    r'\b(?:code|device|verification|one[-\s]?time)\b|enter',
+    caseSensitive: false,
+  );
+  final candidateRe = RegExp(
+    r'\b[A-Z0-9]{4}(?:[-\s][A-Z0-9]{4}){1,3}\b|\b[A-Z0-9]{8}\b',
+    caseSensitive: false,
+  );
+
+  String? code;
+  for (var i = 0; i < lines.length && code == null; i++) {
+    final context = [
+      if (i > 0) lines[i - 1],
+      lines[i],
+      if (i + 1 < lines.length) lines[i + 1],
+    ].join('\n');
+    if (!contextRe.hasMatch(context)) continue;
+    final lineHasContext = contextRe.hasMatch(lines[i]);
+    for (final match in candidateRe.allMatches(lines[i])) {
+      final candidate = match.group(0) ?? '';
+      final remainder = lines[i]
+          .replaceFirst(candidate, '')
+          .replaceAll(RegExp(r'[^A-Z0-9]+', caseSensitive: false), '');
+      code = _normalizeBackendAuthCodeCandidate(
+        candidate,
+        allowCompact: lineHasContext || remainder.isEmpty,
+      );
+      if (code != null) break;
+    }
+  }
+
+  if (code == null) {
+    for (final match in candidateRe.allMatches(codeText)) {
+      code = _normalizeBackendAuthCodeCandidate(match.group(0) ?? '');
+      if (code != null) break;
+    }
+  }
+
+  if (code != null && code.isNotEmpty) {
+    parsed['authCode'] = code;
+  }
+  return parsed;
+}
+
+String? _normalizeBackendAuthCodeCandidate(
+  String value, {
+  bool allowCompact = false,
+}) {
+  final trimmed = value.trim();
+  final grouped = RegExp(
+    r'^[A-Z0-9]{4}(?:[-\s][A-Z0-9]{4}){1,3}$',
+    caseSensitive: false,
+  ).firstMatch(trimmed)?.group(0);
+  if (grouped != null &&
+      (allowCompact ||
+          grouped.contains('-') ||
+          RegExp(r'\d').hasMatch(grouped))) {
+    return grouped.replaceAll(RegExp(r'\s+'), '-').toUpperCase();
+  }
+  final compact = RegExp(
+    r'^[A-Z0-9]{8}$',
+    caseSensitive: false,
+  ).firstMatch(trimmed)?.group(0);
+  if (compact != null && RegExp(r'\d').hasMatch(compact)) {
+    return compact.toUpperCase();
+  }
+  return null;
 }
 
 bool _isLocalRelayUrl(String value) {
@@ -81,12 +168,25 @@ class BackendInstallState {
   final List<String> output;
 
   void apply(Map<String, dynamic> msg) {
+    void absorbAuth(String value) {
+      final parsed = _parseBackendDeviceAuth(value);
+      final parsedUrl = parsed['authUrl'];
+      if (parsedUrl != null && parsedUrl.isNotEmpty) {
+        authUrl = parsedUrl;
+      }
+      final parsedCode = parsed['authCode'];
+      if (parsedCode != null && parsedCode.isNotEmpty) {
+        authCode = parsedCode;
+      }
+    }
+
     operation = msg['operation'] as String? ?? operation;
     phase = msg['phase'] as String? ?? phase;
     status = msg['status'] as String? ?? status;
     final rawMessage = msg['message'] as String?;
     if (rawMessage != null) {
       message = _stripTerminalControl(rawMessage).trimRight();
+      absorbAuth(message);
     }
     final rawAuthUrl = msg['authUrl'] as String?;
     if (rawAuthUrl != null) {
@@ -94,13 +194,24 @@ class BackendInstallState {
     }
     final rawAuthCode = msg['authCode'] as String?;
     if (rawAuthCode != null) {
-      authCode = _stripTerminalControl(rawAuthCode).trim();
+      final normalizedAuthCode = _normalizeBackendAuthCodeCandidate(
+        _stripTerminalControl(rawAuthCode),
+      );
+      if (normalizedAuthCode != null) {
+        authCode = normalizedAuthCode;
+      } else {
+        authCode = null;
+      }
     }
 
     final rawOutput = msg['output'] as String?;
     if (rawOutput != null && rawOutput.trim().isNotEmpty) {
+      final cleanOutput = _stripTerminalControl(
+        rawOutput,
+      ).replaceAll('\r\n', '\n');
+      absorbAuth(cleanOutput);
       final lines = const LineSplitter()
-          .convert(_stripTerminalControl(rawOutput).replaceAll('\r\n', '\n'))
+          .convert(cleanOutput)
           .map((line) => line.trimRight())
           .where((line) => line.trim().isNotEmpty);
       output.addAll(lines);
@@ -112,6 +223,11 @@ class BackendInstallState {
     running =
         status == 'running' ||
         !(status == 'failed' || status == 'cancelled' || phase == 'probe');
+
+    if (authCode != null &&
+        _normalizeBackendAuthCodeCandidate(authCode!) == null) {
+      authCode = null;
+    }
   }
 }
 
@@ -147,6 +263,21 @@ class _DownloadProgressNotification {
   final double? progress;
 }
 
+class _PhoneAdbFileTransfer {
+  _PhoneAdbFileTransfer({
+    required this.path,
+    required this.sink,
+    required this.completer,
+    required this.expectedSize,
+  });
+
+  final String path;
+  final IOSink sink;
+  final Completer<String> completer;
+  final int expectedSize;
+  int receivedBytes = 0;
+}
+
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
@@ -167,6 +298,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Backwards-compat getter — routes to active server's WebSocketService.
   /// Most existing _ws.send() calls work unchanged through this.
   WebSocketService get _ws => _connMgr.active ?? _fallbackWs;
+  WebSocketService get _sessionWs {
+    final serverId = _activeSessionServerId;
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.getConnection(serverId) ?? _ws;
+    }
+    return _ws;
+  }
+
+  void _sendToActiveSessionServer(Map<String, dynamic> message) {
+    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, message);
+    } else {
+      _ws.send(message);
+    }
+  }
 
   /// Dummy WebSocketService for when no server is active (avoids null crashes).
   final WebSocketService _fallbackWs = WebSocketService();
@@ -227,6 +374,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, int> _downloadExpectedBytes = {}; // fileId → expected size
   final Map<String, IOSink> _activeDownloads = {}; // fileId → write sink
   final Map<String, String> _downloadTempPaths = {}; // fileId → temp path
+  final Map<String, String> _socketDownloadTokens =
+      {}; // fileId → active socket transfer token
   final Map<String, BytesBuilder> _fileBytesBuffers = {};
   final Map<String, Completer<String?>> _fileBytesCompleters = {};
   final Map<String, String> _filePathToId = {}; // serverPath → latest fileId
@@ -390,6 +539,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
   Completer<Map<String, dynamic>?>? _pendingCodexStatus;
   final Map<String, Completer<bool>> _pushRegistrationCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>>
+  _adbBridgeSidecarCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>> _adbCommandCompleters = {};
+  final Map<String, _PhoneAdbFileTransfer> _phoneAdbFileTransfers = {};
 
   StreamSubscription? _messageSub;
   StreamSubscription? _statusSub;
@@ -1308,6 +1461,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _shouldDisplayForegroundPushNotification;
     _loadSettings();
     _setupListeners();
+    unawaited(AdbBridgeService.instance.restoreLocalAdbConnection());
   }
 
   @override
@@ -3092,6 +3246,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'terminal_output',
       'terminal_exited',
       'terminal_error',
+      'adb_bridge_sidecar_status',
+      'adb_command_result',
+      'phone_adb_request',
+      'phone_adb_file_chunk',
+      'phone_adb_file_end',
+      'phone_adb_cancel',
+      'file',
       'file_data',
       'file_chunk',
       'file_complete',
@@ -3226,6 +3387,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'terminal_exited':
       case 'terminal_error':
         _handleTerminalMessage(msg, serverId);
+        break;
+      case 'adb_bridge_sidecar_status':
+        _handleAdbBridgeSidecarStatus(msg);
+        break;
+      case 'adb_command_result':
+        _handleAdbCommandResult(msg);
+        break;
+      case 'phone_adb_request':
+        _handlePhoneAdbRequest(msg, serverId);
+        break;
+      case 'phone_adb_file_chunk':
+        _handlePhoneAdbFileChunk(msg);
+        break;
+      case 'phone_adb_file_end':
+        _handlePhoneAdbFileEnd(msg);
+        break;
+      case 'phone_adb_cancel':
+        _handlePhoneAdbCancel(msg);
         break;
       case 'push_token_registered':
         {
@@ -3372,7 +3551,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         break;
       case 'file':
-        _handleFileMessage(msg);
+        _handleFileMessage(msg, serverId);
         break;
       case 'file_data':
         _handleFileData(msg);
@@ -5888,6 +6067,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     var loaded = <ChatMessage>[];
     var historyPrevTodos = <Map<String, dynamic>>[];
+    final skippedToolUseIds = <String>{};
+    final loadedSendFilePaths = <String>{};
 
     for (final entry in rawMessages) {
       final role = entry['role'] as String? ?? '';
@@ -6319,29 +6500,48 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final toolName = (entry['toolName'] as String? ?? 'Tool')
               .replaceFirst('mcp__app__', '');
           final toolInput = (entry['toolInput'] as Map<String, dynamic>?) ?? {};
+          final toolUseId = entry['toolUseId'] as String? ?? '';
+          if (toolName == 'SendFile') {
+            final filePath = toolInput['file_path'] as String? ?? '';
+            if (filePath.isNotEmpty) {
+              final historyFileId =
+                  entry['fileId'] as String? ??
+                  _filePathToId[filePath] ??
+                  filePath;
+              final historyFileName =
+                  entry['fileName'] as String? ?? filePath.split('/').last;
+              final historyFileSize = (entry['fileSize'] as num?)?.toInt();
+              _serverFiles[historyFileId] = filePath;
+              _serverFileNames[historyFileId] = historyFileName;
+              if (historyFileSize != null && historyFileSize > 0) {
+                _serverFileSizes[historyFileId] = historyFileSize;
+              }
+              _filePathToId[filePath] = historyFileId;
+              final activeServerId = _connMgr.activeServerId;
+              if (activeServerId != null && activeServerId.isNotEmpty) {
+                _downloadServerIds[historyFileId] = activeServerId;
+              }
+              if (historySessionId != null && historySessionId.isNotEmpty) {
+                _downloadSessionIds[historyFileId] = historySessionId;
+              }
+            }
+            if (filePath.isNotEmpty && !loadedSendFilePaths.add(filePath)) {
+              if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
+              break;
+            }
+          }
           final toolCallMsg = ChatMessage.toolCall(
             tool: toolName,
             input: toolInput,
-            toolUseId: entry['toolUseId'] as String? ?? '',
+            toolUseId: toolUseId,
           );
           toolCallMsg.uuid = entry['uuid'] as String?;
           toolCallMsg.parentToolUseId = entry['parentToolUseId'] as String?;
           loaded.add(toolCallMsg);
-          // Restore server file references for SendFile tool calls
-          if (toolName == 'SendFile') {
-            final filePath = toolInput['file_path'] as String? ?? '';
-            if (filePath.isNotEmpty) {
-              final fileName = filePath.split('/').last;
-              // Use filePath as a fallback fileId for history entries (no hash available)
-              final fileId = _filePathToId[filePath] ?? filePath;
-              _serverFiles[fileId] = filePath;
-              _serverFileNames[fileId] = fileName;
-              _filePathToId[filePath] = fileId;
-            }
-          }
           break;
         case 'tool_result':
           final toolUseId = entry['toolUseId'] as String? ?? '';
+          if (skippedToolUseIds.contains(toolUseId)) break;
           final output = entry['toolOutput'] as String? ?? '';
           // Skip TodoWrite boilerplate results
           if (output.startsWith('Todos have been modified successfully')) break;
@@ -6840,14 +7040,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final useCodexFastMode = _activeSessionBackend == 'codex' && _codexFastMode;
-    _ws.sendPrompt(
-      prompt,
-      sessionId: _activeSessionId,
-      priority: priority,
-      messageId: userMsg.id,
-      cwd: _activeSessionId == null ? _activeSessionCwd : null,
-      codexFastMode: useCodexFastMode ? true : null,
-    );
+    _sendToActiveSessionServer({
+      'type': 'prompt',
+      'text': prompt,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+      if (priority != null) 'priority': priority,
+      'messageId': userMsg.id,
+      if (_activeSessionId == null && _activeSessionCwd != null)
+        'cwd': _activeSessionCwd,
+      if (useCodexFastMode) 'codexFastMode': true,
+    });
 
     // Upload + dispatch done — bubble is officially "sent" now (unless it's
     // queued behind a running query, in which case keep the pending state).
@@ -6873,7 +7075,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _pendingInjectedMessageCount--;
     }
     _pendingLocalUserMessageIds.remove(messageId);
-    _ws.sendRetractQueuedPrompt(messageId);
+    _sendToActiveSessionServer({
+      'type': 'retract_queued_prompt',
+      'messageId': messageId,
+    });
     notifyListeners();
     return text;
   }
@@ -6902,7 +7107,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     final file = File(path);
     final bytes = await file.readAsBytes();
-    final binary = _ws.serverSupportsBinary;
+    final ws = _sessionWs;
+    final binary = ws.serverSupportsBinary;
     // 1MB binary chunks: small enough to not blow up the OS TCP buffer on
     // cellular, big enough that NaCl/JSON overhead per chunk stays a small
     // fraction. 512KB on the legacy base64 path keeps the relay's 16MB
@@ -6935,7 +7141,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       state.start();
     }
 
-    _ws.send({
+    ws.send({
       'type': 'upload_start',
       'uploadId': uploadId,
       'fileName': name,
@@ -6956,13 +7162,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final end = (start + chunkSize).clamp(0, bytes.length);
       final chunk = Uint8List.fromList(bytes.sublist(start, end));
       if (binary) {
-        _ws.sendUploadChunkBinary(
+        ws.sendUploadChunkBinary(
           uploadId: uploadId,
           chunkIndex: i,
           bytes: chunk,
         );
       } else {
-        _ws.send({
+        ws.send({
           'type': 'upload_chunk',
           'uploadId': uploadId,
           'chunkIndex': i,
@@ -7055,7 +7261,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (idx >= 0) {
       _messages[idx].answered = true;
     }
-    _ws.sendAnswer(questionId, answers);
+    _sendToActiveSessionServer({
+      'type': 'answer',
+      'questionId': questionId,
+      'answers': answers,
+    });
     notifyListeners();
   }
 
@@ -7224,6 +7434,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required bool reinstall,
     required bool authenticate,
     required String operation,
+    bool forceAuthenticate = false,
   }) {
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
     final key = _backendInstallKey(serverId, backend);
@@ -7248,6 +7459,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'backend': backend,
       'reinstall': reinstall,
       'authenticate': authenticate,
+      if (forceAuthenticate) 'forceAuthenticate': true,
       'operation': operation,
       'requestId': requestId,
     });
@@ -7284,26 +7496,37 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  void authenticateBackend(String serverId, {String backend = 'codex'}) {
+  void authenticateBackend(
+    String serverId, {
+    String backend = 'codex',
+    bool force = false,
+  }) {
     _runBackendOperation(
       serverId,
       backend: backend,
       reinstall: false,
       authenticate: true,
       operation: 'auth',
+      forceAuthenticate: force,
     );
   }
 
-  void cancelBackendOperation(String serverId, {String backend = 'codex'}) {
+  void cancelBackendOperation(
+    String serverId, {
+    String backend = 'codex',
+    bool force = false,
+  }) {
     final key = _backendInstallKey(serverId, backend);
     final state = _backendInstallStates[key];
-    if (state == null || !state.running) return;
+    if (state == null || (!state.running && !force)) return;
     _connMgr.sendToServer(serverId, {
       'type': 'backend_install_cancel',
       'backend': backend,
-      'requestId': state.requestId,
+      if (!force) 'requestId': state.requestId,
     });
     state.message = 'Stopping backend operation...';
+    state.status = 'running';
+    state.running = true;
     notifyListeners();
   }
 
@@ -7424,6 +7647,275 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     _terminalEvents.add(enriched);
     notifyListeners();
+  }
+
+  void _handleAdbBridgeSidecarStatus(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String?;
+    if (requestId == null || requestId.isEmpty) return;
+    final completer = _adbBridgeSidecarCompleters.remove(requestId);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(Map<String, dynamic>.from(msg));
+    }
+  }
+
+  void _handleAdbCommandResult(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String?;
+    if (requestId == null || requestId.isEmpty) return;
+    final completer = _adbCommandCompleters.remove(requestId);
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(Map<String, dynamic>.from(msg));
+    }
+  }
+
+  void _handlePhoneAdbRequest(Map<String, dynamic> msg, String? serverId) {
+    final requestId = msg['requestId'] as String?;
+    if (requestId == null || requestId.isEmpty || serverId == null) return;
+    unawaited(() async {
+      Map<String, dynamic> result;
+      try {
+        final command = msg['command'] as String? ?? 'devices';
+        switch (command) {
+          case 'pair':
+            result = await AdbBridgeService.instance.localAdbPair(
+              port: _phoneAdbRequestPort(msg, 'pairPort'),
+              code: msg['code']?.toString() ?? '',
+            );
+            break;
+          case 'connect':
+            result = await AdbBridgeService.instance.localAdbConnect(
+              port: _phoneAdbRequestPort(msg, 'connectPort'),
+            );
+            break;
+          case 'shell':
+            result = await AdbBridgeService.instance.localAdbShell(
+              msg['shellCommand'] as String? ?? '',
+            );
+            break;
+          case 'adb':
+          case 'command':
+            result = await AdbBridgeService.instance.localAdbCommand(
+              _phoneAdbStringList(msg['args']),
+              timeoutSeconds: _phoneAdbInt(msg, 'timeoutSeconds', 30),
+            );
+            break;
+          case 'install':
+            final apkPath = await _receivePhoneAdbInstallFile(requestId, msg);
+            try {
+              result = await AdbBridgeService.instance.localAdbInstall(
+                apkPath,
+                args: _phoneAdbStringList(msg['args']),
+              );
+            } finally {
+              unawaited(() async {
+                try {
+                  await File(apkPath).delete();
+                } catch (_) {}
+              }());
+            }
+            break;
+          case 'open_apk':
+          case 'open-apk':
+          case 'stage_apk':
+          case 'stage-apk':
+            final apkPath = await _receivePhoneAdbInstallFile(requestId, msg);
+            result = await _openPhoneAdbApkInstaller(apkPath);
+            break;
+          case 'logcat':
+            result = await AdbBridgeService.instance.localAdbStream(
+              streamId: requestId,
+              args: <String>['logcat', ..._phoneAdbStringList(msg['args'])],
+              timeoutSeconds: _phoneAdbInt(msg, 'timeoutSeconds', 30),
+              maxBytes: _phoneAdbInt(msg, 'maxBytes', 1024 * 1024),
+              onEvent: (event) {
+                if (event['event'] != 'chunk') return;
+                _connMgr.sendToServer(serverId, {
+                  'type': 'phone_adb_stream_chunk',
+                  'requestId': requestId,
+                  'stream': event['stream']?.toString() ?? 'stdout',
+                  'data': event['data']?.toString() ?? '',
+                });
+              },
+            );
+            break;
+          case 'devices':
+          default:
+            result = await AdbBridgeService.instance.localAdbDevices();
+            break;
+        }
+      } catch (e) {
+        result = <String, dynamic>{
+          'ok': false,
+          'command': msg['command'] as String? ?? 'adb',
+          'stdout': '',
+          'stderr': '',
+          'message': e.toString(),
+        };
+      }
+      _connMgr.sendToServer(serverId, {
+        'type': 'phone_adb_result',
+        'requestId': requestId,
+        'result': result,
+      });
+    }());
+  }
+
+  List<String> _phoneAdbStringList(Object? raw) {
+    if (raw is! List) return <String>[];
+    return raw
+        .map((value) => value?.toString() ?? '')
+        .where((value) => value.trim().isNotEmpty)
+        .toList(growable: false);
+  }
+
+  int _phoneAdbInt(Map<String, dynamic> msg, String key, int fallback) {
+    final raw = msg[key];
+    if (raw is int) return raw;
+    if (raw is num) return raw.toInt();
+    if (raw is String) return int.tryParse(raw) ?? fallback;
+    return fallback;
+  }
+
+  int _phoneAdbRequestPort(Map<String, dynamic> msg, String key) {
+    final direct = _phoneAdbInt(msg, key, 0);
+    if (direct > 0) return direct;
+    final args = _phoneAdbStringList(msg['args']);
+    if (args.isNotEmpty) {
+      final raw = args.first.contains(':')
+          ? args.first.split(':').last
+          : args.first;
+      final parsed = int.tryParse(raw);
+      if (parsed != null && parsed > 0) return parsed;
+    }
+    throw StateError('ADB port is required.');
+  }
+
+  Future<String> _receivePhoneAdbInstallFile(
+    String requestId,
+    Map<String, dynamic> msg,
+  ) {
+    final rawName = msg['fileName']?.toString().trim();
+    final safeName =
+        (rawName == null || rawName.isEmpty ? 'install.apk' : rawName)
+            .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
+    final expectedSize = _phoneAdbInt(msg, 'fileSize', 0);
+    final tempDir = Directory('${Directory.systemTemp.path}/socketagent_adb');
+    if (!tempDir.existsSync()) {
+      tempDir.createSync(recursive: true);
+    }
+    final file = File('${tempDir.path}/${requestId}_$safeName');
+    if (file.existsSync()) {
+      file.deleteSync();
+    }
+    final transfer = _PhoneAdbFileTransfer(
+      path: file.path,
+      sink: file.openWrite(),
+      completer: Completer<String>(),
+      expectedSize: expectedSize,
+    );
+    _phoneAdbFileTransfers[requestId] = transfer;
+    return transfer.completer.future.timeout(
+      const Duration(minutes: 10),
+      onTimeout: () {
+        _failPhoneAdbTransfer(
+          requestId,
+          'Timed out receiving APK from server.',
+        );
+        throw TimeoutException('Timed out receiving APK from server.');
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> _openPhoneAdbApkInstaller(String apkPath) async {
+    final result = await OpenFilex.open(
+      apkPath,
+      type: 'application/vnd.android.package-archive',
+    );
+    final ok = result.type == ResultType.done;
+    return <String, dynamic>{
+      'ok': ok,
+      'command': 'open-apk',
+      'endpoint': apkPath,
+      'exitCode': null,
+      'stdout': '',
+      'stderr': '',
+      'message': ok
+          ? 'Android package installer opened.'
+          : 'Could not open Android package installer: ${result.message}',
+    };
+  }
+
+  void _handlePhoneAdbFileChunk(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String?;
+    if (requestId == null || requestId.isEmpty) return;
+    final transfer = _phoneAdbFileTransfers[requestId];
+    if (transfer == null) return;
+    try {
+      final data = msg['data'] as String? ?? '';
+      final bytes = base64Decode(data);
+      transfer.sink.add(bytes);
+      transfer.receivedBytes += bytes.length;
+    } catch (e) {
+      _failPhoneAdbTransfer(requestId, 'Failed to decode APK chunk: $e');
+    }
+  }
+
+  void _handlePhoneAdbFileEnd(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String?;
+    if (requestId == null || requestId.isEmpty) return;
+    final transfer = _phoneAdbFileTransfers.remove(requestId);
+    if (transfer == null) return;
+    unawaited(() async {
+      try {
+        await transfer.sink.flush();
+        await transfer.sink.close();
+        if (msg['ok'] == false) {
+          throw StateError(
+            msg['message']?.toString() ?? 'APK transfer failed.',
+          );
+        }
+        if (transfer.expectedSize > 0 &&
+            transfer.receivedBytes != transfer.expectedSize) {
+          throw StateError(
+            'APK transfer size mismatch: received ${transfer.receivedBytes} of ${transfer.expectedSize} bytes.',
+          );
+        }
+        if (!transfer.completer.isCompleted) {
+          transfer.completer.complete(transfer.path);
+        }
+      } catch (e) {
+        unawaited(() async {
+          try {
+            await File(transfer.path).delete();
+          } catch (_) {}
+        }());
+        if (!transfer.completer.isCompleted) {
+          transfer.completer.completeError(e);
+        }
+      }
+    }());
+  }
+
+  void _handlePhoneAdbCancel(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String?;
+    if (requestId == null || requestId.isEmpty) return;
+    unawaited(AdbBridgeService.instance.localAdbStopStream(requestId));
+    _failPhoneAdbTransfer(requestId, 'Phone ADB request was cancelled.');
+  }
+
+  void _failPhoneAdbTransfer(String requestId, String message) {
+    final transfer = _phoneAdbFileTransfers.remove(requestId);
+    if (transfer == null) return;
+    unawaited(() async {
+      try {
+        await transfer.sink.close();
+      } catch (_) {}
+      try {
+        await File(transfer.path).delete();
+      } catch (_) {}
+    }());
+    if (!transfer.completer.isCompleted) {
+      transfer.completer.completeError(StateError(message));
+    }
   }
 
   void _captureServerRuntimeInfo(Map<String, dynamic> msg, String serverId) {
@@ -8282,6 +8774,73 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       onTimeout: () => <String, dynamic>{
         'success': false,
         'error': 'Timed out waiting for update',
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> requestAdbBridgeSidecar(
+    String serverId, {
+    String action = 'status',
+    int localPort = 5038,
+  }) async {
+    final requestId =
+        'adb_bridge_${action}_${DateTime.now().millisecondsSinceEpoch}';
+    final completer = Completer<Map<String, dynamic>>();
+    _adbBridgeSidecarCompleters[requestId] = completer;
+
+    final type = switch (action) {
+      'start' => 'adb_bridge_sidecar_start',
+      'stop' => 'adb_bridge_sidecar_stop',
+      _ => 'adb_bridge_sidecar_status',
+    };
+    final message = <String, dynamic>{
+      'type': type,
+      'requestId': requestId,
+      if (action == 'start') 'localPort': localPort,
+    };
+    _connMgr.sendToServer(serverId, message);
+
+    return completer.future.timeout(
+      const Duration(seconds: 12),
+      onTimeout: () {
+        _adbBridgeSidecarCompleters.remove(requestId);
+        return <String, dynamic>{
+          'requestId': requestId,
+          'running': false,
+          'error': 'Timed out waiting for ADB sidecar status.',
+        };
+      },
+    );
+  }
+
+  Future<Map<String, dynamic>> requestAdbCommand(
+    String serverId, {
+    required String command,
+    required String host,
+    required int port,
+    String? code,
+  }) async {
+    final requestId = 'adb_${command}_${DateTime.now().millisecondsSinceEpoch}';
+    final completer = Completer<Map<String, dynamic>>();
+    _adbCommandCompleters[requestId] = completer;
+    _connMgr.sendToServer(serverId, {
+      'type': 'adb_command',
+      'requestId': requestId,
+      'command': command,
+      'host': host,
+      'port': port,
+      if (code != null) 'code': code,
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 40),
+      onTimeout: () {
+        _adbCommandCompleters.remove(requestId);
+        return <String, dynamic>{
+          'requestId': requestId,
+          'command': command,
+          'ok': false,
+          'message': 'Timed out waiting for adb $command.',
+        };
       },
     );
   }
@@ -9224,7 +9783,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? getDownloadError(String fileId) => _downloadErrors[fileId];
 
   /// Handle file metadata from server (no data yet — just registers availability)
-  void _handleFileMessage(Map<String, dynamic> msg) {
+  void _handleFileMessage(Map<String, dynamic> msg, [String? serverId]) {
     final fileId = msg['fileId'] as String? ?? '';
     // Sanitize: strip path separators to prevent directory traversal
     var fileName = msg['fileName'] as String? ?? 'file';
@@ -9238,7 +9797,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (fileSize != null && fileSize > 0) {
         _serverFileSizes[fileId] = fileSize;
       }
-      final currentServerId = _connMgr.activeServerId;
+      final currentServerId = serverId ?? _connMgr.activeServerId;
       if (currentServerId != null && currentServerId.isNotEmpty) {
         _downloadServerIds[fileId] = currentServerId;
       }
@@ -9250,10 +9809,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       debugPrint(
         '[File] Available for download: $fileName (id=$fileId, path=$filePath)',
       );
-      final belongsToActiveSession =
-          messageSessionId.isEmpty ||
-          _activeSessionId == null ||
-          messageSessionId == _activeSessionId;
+      final belongsToActiveSession = messageSessionId.isEmpty
+          ? _activeSessionId != null
+          : messageSessionId == _activeSessionId;
       if (!belongsToActiveSession) {
         notifyListeners();
         return;
@@ -9320,10 +9878,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Direct/manual servers use HTTP for large-file speed; relay falls back to
   /// the encrypted socket chunk path.
   void requestFile(String fileId) {
+    unawaited(_requestFile(fileId));
+  }
+
+  Future<void> _requestFile(String fileId) async {
     final serverPath = _serverFiles[fileId];
     if (serverPath == null) return;
     final fileName = _serverFileNames[fileId] ?? serverPath.split('/').last;
-    _cleanupActiveDownload(fileId, deleteTemp: false);
+    await _cleanupActiveDownload(fileId, deleteTemp: false);
     _downloadErrors.remove(fileId);
     _downloadRetryCounts[fileId] = 0;
     _cancelledDownloads.remove(fileId);
@@ -9374,10 +9936,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? serverId,
   }) async {
     final offsetBytes = await _socketDownloadOffset(fileId);
+    final transferToken =
+        '${DateTime.now().microsecondsSinceEpoch}_${_downloadRetryCounts[fileId] ?? 0}';
+    _socketDownloadTokens[fileId] = transferToken;
     final msg = {
       'type': 'request_file',
       'filePath': serverPath,
       'fileId': fileId,
+      'transferToken': transferToken,
       if (offsetBytes > 0) 'offsetBytes': offsetBytes,
     };
     _armDownloadWatchdog(fileId);
@@ -9768,9 +10334,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final totalChunks = msg['totalChunks'] as int? ?? 1;
     final fileSize = (msg['fileSize'] as num?)?.toInt() ?? 0;
     final chunkOffset = (msg['offsetBytes'] as num?)?.toInt();
+    final transferToken = msg['transferToken'] as String?;
     final base64Data = msg['data'] as String? ?? '';
 
     try {
+      final expectedToken = _socketDownloadTokens[fileId];
+      if (expectedToken != null &&
+          transferToken != null &&
+          transferToken != expectedToken) {
+        debugPrint(
+          '[File] Ignoring stale chunk for $fileId token=$transferToken',
+        );
+        return;
+      }
       var bytes = base64Decode(base64Data);
       if (fileSize > 0) {
         _downloadExpectedBytes[fileId] = fileSize;
@@ -9812,9 +10388,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           bytes = Uint8List.fromList(bytes.sublist(overlap));
         } else if (chunkOffset > savedBytes) {
-          throw Exception(
-            'Transfer gap at ${_formatDownloadBytes(savedBytes)}; next chunk starts at ${_formatDownloadBytes(chunkOffset)}',
+          _retrySocketFileDownload(
+            fileId,
+            'Transfer gap at ${_formatDownloadBytes(savedBytes)}; next chunk starts at ${_formatDownloadBytes(chunkOffset)}.',
           );
+          return;
         }
       }
 
@@ -9846,8 +10424,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         msg['fileId'] as String? ?? msg['fileName'] as String? ?? 'file';
     final fileName = msg['fileName'] as String? ?? 'file';
     final fileSize = (msg['fileSize'] as num?)?.toInt();
+    final transferToken = msg['transferToken'] as String?;
 
     try {
+      final expectedToken = _socketDownloadTokens[fileId];
+      if (expectedToken != null &&
+          transferToken != null &&
+          transferToken != expectedToken) {
+        debugPrint(
+          '[File] Ignoring stale completion for $fileId token=$transferToken',
+        );
+        return;
+      }
       final byteCompleter = _fileBytesCompleters.remove(fileId);
       if (byteCompleter != null) {
         final bytes = _fileBytesBuffers.remove(fileId)?.takeBytes();
@@ -9946,6 +10534,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadErrors.remove(fileId);
       _downloadRetryCounts.remove(fileId);
       _downloadExpectedBytes.remove(fileId);
+      _socketDownloadTokens.remove(fileId);
       _showDownloadFinishedNotification(fileId, fileName);
       debugPrint(
         '[File] Chunked download complete: ${targetFile.path} (fileId=$fileId)',
@@ -9959,6 +10548,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _downloadProgress.remove(fileId);
       _downloadReceivedBytes.remove(fileId);
       _downloadExpectedBytes.remove(fileId);
+      _socketDownloadTokens.remove(fileId);
       _downloadErrors[fileId] = e.toString();
       _cancelDownloadWatchdog(fileId);
       _showDownloadFailedNotification(fileId, e.toString());
@@ -10154,6 +10744,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _clearDownloadProgressNotification(fileId);
     _downloadReceivedBytes.remove(fileId);
     _downloadExpectedBytes.remove(fileId);
+    _socketDownloadTokens.remove(fileId);
     _downloadingFiles.remove(fileId);
     _downloadProgress.remove(fileId);
     final sink = _activeDownloads.remove(fileId);
@@ -10183,6 +10774,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _downloadRetryCounts[fileId] = retryCount;
     _cancelDownloadWatchdog(fileId);
+    _socketDownloadTokens[fileId] =
+        'retrying_${DateTime.now().microsecondsSinceEpoch}_$retryCount';
     final sink = _activeDownloads.remove(fileId);
     unawaited(() async {
       try {
@@ -10271,6 +10864,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _backendInstallAckTimers.clear();
+    for (final completer in _adbBridgeSidecarCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.complete(<String, dynamic>{
+          'running': false,
+          'error': 'SocketAgent app is closing.',
+        });
+      }
+    }
+    _adbBridgeSidecarCompleters.clear();
+    for (final completer in _adbCommandCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.complete(<String, dynamic>{
+          'ok': false,
+          'message': 'SocketAgent app is closing.',
+        });
+      }
+    }
+    _adbCommandCompleters.clear();
+    for (final requestId in _phoneAdbFileTransfers.keys.toList()) {
+      _failPhoneAdbTransfer(requestId, 'SocketAgent app is closing.');
+    }
     _connMgr.dispose();
     _speech.dispose();
     _tts.dispose();

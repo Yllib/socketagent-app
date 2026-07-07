@@ -82,11 +82,19 @@ class ChatViewState extends State<ChatView> {
   bool _isAutoScrolling = false;
   bool _userTouching = false;
   bool _autoScrollHeldForInspection = false;
+  bool _imageInspectionActive = false;
+  final Set<String> _expandedImageCardIds = {};
+  final Map<String, GlobalKey> _imageCardKeys = {};
+  final Map<String, int> _imageCollapseSignals = {};
   int _autoScrollGeneration = 0;
   int _lastKnownMessageCount = 0;
   String _lastKnownText = '';
   bool _lastKnownProcessing = false;
+  final GlobalKey _scrollViewportKey = GlobalKey();
   final Map<String, GlobalKey> _taskKeys = {};
+
+  bool get _hasActiveImageInspection =>
+      _imageInspectionActive || _expandedImageCardIds.isNotEmpty;
 
   @override
   void initState() {
@@ -99,7 +107,8 @@ class ChatViewState extends State<ChatView> {
     final pos = _scrollController.position;
     final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
     _userScrolledUp = distanceFromBottom > 150;
-    if (distanceFromBottom <= 80) {
+    _collapseExpandedImagesFarFromViewport();
+    if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
       _autoScrollHeldForInspection = false;
     }
   }
@@ -133,7 +142,7 @@ class ChatViewState extends State<ChatView> {
       final pos = _scrollController.position;
       final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
       _userScrolledUp = distanceFromBottom > 150;
-      if (distanceFromBottom <= 80) {
+      if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
         _autoScrollHeldForInspection = false;
       }
     }
@@ -193,13 +202,113 @@ class ChatViewState extends State<ChatView> {
     }
   }
 
-  void _handleToolExpansionChanged(bool expanded, {required bool hasImage}) {
+  void _handleToolExpansionChanged(
+    String messageId,
+    bool expanded, {
+    required bool hasImage,
+  }) {
     if (!hasImage) return;
     if (expanded) {
-      _autoScrollHeldForInspection = true;
-      _userScrolledUp = true;
-      _cancelAutoScroll();
+      _expandedImageCardIds.add(messageId);
+      _holdAutoScrollForInspection();
+    } else {
+      _expandedImageCardIds.remove(messageId);
+      _releaseInspectionHoldIfIdle();
     }
+  }
+
+  void _handleImageInspectionChanged(bool active) {
+    _imageInspectionActive = active;
+    if (active) {
+      _holdAutoScrollForInspection();
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _releaseInspectionHoldIfIdle();
+    });
+  }
+
+  void _holdAutoScrollForInspection() {
+    _autoScrollHeldForInspection = true;
+    _userScrolledUp = true;
+    _cancelAutoScroll();
+  }
+
+  void _releaseInspectionHoldIfIdle() {
+    if (_hasActiveImageInspection || !_scrollController.hasClients) return;
+    final pos = _scrollController.position;
+    final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+    _autoScrollHeldForInspection = false;
+    _userScrolledUp = distanceFromBottom > 150;
+  }
+
+  GlobalKey _imageCardKeyFor(String inspectionId) {
+    return _imageCardKeys.putIfAbsent(inspectionId, () => GlobalKey());
+  }
+
+  int _imageCollapseSignalFor(String inspectionId) {
+    return _imageCollapseSignals[inspectionId] ?? 0;
+  }
+
+  void _collapseExpandedImagesFarFromViewport() {
+    if (_expandedImageCardIds.isEmpty) return;
+    final viewportBox =
+        _scrollViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    if (viewportBox == null || !viewportBox.hasSize) return;
+
+    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+    final viewportBottom = viewportTop + viewportBox.size.height;
+    const collapseDistance = 96.0;
+    final idsToCollapse = <String>[];
+
+    for (final inspectionId in _expandedImageCardIds) {
+      final cardBox =
+          _imageCardKeys[inspectionId]?.currentContext?.findRenderObject()
+              as RenderBox?;
+      if (cardBox == null || !cardBox.hasSize) {
+        idsToCollapse.add(inspectionId);
+        continue;
+      }
+
+      final cardTop = cardBox.localToGlobal(Offset.zero).dy;
+      final cardBottom = cardTop + cardBox.size.height;
+      final isFarAbove = cardBottom < viewportTop - collapseDistance;
+      final isFarBelow = cardTop > viewportBottom + collapseDistance;
+      if (isFarAbove || isFarBelow) {
+        idsToCollapse.add(inspectionId);
+      }
+    }
+
+    if (idsToCollapse.isEmpty) return;
+    setState(() {
+      for (final inspectionId in idsToCollapse) {
+        _expandedImageCardIds.remove(inspectionId);
+        _imageCollapseSignals[inspectionId] =
+            (_imageCollapseSignals[inspectionId] ?? 0) + 1;
+      }
+    });
+    _releaseInspectionHoldIfIdle();
+  }
+
+  Widget _buildToolOutputBlock(
+    ChatMessage msg, {
+    bool greenTheme = false,
+    String? inspectionId,
+  }) {
+    final id = inspectionId ?? msg.id;
+    return Container(
+      key: _imageCardKeyFor(id),
+      child: ToolOutputBlock(
+        message: msg,
+        greenTheme: greenTheme,
+        collapseSignal: _imageCollapseSignalFor(id),
+        onExpansionChanged: (expanded, {required hasImage}) =>
+            _handleToolExpansionChanged(id, expanded, hasImage: hasImage),
+        onImageInspectionChanged: _handleImageInspectionChanged,
+      ),
+    );
   }
 
   void _cancelAutoScroll() {
@@ -339,6 +448,7 @@ class ChatViewState extends State<ChatView> {
           ),
         Expanded(
           child: Listener(
+            key: _scrollViewportKey,
             onPointerDown: (_) => _userTouching = true,
             onPointerUp: (_) => _userTouching = false,
             onPointerCancel: (_) => _userTouching = false,
@@ -411,21 +521,12 @@ class ChatViewState extends State<ChatView> {
           _taskKeys.putIfAbsent(msg.toolUseId!, () => GlobalKey());
           return Container(
             key: _taskKeys[msg.toolUseId!],
-            child: ToolOutputBlock(
-              message: msg,
-              onExpansionChanged: _handleToolExpansionChanged,
-            ),
+            child: _buildToolOutputBlock(msg),
           );
         }
-        return ToolOutputBlock(
-          message: msg,
-          onExpansionChanged: _handleToolExpansionChanged,
-        );
+        return _buildToolOutputBlock(msg);
       case MessageType.toolResult:
-        return ToolOutputBlock(
-          message: msg,
-          onExpansionChanged: _handleToolExpansionChanged,
-        );
+        return _buildToolOutputBlock(msg);
       case MessageType.question:
         if (msg.emailPreview != null) {
           return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);
@@ -578,7 +679,11 @@ class ChatViewState extends State<ChatView> {
         orElse: () => null,
       );
       if (original != null && original.toolOutput != null) {
-        return ToolOutputBlock(message: original, greenTheme: true);
+        return _buildToolOutputBlock(
+          original,
+          greenTheme: true,
+          inspectionId: '${original.id}:${msg.id}',
+        );
       }
     }
 

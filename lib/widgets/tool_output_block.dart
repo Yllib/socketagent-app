@@ -19,14 +19,18 @@ class _DiffStats {
 class ToolOutputBlock extends StatefulWidget {
   final ChatMessage message;
   final bool greenTheme;
+  final int collapseSignal;
   final void Function(bool expanded, {required bool hasImage})?
   onExpansionChanged;
+  final ValueChanged<bool>? onImageInspectionChanged;
 
   const ToolOutputBlock({
     super.key,
     required this.message,
     this.greenTheme = false,
+    this.collapseSignal = 0,
     this.onExpansionChanged,
+    this.onImageInspectionChanged,
   });
 
   @override
@@ -44,11 +48,32 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   bool get _hasImage =>
       widget.message.toolImageData != null &&
       widget.message.toolImageData!.isNotEmpty;
+  bool get _hasPendingImage =>
+      widget.message.toolImageFilePath != null &&
+      widget.message.toolImageFilePath!.isNotEmpty;
+  bool get _isImageCard => _hasImage || _hasPendingImage;
 
   void _toggleExpanded() {
     final nextExpanded = !_expanded;
     setState(() => _expanded = nextExpanded);
-    widget.onExpansionChanged?.call(nextExpanded, hasImage: _hasImage);
+    widget.onExpansionChanged?.call(nextExpanded, hasImage: _isImageCard);
+  }
+
+  @override
+  void didUpdateWidget(covariant ToolOutputBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.collapseSignal != oldWidget.collapseSignal && _expanded) {
+      _expanded = false;
+      widget.onExpansionChanged?.call(false, hasImage: _isImageCard);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_expanded && _isImageCard) {
+      widget.onExpansionChanged?.call(false, hasImage: _isImageCard);
+    }
+    super.dispose();
   }
 
   /// Parse TaskOutput XML-like result into structured fields
@@ -272,7 +297,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     ),
                     const SizedBox(width: 4),
                   ],
-                  if (_hasImage && !_expanded) ...[
+                  if (_isImageCard && !_expanded) ...[
                     const Icon(Icons.image, size: 14, color: Color(0xFFA6E3A1)),
                     const SizedBox(width: 4),
                   ],
@@ -515,6 +540,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   }
 
   void _showFullscreenImage(List<int> bytes) {
+    widget.onImageInspectionChanged?.call(true);
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
@@ -543,7 +569,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           ],
         ),
       ),
-    );
+    ).whenComplete(() {
+      if (!mounted) return;
+      widget.onImageInspectionChanged?.call(false);
+    });
   }
 
   Widget _buildWriteContent(String content) {

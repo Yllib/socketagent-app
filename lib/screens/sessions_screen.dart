@@ -1199,27 +1199,11 @@ class _SessionsTabState extends State<SessionsTab> {
   List<ServerConfig> _sortedServerConfigs(ChatProvider provider) {
     final sorted = [...provider.serverConfigs];
     sorted.sort((a, b) {
-      final statusCmp = _serverStatusRank(
-        provider.connMgr.statusOf(a.id),
-      ).compareTo(_serverStatusRank(provider.connMgr.statusOf(b.id)));
-      if (statusCmp != 0) return statusCmp;
       final orderCmp = a.sortOrder.compareTo(b.sortOrder);
       if (orderCmp != 0) return orderCmp;
       return a.name.toLowerCase().compareTo(b.name.toLowerCase());
     });
     return sorted;
-  }
-
-  int _serverStatusRank(ConnectionStatus status) {
-    switch (status) {
-      case ConnectionStatus.connected:
-        return 0;
-      case ConnectionStatus.connecting:
-        return 1;
-      case ConnectionStatus.disconnected:
-      case ConnectionStatus.error:
-        return 2;
-    }
   }
 
   Color _serverStatusColor(ConnectionStatus status) {
@@ -1552,12 +1536,9 @@ class _SessionsTabState extends State<SessionsTab> {
       return result;
     }
 
-    final working = take(
-      (session) => session.running && provider.isSessionAvailable(session),
-    );
+    final working = take((session) => session.running);
     final pinned = take((session) => provider.isSessionPinned(session.id));
-    final recent = take((session) => provider.isSessionAvailable(session));
-    final offline = take((session) => !provider.isSessionAvailable(session));
+    final recent = take((session) => true);
 
     final children = <Widget>[];
     void addSection(String title, List<Session> sectionSessions) {
@@ -1582,7 +1563,6 @@ class _SessionsTabState extends State<SessionsTab> {
     addSection('Working', working);
     addSection('Pinned', pinned);
     addSection('Recent', recent);
-    addSection('Offline servers', offline);
 
     return ListView(
       padding: const EdgeInsets.only(bottom: 80),
