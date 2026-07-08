@@ -627,6 +627,8 @@ class HomeScreenState extends State<HomeScreen> {
                   child: ChatView(
                     key: _chatViewKey,
                     messages: provider.filteredMessages,
+                    sessionStorageKey:
+                        '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
                     isProcessing: provider.isProcessing,
                     processingElapsed: provider.currentPromptElapsed,
                     isCompacting: provider.isCompacting,

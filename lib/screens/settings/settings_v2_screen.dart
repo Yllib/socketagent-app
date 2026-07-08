@@ -1404,8 +1404,8 @@ void _showBackendOperationDialog(
             state?.running == false && state?.status == 'completed';
         final healthy = _backendIsHealthy(currentProvider, serverId, backend);
         final authUrl = state?.authUrl;
-        final authCode = state?.authCode;
         final output = state?.output ?? const <String>[];
+        final authCode = state?.authCode;
         final operation = state?.operation ?? fallbackOperation;
         final isAuthOperation = operation == 'auth';
         final hasAuthUrl = authUrl != null && authUrl.isNotEmpty;

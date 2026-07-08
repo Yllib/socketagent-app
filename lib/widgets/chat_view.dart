@@ -25,6 +25,7 @@ import 'secure_input_card.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
+  final String? sessionStorageKey;
   final bool isProcessing;
   final Duration? processingElapsed;
   final bool isCompacting;
@@ -50,6 +51,7 @@ class ChatView extends StatefulWidget {
   const ChatView({
     super.key,
     required this.messages,
+    this.sessionStorageKey,
     required this.isProcessing,
     this.processingElapsed,
     this.isCompacting = false,
@@ -77,6 +79,8 @@ class ChatView extends StatefulWidget {
 }
 
 class ChatViewState extends State<ChatView> {
+  static final Map<String, Set<String>> _expandedImageCardsBySession = {};
+
   final ScrollController _scrollController = ScrollController();
   bool _userScrolledUp = false;
   bool _isAutoScrolling = false;
@@ -86,6 +90,7 @@ class ChatViewState extends State<ChatView> {
   final Set<String> _expandedImageCardIds = {};
   final Map<String, GlobalKey> _imageCardKeys = {};
   final Map<String, int> _imageCollapseSignals = {};
+  final Map<String, DateTime> _imageCardMissingSince = {};
   int _autoScrollGeneration = 0;
   int _lastKnownMessageCount = 0;
   String _lastKnownText = '';
@@ -99,7 +104,25 @@ class ChatViewState extends State<ChatView> {
   @override
   void initState() {
     super.initState();
+    _restoreExpandedImageState();
     _scrollController.addListener(_onScroll);
+  }
+
+  String _imageStateStorageKeyFor(ChatView source) =>
+      source.sessionStorageKey ?? 'default';
+
+  String get _imageStateStorageKey => _imageStateStorageKeyFor(widget);
+
+  void _restoreExpandedImageState() {
+    _expandedImageCardIds
+      ..clear()
+      ..addAll(_expandedImageCardsBySession[_imageStateStorageKey] ?? const {});
+  }
+
+  void _persistExpandedImageState([String? storageKey]) {
+    _expandedImageCardsBySession[storageKey ?? _imageStateStorageKey] = {
+      ..._expandedImageCardIds,
+    };
   }
 
   void _onScroll() {
@@ -129,6 +152,11 @@ class ChatViewState extends State<ChatView> {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.sessionStorageKey != oldWidget.sessionStorageKey) {
+      _persistExpandedImageState(_imageStateStorageKeyFor(oldWidget));
+      _restoreExpandedImageState();
+      _imageCardMissingSince.clear();
+    }
 
     // Resync _userScrolledUp from the current scroll position. _onScroll
     // only fires when the user actively scrolls — if content grew below
@@ -208,12 +236,20 @@ class ChatViewState extends State<ChatView> {
     required bool hasImage,
   }) {
     if (!hasImage) return;
+    final changed = expanded
+        ? _expandedImageCardIds.add(messageId)
+        : _expandedImageCardIds.remove(messageId);
     if (expanded) {
-      _expandedImageCardIds.add(messageId);
+      _imageCardMissingSince.remove(messageId);
+    }
+    if (expanded) {
       _holdAutoScrollForInspection();
     } else {
-      _expandedImageCardIds.remove(messageId);
       _releaseInspectionHoldIfIdle();
+    }
+    if (changed && mounted) {
+      _persistExpandedImageState();
+      setState(() {});
     }
   }
 
@@ -268,9 +304,10 @@ class ChatViewState extends State<ChatView> {
           _imageCardKeys[inspectionId]?.currentContext?.findRenderObject()
               as RenderBox?;
       if (cardBox == null || !cardBox.hasSize) {
-        idsToCollapse.add(inspectionId);
+        _confirmMissingImageCardBeforeCollapse(inspectionId);
         continue;
       }
+      _imageCardMissingSince.remove(inspectionId);
 
       final cardTop = cardBox.localToGlobal(Offset.zero).dy;
       final cardBottom = cardTop + cardBox.size.height;
@@ -289,7 +326,36 @@ class ChatViewState extends State<ChatView> {
             (_imageCollapseSignals[inspectionId] ?? 0) + 1;
       }
     });
+    _persistExpandedImageState();
     _releaseInspectionHoldIfIdle();
+  }
+
+  void _confirmMissingImageCardBeforeCollapse(String inspectionId) {
+    _imageCardMissingSince.putIfAbsent(inspectionId, DateTime.now);
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted || !_expandedImageCardIds.contains(inspectionId)) return;
+      final missingSince = _imageCardMissingSince[inspectionId];
+      if (missingSince == null) return;
+      if (DateTime.now().difference(missingSince) <
+          const Duration(milliseconds: 500)) {
+        return;
+      }
+      final cardBox =
+          _imageCardKeys[inspectionId]?.currentContext?.findRenderObject()
+              as RenderBox?;
+      if (cardBox != null && cardBox.hasSize) {
+        _imageCardMissingSince.remove(inspectionId);
+        return;
+      }
+      setState(() {
+        _expandedImageCardIds.remove(inspectionId);
+        _imageCollapseSignals[inspectionId] =
+            (_imageCollapseSignals[inspectionId] ?? 0) + 1;
+        _imageCardMissingSince.remove(inspectionId);
+      });
+      _persistExpandedImageState();
+      _releaseInspectionHoldIfIdle();
+    });
   }
 
   Widget _buildToolOutputBlock(
@@ -303,6 +369,7 @@ class ChatViewState extends State<ChatView> {
       child: ToolOutputBlock(
         message: msg,
         greenTheme: greenTheme,
+        expanded: _expandedImageCardIds.contains(id) ? true : null,
         collapseSignal: _imageCollapseSignalFor(id),
         onExpansionChanged: (expanded, {required hasImage}) =>
             _handleToolExpansionChanged(id, expanded, hasImage: hasImage),
@@ -476,7 +543,16 @@ class ChatViewState extends State<ChatView> {
   }
 
   Widget _buildMessageWidget(ChatMessage msg) {
-    return _buildMessageContent(msg);
+    return KeyedSubtree(
+      key: ValueKey(_messageRowKey(msg)),
+      child: _buildMessageContent(msg),
+    );
+  }
+
+  String _messageRowKey(ChatMessage msg) {
+    final toolId = msg.toolUseId ?? '';
+    final parentId = msg.parentToolUseId ?? '';
+    return '${msg.type.name}:${msg.id}:$toolId:$parentId';
   }
 
   Widget _buildMessageContent(ChatMessage msg) {

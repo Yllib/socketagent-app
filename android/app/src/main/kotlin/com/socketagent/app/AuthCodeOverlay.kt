@@ -14,7 +14,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -93,17 +92,7 @@ object AuthCodeOverlay {
                 typeface = Typeface.DEFAULT_BOLD
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
-            header.addView(Button(appContext).apply {
-                text = "Close"
-                textSize = 12f
-                setAllCaps(false)
-                minHeight = 0
-                minimumHeight = 0
-                minWidth = 0
-                minimumWidth = 0
-                setPadding(dp(appContext, 10), 0, dp(appContext, 10), 0)
-                setOnClickListener { hide() }
-            })
+            header.addView(actionPill(appContext, "Close") { hide() })
             card.addView(header)
 
             card.addView(TextView(appContext).apply {
@@ -126,20 +115,10 @@ object AuthCodeOverlay {
                 textSize = 12f
                 layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
-            actions.addView(Button(appContext).apply {
-                text = "Copy"
-                textSize = 12f
-                setAllCaps(false)
-                minHeight = 0
-                minimumHeight = 0
-                minWidth = 0
-                minimumWidth = 0
-                setPadding(dp(appContext, 12), 0, dp(appContext, 12), 0)
-                setOnClickListener {
-                    val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    clipboard.setPrimaryClip(ClipData.newPlainText("Device code", code))
-                    Toast.makeText(appContext, "Code copied", Toast.LENGTH_SHORT).show()
-                }
+            actions.addView(actionPill(appContext, "Copy") {
+                val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Device code", code))
+                Toast.makeText(appContext, "Code copied", Toast.LENGTH_SHORT).show()
             })
             card.addView(actions)
 
@@ -219,5 +198,25 @@ object AuthCodeOverlay {
 
     private fun dp(context: Context, value: Int): Int {
         return (value * context.resources.displayMetrics.density).roundToInt()
+    }
+
+    private fun actionPill(context: Context, label: String, onClick: () -> Unit): TextView {
+        return TextView(context).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            minHeight = dp(context, 34)
+            setPadding(dp(context, 14), dp(context, 7), dp(context, 14), dp(context, 7))
+            background = GradientDrawable().apply {
+                setColor(Color.argb(42, 255, 255, 255))
+                cornerRadius = dp(context, 18).toFloat()
+                setStroke(dp(context, 1), Color.argb(82, 255, 255, 255))
+            }
+            setOnClickListener { onClick() }
+        }
     }
 }

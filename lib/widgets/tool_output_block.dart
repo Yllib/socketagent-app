@@ -20,6 +20,7 @@ class ToolOutputBlock extends StatefulWidget {
   final ChatMessage message;
   final bool greenTheme;
   final int collapseSignal;
+  final bool? expanded;
   final void Function(bool expanded, {required bool hasImage})?
   onExpansionChanged;
   final ValueChanged<bool>? onImageInspectionChanged;
@@ -29,6 +30,7 @@ class ToolOutputBlock extends StatefulWidget {
     required this.message,
     this.greenTheme = false,
     this.collapseSignal = 0,
+    this.expanded,
     this.onExpansionChanged,
     this.onImageInspectionChanged,
   });
@@ -39,6 +41,9 @@ class ToolOutputBlock extends StatefulWidget {
 
 class _ToolOutputBlockState extends State<ToolOutputBlock> {
   bool _expanded = false;
+  String? _cachedImageData;
+  Uint8List? _cachedImageBytes;
+  MemoryImage? _cachedImageProvider;
 
   bool get _isBash => widget.message.toolName == 'Bash';
   bool get _isEditTool => widget.message.toolName == 'Edit';
@@ -53,6 +58,29 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       widget.message.toolImageFilePath!.isNotEmpty;
   bool get _isImageCard => _hasImage || _hasPendingImage;
 
+  Uint8List? get _inlineImageBytes {
+    final imageData = widget.message.toolImageData;
+    if (imageData == null || imageData.isEmpty) return null;
+    if (_cachedImageData != imageData || _cachedImageBytes == null) {
+      final bytes = base64Decode(imageData);
+      _cachedImageData = imageData;
+      _cachedImageBytes = bytes;
+      _cachedImageProvider = MemoryImage(bytes);
+    }
+    return _cachedImageBytes;
+  }
+
+  MemoryImage? get _inlineImageProvider {
+    _inlineImageBytes;
+    return _cachedImageProvider;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.expanded ?? false;
+  }
+
   void _toggleExpanded() {
     final nextExpanded = !_expanded;
     setState(() => _expanded = nextExpanded);
@@ -62,18 +90,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   @override
   void didUpdateWidget(covariant ToolOutputBlock oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (widget.expanded != null && widget.expanded != _expanded) {
+      _expanded = widget.expanded!;
+    }
     if (widget.collapseSignal != oldWidget.collapseSignal && _expanded) {
       _expanded = false;
-      widget.onExpansionChanged?.call(false, hasImage: _isImageCard);
     }
-  }
-
-  @override
-  void dispose() {
-    if (_expanded && _isImageCard) {
-      widget.onExpansionChanged?.call(false, hasImage: _isImageCard);
-    }
-    super.dispose();
   }
 
   /// Parse TaskOutput XML-like result into structured fields
@@ -522,7 +544,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   }
 
   Widget _buildInlineImage() {
-    final bytes = base64Decode(widget.message.toolImageData!);
+    final bytes = _inlineImageBytes;
+    final provider = _inlineImageProvider;
+    if (bytes == null || provider == null) return const SizedBox.shrink();
     return GestureDetector(
       onTap: () => _showFullscreenImage(bytes),
       child: Container(
@@ -533,7 +557,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         padding: const EdgeInsets.all(8),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
-          child: Image.memory(bytes, fit: BoxFit.contain),
+          child: Image(
+            image: provider,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.medium,
+          ),
         ),
       ),
     );

@@ -44,62 +44,93 @@ String _stripTerminalControl(String value) {
 Map<String, String> _parseBackendDeviceAuth(String value) {
   final parsed = <String, String>{};
   final text = _stripTerminalControl(value);
-  final urlMatch = RegExp(r'https?://[^\s)]+')
-      .allMatches(text)
-      .map((m) => m.group(0) ?? '')
-      .firstWhere(
-        (candidate) =>
-            candidate.contains('/codex/device') || candidate.contains('device'),
-        orElse: () => '',
-      );
-  if (urlMatch.isNotEmpty) {
-    parsed['authUrl'] = urlMatch.replaceAll(RegExp(r'[,.]+$'), '');
+  for (final match in RegExp(r'https?://[^\s)]+').allMatches(text)) {
+    final candidate = (match.group(0) ?? '').replaceAll(RegExp(r'[,.]+$'), '');
+    if (!(candidate.contains('/codex/device') ||
+        candidate.contains('device'))) {
+      continue;
+    }
+    parsed['authUrl'] ??= candidate;
+    final urlCode = _parseBackendDeviceCodeFromUrl(candidate);
+    if (urlCode != null && urlCode.isNotEmpty) {
+      parsed['authCode'] ??= urlCode;
+    }
   }
 
   final codeText = text.replaceAll(RegExp(r'https?://[^\s)]+'), ' ');
-  final lines = const LineSplitter().convert(codeText);
-  final contextRe = RegExp(
-    r'\b(?:code|device|verification|one[-\s]?time)\b|enter',
-    caseSensitive: false,
-  );
-  final candidateRe = RegExp(
-    r'\b[A-Z0-9]{4}(?:[-\s][A-Z0-9]{4}){1,3}\b|\b[A-Z0-9]{8}\b',
-    caseSensitive: false,
-  );
-
-  String? code;
-  for (var i = 0; i < lines.length && code == null; i++) {
-    final context = [
-      if (i > 0) lines[i - 1],
-      lines[i],
-      if (i + 1 < lines.length) lines[i + 1],
-    ].join('\n');
-    if (!contextRe.hasMatch(context)) continue;
-    final lineHasContext = contextRe.hasMatch(lines[i]);
-    for (final match in candidateRe.allMatches(lines[i])) {
-      final candidate = match.group(0) ?? '';
-      final remainder = lines[i]
-          .replaceFirst(candidate, '')
-          .replaceAll(RegExp(r'[^A-Z0-9]+', caseSensitive: false), '');
-      code = _normalizeBackendAuthCodeCandidate(
-        candidate,
-        allowCompact: lineHasContext || remainder.isEmpty,
-      );
-      if (code != null) break;
-    }
-  }
-
-  if (code == null) {
-    for (final match in candidateRe.allMatches(codeText)) {
-      code = _normalizeBackendAuthCodeCandidate(match.group(0) ?? '');
-      if (code != null) break;
-    }
-  }
+  final code =
+      parsed['authCode'] ?? _parseBackendDeviceCodeAfterOneTime(codeText);
 
   if (code != null && code.isNotEmpty) {
     parsed['authCode'] = code;
   }
   return parsed;
+}
+
+String? _parseBackendDeviceCodeAfterOneTime(String text) {
+  final oneTimeRe = RegExp(r'\bone-time\b', caseSensitive: false);
+  final hyphenatedRe = RegExp(
+    r'\b[A-Z0-9]{4,6}(?:-[A-Z0-9]{4,6})+\b',
+    caseSensitive: false,
+  );
+  for (final marker in oneTimeRe.allMatches(text)) {
+    final tail = text.substring(marker.end);
+    final match = hyphenatedRe.firstMatch(tail);
+    if (match == null) continue;
+    final code = _normalizeBackendAuthCodeCandidate(
+      match.group(0) ?? '',
+      allowCompact: true,
+    );
+    if (code != null) return code;
+  }
+  return null;
+}
+
+String? _parseBackendDeviceCodeFromUrl(String candidate) {
+  final uri = Uri.tryParse(candidate);
+  if (uri == null) return null;
+  for (final key in [
+    'user_code',
+    'userCode',
+    'code',
+    'device_code',
+    'deviceCode',
+  ]) {
+    final value = uri.queryParameters[key];
+    if (value == null || value.isEmpty) continue;
+    final code = _normalizeBackendAuthCodeCandidate(value, allowCompact: true);
+    if (code != null) return code;
+  }
+  return null;
+}
+
+const Set<String> _backendAuthCodeStopWords = {
+  'STARTING',
+  'AUTHORIZ',
+  'AUTHORIZE',
+  'AUTHCODE',
+  'LOGINING',
+  'LOGINCODE',
+  'SIGNININ',
+  'SIGNINCODE',
+  'BROWSER',
+  'OPENAI',
+  'DEVICE',
+  'DEVICECODE',
+  'ENTERCODE',
+  'TIMECODE',
+  'ONETIMECODE',
+  'VERIFICATIONCODE',
+  'RUNNING',
+  'WAITING',
+  'PENDING',
+  'COMPLETE',
+  'CANCELLED',
+};
+
+bool _isBackendAuthCodeStopWord(String value) {
+  final normalized = value.replaceAll(RegExp(r'[^A-Z0-9]'), '').toUpperCase();
+  return _backendAuthCodeStopWords.contains(normalized);
 }
 
 String? _normalizeBackendAuthCodeCandidate(
@@ -108,21 +139,26 @@ String? _normalizeBackendAuthCodeCandidate(
 }) {
   final trimmed = value.trim();
   final grouped = RegExp(
-    r'^[A-Z0-9]{4}(?:[-\s][A-Z0-9]{4}){1,3}$',
+    r'^[A-Z0-9]{4}(?:[- \t][A-Z0-9]{4,6}){1,3}$',
     caseSensitive: false,
   ).firstMatch(trimmed)?.group(0);
-  if (grouped != null &&
-      (allowCompact ||
-          grouped.contains('-') ||
-          RegExp(r'\d').hasMatch(grouped))) {
-    return grouped.replaceAll(RegExp(r'\s+'), '-').toUpperCase();
+  if (grouped != null) {
+    final normalized = grouped.replaceAll(RegExp(r'[ \t]+'), '-').toUpperCase();
+    if (!_isBackendAuthCodeStopWord(normalized) &&
+        (allowCompact || RegExp(r'\d').hasMatch(normalized))) {
+      return normalized;
+    }
   }
   final compact = RegExp(
-    r'^[A-Z0-9]{8}$',
+    r'^[A-Z0-9]{8,9}$',
     caseSensitive: false,
   ).firstMatch(trimmed)?.group(0);
-  if (compact != null && RegExp(r'\d').hasMatch(compact)) {
-    return compact.toUpperCase();
+  if (compact != null) {
+    final normalized = compact.toUpperCase();
+    if (!_isBackendAuthCodeStopWord(normalized) &&
+        (allowCompact || RegExp(r'\d').hasMatch(normalized))) {
+      return normalized;
+    }
   }
   return null;
 }
@@ -166,10 +202,19 @@ class BackendInstallState {
   String? authCode;
   bool running;
   final List<String> output;
+  String _authTextTail = '';
 
   void apply(Map<String, dynamic> msg) {
-    void absorbAuth(String value) {
-      final parsed = _parseBackendDeviceAuth(value);
+    void absorbAuth(String value, {bool accumulate = false}) {
+      var source = value;
+      if (accumulate) {
+        _authTextTail = '$_authTextTail\n$value';
+        if (_authTextTail.length > 12000) {
+          _authTextTail = _authTextTail.substring(_authTextTail.length - 12000);
+        }
+        source = _authTextTail;
+      }
+      final parsed = _parseBackendDeviceAuth(source);
       final parsedUrl = parsed['authUrl'];
       if (parsedUrl != null && parsedUrl.isNotEmpty) {
         authUrl = parsedUrl;
@@ -186,7 +231,7 @@ class BackendInstallState {
     final rawMessage = msg['message'] as String?;
     if (rawMessage != null) {
       message = _stripTerminalControl(rawMessage).trimRight();
-      absorbAuth(message);
+      absorbAuth(message, accumulate: true);
     }
     final rawAuthUrl = msg['authUrl'] as String?;
     if (rawAuthUrl != null) {
@@ -196,6 +241,7 @@ class BackendInstallState {
     if (rawAuthCode != null) {
       final normalizedAuthCode = _normalizeBackendAuthCodeCandidate(
         _stripTerminalControl(rawAuthCode),
+        allowCompact: true,
       );
       if (normalizedAuthCode != null) {
         authCode = normalizedAuthCode;
@@ -209,7 +255,7 @@ class BackendInstallState {
       final cleanOutput = _stripTerminalControl(
         rawOutput,
       ).replaceAll('\r\n', '\n');
-      absorbAuth(cleanOutput);
+      absorbAuth(cleanOutput, accumulate: true);
       final lines = const LineSplitter()
           .convert(cleanOutput)
           .map((line) => line.trimRight())
@@ -225,7 +271,8 @@ class BackendInstallState {
         !(status == 'failed' || status == 'cancelled' || phase == 'probe');
 
     if (authCode != null &&
-        _normalizeBackendAuthCodeCandidate(authCode!) == null) {
+        _normalizeBackendAuthCodeCandidate(authCode!, allowCompact: true) ==
+            null) {
       authCode = null;
     }
   }
@@ -8027,6 +8074,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final key = _backendInstallKey(serverId, backend);
         final state = _backendInstallStates[key];
         if (state == null) continue;
+        if (state.operation == 'auth' && state.running) continue;
 
         _backendInstallAckTimers.remove(key)?.cancel();
         state.phase = 'probe';
