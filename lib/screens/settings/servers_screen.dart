@@ -313,6 +313,9 @@ class _ServersScreenState extends State<ServersScreen> {
     int? selectedColor = existing?.colorValue;
     bool useRelay =
         existing?.useRelay ?? true; // Default to relay for new servers
+    final canEditSystemPrompt =
+        existing != null &&
+        provider.connMgr.statusOf(existing.id) == ConnectionStatus.connected;
 
     showDialog(
       context: context,
@@ -345,12 +348,18 @@ class _ServersScreenState extends State<ServersScreen> {
                 const SizedBox(height: 12),
                 TextField(
                   controller: sysPromptCtrl,
+                  enabled: canEditSystemPrompt,
                   maxLines: 3,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     labelText: 'Default System Prompt (optional)',
-                    hintText: 'Extra instructions for all sessions...',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.description),
+                    hintText: canEditSystemPrompt
+                        ? 'Extra instructions copied into new sessions...'
+                        : null,
+                    helperText: canEditSystemPrompt
+                        ? null
+                        : 'Connect to this server to edit',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.description),
                     alignLabelWithHint: true,
                   ),
                 ),

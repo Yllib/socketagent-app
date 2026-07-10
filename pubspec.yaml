@@ -2,7 +2,7 @@ name: app
 description: "Claude Voice Assistant - Flutter Chat App with Voice Support"
 publish_to: 'none'
 
-version: 1.0.101+102
+version: 1.0.102+103
 
 environment:
   sdk: ^3.11.0

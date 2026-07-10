@@ -1298,6 +1298,7 @@ class HomeScreenState extends State<HomeScreen> {
         break;
       case 'max':
       case 'xhigh':
+      case 'ultra':
         icon = Icons.whatshot;
         color = Colors.orange.shade300;
         break;
@@ -1306,8 +1307,15 @@ class HomeScreenState extends State<HomeScreen> {
         color = Theme.of(context).colorScheme.primary;
     }
     final label = _effortLabel(provider.effort);
+    final codexEfforts = provider.codexReasoningEfforts;
     final options = isCodex
-        ? const ['minimal', 'low', 'medium', 'high', 'xhigh']
+        ? codexEfforts
+              .map(
+                (entry) => (entry['reasoningEffort'] ?? entry['effort'] ?? '')
+                    .toString(),
+              )
+              .where((value) => value.isNotEmpty)
+              .toList()
         : const ['low', 'medium', 'high', 'max'];
 
     return PopupMenuButton<String>(
@@ -1345,6 +1353,8 @@ class HomeScreenState extends State<HomeScreen> {
         return 'Minimal';
       case 'xhigh':
         return 'XHigh';
+      case 'ultra':
+        return 'Ultra';
       default:
         if (effort.isEmpty) return 'Default';
         return effort[0].toUpperCase() + effort.substring(1);

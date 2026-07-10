@@ -450,7 +450,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<String>> _serverBackends = {};
   final Map<String, List<Map<String, dynamic>>> _serverCodexCollaborationModes =
       {};
-  final Map<String, String> _serverCodexCollaborationMode = {};
   final Map<String, BackendInstallState> _backendInstallStates = {};
   final Map<String, Timer> _backendInstallAckTimers = {};
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
@@ -499,6 +498,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _effort = 'high';
   bool _codexFastMode = false;
   bool _claudeAutoCompactEnabled = true;
+  String _codexCollaborationMode = 'default';
   Map<String, dynamic> _thinking = {'type': 'adaptive'};
   List<String> _availableTools = [];
   // Per-session disallowed tools and system prompt caches
@@ -542,7 +542,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _authToken = '';
   String _defaultCwd = '';
   bool _autoVoiceOnAssist = true;
-  bool _colorfulCards = true;
 
   // Multi-server
   List<ServerConfig> _serverConfigs = [];
@@ -1130,11 +1129,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<String> get promptSuggestions => _promptSuggestions;
   List<dynamic>? get supportedCommands => _supportedCommands;
   List<dynamic>? get supportedAgents => _supportedAgents;
-  String get codexCollaborationMode {
-    final serverId = _connMgr.activeServerId ?? _serverConfigs.firstOrNull?.id;
-    if (serverId == null) return 'default';
-    return _serverCodexCollaborationMode[serverId] ?? 'default';
-  }
+  String get codexCollaborationMode => _codexCollaborationMode;
 
   DateTime? _parseServerDateTime(dynamic value) {
     if (value is! String || value.isEmpty) return null;
@@ -1426,7 +1421,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String get authToken => _authToken;
   String get defaultCwd => _defaultCwd;
   bool get autoVoiceOnAssist => _autoVoiceOnAssist;
-  bool get colorfulCards => _colorfulCards;
   WebSocketService get ws => _ws;
   ConnectionManager get connMgr => _connMgr;
   List<ServerConfig> get serverConfigs => _serverConfigs;
@@ -1634,10 +1628,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _defaultCwd = prefs.getString('default_cwd') ?? '';
     _autoVoiceOnAssist = prefs.getBool('auto_voice_on_assist') ?? true;
     _pushToTalk = prefs.getBool('push_to_talk') ?? false;
-    _colorfulCards = true;
-    if (prefs.getBool('colorful_cards') != true) {
-      await prefs.setBool('colorful_cards', true);
-    }
 
     // Load sensitive credentials from SecureStorage
     _authToken = await _secureStorage.getAuthToken() ?? '';
@@ -1707,13 +1697,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
     // Recent CWDs are now server-side — loaded via get_recent_cwds on connect
     _ttsEnabled = prefs.getBool('tts_enabled') ?? false;
-    _effort = prefs.getString('effort') ?? 'high';
-    final savedThinking = prefs.getString('thinking');
-    if (savedThinking != null) {
-      try {
-        _thinking = Map<String, dynamic>.from(jsonDecode(savedThinking) as Map);
-      } catch (_) {}
-    }
     // Eagerly initialize STT so model is loaded before user presses mic
     _speech.initialize();
     // Always eagerly initialize TTS so it's warm before any speak message arrives
@@ -2033,6 +2016,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> updateServer(ServerConfig config) async {
     final idx = _serverConfigs.indexWhere((c) => c.id == config.id);
     final previous = idx >= 0 ? _serverConfigs[idx] : null;
+    final systemPromptEditable =
+        _connMgr.statusOf(config.id) == ConnectionStatus.connected;
     if (idx >= 0) {
       _serverConfigs[idx] = config;
     } else {
@@ -2049,7 +2034,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (reconnect) {
       _connMgr.getConnection(config.id)?.connect();
     }
-    _sendServerSettings(config.id, defaultCwd: config.defaultCwd);
+    _sendServerSettings(
+      config.id,
+      defaultCwd: config.defaultCwd,
+      systemPrompt: systemPromptEditable ? config.systemPrompt : null,
+    );
     notifyListeners();
   }
 
@@ -2382,27 +2371,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'engine': engineStr,
       'voice': _kokoroServerEngine.selectedVoice?.id ?? 'af_heart',
     });
-    sendTo({'type': 'set_effort', 'effort': _effort});
-    if (_activeSessionBackend == 'codex') {
-      sendTo({'type': 'set_codex_fast_mode', 'enabled': _codexFastMode});
-    } else {
+    final config = _serverConfigs
+        .where((item) => item.id == (serverId ?? _connMgr.activeServerId))
+        .firstOrNull;
+    if (config != null && config.systemPrompt.isNotEmpty) {
       sendTo({
-        'type': 'set_claude_auto_compact',
-        'enabled': _claudeAutoCompactEnabled,
+        'type': 'set_server_settings',
+        'systemPromptIfUnset': config.systemPrompt,
       });
-    }
-    sendTo({'type': 'set_thinking', 'thinking': _thinking});
-
-    // Send per-session disallowed tools and system prompt if we have an active session
-    if (_activeSessionId != null) {
-      final dt = _sessionDisallowedTools[_activeSessionId!];
-      if (dt != null && dt.isNotEmpty) {
-        sendTo({'type': 'set_disallowed_tools', 'tools': dt});
-      }
-      final sp = getEffectiveSystemPrompt(_activeSessionId!);
-      if (sp.isNotEmpty) {
-        sendTo({'type': 'set_system_prompt', 'prompt': sp});
-      }
     }
 
     // Request session list from this server (or all if no serverId)
@@ -3496,7 +3472,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _serverCodexCollaborationModes[key] = modes;
             final currentMode = msg['currentMode'] as String?;
             if (currentMode != null && currentMode.isNotEmpty) {
-              _serverCodexCollaborationMode[key] = currentMode;
+              _codexCollaborationMode = currentMode;
             }
             notifyListeners();
           }
@@ -3504,9 +3480,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       case 'codex_collaboration_mode_changed':
         {
-          final key = serverId ?? _connMgr.activeServerId;
           final mode = msg['mode'] as String? ?? 'default';
-          if (key != null) _serverCodexCollaborationMode[key] = mode;
+          _codexCollaborationMode = mode;
           _messages.add(
             ChatMessage(
               id: 'codex_mode_${DateTime.now().microsecondsSinceEpoch}',
@@ -3878,6 +3853,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ),
         );
         notifyListeners();
+        break;
+      case 'session_settings':
+        _handleSessionSettings(msg);
         break;
       case 'task_completed_hook':
         final hookTaskId = msg['taskId'] as String? ?? '';
@@ -5691,8 +5669,109 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
         }
       }
+      _normalizeCodexEffortForSelectedModel();
       notifyListeners();
     }
+  }
+
+  void _handleSessionSettings(Map<String, dynamic> msg) {
+    final sessionId = msg['sessionId']?.toString() ?? '';
+    if (sessionId.isEmpty || sessionId != _activeSessionId) return;
+    final raw = msg['settings'];
+    if (raw is! Map) return;
+    final settings = Map<String, dynamic>.from(raw);
+
+    final model = settings['model']?.toString();
+    if (model != null && model.isNotEmpty) _sessionModel = model;
+    final effort = settings['effort']?.toString();
+    if (effort != null && effort.isNotEmpty) _effort = effort;
+    if (settings['thinking'] is Map) {
+      _thinking = Map<String, dynamic>.from(settings['thinking'] as Map);
+    }
+    final fastMode = settings['codexFastMode'];
+    if (fastMode is bool) {
+      _codexFastMode = fastMode;
+      _sessionCodexFastModes[sessionId] = fastMode;
+    }
+    final autoCompact = settings['claudeAutoCompact'];
+    if (autoCompact is bool) {
+      _claudeAutoCompactEnabled = autoCompact;
+      _sessionClaudeAutoCompact[sessionId] = autoCompact;
+    }
+    final collaborationMode = settings['codexCollaborationMode']?.toString();
+    if (collaborationMode != null && collaborationMode.isNotEmpty) {
+      _codexCollaborationMode = collaborationMode;
+    }
+    final disallowedTools = settings['disallowedTools'];
+    if (disallowedTools is List) {
+      _sessionDisallowedTools[sessionId] = disallowedTools
+          .map((value) => value.toString())
+          .toList();
+    }
+    if (settings.containsKey('systemPrompt')) {
+      _sessionSystemPrompts[sessionId] =
+          settings['systemPrompt']?.toString() ?? '';
+    } else {
+      _sessionSystemPrompts.remove(sessionId);
+    }
+    notifyListeners();
+  }
+
+  List<Map<String, dynamic>> get codexReasoningEfforts {
+    final currentModel = _sessionModel ?? '';
+    for (final model in _supportedModels) {
+      final value = (model['value'] ?? model['id'] ?? '').toString();
+      if (value != currentModel) continue;
+      final rawEfforts = model['supportedReasoningEfforts'];
+      if (rawEfforts is! List) break;
+      final efforts = rawEfforts
+          .map((entry) {
+            if (entry is Map) return Map<String, dynamic>.from(entry);
+            return <String, dynamic>{'reasoningEffort': entry.toString()};
+          })
+          .where((entry) {
+            return (entry['reasoningEffort'] ?? entry['effort'] ?? '')
+                .toString()
+                .isNotEmpty;
+          })
+          .toList();
+      if (efforts.isNotEmpty) return efforts;
+      break;
+    }
+    return const [
+      {'reasoningEffort': 'minimal'},
+      {'reasoningEffort': 'low'},
+      {'reasoningEffort': 'medium'},
+      {'reasoningEffort': 'high'},
+      {'reasoningEffort': 'xhigh'},
+    ];
+  }
+
+  void _normalizeCodexEffortForSelectedModel() {
+    if (_activeSessionBackend != 'codex') return;
+    final supported = codexReasoningEfforts
+        .map(
+          (entry) =>
+              (entry['reasoningEffort'] ?? entry['effort'] ?? '').toString(),
+        )
+        .where((value) => value.isNotEmpty)
+        .toList();
+    if (supported.isEmpty || supported.contains(_effort)) return;
+
+    String? defaultEffort;
+    final currentModel = _sessionModel ?? '';
+    for (final model in _supportedModels) {
+      final value = (model['value'] ?? model['id'] ?? '').toString();
+      if (value == currentModel) {
+        defaultEffort = model['defaultReasoningEffort']?.toString();
+        break;
+      }
+    }
+    setEffort(
+      defaultEffort != null && supported.contains(defaultEffort)
+          ? defaultEffort
+          : supported.first,
+    );
   }
 
   void _handleMcpStatus(Map<String, dynamic> msg) {
@@ -5770,11 +5849,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void setModel(String? model) {
     _connMgr.send({'type': 'set_model', if (model != null) 'model': model});
     if (model != null) _sessionModel = model;
+    _normalizeCodexEffortForSelectedModel();
     notifyListeners();
   }
 
   void setPermissionMode(String mode) {
-    _ws.sendSetPermissionMode(mode);
+    _connMgr.send({'type': 'set_permission_mode', 'mode': mode});
     if (_permissionMode != mode) {
       _permissionMode = mode;
       _messages.add(_permissionModeMessage(mode));
@@ -6046,8 +6126,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final backend = msg['backend'] as String?;
     if (backend != null) _activeSessionBackend = backend;
     if (sessionId != null && sessionId.isNotEmpty) {
-      final wasPendingNewSession =
-          _activeSessionId == null || _activeSessionId!.isEmpty;
       _activeSessionId = sessionId;
       if (serverId != null && serverId.isNotEmpty) {
         _activeSessionServerId = serverId;
@@ -6061,14 +6139,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           sessionId,
           () => _claudeAutoCompactEnabled,
         );
-        if (wasPendingNewSession) {
-          SharedPreferences.getInstance().then((prefs) {
-            prefs.setBool(
-              'claude_auto_compact_$sessionId',
-              _claudeAutoCompactEnabled,
-            );
-          });
-        }
       }
       _loadPrepends();
     }
@@ -7395,6 +7465,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _activeSessionBackend = effectiveBackend;
     _codexFastMode = false;
     _claudeAutoCompactEnabled = true;
+    _effort = 'high';
+    _thinking = {'type': 'adaptive'};
+    _codexCollaborationMode = 'default';
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
     _isProcessing = false;
@@ -8034,17 +8107,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _captureCodexDriverSettings(Map<String, dynamic> msg, String serverId) {
-    final currentMode = msg['codexCollaborationMode'] as String?;
-    if (currentMode != null && currentMode.isNotEmpty) {
-      _serverCodexCollaborationMode[serverId] = currentMode;
-    }
-
     final defaultCwd = msg['defaultCwd'] as String?;
     if (defaultCwd != null && defaultCwd.isNotEmpty) {
       final idx = _serverConfigs.indexWhere((config) => config.id == serverId);
       if (idx >= 0 && _serverConfigs[idx].defaultCwd != defaultCwd) {
         _serverConfigs[idx] = _serverConfigs[idx].copyWith(
           defaultCwd: defaultCwd,
+        );
+        unawaited(_saveServerConfigs());
+      }
+    }
+
+    final systemPrompt = msg['systemPrompt'] as String?;
+    if (systemPrompt != null) {
+      final idx = _serverConfigs.indexWhere((config) => config.id == serverId);
+      if (idx >= 0 && _serverConfigs[idx].systemPrompt != systemPrompt) {
+        _serverConfigs[idx] = _serverConfigs[idx].copyWith(
+          systemPrompt: systemPrompt,
         );
         unawaited(_saveServerConfigs());
       }
@@ -8110,10 +8189,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     requestCodexCollaborationModes();
   }
 
-  void _sendServerSettings(String serverId, {String? defaultCwd}) {
+  void _sendServerSettings(
+    String serverId, {
+    String? defaultCwd,
+    String? systemPrompt,
+  }) {
     final msg = <String, dynamic>{
       'type': 'set_server_settings',
       if (defaultCwd != null) 'defaultCwd': defaultCwd,
+      if (systemPrompt != null) 'systemPrompt': systemPrompt,
     };
     if (_connMgr.statusOf(serverId) == ConnectionStatus.connected) {
       _connMgr.sendToServer(serverId, msg);
@@ -8153,15 +8237,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setCodexCollaborationMode(String mode) {
+    _codexCollaborationMode = mode;
     final serverId = _connMgr.activeServerId;
     if (serverId != null) {
-      _serverCodexCollaborationMode[serverId] = mode;
       _connMgr.sendToServer(serverId, {
         'type': 'set_codex_collaboration_mode',
         'mode': mode,
       });
     } else {
-      _ws.send({'type': 'set_codex_collaboration_mode', 'mode': mode});
+      _connMgr.send({'type': 'set_codex_collaboration_mode', 'mode': mode});
     }
     notifyListeners();
   }
@@ -8176,8 +8260,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _lastUsage = null;
     _activeSessionId = sessionId;
     _activeSessionServerId = serverId;
-    _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
-    _claudeAutoCompactEnabled = _sessionClaudeAutoCompact[sessionId] ?? true;
+    _effort = 'high';
+    _thinking = {'type': 'adaptive'};
+    _codexFastMode = false;
+    _claudeAutoCompactEnabled = true;
+    _codexCollaborationMode = 'default';
     _loadPrepends();
     _currentStreamingMessage = null;
     _currentThinkingMessage = null;
@@ -8200,9 +8287,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingImageLoads.clear();
     _clearAttachment();
     _clearRawState();
-    // Load per-session settings from prefs
-    _loadSessionSettings(sessionId);
-
     // Look up which server owns this session and switch active server
     final session =
         _sessions
@@ -8237,20 +8321,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(session.serverId, {'type': 'get_status_sync'});
     } else {
       if (session != null) {
-        _ws.send({
+        _connMgr.send({
           'type': 'resume_session',
           'sessionId': sessionId,
           'cwd': session.cwd,
           if (session.backend != null) 'backend': session.backend,
         });
       } else {
-        _ws.sendResumeSession(sessionId);
+        _connMgr.send({'type': 'resume_session', 'sessionId': sessionId});
       }
-      _ws.send({'type': 'get_status_sync'});
+      _connMgr.send({'type': 'get_status_sync'});
     }
 
-    // Send per-session settings after resume
-    _sendSessionSettings(sessionId);
     _requestActiveCodexMetadata();
 
     notifyListeners();
@@ -8261,49 +8343,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.activeServerId = serverId;
     }
     resumeSession(sessionId, serverId: serverId);
-  }
-
-  void _loadSessionSettings(String sessionId) {
-    SharedPreferences.getInstance().then((prefs) {
-      final dt = prefs.getStringList('disallowed_tools_$sessionId');
-      if (dt != null) _sessionDisallowedTools[sessionId] = dt;
-      final sp = prefs.getString('system_prompt_$sessionId');
-      if (sp != null) _sessionSystemPrompts[sessionId] = sp;
-      final autoCompact = prefs.getBool('claude_auto_compact_$sessionId');
-      if (autoCompact != null) {
-        _sessionClaudeAutoCompact[sessionId] = autoCompact;
-        if (_activeSessionId == sessionId) {
-          _claudeAutoCompactEnabled = autoCompact;
-        }
-      }
-      if (_activeSessionId == sessionId) {
-        _sendSessionSettings(sessionId);
-        notifyListeners();
-      }
-    });
-  }
-
-  void _sendSessionSettings(String sessionId) {
-    if (_activeSessionBackend == 'codex') {
-      _connMgr.send({
-        'type': 'set_codex_fast_mode',
-        'enabled': _sessionCodexFastModes[sessionId] ?? _codexFastMode,
-      });
-    } else {
-      _connMgr.send({
-        'type': 'set_claude_auto_compact',
-        'enabled':
-            _sessionClaudeAutoCompact[sessionId] ?? _claudeAutoCompactEnabled,
-      });
-    }
-    final dt = _sessionDisallowedTools[sessionId];
-    if (dt != null && dt.isNotEmpty) {
-      _connMgr.send({'type': 'set_disallowed_tools', 'tools': dt});
-    }
-    final sp = getEffectiveSystemPrompt(sessionId);
-    if (sp.isNotEmpty) {
-      _connMgr.send({'type': 'set_system_prompt', 'prompt': sp});
-    }
   }
 
   void loadMoreHistory() {
@@ -8907,8 +8946,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _lastUsage = null;
     _activeSessionId = sessionId;
     _activeSessionServerId = serverId ?? _connMgr.activeServerId;
-    _codexFastMode = _sessionCodexFastModes[sessionId] ?? false;
-    _claudeAutoCompactEnabled = _sessionClaudeAutoCompact[sessionId] ?? true;
+    _effort = 'high';
+    _thinking = {'type': 'adaptive'};
+    _codexFastMode = false;
+    _claudeAutoCompactEnabled = true;
+    _codexCollaborationMode = 'default';
     _isLoadingHistory = true;
     _isProcessing = false;
     _stopPromptRuntime();
@@ -8921,8 +8963,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // before session_created comes back; falls through to whatever the
     // server confirms on the SessionInfo write-through.
     _activeSessionBackend = backend;
-    _loadSessionSettings(sessionId);
-
     final msg = {
       'type': 'resume_session',
       'sessionId': sessionId,
@@ -8936,7 +8976,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
-    _sendSessionSettings(sessionId);
     _requestActiveCodexMetadata();
     notifyListeners();
   }
@@ -9279,21 +9318,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  void setColorfulCards(bool value) {
-    _colorfulCards = true;
-    notifyListeners();
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setBool('colorful_cards', true);
-    });
-  }
-
   void setEffort(String effort) {
     _effort = effort;
-    _ws.send({'type': 'set_effort', 'effort': effort});
+    _connMgr.send({'type': 'set_effort', 'effort': effort});
     notifyListeners();
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setString('effort', effort);
-    });
   }
 
   void setCodexFastMode(bool enabled) {
@@ -9310,9 +9338,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final sessionId = _activeSessionId;
     if (sessionId != null) {
       _sessionClaudeAutoCompact[sessionId] = enabled;
-      SharedPreferences.getInstance().then((prefs) {
-        prefs.setBool('claude_auto_compact_$sessionId', enabled);
-      });
     }
     _connMgr.send({'type': 'set_claude_auto_compact', 'enabled': enabled});
     notifyListeners();
@@ -9320,11 +9345,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void setThinking(Map<String, dynamic> thinking) {
     _thinking = thinking;
-    _ws.send({'type': 'set_thinking', 'thinking': thinking});
+    _connMgr.send({'type': 'set_thinking', 'thinking': thinking});
     notifyListeners();
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setString('thinking', jsonEncode(thinking));
-    });
   }
 
   // Per-session disallowed tools
@@ -9334,9 +9356,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> setDisallowedTools(String sessionId, List<String> tools) async {
     _sessionDisallowedTools[sessionId] = tools;
-    _connMgr.send({'type': 'set_disallowed_tools', 'tools': tools});
-    final prefs = await SharedPreferences.getInstance();
-    prefs.setStringList('disallowed_tools_$sessionId', tools);
+    _sendSessionSetting(sessionId, {
+      'type': 'set_disallowed_tools',
+      'tools': tools,
+    });
     notifyListeners();
   }
 
@@ -9346,37 +9369,63 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String getEffectiveSystemPrompt(String sessionId) {
-    final sessionOverride = _sessionSystemPrompts[sessionId] ?? '';
-    if (sessionOverride.isNotEmpty) return sessionOverride;
-    // Fall back to server-level default
-    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
-    if (session != null && session.serverId.isNotEmpty) {
-      final config = _serverConfigs
-          .where((c) => c.id == session.serverId)
-          .firstOrNull;
-      if (config != null && config.systemPrompt.isNotEmpty) {
-        return config.systemPrompt;
-      }
+    final sessionOverride = _sessionSystemPrompts[sessionId];
+    if (sessionOverride != null && sessionOverride.isNotEmpty) {
+      return sessionOverride;
     }
-    // Single server fallback
-    if (_serverConfigs.length == 1 &&
-        _serverConfigs.first.systemPrompt.isNotEmpty) {
-      return _serverConfigs.first.systemPrompt;
-    }
-    return '';
+    return _serverDefaultSystemPrompt(sessionId);
   }
 
   Future<void> setSessionSystemPrompt(String sessionId, String prompt) async {
-    _sessionSystemPrompts[sessionId] = prompt;
-    final effective = getEffectiveSystemPrompt(sessionId);
-    _connMgr.send({'type': 'set_system_prompt', 'prompt': effective});
-    final prefs = await SharedPreferences.getInstance();
     if (prompt.isEmpty) {
-      prefs.remove('system_prompt_$sessionId');
+      _sessionSystemPrompts.remove(sessionId);
+      _clearSessionSystemPromptOverride(sessionId);
     } else {
-      prefs.setString('system_prompt_$sessionId', prompt);
+      _sessionSystemPrompts[sessionId] = prompt;
+      _sendSessionSetting(sessionId, {
+        'type': 'set_system_prompt',
+        'prompt': prompt,
+      });
     }
     notifyListeners();
+  }
+
+  String _serverDefaultSystemPrompt(String sessionId) {
+    final session = _sessions.where((item) => item.id == sessionId).firstOrNull;
+    final serverId = session?.serverId.isNotEmpty == true
+        ? session!.serverId
+        : _activeSessionServerId ?? _connMgr.activeServerId;
+    return _serverConfigs
+            .where((config) => config.id == serverId)
+            .firstOrNull
+            ?.systemPrompt
+            .trim() ??
+        '';
+  }
+
+  void _clearSessionSystemPromptOverride(String sessionId) {
+    final message = {
+      'type': 'set_system_prompt',
+      'prompt': '',
+      'inherited': true,
+      'clearOverride': true,
+    };
+    _sendSessionSetting(sessionId, message);
+  }
+
+  void _sendSessionSetting(String sessionId, Map<String, dynamic> message) {
+    message['sessionId'] = sessionId;
+    final session = _sessions.where((item) => item.id == sessionId).firstOrNull;
+    final serverId = session?.serverId.isNotEmpty == true
+        ? session!.serverId
+        : _activeSessionId == sessionId
+        ? _activeSessionServerId
+        : null;
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, message);
+    } else {
+      _connMgr.send(message);
+    }
   }
 
   void dismissTodos() {

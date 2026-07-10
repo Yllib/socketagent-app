@@ -602,9 +602,9 @@ class _SettingsV2ServerDetailScreenState
                   ),
                   _DetailRow(
                     icon: Icons.notes_outlined,
-                    title: 'System prompt',
+                    title: 'Default session prompt',
                     subtitle: config.systemPrompt.isEmpty
-                        ? 'No server default prompt'
+                        ? 'No default for new sessions'
                         : config.systemPrompt,
                   ),
                 ],
@@ -2089,6 +2089,9 @@ void _showServerDialog(
   bool pubkeyVisible = false;
   int? selectedColor = existing?.colorValue;
   bool useRelay = existing?.useRelay ?? true;
+  final canEditSystemPrompt =
+      existing != null &&
+      provider.connMgr.statusOf(existing.id) == ConnectionStatus.connected;
 
   showDialog(
     context: context,
@@ -2121,12 +2124,18 @@ void _showServerDialog(
               const SizedBox(height: 12),
               TextField(
                 controller: sysPromptCtrl,
+                enabled: canEditSystemPrompt,
                 maxLines: 3,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: 'Default System Prompt',
-                  hintText: 'Optional instructions for sessions on this server',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.description),
+                  hintText: canEditSystemPrompt
+                      ? 'Optional instructions copied into new sessions'
+                      : null,
+                  helperText: canEditSystemPrompt
+                      ? null
+                      : 'Connect to this server to edit',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.description),
                   alignLabelWithHint: true,
                 ),
               ),

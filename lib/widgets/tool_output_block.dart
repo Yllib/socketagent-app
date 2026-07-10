@@ -2,9 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
 import '../models/message.dart';
-import '../services/chat_provider.dart';
 import 'scroll_passthrough.dart';
 
 class _DiffStats {
@@ -209,12 +207,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final patchDiff = _isApplyPatchTool && hasOutput ? output : null;
     final patchStats = patchDiff == null ? null : _diffStats(patchDiff);
 
-    final colorful = context.select<ChatProvider, bool>((p) => p.colorfulCards);
     final accentColor = widget.greenTheme
         ? const Color(0xFFA6E3A1)
-        : colorful
-        ? _toolAccentColor(rawToolName)
-        : const Color(0xFF89B4FA);
+        : _toolAccentColor(rawToolName);
 
     // Always expandable if there's content to show
     final writeContent = _isWriteTool
@@ -235,11 +230,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         color: isBg ? const Color(0xFF1E2030) : const Color(0xFF1E1E2E),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isBg
-              ? accentColor.withAlpha(120)
-              : colorful
-              ? accentColor.withAlpha(80)
-              : const Color(0xFF313244),
+          color: isBg ? accentColor.withAlpha(120) : accentColor.withAlpha(80),
           width: 1,
         ),
       ),
