@@ -3293,6 +3293,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'file_data',
       'file_chunk',
       'file_complete',
+      'file_error',
       'push_token_registered',
       'push_token_unregistered',
       'push_registration_status',
@@ -3605,6 +3606,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'file_complete':
         _handleFileComplete(msg);
+        break;
+      case 'file_error':
+        _handleFileError(msg);
         break;
       case 'todos':
         final rawTodos = msg['todos'] as List?;
@@ -10745,6 +10749,36 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _cancelDownloadWatchdog(fileId);
       _showDownloadFailedNotification(fileId, e.toString());
       notifyListeners();
+    }
+  }
+
+  void _handleFileError(Map<String, dynamic> msg) {
+    final fileId = msg['fileId'] as String? ?? '';
+    if (fileId.isEmpty) return;
+    final transferToken = msg['transferToken'] as String?;
+    final expectedToken = _socketDownloadTokens[fileId];
+    if (expectedToken != null &&
+        transferToken != null &&
+        transferToken != expectedToken) {
+      debugPrint(
+        '[File] Ignoring stale error for $fileId token=$transferToken',
+      );
+      return;
+    }
+
+    final byteCompleter = _fileBytesCompleters.remove(fileId);
+    if (byteCompleter != null) {
+      _fileBytesBuffers.remove(fileId);
+      if (!byteCompleter.isCompleted) byteCompleter.complete(null);
+      return;
+    }
+
+    if (_downloadingFiles.contains(fileId)) {
+      _failDownload(
+        fileId,
+        msg['message'] as String? ?? 'File download failed',
+        deleteTemp: false,
+      );
     }
   }
 
