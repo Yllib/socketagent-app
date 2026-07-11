@@ -30,6 +30,18 @@ import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 import 'adb_bridge_service.dart';
 
+class SdkSessionPage {
+  const SdkSessionPage({
+    required this.sessions,
+    required this.total,
+    required this.hasMore,
+  });
+
+  final List<Map<String, dynamic>> sessions;
+  final int total;
+  final bool hasMore;
+}
+
 String _stripTerminalControl(String value) {
   return value
       .replaceAll(
@@ -569,7 +581,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _pendingCwdCheckServerId;
   Map<String, dynamic>? _lastCwdCheck;
   Completer<Map<String, dynamic>>? _pendingDirList;
-  Completer<List<Map<String, dynamic>>>? _pendingSdkSessions;
+  final Map<String, Completer<SdkSessionPage>> _sdkSessionCompleters = {};
+  final Map<String, String?> _sdkSessionRequestServers = {};
+  final Map<String, String> _sdkSessionRequestCwds = {};
+  final Map<String, int> _sdkSessionRequestLimits = {};
   final Map<String, Completer<FileManagerListing>> _fileManagerListCompleters =
       {};
   final Map<String, Completer<Map<String, dynamic>>>
@@ -578,7 +593,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   _fileManagerOperationCompleters = {};
   final Map<String, Completer<Map<String, dynamic>>>
   _fileManagerTextCompleters = {};
-  String? _pendingSdkSessionsServerId;
   int _sdkSessionsRequestSeq = 0;
   Completer<Map<String, dynamic>>? _pendingVersionCheck;
   String? _pendingVersionCheckServerId;
@@ -3302,6 +3316,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // events to the current chat; they will be restored from that session's
     // persisted history when the user opens it again.
     final messageSessionId = msg['sessionId'] as String?;
+    final replacementSessionId = type == 'session_created'
+        ? msg['replacesSessionId'] as String?
+        : null;
+    final replacesActiveSession =
+        replacementSessionId != null &&
+        replacementSessionId.isNotEmpty &&
+        replacementSessionId == _activeSessionId;
     if (!globalTypes.contains(type) &&
         messageSessionId != null &&
         messageSessionId.isNotEmpty) {
@@ -3310,7 +3331,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _handleNotificationOnlyServerMessage(type, msg, serverId);
           return;
         }
-      } else if (messageSessionId != _activeSessionId) {
+      } else if (messageSessionId != _activeSessionId &&
+          !replacesActiveSession) {
         _handleNotificationOnlyServerMessage(type, msg, serverId);
         return;
       }
@@ -3708,20 +3730,73 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         break;
       case 'sdk_session_list':
-        // Only accept response from the server we sent the request to
-        if (_pendingSdkSessionsServerId != null &&
-            serverId != null &&
-            serverId != _pendingSdkSessionsServerId) {
-          break;
-        }
         final sessions =
             (msg['sessions'] as List?)
                 ?.map((e) => Map<String, dynamic>.from(e as Map))
                 .toList() ??
             <Map<String, dynamic>>[];
-        _pendingSdkSessions?.complete(sessions);
-        _pendingSdkSessions = null;
-        _pendingSdkSessionsServerId = null;
+        final requestId = msg['requestId'] as String?;
+        if (requestId != null && requestId.isNotEmpty) {
+          final expectedServer = _sdkSessionRequestServers[requestId];
+          if (expectedServer != null &&
+              serverId != null &&
+              serverId != expectedServer) {
+            break;
+          }
+          _sdkSessionRequestServers.remove(requestId);
+          _sdkSessionRequestCwds.remove(requestId);
+          final requestedLimit =
+              _sdkSessionRequestLimits.remove(requestId) ?? 30;
+          final completer = _sdkSessionCompleters.remove(requestId);
+          if (completer != null && !completer.isCompleted) {
+            completer.complete(
+              SdkSessionPage(
+                sessions: sessions,
+                total: msg['total'] as int? ?? sessions.length,
+                hasMore:
+                    msg['hasMore'] as bool? ??
+                    sessions.length >= requestedLimit,
+              ),
+            );
+          }
+          break;
+        }
+
+        // Compatibility with servers that predate request IDs. Route by the
+        // echoed cwd/server, preferring the newest identical lookup. Identical
+        // requests have interchangeable results, and the picker separately
+        // ignores callbacks from older UI generations.
+        final responseCwd = msg['cwd'] as String?;
+        final matchingIds = _sdkSessionRequestServers.entries
+            .where(
+              (entry) =>
+                  (entry.value == null ||
+                      serverId == null ||
+                      entry.value == serverId) &&
+                  (responseCwd == null ||
+                      _sdkSessionRequestCwds[entry.key] == responseCwd),
+            )
+            .map((entry) => entry.key)
+            .toList();
+        if (matchingIds.isNotEmpty) {
+          final legacyId = matchingIds.last;
+          _sdkSessionRequestServers.remove(legacyId);
+          _sdkSessionRequestCwds.remove(legacyId);
+          final requestedLimit =
+              _sdkSessionRequestLimits.remove(legacyId) ?? 30;
+          final completer = _sdkSessionCompleters.remove(legacyId);
+          if (completer != null && !completer.isCompleted) {
+            completer.complete(
+              SdkSessionPage(
+                sessions: sessions,
+                total: msg['total'] as int? ?? sessions.length,
+                hasMore:
+                    msg['hasMore'] as bool? ??
+                    sessions.length >= requestedLimit,
+              ),
+            );
+          }
+        }
         break;
       case 'version_info':
         if (_pendingVersionCheckServerId != null &&
@@ -6123,9 +6198,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleSessionCreated(Map<String, dynamic> msg, String? serverId) {
     final sessionId = msg['sessionId'] as String?;
+    final replacesSessionId = msg['replacesSessionId'] as String?;
     final backend = msg['backend'] as String?;
     if (backend != null) _activeSessionBackend = backend;
     if (sessionId != null && sessionId.isNotEmpty) {
+      if (replacesSessionId != null && replacesSessionId.isNotEmpty) {
+        _locallyClearedSessions.remove(replacesSessionId);
+      }
       _activeSessionId = sessionId;
       if (serverId != null && serverId.isNotEmpty) {
         _activeSessionServerId = serverId;
@@ -8801,26 +8880,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Request SDK sessions for a given CWD from the server.
-  Future<List<Map<String, dynamic>>> requestSdkSessions(
+  Future<SdkSessionPage> requestSdkSessions(
     String cwd, {
     String? serverId,
+    int limit = 30,
   }) async {
     final seq = ++_sdkSessionsRequestSeq;
-    _pendingSdkSessions = Completer<List<Map<String, dynamic>>>();
-    _pendingSdkSessionsServerId = serverId;
-    final msg = {'type': 'list_sdk_sessions', 'cwd': cwd};
+    final requestId = 'sdk_${DateTime.now().microsecondsSinceEpoch}_$seq';
+    final completer = Completer<SdkSessionPage>();
+    _sdkSessionCompleters[requestId] = completer;
+    _sdkSessionRequestServers[requestId] = serverId;
+    _sdkSessionRequestCwds[requestId] = cwd;
+    _sdkSessionRequestLimits[requestId] = limit;
+    final msg = {
+      'type': 'list_sdk_sessions',
+      'cwd': cwd,
+      'requestId': requestId,
+      'limit': limit,
+    };
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
     } else {
       _ws.send(msg);
     }
-    final result = await _pendingSdkSessions!.future.timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => <Map<String, dynamic>>[],
-    );
-    // Ignore stale results if a newer request was made
-    if (seq != _sdkSessionsRequestSeq) return <Map<String, dynamic>>[];
-    return result;
+    try {
+      return await completer.future.timeout(
+        const Duration(seconds: 5),
+        onTimeout: () =>
+            const SdkSessionPage(sessions: [], total: 0, hasMore: false),
+      );
+    } finally {
+      _sdkSessionCompleters.remove(requestId);
+      _sdkSessionRequestServers.remove(requestId);
+      _sdkSessionRequestCwds.remove(requestId);
+      _sdkSessionRequestLimits.remove(requestId);
+    }
   }
 
   /// Check server version and available updates.
@@ -9001,6 +9095,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String cwd,
     required String scheduledTime,
     String? backend,
+    String? model,
+    String effort = 'high',
+    String permissionMode = 'bypassPermissions',
     String? recurrenceType,
     int? customIntervalMs,
     bool reuseSession = false,
@@ -9012,6 +9109,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'prompt': prompt,
       'cwd': cwd,
       'backend': backend ?? preferredBackendForServer(serverId),
+      if (model != null && model.isNotEmpty) 'model': model,
+      'effort': effort,
+      'permissionMode': permissionMode,
       'scheduledTime': scheduledTime,
       'reuseSession': reuseSession,
       'notificationMode': notificationMode,
@@ -9035,6 +9135,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? prompt,
     String? cwd,
     String? backend,
+    String? model,
+    String? effort,
+    String? permissionMode,
     String? scheduledTime,
     String? recurrenceType,
     int? customIntervalMs,
@@ -9048,6 +9151,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (prompt != null) msg['prompt'] = prompt;
     if (cwd != null) msg['cwd'] = cwd;
     if (backend != null) msg['backend'] = backend;
+    if (model != null) msg['model'] = model;
+    if (effort != null) msg['effort'] = effort;
+    if (permissionMode != null) msg['permissionMode'] = permissionMode;
     if (scheduledTime != null) msg['scheduledTime'] = scheduledTime;
     if (reuseSession != null) msg['reuseSession'] = reuseSession;
     if (notificationMode != null) msg['notificationMode'] = notificationMode;
@@ -9186,7 +9292,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void clearSessionContext(String sessionId) {
-    _locallyClearedSessions.add(sessionId);
     final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
     if (session != null && session.serverId.isNotEmpty) {
       _connMgr.sendToServer(session.serverId, {
@@ -9196,16 +9301,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _ws.sendClearContext(sessionId);
     }
-    // If this is the active session, clear local messages/todos
-    if (_activeSessionId == sessionId) {
-      _messages.clear();
-      _pendingInjectedMessageCount = 0;
-      _pendingLocalUserMessageIds.clear();
-      _todos.clear();
-      _currentStreamingMessage = null;
-      _lastUsage = null;
-    }
-    notifyListeners();
   }
 
   void compactCodexThread(String sessionId) {

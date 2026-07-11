@@ -7,6 +7,7 @@ class ServerConfig {
   final int port;
   final String token;
   final bool useRelay;
+  final bool expectedOnline;
   final int sortOrder;
   // Per-server relay pairing data
   final String relayUrl;
@@ -24,6 +25,7 @@ class ServerConfig {
     required this.port,
     required this.token,
     this.useRelay = false,
+    this.expectedOnline = false,
     this.sortOrder = 0,
     this.relayUrl = '',
     this.pairingToken = '',
@@ -59,6 +61,7 @@ class ServerConfig {
       port: json['port'] as int,
       token: json['token'] as String,
       useRelay: json['useRelay'] as bool? ?? false,
+      expectedOnline: json['expectedOnline'] as bool? ?? false,
       sortOrder: json['sortOrder'] as int? ?? 0,
       relayUrl: json['relayUrl'] as String? ?? '',
       pairingToken: json['pairingToken'] as String? ?? '',
@@ -76,6 +79,7 @@ class ServerConfig {
     'port': port,
     'token': token,
     'useRelay': useRelay,
+    'expectedOnline': expectedOnline,
     'sortOrder': sortOrder,
     'relayUrl': relayUrl,
     'pairingToken': pairingToken,
@@ -92,6 +96,7 @@ class ServerConfig {
     int? port,
     String? token,
     bool? useRelay,
+    bool? expectedOnline,
     int? sortOrder,
     String? relayUrl,
     String? pairingToken,
@@ -107,6 +112,7 @@ class ServerConfig {
       port: port ?? this.port,
       token: token ?? this.token,
       useRelay: useRelay ?? this.useRelay,
+      expectedOnline: expectedOnline ?? this.expectedOnline,
       sortOrder: sortOrder ?? this.sortOrder,
       relayUrl: relayUrl ?? this.relayUrl,
       pairingToken: pairingToken ?? this.pairingToken,

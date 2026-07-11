@@ -130,6 +130,266 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     return backend == 'codex' ? Icons.terminal : Icons.auto_awesome;
   }
 
+  List<Map<String, String>> _modelOptions(
+    ChatProvider provider,
+    String backend,
+    String selectedModel,
+  ) {
+    final options = <String, String>{'': 'Provider default'};
+    if (backend == 'claude') {
+      options.addAll({'sonnet': 'Sonnet', 'opus': 'Opus', 'haiku': 'Haiku'});
+    }
+    if (provider.activeSessionBackend == backend) {
+      for (final model in provider.supportedModels) {
+        final value = (model['value'] ?? model['id'] ?? '').toString();
+        if (value.isEmpty) continue;
+        final label =
+            (model['displayName'] ?? model['label'] ?? model['name'] ?? value)
+                .toString();
+        options[value] = label;
+      }
+    }
+    if (selectedModel.isNotEmpty) {
+      options.putIfAbsent(selectedModel, () => selectedModel);
+    }
+    options['__custom__'] = 'Custom model ID...';
+    return options.entries
+        .map((entry) => {'value': entry.key, 'label': entry.value})
+        .toList();
+  }
+
+  List<String> _effortOptions(String backend) => backend == 'codex'
+      ? const ['minimal', 'low', 'medium', 'high', 'max', 'xhigh', 'ultra']
+      : const ['low', 'medium', 'high', 'max'];
+
+  String _effortLabel(String effort) {
+    switch (effort) {
+      case 'xhigh':
+        return 'Extra high';
+      case 'ultra':
+        return 'Ultra';
+      default:
+        return '${effort[0].toUpperCase()}${effort.substring(1)}';
+    }
+  }
+
+  String _permissionLabel(String mode) {
+    switch (mode) {
+      case 'plan':
+        return 'Read only';
+      case 'default':
+        return 'Workspace write';
+      default:
+        return 'Full access';
+    }
+  }
+
+  Future<String?> _promptForModelId(String currentModel) async {
+    final controller = TextEditingController(text: currentModel);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Custom Model'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'Model ID',
+            hintText: 'Provider model identifier',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (value) {
+            final model = value.trim();
+            if (model.isNotEmpty) Navigator.pop(dialogContext, model);
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final model = controller.text.trim();
+              if (model.isNotEmpty) Navigator.pop(dialogContext, model);
+            },
+            child: const Text('Use Model'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    return result;
+  }
+
+  Widget _buildAgentSettings({
+    required ChatProvider provider,
+    required List<String> backends,
+    required String selectedBackend,
+    required String selectedModel,
+    required String selectedEffort,
+    required String selectedPermissionMode,
+    required ValueChanged<String> onBackendChanged,
+    required ValueChanged<String> onModelChanged,
+    required ValueChanged<String> onEffortChanged,
+    required ValueChanged<String> onPermissionChanged,
+  }) {
+    final models = _modelOptions(provider, selectedBackend, selectedModel);
+    final efforts = _effortOptions(selectedBackend);
+    final effectiveEffort = efforts.contains(selectedEffort)
+        ? selectedEffort
+        : 'high';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: Text(
+            'Agent',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: DropdownButtonFormField<String>(
+            key: ValueKey('provider-$selectedBackend'),
+            isExpanded: true,
+            initialValue: selectedBackend,
+            decoration: const InputDecoration(
+              labelText: 'Provider',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.hub_outlined),
+              isDense: true,
+            ),
+            items: backends
+                .map(
+                  (backend) => DropdownMenuItem(
+                    value: backend,
+                    child: Text(_backendLabel(backend)),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) {
+              if (value != null) onBackendChanged(value);
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: DropdownButtonFormField<String>(
+            key: UniqueKey(),
+            isExpanded: true,
+            initialValue: selectedModel,
+            decoration: const InputDecoration(
+              labelText: 'Model',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.smart_toy_outlined),
+              isDense: true,
+            ),
+            items: models
+                .map(
+                  (model) => DropdownMenuItem(
+                    value: model['value'],
+                    child: Text(
+                      model['label']!,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (value) async {
+              if (value == '__custom__') {
+                final custom = await _promptForModelId(selectedModel);
+                onModelChanged(custom ?? selectedModel);
+                return;
+              }
+              onModelChanged(value ?? '');
+            },
+          ),
+        ),
+        const SizedBox(height: 10),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey('effort-$selectedBackend-$effectiveEffort'),
+                  isExpanded: true,
+                  initialValue: effectiveEffort,
+                  decoration: const InputDecoration(
+                    labelText: 'Effort',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: efforts
+                      .map(
+                        (effort) => DropdownMenuItem(
+                          value: effort,
+                          child: Text(_effortLabel(effort)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) onEffortChanged(value);
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  key: ValueKey('access-$selectedPermissionMode'),
+                  isExpanded: true,
+                  initialValue: selectedPermissionMode,
+                  decoration: const InputDecoration(
+                    labelText: 'Access',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 'plan', child: Text('Read only')),
+                    DropdownMenuItem(
+                      value: 'default',
+                      child: Text('Workspace write'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'bypassPermissions',
+                      child: Text('Full access'),
+                    ),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) onPermissionChanged(value);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
+          child: Text(
+            selectedPermissionMode == 'plan'
+                ? 'The agent can inspect files but cannot modify them.'
+                : selectedPermissionMode == 'default'
+                ? 'The agent can write in the workspace and may request approval.'
+                : 'The agent can run unattended with read/write access.',
+            style: TextStyle(
+              fontSize: 11,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   String _shortenCwd(String cwd) {
     final homePattern = RegExp(r'^/home/[^/]+/');
     if (homePattern.hasMatch(cwd)) {
@@ -198,6 +458,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     String selectedBackend = provider.preferredBackendForServer(
       selectedServerId,
     );
+    String selectedModel = '';
+    String selectedEffort = 'high';
+    String selectedPermissionMode = 'bypassPermissions';
 
     showModalBottomSheet(
       context: context,
@@ -288,6 +551,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                     .preferredBackendForServer(
                                       selectedServerId,
                                     );
+                                selectedModel = '';
+                                selectedEffort = 'high';
+                                selectedPermissionMode = 'bypassPermissions';
                               });
                             },
                             style: const ButtonStyle(
@@ -300,32 +566,26 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       const SizedBox(height: 8),
                     ],
 
-                    if (backends.length > 1) ...[
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: SegmentedButton<String>(
-                            segments: backends.map((backend) {
-                              return ButtonSegment(
-                                value: backend,
-                                label: Text(_backendLabel(backend)),
-                                icon: Icon(_backendIcon(backend), size: 16),
-                              );
-                            }).toList(),
-                            selected: {selectedBackend},
-                            onSelectionChanged: (v) {
-                              setSheetState(() => selectedBackend = v.first);
-                            },
-                            style: const ButtonStyle(
-                              visualDensity: VisualDensity.compact,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                    ],
+                    _buildAgentSettings(
+                      provider: provider,
+                      backends: backends,
+                      selectedBackend: selectedBackend,
+                      selectedModel: selectedModel,
+                      selectedEffort: selectedEffort,
+                      selectedPermissionMode: selectedPermissionMode,
+                      onBackendChanged: (value) => setSheetState(() {
+                        selectedBackend = value;
+                        selectedModel = '';
+                        selectedEffort = 'high';
+                        selectedPermissionMode = 'bypassPermissions';
+                      }),
+                      onModelChanged: (value) =>
+                          setSheetState(() => selectedModel = value),
+                      onEffortChanged: (value) =>
+                          setSheetState(() => selectedEffort = value),
+                      onPermissionChanged: (value) =>
+                          setSheetState(() => selectedPermissionMode = value),
+                    ),
 
                     const Divider(height: 1),
 
@@ -660,6 +920,11 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                               prompt: prompt,
                               cwd: cwd,
                               backend: selectedBackend,
+                              model: selectedModel.isEmpty
+                                  ? null
+                                  : selectedModel,
+                              effort: selectedEffort,
+                              permissionMode: selectedPermissionMode,
                               scheduledTime: selectedDate
                                   .toUtc()
                                   .toIso8601String(),
@@ -806,6 +1071,16 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     bool reuseSession = task['reuseSession'] as bool? ?? false;
     bool quietMode = task['notificationMode'] == 'quiet';
     String selectedBackend = task['backend'] as String? ?? 'claude';
+    String selectedModel = task['model'] as String? ?? '';
+    String selectedEffort = task['effort'] as String? ?? 'high';
+    if (!_effortOptions(selectedBackend).contains(selectedEffort)) {
+      selectedEffort = 'high';
+    }
+    final storedPermissionMode = task['permissionMode'] as String?;
+    String selectedPermissionMode =
+        storedPermissionMode == 'plan' || storedPermissionMode == 'default'
+        ? storedPermissionMode!
+        : 'bypassPermissions';
     final taskServerId = task['_serverId'] as String?;
 
     // Parse custom interval
@@ -871,32 +1146,26 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    if (backends.length > 1) ...[
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: SegmentedButton<String>(
-                            segments: backends.map((backend) {
-                              return ButtonSegment(
-                                value: backend,
-                                label: Text(_backendLabel(backend)),
-                                icon: Icon(_backendIcon(backend), size: 16),
-                              );
-                            }).toList(),
-                            selected: {selectedBackend},
-                            onSelectionChanged: (v) {
-                              setSheetState(() => selectedBackend = v.first);
-                            },
-                            style: const ButtonStyle(
-                              visualDensity: VisualDensity.compact,
-                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                    ],
+                    _buildAgentSettings(
+                      provider: provider,
+                      backends: backends,
+                      selectedBackend: selectedBackend,
+                      selectedModel: selectedModel,
+                      selectedEffort: selectedEffort,
+                      selectedPermissionMode: selectedPermissionMode,
+                      onBackendChanged: (value) => setSheetState(() {
+                        selectedBackend = value;
+                        selectedModel = '';
+                        selectedEffort = 'high';
+                        selectedPermissionMode = 'bypassPermissions';
+                      }),
+                      onModelChanged: (value) =>
+                          setSheetState(() => selectedModel = value),
+                      onEffortChanged: (value) =>
+                          setSheetState(() => selectedEffort = value),
+                      onPermissionChanged: (value) =>
+                          setSheetState(() => selectedPermissionMode = value),
+                    ),
 
                     const Divider(height: 1),
 
@@ -1227,6 +1496,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                               prompt: prompt,
                               cwd: cwd,
                               backend: selectedBackend,
+                              model: selectedModel,
+                              effort: selectedEffort,
+                              permissionMode: selectedPermissionMode,
                               scheduledTime: selectedDate
                                   .toUtc()
                                   .toIso8601String(),
@@ -1434,6 +1706,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     final runCount = task['runCount'] as int? ?? 0;
                     final runs = (task['runs'] as List?) ?? [];
                     final backend = task['backend'] as String? ?? 'claude';
+                    final model = task['model'] as String?;
+                    final effort = task['effort'] as String?;
+                    final permissionMode = task['permissionMode'] as String?;
                     final isRecurring = recurrence != null;
                     final isQuiet = task['notificationMode'] == 'quiet';
                     final isExpanded = _expandedTasks.contains(taskId);
@@ -1579,30 +1854,25 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                                   .withAlpha(128),
                                             ),
                                             const SizedBox(width: 4),
-                                            Text(
-                                              _backendLabel(backend),
-                                              style: TextStyle(
-                                                fontSize: 11,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurface
-                                                    .withAlpha(128),
-                                              ),
-                                            ),
-                                            if (isQuiet) ...[
-                                              const SizedBox(width: 8),
-                                              Icon(
-                                                Icons
-                                                    .notifications_off_outlined,
-                                                size: 12,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurface
-                                                    .withAlpha(128),
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                'Quiet',
+                                            Expanded(
+                                              child: Text(
+                                                [
+                                                  _backendLabel(backend),
+                                                  model == null || model.isEmpty
+                                                      ? 'Default model'
+                                                      : model,
+                                                  effort == null
+                                                      ? 'Default effort'
+                                                      : _effortLabel(effort),
+                                                  permissionMode == null
+                                                      ? 'Inherited access'
+                                                      : _permissionLabel(
+                                                          permissionMode,
+                                                        ),
+                                                  if (isQuiet) 'Quiet',
+                                                ].join(' · '),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
                                                 style: TextStyle(
                                                   fontSize: 11,
                                                   color: Theme.of(context)
@@ -1611,7 +1881,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                                       .withAlpha(128),
                                                 ),
                                               ),
-                                            ],
+                                            ),
                                           ],
                                         ),
                                         const SizedBox(height: 2),

@@ -313,6 +313,7 @@ class _ServersScreenState extends State<ServersScreen> {
     int? selectedColor = existing?.colorValue;
     bool useRelay =
         existing?.useRelay ?? true; // Default to relay for new servers
+    bool expectedOnline = existing?.expectedOnline ?? false;
     final canEditSystemPrompt =
         existing != null &&
         provider.connMgr.statusOf(existing.id) == ConnectionStatus.connected;
@@ -346,6 +347,16 @@ class _ServersScreenState extends State<ServersScreen> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: expectedOnline,
+                  title: const Text('Expected to stay online'),
+                  subtitle: const Text('Warn when this server is unavailable'),
+                  secondary: const Icon(Icons.power_settings_new_outlined),
+                  onChanged: (value) =>
+                      setDialogState(() => expectedOnline = value),
+                ),
+                const SizedBox(height: 4),
                 TextField(
                   controller: sysPromptCtrl,
                   enabled: canEditSystemPrompt,
@@ -586,6 +597,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     port: port,
                     token: token,
                     useRelay: false,
+                    expectedOnline: expectedOnline,
                     sortOrder:
                         existing?.sortOrder ?? provider.serverConfigs.length,
                     relayUrl: existing?.relayUrl ?? '',
@@ -627,6 +639,7 @@ class _ServersScreenState extends State<ServersScreen> {
                         8085,
                     token: existing?.token ?? tokenCtrl.text.trim(),
                     useRelay: true,
+                    expectedOnline: expectedOnline,
                     sortOrder:
                         existing?.sortOrder ?? provider.serverConfigs.length,
                     relayUrl: existing?.relayUrl ?? '',

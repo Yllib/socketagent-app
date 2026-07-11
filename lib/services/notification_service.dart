@@ -31,6 +31,7 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   bool _isInitialized = false;
+  bool _timeZoneInitialized = false;
   String? _launchPayload;
   final Map<int, DateTime> _lastShownAtById = {};
   final Map<int, String> _lastShownSignatureById = {};
@@ -52,13 +53,8 @@ class NotificationService {
     return payload;
   }
 
-  Future<void> initialize() async {
+  Future<void> initialize({bool requestPermissions = true}) async {
     if (_isInitialized) return;
-
-    // Initialize timezone database
-    tzdata.initializeTimeZones();
-    final timeZoneName = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(timeZoneName));
 
     const androidSettings = AndroidInitializationSettings(
       '@mipmap/ic_launcher',
@@ -79,13 +75,14 @@ class NotificationService {
       },
     );
 
-    // Request permissions (Android 13+)
     final androidPlugin = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
-    await androidPlugin?.requestNotificationsPermission();
-    await androidPlugin?.requestExactAlarmsPermission();
+    if (requestPermissions) {
+      await androidPlugin?.requestNotificationsPermission();
+      await androidPlugin?.requestExactAlarmsPermission();
+    }
 
     // Pre-create the reminders channel so it exists when the receiver fires
     await androidPlugin?.createNotificationChannel(
@@ -124,7 +121,17 @@ class NotificationService {
     );
 
     _isInitialized = true;
-    debugPrint('[Notification] initialized, timezone=$timeZoneName');
+    debugPrint(
+      '[Notification] initialized${requestPermissions ? '' : ' for background delivery'}',
+    );
+  }
+
+  Future<void> _ensureTimeZoneInitialized() async {
+    if (_timeZoneInitialized) return;
+    tzdata.initializeTimeZones();
+    final timeZoneName = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(timeZoneName));
+    _timeZoneInitialized = true;
   }
 
   Future<bool> showInstant({
@@ -246,6 +253,7 @@ class NotificationService {
     required DateTime scheduledTime,
   }) async {
     if (!_isInitialized) await initialize();
+    await _ensureTimeZoneInitialized();
 
     try {
       const androidDetails = AndroidNotificationDetails(

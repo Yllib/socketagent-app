@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'notification_service.dart';
 
 @pragma('vm:entry-point')
@@ -93,12 +94,17 @@ class PushNotificationService {
     final kind = data['kind'] as String? ?? '';
     final id = notificationIdForData(data, title);
     final payload = payloadForData(data);
-    final shouldDisplay = foreground
+    var shouldDisplay = foreground
         ? (shouldDisplayForegroundNotification?.call(data) ?? true)
         : true;
+    if (!foreground && await _isSessionMuted(data)) {
+      shouldDisplay = false;
+    }
     final notifications = NotificationService();
+    await notifications.initialize(requestPermissions: foreground);
 
-    if (kind == 'session_started') {
+    if (kind == 'session_started' || kind == 'session_running') {
+      if (await _isStaleRunningEvent(data)) return;
       if (!shouldDisplay) {
         await notifications.cancel(id);
         return;
@@ -116,6 +122,7 @@ class PushNotificationService {
     }
 
     if (kind == 'session_finished') {
+      await _recordFinishedEvent(data);
       await notifications.cancel(id);
       if (!shouldDisplay) return;
       await notifications.showInstant(
@@ -151,6 +158,40 @@ class PushNotificationService {
         ? 'session:${serverId ?? ''}:$sessionId'
         : title;
     return NotificationService.stableId(key);
+  }
+
+  static String? _sessionStateKey(Map<String, dynamic> data) {
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null || sessionId.isEmpty) return null;
+    final serverId = data['serverId'] as String? ?? '';
+    return 'push_session_finished_${Uri.encodeComponent(serverId)}_${Uri.encodeComponent(sessionId)}';
+  }
+
+  static Future<void> _recordFinishedEvent(Map<String, dynamic> data) async {
+    final key = _sessionStateKey(data);
+    if (key == null) return;
+    final finishedAt =
+        DateTime.tryParse(data['finishedAt'] as String? ?? '') ??
+        DateTime.now().toUtc();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(key, finishedAt.toUtc().toIso8601String());
+  }
+
+  static Future<bool> _isStaleRunningEvent(Map<String, dynamic> data) async {
+    final key = _sessionStateKey(data);
+    final startedAt = DateTime.tryParse(data['startedAt'] as String? ?? '');
+    if (key == null || startedAt == null) return false;
+    final prefs = await SharedPreferences.getInstance();
+    final finishedAt = DateTime.tryParse(prefs.getString(key) ?? '');
+    return finishedAt != null && !startedAt.isAfter(finishedAt);
+  }
+
+  static Future<bool> _isSessionMuted(Map<String, dynamic> data) async {
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null || sessionId.isEmpty) return false;
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList('notif_muted_sessions') ?? const <String>[])
+        .contains(sessionId);
   }
 
   void dispose() {

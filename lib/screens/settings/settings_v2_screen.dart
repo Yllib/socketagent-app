@@ -214,9 +214,11 @@ class SettingsV2Screen extends StatelessWidget {
     final items = <_AttentionItem>[];
     final configs = provider.serverConfigs;
     final relayServers = configs.where((c) => c.useRelay).toList();
-    final disconnected = configs
+    final expectedOffline = configs
         .where(
-          (c) => provider.connMgr.statusOf(c.id) != ConnectionStatus.connected,
+          (c) =>
+              c.expectedOnline &&
+              provider.connMgr.statusOf(c.id) != ConnectionStatus.connected,
         )
         .toList();
     final backendWarnings = configs
@@ -259,16 +261,19 @@ class SettingsV2Screen extends StatelessWidget {
         ),
       );
     }
-    if (disconnected.isNotEmpty) {
+    if (expectedOffline.isNotEmpty) {
       items.add(
         _AttentionItem(
           icon: Icons.link_off,
           title:
-              '${disconnected.length} server${disconnected.length == 1 ? '' : 's'} offline',
-          subtitle: _serverNames(disconnected),
+              '${expectedOffline.length} expected server${expectedOffline.length == 1 ? '' : 's'} offline',
+          subtitle: _serverNames(expectedOffline),
           severity: _AttentionSeverity.warning,
-          onTap: () =>
-              _openServerList(context, 'Offline Servers', disconnected),
+          onTap: () => _openServerList(
+            context,
+            'Expected Servers Offline',
+            expectedOffline,
+          ),
         ),
       );
     }
@@ -594,6 +599,13 @@ class _SettingsV2ServerDetailScreenState
                 title: 'Defaults',
                 children: [
                   _DetailRow(
+                    icon: Icons.power_settings_new_outlined,
+                    title: 'Availability',
+                    subtitle: config.expectedOnline
+                        ? 'Expected to stay online'
+                        : 'On-demand device',
+                  ),
+                  _DetailRow(
                     icon: Icons.folder_outlined,
                     title: 'Default directory',
                     subtitle: config.defaultCwd.isEmpty
@@ -719,6 +731,13 @@ class _Overview extends StatelessWidget {
           (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
         )
         .length;
+    final expectedOffline = configs
+        .where(
+          (c) =>
+              c.expectedOnline &&
+              provider.connMgr.statusOf(c.id) != ConnectionStatus.connected,
+        )
+        .length;
     final warnings = configs
         .where((c) => provider.backendWarningForServer(c.id) != null)
         .length;
@@ -742,8 +761,10 @@ class _Overview extends StatelessWidget {
                 child: _MetricChip(
                   icon: Icons.dns_outlined,
                   label: 'Servers',
-                  value: '${configs.isEmpty ? 0 : connected}/${configs.length}',
-                  tone: connected == configs.length && configs.isNotEmpty
+                  value: '$connected online',
+                  tone: expectedOffline > 0
+                      ? _ChipTone.warning
+                      : connected > 0
                       ? _ChipTone.good
                       : _ChipTone.neutral,
                 ),
@@ -878,6 +899,7 @@ class _ServerTile extends StatelessWidget {
             [
               config.useRelay ? 'Relay' : 'Direct',
               _statusLabel(status),
+              config.expectedOnline ? 'always on' : 'on demand',
               if (warning != null) 'backend ${warning['severity']}',
               if (connected && push) 'notifications',
             ].join(' · '),
@@ -2089,6 +2111,7 @@ void _showServerDialog(
   bool pubkeyVisible = false;
   int? selectedColor = existing?.colorValue;
   bool useRelay = existing?.useRelay ?? true;
+  bool expectedOnline = existing?.expectedOnline ?? false;
   final canEditSystemPrompt =
       existing != null &&
       provider.connMgr.statusOf(existing.id) == ConnectionStatus.connected;
@@ -2122,6 +2145,16 @@ void _showServerDialog(
                 ),
               ),
               const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: expectedOnline,
+                title: const Text('Expected to stay online'),
+                subtitle: const Text('Warn when this server is unavailable'),
+                secondary: const Icon(Icons.power_settings_new_outlined),
+                onChanged: (value) =>
+                    setDialogState(() => expectedOnline = value),
+              ),
+              const SizedBox(height: 4),
               TextField(
                 controller: sysPromptCtrl,
                 enabled: canEditSystemPrompt,
@@ -2318,6 +2351,7 @@ void _showServerDialog(
                 token: tokenCtrl.text.trim(),
                 serverPubkey: pubkeyCtrl.text.trim(),
                 useRelay: useRelay,
+                expectedOnline: expectedOnline,
                 colorValue: selectedColor,
               );
               if (config == null) {
@@ -2417,6 +2451,7 @@ ServerConfig? _serverConfigFromInputs({
   required String token,
   required String serverPubkey,
   required bool useRelay,
+  required bool expectedOnline,
   required int? colorValue,
 }) {
   if (useRelay && name.isEmpty) return null;
@@ -2430,6 +2465,7 @@ ServerConfig? _serverConfigFromInputs({
     port: useRelay ? existing?.port ?? port : port,
     token: useRelay ? existing?.token ?? token : token,
     useRelay: useRelay,
+    expectedOnline: expectedOnline,
     sortOrder: existing?.sortOrder ?? provider.serverConfigs.length,
     relayUrl: existing?.relayUrl ?? '',
     pairingToken: existing?.pairingToken ?? '',

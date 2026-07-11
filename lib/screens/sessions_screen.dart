@@ -533,7 +533,12 @@ class _SessionsTabState extends State<SessionsTab> {
     );
     List<Map<String, dynamic>> sdkSessions = [];
     bool loadingSdkSessions = false;
+    bool loadingMoreSdkSessions = false;
+    bool hasMoreSdkSessions = false;
+    int sdkSessionTotal = 0;
+    int sdkSessionLimit = 30;
     bool initialFetchDone = false;
+    int sdkSessionsFetchGeneration = 0;
     Timer? fetchDebounce;
     String selectedBackend = provider.preferredBackendForServer(
       selectedServerId,
@@ -557,25 +562,47 @@ class _SessionsTabState extends State<SessionsTab> {
             );
             final showBackendChip = supportedBackends.length > 1;
 
-            void fetchSdkSessions() {
+            void fetchSdkSessions({bool loadMore = false}) {
               fetchDebounce?.cancel();
+              final generation = ++sdkSessionsFetchGeneration;
               final path = controller.text.trim();
+              final requestServerId = selectedServerId;
+              if (!loadMore) sdkSessionLimit = 30;
               if (path.isEmpty) {
                 setSheetState(() {
                   sdkSessions = [];
                   loadingSdkSessions = false;
+                  loadingMoreSdkSessions = false;
+                  hasMoreSdkSessions = false;
+                  sdkSessionTotal = 0;
                 });
                 return;
               }
-              setSheetState(() => loadingSdkSessions = true);
+              setSheetState(() {
+                if (loadMore) {
+                  loadingMoreSdkSessions = true;
+                } else {
+                  loadingSdkSessions = true;
+                }
+              });
               fetchDebounce = Timer(const Duration(milliseconds: 250), () {
                 provider
-                    .requestSdkSessions(path, serverId: selectedServerId)
-                    .then((sessions) {
-                      if (ctx.mounted) {
+                    .requestSdkSessions(
+                      path,
+                      serverId: requestServerId,
+                      limit: sdkSessionLimit,
+                    )
+                    .then((page) {
+                      if (ctx.mounted &&
+                          generation == sdkSessionsFetchGeneration &&
+                          controller.text.trim() == path &&
+                          selectedServerId == requestServerId) {
                         setSheetState(() {
-                          sdkSessions = sessions;
+                          sdkSessions = page.sessions;
+                          sdkSessionTotal = page.total;
+                          hasMoreSdkSessions = page.hasMore;
                           loadingSdkSessions = false;
+                          loadingMoreSdkSessions = false;
                         });
                       }
                     });
@@ -930,7 +957,9 @@ class _SessionsTabState extends State<SessionsTab> {
                           const Spacer(),
                           if (!loadingSdkSessions && sdkSessions.isNotEmpty)
                             Text(
-                              '${sdkSessions.length}',
+                              sdkSessions.length < sdkSessionTotal
+                                  ? '${sdkSessions.length} of $sdkSessionTotal'
+                                  : '$sdkSessionTotal',
                               style: TextStyle(
                                 fontSize: 12,
                                 color: Theme.of(
@@ -973,8 +1002,36 @@ class _SessionsTabState extends State<SessionsTab> {
                             )
                           : ListView.builder(
                               padding: const EdgeInsets.only(bottom: 16),
-                              itemCount: sdkSessions.length,
+                              itemCount:
+                                  sdkSessions.length +
+                                  (hasMoreSdkSessions ? 1 : 0),
                               itemBuilder: (_, index) {
+                                if (index == sdkSessions.length) {
+                                  return Center(
+                                    child: TextButton.icon(
+                                      onPressed: loadingMoreSdkSessions
+                                          ? null
+                                          : () {
+                                              sdkSessionLimit =
+                                                  (sdkSessionLimit + 30).clamp(
+                                                    1,
+                                                    2000,
+                                                  );
+                                              fetchSdkSessions(loadMore: true);
+                                            },
+                                      icon: loadingMoreSdkSessions
+                                          ? const SizedBox(
+                                              width: 16,
+                                              height: 16,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(Icons.expand_more),
+                                      label: const Text('View more'),
+                                    ),
+                                  );
+                                }
                                 final session = sdkSessions[index];
                                 final preview =
                                     session['firstMessage'] as String? ?? '';
@@ -1109,13 +1166,23 @@ class _SessionsTabState extends State<SessionsTab> {
                 provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
           )
           .length;
-      final color = connectedCount == configs.length
-          ? Colors.green
-          : connectedCount > 0
+      final expectedOfflineCount = configs
+          .where(
+            (c) =>
+                c.expectedOnline &&
+                provider.connMgr.statusOf(c.id) != ConnectionStatus.connected,
+          )
+          .length;
+      final color = expectedOfflineCount > 0
           ? Colors.orange
+          : connectedCount > 0
+          ? Colors.green
           : Colors.grey;
+      final tooltip = expectedOfflineCount > 0
+          ? '$connectedCount online · $expectedOfflineCount expected offline'
+          : '$connectedCount online';
       return Tooltip(
-        message: '$connectedCount/${configs.length} servers connected',
+        message: tooltip,
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Row(
@@ -1139,7 +1206,7 @@ class _SessionsTabState extends State<SessionsTab> {
               ),
               const SizedBox(width: 4),
               Text(
-                '$connectedCount/${configs.length}',
+                '$connectedCount online',
                 style: TextStyle(
                   fontSize: 11,
                   color: color,
@@ -1326,9 +1393,7 @@ class _SessionsTabState extends State<SessionsTab> {
               ListTile(
                 leading: const Icon(Icons.cloud_done),
                 title: const Text('Connected only'),
-                subtitle: Text(
-                  '$connectedCount/${provider.serverConfigs.length} online',
-                ),
+                subtitle: Text('$connectedCount online'),
                 selected: _connectedOnlyFilter,
                 onTap: () {
                   setState(() {
@@ -2283,7 +2348,7 @@ class _SessionsTabState extends State<SessionsTab> {
               context.read<ChatProvider>().clearSessionContext(session.id);
               ScaffoldMessenger.of(
                 context,
-              ).showSnackBar(const SnackBar(content: Text('Context cleared')));
+              ).showSnackBar(const SnackBar(content: Text('Clearing context')));
             },
             child: const Text('Clear'),
           ),
