@@ -30,6 +30,13 @@ import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 import 'adb_bridge_service.dart';
 
+const _codexAgentControlTypes = {
+  'wait',
+  'sendInput',
+  'resumeAgent',
+  'closeAgent',
+};
+
 class SdkSessionPage {
   const SdkSessionPage({
     required this.sessions,
@@ -5065,12 +5072,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _messages.add(toolMsg);
 
     // Track Task/Agent tool calls as subagent tasks
-    if (tool == 'Task' || tool == 'Agent') {
+    final subagentType = input['subagent_type'] as String? ?? '';
+    if ((tool == 'Task' || tool == 'Agent') &&
+        !_codexAgentControlTypes.contains(subagentType)) {
       final desc = input['description'] as String? ?? 'Sub agent task';
       _subagentTasks[toolUseId] = {
         'description': desc,
         'prompt': input['prompt'] as String? ?? '',
-        'subagentType': input['subagent_type'] as String? ?? '',
+        'subagentType': subagentType,
         'status': 'running',
         'toolUseId': toolUseId,
       };
@@ -5466,10 +5475,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           t['status'] == 'failed' ||
           t['status'] == 'stopped',
     );
-    // Mark any still-running subagents as completed (query is done)
-    for (final entry in _subagentTasks.values) {
-      if (entry['status'] == 'running') entry['status'] = 'completed';
-    }
     notifyListeners();
   }
 
@@ -5493,24 +5498,55 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// for subagents that are currently running but whose start may not be in
   /// the loaded history page.
   void _handleActiveSubagents(Map<String, dynamic> msg) {
+    final messageSessionId = msg['sessionId'] as String?;
+    if (messageSessionId != null &&
+        _activeSessionId != null &&
+        messageSessionId != _activeSessionId) {
+      return;
+    }
     final tasks = msg['tasks'] as List<dynamic>? ?? [];
+    final source = msg['backend'] as String?;
+    final replace = msg['replace'] == true;
+    final incomingIds = <String>{};
     for (final task in tasks) {
       final t = task as Map<String, dynamic>;
       final toolUseId = t['toolUseId'] as String? ?? '';
       final description = t['description'] as String? ?? 'Sub agent task';
       final subagentType = t['subagentType'] as String? ?? '';
+      final rawStatus = t['status'] as String? ?? 'running';
       if (toolUseId.isEmpty) continue;
 
-      // Add to subagent tracking if not already there
-      if (!_subagentTasks.containsKey(toolUseId)) {
-        _subagentTasks[toolUseId] = {
-          'description': description,
-          'prompt': '',
-          'subagentType': subagentType,
-          'status': 'running',
-          'toolUseId': toolUseId,
-        };
+      final isActive = rawStatus == 'running' || rawStatus == 'pending';
+      if (!isActive) {
+        // A status snapshot is only for live recovery. Terminal agents belong
+        // in persisted history and must never be synthesized back into chat.
+        _subagentTasks.remove(toolUseId);
+        for (final message in _messages) {
+          if (message.type == MessageType.toolCall &&
+              message.toolUseId == toolUseId) {
+            message.toolStreaming = false;
+          }
+        }
+        continue;
       }
+      incomingIds.add(toolUseId);
+
+      final previous = _subagentTasks[toolUseId];
+      _subagentTasks[toolUseId] = {
+        ...?previous,
+        'description': description,
+        'prompt': t['prompt'] as String? ?? previous?['prompt'] ?? '',
+        'subagentType': subagentType,
+        'status': 'running',
+        'terminalStatus': rawStatus,
+        'toolUseId': toolUseId,
+        'source': source ?? previous?['source'],
+        if (t['agentId'] != null) 'agentId': t['agentId'],
+        if (t['model'] != null) 'model': t['model'],
+        if (t['reasoningEffort'] != null)
+          'reasoningEffort': t['reasoningEffort'],
+        if (t['agentPath'] != null) 'agentPath': t['agentPath'],
+      };
 
       // If the Task tool_call message isn't in _messages, create a synthetic one
       final hasToolCall = _messages.any(
@@ -5519,14 +5555,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (!hasToolCall) {
         final syntheticMsg = ChatMessage.toolCall(
           tool: 'Agent',
-          input: {'description': description, 'subagent_type': subagentType},
+          input: {
+            'description': description,
+            'subagent_type': subagentType,
+            if (t['agentId'] != null) 'agentId': t['agentId'],
+            if (t['model'] != null) 'model': t['model'],
+            if (t['reasoningEffort'] != null)
+              'reasoningEffort': t['reasoningEffort'],
+          },
           toolUseId: toolUseId,
         );
         syntheticMsg.toolStreaming = true;
         _messages.add(syntheticMsg);
+      } else {
+        final toolCall = _messages
+            .where(
+              (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
+            )
+            .lastOrNull;
+        if (toolCall != null) {
+          toolCall.toolStreaming = true;
+        }
       }
     }
-    if (tasks.isNotEmpty) notifyListeners();
+    if (replace && source != null) {
+      _subagentTasks.removeWhere(
+        (id, task) => task['source'] == source && !incomingIds.contains(id),
+      );
+    }
+    notifyListeners();
   }
 
   Future<void> _handleReminder(Map<String, dynamic> msg) async {
@@ -6701,6 +6758,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               .replaceFirst('mcp__app__', '');
           final toolInput = (entry['toolInput'] as Map<String, dynamic>?) ?? {};
           final toolUseId = entry['toolUseId'] as String? ?? '';
+          if (toolName == 'Agent' &&
+              _codexAgentControlTypes.contains(
+                toolInput['subagent_type'] as String? ?? '',
+              )) {
+            if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
+            break;
+          }
           if (toolName == 'SendFile') {
             final filePath = toolInput['file_path'] as String? ?? '';
             if (filePath.isNotEmpty) {
@@ -6944,7 +7008,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     for (final m in _messages) {
       if (m.type == MessageType.toolCall &&
           (m.toolName == 'Task' || m.toolName == 'Agent') &&
-          m.toolUseId != null) {
+          m.toolUseId != null &&
+          !_codexAgentControlTypes.contains(
+            m.toolInput?['subagent_type'] as String? ?? '',
+          )) {
         final desc = m.toolInput?['description'] as String? ?? 'Sub agent task';
         final hasResult = m.toolOutput != null;
         _subagentTasks[m.toolUseId!] = {
