@@ -533,6 +533,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ChatMessage? _currentStreamingMessage;
   String? _currentStreamingStreamId;
   ChatMessage? _currentThinkingMessage;
+  final Map<String, ChatMessage> _streamingMessagesByKey = {};
+  final Map<String, ChatMessage> _thinkingMessagesByKey = {};
   String? _lastServerStartedAt; // detect server restarts
   Map<String, dynamic>? _contextUsage; // detailed context breakdown from SDK
   // SDK session info
@@ -3271,7 +3273,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'file_manager_text_result',
       'cwd_check',
       'sdk_session_list',
-      'active_subagents',
       'version_info',
       'update_result',
       'recent_cwds',
@@ -3388,6 +3389,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'secure_input_saved':
         _handleSecureInputSaved(msg);
+        break;
+      case 'secure_input_cancelled':
+        _handleSecureInputCancelled(msg);
         break;
       case 'result':
         _handleResult(msg);
@@ -4009,7 +4013,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _isProcessing = false;
           _processingSetAt = null;
           _stopPromptRuntime();
-          _currentStreamingMessage = null;
+          _closeLiveStreamsForParent(null);
         }
         // requires_action keeps _isProcessing true (still mid-query)
         notifyListeners();
@@ -4194,7 +4198,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
           _isCompacting = false;
           _stopPromptRuntime();
-          _currentStreamingMessage = null;
+          _closeLiveStreamsForParent(null);
         } else {
           _markSessionRunning(
             _activeSessionId,
@@ -4359,7 +4363,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (!_isProcessing) {
           _isCompacting = false;
           _stopPromptRuntime();
-          _currentStreamingMessage = null;
+          _closeLiveStreamsForParent(null);
         } else {
           _isCompacting = serverSaysCompacting;
           _startPromptRuntime(
@@ -4515,7 +4519,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _pendingInjectedMessageCount = 0;
           _pendingLocalUserMessageIds.clear();
           _todos.clear();
-          _currentStreamingMessage = null;
+          _clearLiveMessageStreams();
           _lastUsage = null;
         }
         // Refresh session list to show updated preview
@@ -4632,7 +4636,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         }
       case 'compact_boundary':
-        _currentStreamingMessage = null;
+        _closeLiveStreamsForParent(null);
         final trigger = msg['trigger'] as String? ?? 'auto';
         final preTokens = (msg['preTokens'] as num?)?.toInt() ?? 0;
         _messages.add(
@@ -4765,7 +4769,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleOutlookAuth(Map<String, dynamic> msg, [String? serverId]) {
-    _currentStreamingMessage = null;
+    _closeLiveStreamsForParent(null);
     final authRequestId = msg['authRequestId'] as String? ?? '';
     if (authRequestId.isEmpty) return;
 
@@ -4811,7 +4815,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleElicitationUrl(Map<String, dynamic> msg) {
-    _currentStreamingMessage = null;
+    _closeLiveStreamsForParent(null);
     final questionId = msg['questionId'] as String? ?? '';
     final mcpServerName = msg['mcpServerName'] as String? ?? 'MCP Server';
     final message = msg['message'] as String? ?? '';
@@ -4830,7 +4834,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleIBSAuth(Map<String, dynamic> msg, [String? serverId]) {
-    _currentStreamingMessage = null;
+    _closeLiveStreamsForParent(null);
     final authRequestId = msg['authRequestId'] as String? ?? '';
     if (authRequestId.isEmpty) return;
 
@@ -4895,20 +4899,70 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     dotAll: true,
   );
 
-  void _handleTextMessage(Map<String, dynamic> msg) {
+  String _hierarchyStreamKey(Map<String, dynamic> msg) {
+    final streamId = msg['streamId'] as String?;
+    if (streamId != null && streamId.isNotEmpty) return 'stream:$streamId';
+    final uuid = msg['uuid'] as String?;
+    if (uuid != null && uuid.isNotEmpty) return 'uuid:$uuid';
+    final parentToolUseId = msg['parentToolUseId'] as String?;
+    if (parentToolUseId != null && parentToolUseId.isNotEmpty) {
+      return 'parent:$parentToolUseId';
+    }
+    return 'main';
+  }
+
+  void _clearLiveMessageStreams() {
+    _streamingMessagesByKey.clear();
+    _thinkingMessagesByKey.clear();
+    _currentStreamingMessage = null;
+    _currentStreamingStreamId = null;
     _closeThinkingMessage();
+  }
+
+  void _closeLiveStreamsForParent(String? parentToolUseId) {
+    _streamingMessagesByKey.removeWhere(
+      (_, message) => message.parentToolUseId == parentToolUseId,
+    );
+    _thinkingMessagesByKey.removeWhere((_, message) {
+      final matches = message.parentToolUseId == parentToolUseId;
+      if (matches) message.toolStreaming = false;
+      return matches;
+    });
+    if (_currentStreamingMessage?.parentToolUseId == parentToolUseId) {
+      _currentStreamingMessage = null;
+      _currentStreamingStreamId = null;
+    }
+    if (_currentThinkingMessage?.parentToolUseId == parentToolUseId) {
+      _currentThinkingMessage!.toolStreaming = false;
+      _currentThinkingMessage = null;
+    }
+  }
+
+  void _handleTextMessage(Map<String, dynamic> msg) {
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
     final streamId = msg['streamId'] as String?;
     final isReplay = msg['replay'] == true;
+    final parentToolUseId = msg['parentToolUseId'] as String?;
+    final streamKey = _hierarchyStreamKey(msg);
+
+    final thinking = _thinkingMessagesByKey.remove(streamKey);
+    if (thinking != null) thinking.toolStreaming = false;
+    if (identical(_currentThinkingMessage, thinking)) {
+      _currentThinkingMessage = null;
+    }
 
     if (isReplay) {
-      final existing = _findReplayedAssistantMessage(content);
+      final existing = _findReplayedAssistantMessage(
+        content,
+        parentToolUseId: parentToolUseId,
+      );
       if (existing != null) {
         if (content.length > existing.textContent.length &&
             content.startsWith(existing.textContent)) {
           existing.textContent = content;
         }
+        _streamingMessagesByKey[streamKey] = existing;
         _currentStreamingMessage = existing;
         _currentStreamingStreamId = streamId;
         notifyListeners();
@@ -4916,46 +4970,36 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    if (_currentStreamingMessage != null &&
-        streamId != null &&
-        _currentStreamingStreamId != null &&
-        _currentStreamingStreamId != streamId) {
-      _currentStreamingMessage = null;
-      _currentStreamingStreamId = null;
-    }
-
-    if (_currentStreamingMessage == null ||
-        _currentStreamingMessage!.type != MessageType.text ||
-        _currentStreamingMessage!.sender != MessageSender.assistant) {
-      _currentStreamingMessage = ChatMessage.assistantText(
-        msg['sessionId'] ?? '',
-      );
+    var streamMessage = _streamingMessagesByKey[streamKey];
+    if (streamMessage == null) {
+      streamMessage = ChatMessage.assistantText(msg['sessionId'] ?? '');
       _currentStreamingStreamId = streamId;
       // Forward SDK hierarchy fields
-      _currentStreamingMessage!.parentToolUseId =
-          msg['parentToolUseId'] as String?;
-      _currentStreamingMessage!.uuid = msg['uuid'] as String?;
+      streamMessage.parentToolUseId = parentToolUseId;
+      streamMessage.uuid = msg['uuid'] as String?;
+      _streamingMessagesByKey[streamKey] = streamMessage;
       // Don't add to _messages yet — wait until there's visible content
     } else if (_currentStreamingStreamId == null && streamId != null) {
       _currentStreamingStreamId = streamId;
     }
+    _currentStreamingMessage = streamMessage;
 
     if (streamId != null) {
-      final currentText = _currentStreamingMessage!.textContent;
+      final currentText = streamMessage.textContent;
       if (content == currentText) {
         // Live-state replay after reconnect/resume can resend the full text
         // already shown for this Codex item.
       } else if (currentText.isNotEmpty && content.startsWith(currentText)) {
-        _currentStreamingMessage!.textContent = content;
+        streamMessage.textContent = content;
       } else {
-        _currentStreamingMessage!.textContent += content;
+        streamMessage.textContent += content;
       }
     } else {
-      _currentStreamingMessage!.textContent += content;
+      streamMessage.textContent += content;
     }
 
     // Extract task notifications and create notification messages
-    final rawText = _currentStreamingMessage!.textContent;
+    final rawText = streamMessage.textContent;
     final notifMatches = _taskNotifRegex.allMatches(rawText).toList();
     if (notifMatches.isNotEmpty) {
       var cleaned = rawText;
@@ -4975,22 +5019,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               timestamp: DateTime.now(),
               textContent: summary,
               toolName: status, // reuse toolName to store status
+              parentToolUseId: parentToolUseId,
             ),
           );
         }
       }
-      _currentStreamingMessage!.textContent = cleaned;
+      streamMessage.textContent = cleaned;
     }
 
     // Strip system-reminder blocks
-    _currentStreamingMessage!.textContent = _currentStreamingMessage!
-        .textContent
-        .replaceAll(_systemReminderRegex, '');
+    streamMessage.textContent = streamMessage.textContent.replaceAll(
+      _systemReminderRegex,
+      '',
+    );
 
     // Only add to the message list once there's visible content
-    if (_currentStreamingMessage!.textContent.trim().isNotEmpty &&
-        !_messages.contains(_currentStreamingMessage)) {
-      _messages.add(_currentStreamingMessage!);
+    if (streamMessage.textContent.trim().isNotEmpty &&
+        !_messages.contains(streamMessage)) {
+      _messages.add(streamMessage);
     }
 
     notifyListeners();
@@ -4999,6 +5045,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _closeThinkingMessage() {
     if (_currentThinkingMessage != null) {
       _currentThinkingMessage!.toolStreaming = false;
+      _thinkingMessagesByKey.removeWhere(
+        (_, message) => identical(message, _currentThinkingMessage),
+      );
       _currentThinkingMessage = null;
     }
   }
@@ -5007,34 +5056,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
     final isReplay = msg['replay'] == true;
+    final parentToolUseId = msg['parentToolUseId'] as String?;
+    final streamKey = _hierarchyStreamKey(msg);
     if (isReplay) {
-      final existing = _findReplayedThinkingMessage(content);
+      final existing = _findReplayedThinkingMessage(
+        content,
+        parentToolUseId: parentToolUseId,
+      );
       if (existing != null) {
         if (content.length > existing.textContent.length &&
             content.startsWith(existing.textContent)) {
           existing.textContent = content;
         }
         existing.toolStreaming = true;
+        _thinkingMessagesByKey[streamKey] = existing;
         _currentThinkingMessage = existing;
         notifyListeners();
         return;
       }
     }
-    if (_currentThinkingMessage == null) {
-      _currentThinkingMessage = ChatMessage.thinking();
-      _currentThinkingMessage!.parentToolUseId =
-          msg['parentToolUseId'] as String?;
-      _currentThinkingMessage!.uuid = msg['uuid'] as String?;
-      _messages.add(_currentThinkingMessage!);
+    var thinkingMessage = _thinkingMessagesByKey[streamKey];
+    if (thinkingMessage == null) {
+      thinkingMessage = ChatMessage.thinking();
+      thinkingMessage.parentToolUseId = parentToolUseId;
+      thinkingMessage.uuid = msg['uuid'] as String?;
+      _thinkingMessagesByKey[streamKey] = thinkingMessage;
+      _messages.add(thinkingMessage);
     }
-    _currentThinkingMessage!.textContent += content;
-    _currentThinkingMessage!.toolStreaming = true;
+    thinkingMessage.textContent += content;
+    thinkingMessage.toolStreaming = true;
+    _currentThinkingMessage = thinkingMessage;
     notifyListeners();
   }
 
   void _handleToolCall(Map<String, dynamic> msg) {
-    _currentStreamingMessage = null;
-    _closeThinkingMessage();
+    _closeLiveStreamsForParent(msg['parentToolUseId'] as String?);
     _processingSetAt = null; // server confirmed processing
 
     final rawTool = msg['tool'] ?? 'Unknown';
@@ -5082,6 +5138,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'subagentType': subagentType,
         'status': 'running',
         'toolUseId': toolUseId,
+        if (input['agentId'] != null) 'agentId': input['agentId'],
+        if (toolMsg.parentToolUseId != null)
+          'parentToolUseId': toolMsg.parentToolUseId,
       };
     }
     notifyListeners();
@@ -5113,7 +5172,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     } else if (output.trim().isNotEmpty) {
       _messages.add(
-        ChatMessage.toolResult(toolUseId: toolUseId, output: output),
+        ChatMessage.toolResult(
+          toolUseId: toolUseId,
+          output: output,
+          parentToolUseId: msg['parentToolUseId'] as String?,
+        ),
       );
     }
     notifyListeners();
@@ -5286,7 +5349,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleQuestion(Map<String, dynamic> msg) {
-    _currentStreamingMessage = null;
+    _closeLiveStreamsForParent(msg['parentToolUseId'] as String?);
 
     final questionId = msg['questionId'] as String? ?? '';
 
@@ -5297,6 +5360,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
     if (existingIdx >= 0) {
       _messages[existingIdx].answered = false;
+      _messages[existingIdx].toolInput?['status'] = 'pending';
       notifyListeners();
       return;
     }
@@ -5343,7 +5407,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleSecureInputRequest(Map<String, dynamic> msg) {
-    _currentStreamingMessage = null;
+    _closeLiveStreamsForParent(msg['parentToolUseId'] as String?);
     final requestId = msg['requestId'] as String? ?? '';
     if (requestId.isEmpty) return;
     final existingIdx = _messages.indexWhere(
@@ -5382,7 +5446,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final idx = _messages.indexWhere(
         (m) => m.type == MessageType.secureInput && m.questionId == requestId,
       );
-      if (idx >= 0) _messages[idx].answered = true;
+      if (idx >= 0) {
+        _messages[idx].answered = true;
+        _messages[idx].toolInput?['status'] = 'saved';
+      }
     }
     _messages.add(
       ChatMessage(
@@ -5399,10 +5466,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  void _handleSecureInputCancelled(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String? ?? '';
+    final idx = _messages.indexWhere(
+      (m) => m.type == MessageType.secureInput && m.questionId == requestId,
+    );
+    if (idx >= 0) {
+      _messages[idx].answered = true;
+      _messages[idx].toolInput?['status'] = 'cancelled';
+      notifyListeners();
+    }
+  }
+
   void _handleResult(Map<String, dynamic> msg) {
     _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
-    _currentStreamingMessage = null;
-    _closeThinkingMessage();
+    _closeLiveStreamsForParent(null);
     _isProcessing = false;
     _stopPromptRuntime();
     _isCompacting = false;
@@ -5480,6 +5558,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleSubagentResult(Map<String, dynamic> msg) {
     final parentToolUseId = msg['parentToolUseId'] as String? ?? '';
+    _closeLiveStreamsForParent(parentToolUseId);
     // Mark the subagent task as completed
     if (_subagentTasks.containsKey(parentToolUseId)) {
       _subagentTasks[parentToolUseId]!['status'] = 'completed';
@@ -5518,9 +5597,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       final isActive = rawStatus == 'running' || rawStatus == 'pending';
       if (!isActive) {
-        // A status snapshot is only for live recovery. Terminal agents belong
-        // in persisted history and must never be synthesized back into chat.
-        _subagentTasks.remove(toolUseId);
+        final existing = _subagentTasks[toolUseId];
+        if (existing != null) {
+          existing['status'] = 'completed';
+          existing['terminalStatus'] = rawStatus;
+        }
         for (final message in _messages) {
           if (message.type == MessageType.toolCall &&
               message.toolUseId == toolUseId) {
@@ -5546,6 +5627,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (t['reasoningEffort'] != null)
           'reasoningEffort': t['reasoningEffort'],
         if (t['agentPath'] != null) 'agentPath': t['agentPath'],
+        if (t['parentToolUseId'] != null)
+          'parentToolUseId': t['parentToolUseId'],
       };
 
       // If the Task tool_call message isn't in _messages, create a synthetic one
@@ -5566,6 +5649,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           toolUseId: toolUseId,
         );
         syntheticMsg.toolStreaming = true;
+        syntheticMsg.parentToolUseId = t['parentToolUseId'] as String?;
         _messages.add(syntheticMsg);
       } else {
         final toolCall = _messages
@@ -5575,13 +5659,40 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             .lastOrNull;
         if (toolCall != null) {
           toolCall.toolStreaming = true;
+          toolCall.toolInput?.addAll({
+            'description': description,
+            'prompt': t['prompt'] as String? ?? previous?['prompt'] ?? '',
+            'subagent_type': subagentType,
+            if (t['agentId'] != null) 'agentId': t['agentId'],
+            if (t['model'] != null) 'model': t['model'],
+            if (t['reasoningEffort'] != null)
+              'reasoningEffort': t['reasoningEffort'],
+          });
+          if (t['parentToolUseId'] != null) {
+            toolCall.parentToolUseId = t['parentToolUseId'] as String?;
+          }
         }
       }
     }
     if (replace && source != null) {
-      _subagentTasks.removeWhere(
-        (id, task) => task['source'] == source && !incomingIds.contains(id),
-      );
+      final settledIds = _subagentTasks.entries
+          .where(
+            (entry) =>
+                entry.value['source'] == source &&
+                !incomingIds.contains(entry.key),
+          )
+          .map((entry) => entry.key)
+          .toSet();
+      for (final id in settledIds) {
+        _subagentTasks[id]!['status'] = 'completed';
+        _subagentTasks[id]!['terminalStatus'] ??= 'completed';
+      }
+      for (final message in _messages) {
+        if (message.type == MessageType.toolCall &&
+            settledIds.contains(message.toolUseId)) {
+          message.toolStreaming = false;
+        }
+      }
     }
     notifyListeners();
   }
@@ -5668,9 +5779,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       toolName: status,
       toolOutput: outputFile,
       toolUseId: taskId,
+      originToolUseId: originToolUseId,
     );
-    // Link to original bash card so completion card can show its content
-    notifMsg.parentToolUseId = originToolUseId;
+    // Parent controls subagent nesting; origin links to the Bash card.
+    notifMsg.parentToolUseId =
+        msg['parentToolUseId'] as String? ?? originToolUseId;
     _messages.add(notifMsg);
     notifyListeners();
   }
@@ -5733,15 +5846,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleToolSummary(Map<String, dynamic> msg) {
-    _currentStreamingMessage = null;
-    _closeThinkingMessage();
+    final parentToolUseId = msg['parentToolUseId'] as String?;
+    _closeLiveStreamsForParent(parentToolUseId);
     final summary = msg['summary'] as String? ?? '';
     final precedingIds =
         (msg['precedingToolUseIds'] as List?)
             ?.map((e) => e.toString())
             .toList() ??
         [];
-    final parentToolUseId = msg['parentToolUseId'] as String?;
     final uuid = msg['uuid'] as String?;
     _messages.add(
       ChatMessage.toolSummary(
@@ -6076,7 +6188,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       _isProcessing = false;
       _stopPromptRuntime();
-      _currentStreamingMessage = null;
+      _clearLiveMessageStreams();
       _messages.add(
         ChatMessage(
           id: 'rewind_conv_${DateTime.now().microsecondsSinceEpoch}',
@@ -6113,7 +6225,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeSessionId = newSessionId;
       _isProcessing = false;
       _stopPromptRuntime();
-      _currentStreamingMessage = null;
+      _clearLiveMessageStreams();
       notifyListeners();
       requestSessionList();
     } else {
@@ -6426,6 +6538,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 ChatMessage.toolSummary(
                   summary: content,
                   precedingToolUseIds: precedingIds,
+                  parentToolUseId: entry['parentToolUseId'] as String?,
                   uuid: entry['uuid'] as String?,
                 ),
               );
@@ -6436,6 +6549,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final m = ChatMessage.thinking();
               m.textContent = content;
               m.uuid = entry['uuid'] as String?;
+              m.parentToolUseId = entry['parentToolUseId'] as String?;
               loaded.add(m);
               break;
             }
@@ -6665,6 +6779,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final m = ChatMessage.assistantText('');
               m.textContent = cleaned;
               m.uuid = entry['uuid'] as String?;
+              m.parentToolUseId = entry['parentToolUseId'] as String?;
               loaded.add(m);
             }
           }
@@ -6696,7 +6811,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               textContent: content,
               toolName: status,
             );
-            notifMsg.parentToolUseId = originToolUseId;
+            notifMsg.originToolUseId = originToolUseId;
+            notifMsg.parentToolUseId =
+                entry['parentToolUseId'] as String? ?? originToolUseId;
             loaded.add(notifMsg);
           }
           break;
@@ -6817,7 +6934,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             loaded[idx].toolStreaming = false;
           } else if (output.trim().isNotEmpty) {
             loaded.add(
-              ChatMessage.toolResult(toolUseId: toolUseId, output: output),
+              ChatMessage.toolResult(
+                toolUseId: toolUseId,
+                output: output,
+                parentToolUseId: entry['parentToolUseId'] as String?,
+              ),
             );
           }
           break;
@@ -6899,6 +7020,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           qMsg.answered = answered;
           loaded.add(qMsg);
           break;
+        case 'secure_input':
+          final requestId = entry['questionId'] as String? ?? '';
+          final input = Map<String, dynamic>.from(
+            (entry['toolInput'] as Map?) ?? const {},
+          );
+          final status =
+              entry['status'] as String? ??
+              input['status'] as String? ??
+              'interrupted';
+          final existingIdx = loaded.lastIndexWhere(
+            (m) =>
+                m.type == MessageType.secureInput && m.questionId == requestId,
+          );
+          if (existingIdx >= 0) {
+            loaded[existingIdx].answered = status != 'pending';
+            loaded[existingIdx].toolInput?['status'] = status;
+          } else if (requestId.isNotEmpty) {
+            final secureMessage = ChatMessage.secureInput(
+              requestId: requestId,
+              label: input['label'] as String? ?? 'Secret',
+              reason: input['reason'] as String? ?? content,
+              envHint: input['envHint'] as String? ?? '',
+              scope: input['scope'] as String? ?? 'session',
+              status: status,
+            );
+            secureMessage.answered = status != 'pending';
+            loaded.add(secureMessage);
+          }
+          break;
         case 'elicitation_url':
           final elicitQId = entry['questionId'] as String? ?? '';
           final elicitServer =
@@ -6949,11 +7099,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                     (m) =>
                         m.sender == msg.sender &&
                         m.type == MessageType.text &&
+                        m.parentToolUseId == msg.parentToolUseId &&
                         _normalizeHistoryText(m.textContent) == normalizedText,
                   ) ||
               (_currentStreamingMessage != null &&
                   _currentStreamingMessage!.sender == msg.sender &&
                   _currentStreamingMessage!.type == MessageType.text &&
+                  _currentStreamingMessage!.parentToolUseId ==
+                      msg.parentToolUseId &&
                   _normalizeHistoryText(
                         _currentStreamingMessage!.textContent,
                       ) ==
@@ -6969,8 +7122,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _isLoadingMore = false;
     } else {
       // Initial load — replace
-      _currentStreamingMessage = null;
-      _currentStreamingStreamId = null;
+      _clearLiveMessageStreams();
       final localPendingUserPrompts = _messages
           .where(_isPendingLocalUserPrompt)
           .where((m) => !_hasEquivalentUserMessage(loaded, m))
@@ -7020,6 +7172,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'subagentType': m.toolInput?['subagent_type'] as String? ?? '',
           'status': hasResult ? 'completed' : 'running',
           'toolUseId': m.toolUseId!,
+          if (m.toolInput?['agentId'] != null)
+            'agentId': m.toolInput?['agentId'],
+          if (m.parentToolUseId != null) 'parentToolUseId': m.parentToolUseId,
         };
       }
     }
@@ -7042,7 +7197,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     for (final msg in messages) {
       final uuid = msg.uuid;
       if (uuid != null && uuid.isNotEmpty) {
-        final key = '${msg.sender.name}:${msg.type.name}:$uuid';
+        final key =
+            '${msg.sender.name}:${msg.type.name}:${msg.parentToolUseId ?? ''}:$uuid';
         if (!seenMessageKeys.add(key)) continue;
       }
       if ((msg.sender == MessageSender.user ||
@@ -7053,6 +7209,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final previous = deduped.last;
           if (previous.sender == msg.sender &&
               previous.type == MessageType.text &&
+              previous.parentToolUseId == msg.parentToolUseId &&
               _normalizeHistoryText(previous.textContent) == normalized) {
             continue;
           }
@@ -7063,7 +7220,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return deduped;
   }
 
-  ChatMessage? _findReplayedAssistantMessage(String content) {
+  ChatMessage? _findReplayedAssistantMessage(
+    String content, {
+    String? parentToolUseId,
+  }) {
     final normalized = _normalizeHistoryText(content);
     if (normalized.isEmpty) return null;
     final lastUserIndex = _messages.lastIndexWhere(
@@ -7074,7 +7234,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     for (var i = _messages.length - 1; i > lastUserIndex; i--) {
       final candidate = _messages[i];
       if (candidate.sender != MessageSender.assistant ||
-          candidate.type != MessageType.text) {
+          candidate.type != MessageType.text ||
+          candidate.parentToolUseId != parentToolUseId) {
         continue;
       }
       final candidateText = _normalizeHistoryText(candidate.textContent);
@@ -7088,7 +7249,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return null;
   }
 
-  ChatMessage? _findReplayedThinkingMessage(String content) {
+  ChatMessage? _findReplayedThinkingMessage(
+    String content, {
+    String? parentToolUseId,
+  }) {
     final normalized = _normalizeHistoryText(content);
     if (normalized.isEmpty) return null;
     final lastUserIndex = _messages.lastIndexWhere(
@@ -7098,7 +7262,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
     for (var i = _messages.length - 1; i > lastUserIndex; i--) {
       final candidate = _messages[i];
-      if (candidate.type != MessageType.thinking) continue;
+      if (candidate.type != MessageType.thinking ||
+          candidate.parentToolUseId != parentToolUseId) {
+        continue;
+      }
       final candidateText = _normalizeHistoryText(candidate.textContent);
       if (candidateText.isEmpty) continue;
       if (candidateText == normalized ||
@@ -7465,8 +7632,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
-    _currentStreamingMessage = null;
-    _closeThinkingMessage();
+    _clearLiveMessageStreams();
     _isProcessing = false;
     _stopPromptRuntime();
     _isCompacting = false;
@@ -7618,8 +7784,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _effort = 'high';
     _thinking = {'type': 'adaptive'};
     _codexCollaborationMode = 'default';
-    _currentStreamingMessage = null;
-    _currentThinkingMessage = null;
+    _clearLiveMessageStreams();
     _isProcessing = false;
     _processingSetAt = null;
     _stopPromptRuntime();
@@ -8416,8 +8581,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _claudeAutoCompactEnabled = true;
     _codexCollaborationMode = 'default';
     _loadPrepends();
-    _currentStreamingMessage = null;
-    _currentThinkingMessage = null;
+    _clearLiveMessageStreams();
     _isProcessing = false;
     _processingSetAt = null;
     _stopPromptRuntime();
@@ -9120,7 +9284,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isProcessing = false;
     _stopPromptRuntime();
     _isCompacting = false;
-    _currentStreamingMessage = null;
+    _clearLiveMessageStreams();
     _promptSuggestions = [];
     _contextUsage = null;
     _requiresAction = false;
@@ -9760,7 +9924,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void forkSession(String sessionId) {
     _activeSessionId = null;
     _activeSessionServerId = null;
-    _currentStreamingMessage = null;
+    _clearLiveMessageStreams();
     _isProcessing = false;
     _stopPromptRuntime();
     _pendingLocalUserMessageIds.clear();

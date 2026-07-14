@@ -67,6 +67,7 @@ class ChatMessage {
 
   // SDK hierarchy fields
   String? parentToolUseId;
+  String? originToolUseId;
   String? uuid;
   String? agentId;
 
@@ -99,6 +100,7 @@ class ChatMessage {
     this.expired = false,
     this.authRequestId,
     this.parentToolUseId,
+    this.originToolUseId,
     this.uuid,
     this.agentId,
     this.precedingToolUseIds,
@@ -206,6 +208,7 @@ class ChatMessage {
   factory ChatMessage.toolResult({
     required String toolUseId,
     required String output,
+    String? parentToolUseId,
   }) {
     return ChatMessage(
       id: 'result_$toolUseId',
@@ -214,6 +217,7 @@ class ChatMessage {
       timestamp: DateTime.now(),
       toolUseId: toolUseId,
       toolOutput: output,
+      parentToolUseId: parentToolUseId,
     );
   }
 
@@ -239,6 +243,7 @@ class ChatMessage {
     String reason = '',
     String envHint = '',
     String scope = 'session',
+    String status = 'pending',
   }) {
     return ChatMessage(
       id: 'secure_input_$requestId',
@@ -252,6 +257,7 @@ class ChatMessage {
         'reason': reason,
         'envHint': envHint,
         'scope': scope,
+        'status': status,
       },
     );
   }

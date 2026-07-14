@@ -34,6 +34,17 @@ class _SecureInputCardState extends State<SecureInputCard> {
   String get _envHint => widget.message.toolInput?['envHint'] as String? ?? '';
   String get _scope =>
       widget.message.toolInput?['scope'] as String? ?? 'session';
+  String get _status =>
+      widget.message.toolInput?['status'] as String? ??
+      (widget.message.answered ? 'saved' : 'pending');
+
+  String get _statusTitle => switch (_status) {
+    'saved' => 'Secure input saved',
+    'cancelled' => 'Secure input cancelled',
+    'expired' => 'Secure input expired',
+    'interrupted' => 'Secure input interrupted',
+    _ => 'Secure input',
+  };
 
   void _submit() {
     final value = _controller.text;
@@ -71,7 +82,7 @@ class _SecureInputCardState extends State<SecureInputCard> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      answered ? 'Secure input saved' : 'Secure input',
+                      _statusTitle,
                       style: TextStyle(
                         fontWeight: FontWeight.w700,
                         color: answered
@@ -80,7 +91,7 @@ class _SecureInputCardState extends State<SecureInputCard> {
                       ),
                     ),
                   ),
-                  if (answered)
+                  if (_status == 'saved')
                     Icon(
                       Icons.check_circle,
                       size: 18,

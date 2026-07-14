@@ -738,7 +738,8 @@ class ChatViewState extends State<ChatView> {
     final isUploaded = status == 'uploaded';
     final isTodoUpdate = status == 'todos_updated';
     final isPermissionMode = status == 'permission_mode';
-    final slashCommandId = msg.parentToolUseId ?? msg.toolUseId ?? '';
+    final originToolUseId = msg.originToolUseId ?? msg.parentToolUseId;
+    final slashCommandId = originToolUseId ?? msg.toolUseId ?? '';
     final isSlashCommand = slashCommandId.startsWith('codex_slash_');
 
     // Todo updates get a dedicated card
@@ -747,11 +748,10 @@ class ChatViewState extends State<ChatView> {
     }
 
     // Background bash completion — render as a ToolOutputBlock mirroring the original card
-    if ((isSuccess || isFailed) && msg.parentToolUseId != null) {
+    if ((isSuccess || isFailed) && originToolUseId != null) {
       final original = widget.allMessages.cast<ChatMessage?>().firstWhere(
         (m) =>
-            m!.type == MessageType.toolCall &&
-            m.toolUseId == msg.parentToolUseId,
+            m!.type == MessageType.toolCall && m.toolUseId == originToolUseId,
         orElse: () => null,
       );
       if (original != null && original.toolOutput != null) {
