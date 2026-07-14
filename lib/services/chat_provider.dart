@@ -29,6 +29,7 @@ import 'push_notification_service.dart';
 import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 import 'adb_bridge_service.dart';
+import 'tool_event_reconciler.dart';
 
 const _codexAgentControlTypes = {
   'wait',
@@ -535,7 +536,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ChatMessage? _currentThinkingMessage;
   final Map<String, ChatMessage> _streamingMessagesByKey = {};
   final Map<String, ChatMessage> _thinkingMessagesByKey = {};
-  final Map<String, ChatMessage> _orphanHistoryToolResults = {};
+  // Tool events can straddle a reconnect/history replacement. Keep results
+  // keyed by toolUseId until their call card is present instead of rendering a
+  // nameless standalone Tool card.
+  final ToolEventReconciler _toolEventReconciler = ToolEventReconciler();
   final Set<String> _suppressedToolUseIds = {};
   String? _lastServerStartedAt; // detect server restarts
   Map<String, dynamic>? _contextUsage; // detailed context breakdown from SDK
@@ -5120,7 +5124,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final toolUseId = msg['toolUseId'] as String? ?? '';
     if (tool.endsWith('RequestSecureInput')) {
-      if (toolUseId.isNotEmpty) _suppressedToolUseIds.add(toolUseId);
+      if (toolUseId.isNotEmpty) {
+        _toolEventReconciler.discard(toolUseId);
+        _suppressedToolUseIds.add(toolUseId);
+      }
       return;
     }
     final toolMsg = ChatMessage.toolCall(
@@ -5131,6 +5138,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     toolMsg.toolStreaming = true; // tool is actively running
     toolMsg.parentToolUseId = msg['parentToolUseId'] as String?;
     toolMsg.uuid = msg['uuid'] as String?;
+    final pendingResult = _toolEventReconciler.takeResult(toolUseId);
+    final pendingStream = _toolEventReconciler.takeStream(toolUseId);
+    if (pendingResult != null) {
+      toolMsg.toolOutput = pendingResult.output;
+      toolMsg.toolStreaming = false;
+      toolMsg.parentToolUseId ??= pendingResult.parentToolUseId;
+    } else if (pendingStream != null) {
+      toolMsg.toolOutput = pendingStream.output;
+      toolMsg.toolStreaming = !pendingStream.done;
+    }
     _messages.add(toolMsg);
 
     // Track Task/Agent tool calls as subagent tasks
@@ -5178,13 +5195,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_subagentTasks.containsKey(toolUseId)) {
         _subagentTasks[toolUseId]!['status'] = 'completed';
       }
-    } else if (output.trim().isNotEmpty) {
-      _messages.add(
-        ChatMessage.toolResult(
-          toolUseId: toolUseId,
-          output: output,
-          parentToolUseId: msg['parentToolUseId'] as String?,
-        ),
+    } else if (toolUseId.isNotEmpty && output.trim().isNotEmpty) {
+      _toolEventReconciler.bufferResult(
+        toolUseId,
+        output,
+        parentToolUseId: msg['parentToolUseId'] as String?,
       );
     }
     notifyListeners();
@@ -5215,6 +5230,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (done && _subagentTasks.containsKey(toolUseId)) {
         _subagentTasks[toolUseId]!['status'] = 'completed';
       }
+    } else if (toolUseId.isNotEmpty && content.isNotEmpty) {
+      _toolEventReconciler.bufferChunk(
+        toolUseId,
+        content,
+        chunkIndex: chunkIndex,
+        done: done,
+      );
     }
     notifyListeners();
   }
@@ -6418,7 +6440,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
     final isAppend = msg['append'] == true;
     final isPrepend = _isLoadingMore && _messages.isNotEmpty;
-    if (!isAppend && !isPrepend) _orphanHistoryToolResults.clear();
+    if (!isAppend && !isPrepend) {
+      _toolEventReconciler.clear();
+    }
 
     if (historySessionId != null &&
         _locallyClearedSessions.contains(historySessionId) &&
@@ -6956,9 +6980,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
           toolCallMsg.uuid = entry['uuid'] as String?;
           toolCallMsg.parentToolUseId = entry['parentToolUseId'] as String?;
-          final orphanResult = _orphanHistoryToolResults.remove(toolUseId);
+          final orphanResult = _toolEventReconciler.takeResult(toolUseId);
           if (orphanResult != null) {
-            toolCallMsg.toolOutput = orphanResult.toolOutput;
+            toolCallMsg.toolOutput = orphanResult.output;
             toolCallMsg.toolStreaming = false;
           }
           loaded.add(toolCallMsg);
@@ -6987,9 +7011,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _messages[existingIdx].toolOutput = output;
               _messages[existingIdx].toolStreaming = false;
             } else {
-              _orphanHistoryToolResults[toolUseId] = ChatMessage.toolResult(
-                toolUseId: toolUseId,
-                output: output,
+              _toolEventReconciler.bufferResult(
+                toolUseId,
+                output,
                 parentToolUseId: entry['parentToolUseId'] as String?,
               );
             }
