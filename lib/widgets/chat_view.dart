@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
+import '../models/message_reconciliation.dart';
 import '../models/raw_event.dart';
 import 'message_bubble.dart';
 import 'tool_output_block.dart';
@@ -95,6 +96,7 @@ class ChatViewState extends State<ChatView> {
   int _lastKnownMessageCount = 0;
   String _lastKnownText = '';
   bool _lastKnownProcessing = false;
+  Set<String> _knownPendingInteractionKeys = {};
   final GlobalKey _scrollViewportKey = GlobalKey();
   final Map<String, GlobalKey> _taskKeys = {};
 
@@ -105,6 +107,7 @@ class ChatViewState extends State<ChatView> {
   void initState() {
     super.initState();
     _restoreExpandedImageState();
+    _knownPendingInteractionKeys = pendingInteractionKeys(widget.messages);
     _scrollController.addListener(_onScroll);
   }
 
@@ -152,6 +155,13 @@ class ChatViewState extends State<ChatView> {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final currentPendingInteractionKeys = pendingInteractionKeys(
+      widget.messages,
+    );
+    final hasNewPendingInteraction = currentPendingInteractionKeys
+        .difference(_knownPendingInteractionKeys)
+        .isNotEmpty;
+    _knownPendingInteractionKeys = currentPendingInteractionKeys;
     if (widget.sessionStorageKey != oldWidget.sessionStorageKey) {
       _persistExpandedImageState(_imageStateStorageKeyFor(oldWidget));
       _restoreExpandedImageState();
@@ -204,6 +214,16 @@ class ChatViewState extends State<ChatView> {
           _scrollController.jumpTo(oldOffset + addedHeight);
         }
       });
+      return;
+    }
+
+    // Questions and secure-input requests are blocking interactions. Always
+    // bring a newly arrived one into view, even if streaming output made the
+    // scroll controller think the user had moved away from the bottom.
+    if (hasNewPendingInteraction) {
+      _userScrolledUp = false;
+      _autoScrollHeldForInspection = false;
+      _jumpToBottomRepeatedly();
       return;
     }
 

@@ -9,6 +9,7 @@ import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
+import '../models/message_reconciliation.dart';
 import '../models/archive_entry.dart';
 import '../models/file_manager_entry.dart';
 import '../screens/pair_screen.dart' show PairingResult;
@@ -3267,6 +3268,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final type = msg['type'] as String?;
     if (type == null) return;
 
+    final messageSessionId = msg['sessionId'] as String?;
+    final isForVisibleSession =
+        messageSessionId != null &&
+        messageSessionId.isNotEmpty &&
+        _appInForeground &&
+        _viewingSessionId == messageSessionId &&
+        (_viewingServerId == null ||
+            serverId == null ||
+            _viewingServerId == serverId);
+
     // Messages that should be processed from ANY server
     const globalTypes = {
       'session_list',
@@ -3318,6 +3329,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Route: only process non-global messages from the active server
     final fromInactiveServer =
         !globalTypes.contains(type) &&
+        !isForVisibleSession &&
         serverId != null &&
         _connMgr.activeServerId != null &&
         serverId != _connMgr.activeServerId;
@@ -3330,7 +3342,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // messages after the user has opened another session, do not append those
     // events to the current chat; they will be restored from that session's
     // persisted history when the user opens it again.
-    final messageSessionId = msg['sessionId'] as String?;
     final replacementSessionId = type == 'session_created'
         ? msg['replacesSessionId'] as String?
         : null;
@@ -3342,11 +3353,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         messageSessionId != null &&
         messageSessionId.isNotEmpty) {
       if (_activeSessionId == null) {
-        if (type != 'session_created') {
+        if (!isForVisibleSession && type != 'session_created') {
           _handleNotificationOnlyServerMessage(type, msg, serverId);
           return;
         }
-      } else if (messageSessionId != _activeSessionId &&
+      } else if (!isForVisibleSession &&
+          messageSessionId != _activeSessionId &&
           !replacesActiveSession) {
         _handleNotificationOnlyServerMessage(type, msg, serverId);
         return;
@@ -7204,6 +7216,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .where(_isPendingLocalUserPrompt)
           .where((m) => !_hasEquivalentUserMessage(loaded, m))
           .toList();
+      final localPendingInteractions = pendingInteractionsMissingFromSnapshot(
+        _messages,
+        loaded,
+      );
       for (final m in _messages.where(_isPendingLocalUserPrompt)) {
         if (_hasEquivalentUserMessage(loaded, m)) {
           _pendingLocalUserMessageIds.remove(m.id);
@@ -7222,7 +7238,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               l.toolInput.toString() == m.toolInput.toString(),
         );
       }).toList();
-      _messages = [...loaded, ...localPendingUserPrompts, ...localOnlyCards];
+      _messages = [
+        ...loaded,
+        ...localPendingInteractions,
+        ...localPendingUserPrompts,
+        ...localOnlyCards,
+      ];
       _backgroundTasks.clear();
       _subagentTasks.clear();
       _isLoadingHistory = false;
