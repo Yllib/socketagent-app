@@ -6438,6 +6438,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     var historyPrevTodos = <Map<String, dynamic>>[];
     final skippedToolUseIds = <String>{};
     final loadedSendFilePaths = <String>{};
+    String secureInputHistoryKey(Map input) => [
+      input['label']?.toString() ?? '',
+      input['reason']?.toString() ?? '',
+      input['scope']?.toString() ?? 'session',
+    ].join('\u0000');
+    final persistedSecureInputKeys = <String>{};
+    for (final entry in rawMessages) {
+      if (entry['role'] != 'secure_input') continue;
+      final input = (entry['toolInput'] as Map?) ?? const {};
+      persistedSecureInputKeys.add(secureInputHistoryKey(input));
+    }
 
     for (final entry in rawMessages) {
       final role = entry['role'] as String? ?? '';
@@ -6919,6 +6930,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           toolCallMsg.uuid = entry['uuid'] as String?;
           toolCallMsg.parentToolUseId = entry['parentToolUseId'] as String?;
           loaded.add(toolCallMsg);
+          if (toolName.endsWith('RequestSecureInput')) {
+            final historyKey = secureInputHistoryKey(toolInput);
+            if (!persistedSecureInputKeys.contains(historyKey)) {
+              final legacyCard = ChatMessage.secureInput(
+                requestId: 'legacy_$toolUseId',
+                label: toolInput['label'] as String? ?? 'Secret',
+                reason: toolInput['reason'] as String? ?? '',
+                envHint: toolInput['envHint'] as String? ?? '',
+                scope: toolInput['scope'] as String? ?? 'session',
+                status: 'interrupted',
+              );
+              legacyCard.answered = true;
+              loaded.add(legacyCard);
+            }
+          }
           break;
         case 'tool_result':
           final toolUseId = entry['toolUseId'] as String? ?? '';
