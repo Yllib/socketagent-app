@@ -554,7 +554,9 @@ class _ArchiveScreenState extends State<ArchiveScreen>
     final canDelete = !e.isNativeCodexArchive;
     return Dismissible(
       key: Key('archive_${e.serverId}_${e.sid}_${e.ts}'),
-      direction: canDelete ? DismissDirection.endToStart : DismissDirection.none,
+      direction: canDelete
+          ? DismissDirection.endToStart
+          : DismissDirection.none,
       background: canDelete
           ? Container(
               alignment: Alignment.centerRight,
@@ -716,8 +718,9 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
           );
           break;
         case 'tool_call':
-          final toolName = (entry['toolName'] as String? ?? 'Tool')
-              .replaceFirst('mcp__app__', '');
+          final toolName = normalizeSocketAgentToolName(
+            entry['toolName'] as String? ?? 'Tool',
+          );
           final toolInput = Map<String, dynamic>.from(
             (entry['toolInput'] as Map?) ?? const {},
           );

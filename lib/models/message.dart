@@ -1,5 +1,18 @@
 enum MessageSender { user, assistant, system }
 
+String normalizeSocketAgentToolName(String rawName) {
+  for (final prefix in const [
+    'mcp__app__',
+    'mcp__socketagent_app__',
+    'mcp__socketagent-app__',
+    'mcp:socketagent_app/',
+    'mcp:socketagent-app/',
+  ]) {
+    if (rawName.startsWith(prefix)) return rawName.substring(prefix.length);
+  }
+  return rawName;
+}
+
 enum MessageType {
   text,
   toolCall,
