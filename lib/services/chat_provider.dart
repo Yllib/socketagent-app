@@ -10,6 +10,8 @@ import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../models/message_reconciliation.dart';
+import '../models/file_event_routing.dart';
+import '../models/history_normalization.dart';
 import '../models/history_response_gate.dart';
 import '../models/composer_attachment.dart';
 import '../models/archive_entry.dart';
@@ -5360,6 +5362,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       return;
     }
+    var syntheticSendFileIndex = -1;
+    if (tool == 'SendFile') {
+      final filePath = input['file_path']?.toString() ?? '';
+      if (filePath.isNotEmpty) {
+        syntheticSendFileIndex = _messages.lastIndexWhere(
+          (message) =>
+              message.type == MessageType.toolCall &&
+              message.toolName == 'SendFile' &&
+              message.toolUseId?.startsWith('file_') == true &&
+              message.toolInput?['file_path'] == filePath,
+        );
+        if (syntheticSendFileIndex >= 0) {
+          mergeSendFileTransportMetadata(
+            input,
+            _messages[syntheticSendFileIndex].toolInput,
+          );
+        }
+      }
+    }
     var toolMsg = ChatMessage.toolCall(
       tool: tool,
       input: input,
@@ -5368,13 +5389,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     toolMsg.toolStreaming = true; // tool is actively running
     toolMsg.parentToolUseId = msg['parentToolUseId']?.toString();
     toolMsg.uuid = msg['uuid']?.toString();
-    final existingIndex = toolUseId.isEmpty
+    var existingIndex = toolUseId.isEmpty
         ? -1
         : _messages.lastIndexWhere(
             (message) =>
                 message.type == MessageType.toolCall &&
                 message.toolUseId == toolUseId,
           );
+    final replacesSyntheticSendFile =
+        existingIndex < 0 && syntheticSendFileIndex >= 0;
+    if (replacesSyntheticSendFile) {
+      existingIndex = syntheticSendFileIndex;
+    }
     // Retransmission is the same transcript event. Only a genuinely new tool
     // call closes the preceding assistant stream.
     if (existingIndex < 0) {
@@ -5382,12 +5408,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (existingIndex >= 0) {
       final existing = _messages[existingIndex];
-      if (shouldReplaceToolCardMetadata(
-        existingName: existing.toolName,
-        existingInput: existing.toolInput,
-        incomingName: tool,
-        incomingInput: input,
-      )) {
+      if (replacesSyntheticSendFile ||
+          shouldReplaceToolCardMetadata(
+            existingName: existing.toolName,
+            existingInput: existing.toolInput,
+            incomingName: tool,
+            incomingInput: input,
+          )) {
         toolMsg.toolOutput = existing.toolOutput;
         toolMsg.toolStreaming = existing.toolStreaming;
         toolMsg.parentToolUseId ??= existing.parentToolUseId;
@@ -6773,7 +6800,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final liveBeforeSnapshot = [..._messages];
-    final rawMessages = msg['messages'] as List? ?? [];
+    final rawMessages = normalizeSendFileHistoryEntries(
+      msg['messages'] as List? ?? const [],
+    );
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
     final isAppend = decision.kind == SessionHistoryKind.append;
     final isPrepend = decision.kind == SessionHistoryKind.older;
@@ -6803,7 +6832,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     var loaded = <ChatMessage>[];
     var historyPrevTodos = <Map<String, dynamic>>[];
     final skippedToolUseIds = <String>{};
-    final loadedSendFilePaths = <String>{};
     for (final entry in rawMessages) {
       final role = entry['role'] as String? ?? '';
       final content = entry['content'] as String? ?? '';
@@ -7273,7 +7301,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final toolName = normalizeSocketAgentToolName(
             entry['toolName'] as String? ?? 'Tool',
           );
-          final toolInput = (entry['toolInput'] as Map<String, dynamic>?) ?? {};
+          final rawToolInput = entry['toolInput'];
+          final toolInput = rawToolInput is Map
+              ? Map<String, dynamic>.from(rawToolInput)
+              : <String, dynamic>{};
           final toolUseId = entry['toolUseId'] as String? ?? '';
           if (toolName == 'Agent' &&
               _codexAgentControlTypes.contains(
@@ -7297,6 +7328,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               if (historyFileSize != null && historyFileSize > 0) {
                 _serverFileSizes[historyFileId] = historyFileSize;
               }
+              toolInput['_file_id'] = historyFileId;
+              toolInput['_file_name'] = historyFileName;
+              if (historyFileSize != null && historyFileSize > 0) {
+                toolInput['_file_size'] = historyFileSize;
+              }
               _filePathToId[filePath] = historyFileId;
               final activeServerId = _connMgr.activeServerId;
               if (activeServerId != null && activeServerId.isNotEmpty) {
@@ -7305,10 +7341,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               if (historySessionId != null && historySessionId.isNotEmpty) {
                 _downloadSessionIds[historyFileId] = historySessionId;
               }
-            }
-            if (filePath.isNotEmpty && !loadedSendFilePaths.add(filePath)) {
-              if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
-              break;
             }
           }
           if (toolName.endsWith('RequestSecureInput')) {
@@ -10987,17 +11019,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (messageSessionId.isNotEmpty) {
         _downloadSessionIds[fileId] = messageSessionId;
       }
-      _filePathToId[filePath] = fileId;
       debugPrint(
         '[File] Available for download: $fileName (id=$fileId, path=$filePath)',
       );
-      final belongsToActiveSession = messageSessionId.isEmpty
-          ? _activeSessionId != null
-          : messageSessionId == _activeSessionId;
+      final belongsToActiveSession = fileEventBelongsToVisibleSession(
+        messageSessionId: messageSessionId,
+        activeSessionId: _activeSessionId,
+        messageServerId: currentServerId,
+        activeServerId: _activeSessionServerId ?? _connMgr.activeServerId,
+      );
       if (!belongsToActiveSession) {
         notifyListeners();
         return;
       }
+      _filePathToId[filePath] = fileId;
       final hasVisibleCard = _messages.any(
         (m) =>
             m.type == MessageType.toolCall &&
@@ -11008,7 +11043,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _messages.add(
           ChatMessage.toolCall(
             tool: 'SendFile',
-            input: {'file_path': filePath},
+            input: {
+              'file_path': filePath,
+              '_file_id': fileId,
+              '_file_name': fileName,
+              if (fileSize != null && fileSize > 0) '_file_size': fileSize,
+            },
             toolUseId: 'file_$fileId',
           ),
         );

@@ -77,7 +77,10 @@ class FileCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final name = _displayName;
     final provider = context.watch<ChatProvider>();
-    final fileId = provider.getFileId(_filePath);
+    final embeddedFileId = message.toolInput?['_file_id'] as String?;
+    final fileId = embeddedFileId != null && embeddedFileId.isNotEmpty
+        ? embeddedFileId
+        : provider.getFileId(_filePath);
     final localPath = fileId != null
         ? provider.getReceivedFilePath(fileId)
         : null;

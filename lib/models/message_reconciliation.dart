@@ -130,6 +130,19 @@ bool _isLiveTranscriptMessage(ChatMessage message) {
       message.type == MessageType.secureInput;
 }
 
+bool _isExplicitlyActiveLiveMessage(ChatMessage message) {
+  if (message.type == MessageType.question ||
+      message.type == MessageType.secureInput) {
+    return !message.answered;
+  }
+  if (message.type == MessageType.toolCall) return message.toolStreaming;
+  if (message.type == MessageType.text ||
+      message.type == MessageType.thinking) {
+    return message.streamId != null && message.streamId!.isNotEmpty;
+  }
+  return false;
+}
+
 bool _messagesOverlap(ChatMessage live, ChatMessage snapshot) {
   final liveKey = _stableLiveKey(live);
   if (liveKey != null) return _stableLiveKey(snapshot) == liveKey;
@@ -213,6 +226,7 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     // persisted. Preserve user messages in the live tail after the newest
     // snapshot overlap so the UI cannot roll back to the previous prompt.
     final isLiveUserTail =
+        newestLiveOverlap >= 0 &&
         i > newestLiveOverlap &&
         live.sender == MessageSender.user &&
         (live.type == MessageType.text ||
@@ -237,6 +251,16 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
       reconciled[matchIndex] = live;
       continue;
     }
+    // A reconnect snapshot is a sliding tail page. Entries that were visible
+    // before reconnect but fell off the front of the new page are older, not
+    // live-missing; appending them here moves old tool cards to the bottom.
+    // Only preserve the unmatched tail after the newest overlap. If the two
+    // pages do not overlap at all, preserve only objects that are explicitly
+    // still live (stream ID, active tool, or pending interaction).
+    final belongsToUnmatchedLiveTail = newestLiveOverlap >= 0
+        ? i > newestLiveOverlap
+        : reconciled.isEmpty || _isExplicitlyActiveLiveMessage(live);
+    if (!belongsToUnmatchedLiveTail && !isLiveUserTail) continue;
     if ((live.type == MessageType.question ||
             live.type == MessageType.secureInput) &&
         live.answered) {

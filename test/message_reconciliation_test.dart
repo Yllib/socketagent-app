@@ -10,26 +10,29 @@ void main() {
     expect(liveMessageMatchesParent(root, null), isTrue);
   });
 
-  test('deduplicates the same tracked transcript event across delivery ids', () {
-    final first = acknowledgedSessionEventKey({
-      'type': 'tool_call',
-      'sessionId': 'session-1',
-      'toolUseId': 'tool-1',
-      'tool': 'Bash',
-      'input': {'command': 'npm test'},
-      'deliveryId': 'delivery-1',
-    });
-    final retryWithNewDeliveryId = acknowledgedSessionEventKey({
-      'type': 'tool_call',
-      'sessionId': 'session-1',
-      'toolUseId': 'tool-1',
-      'tool': 'Bash',
-      'input': {'command': 'npm test'},
-      'deliveryId': 'delivery-2',
-    });
+  test(
+    'deduplicates the same tracked transcript event across delivery ids',
+    () {
+      final first = acknowledgedSessionEventKey({
+        'type': 'tool_call',
+        'sessionId': 'session-1',
+        'toolUseId': 'tool-1',
+        'tool': 'Bash',
+        'input': {'command': 'npm test'},
+        'deliveryId': 'delivery-1',
+      });
+      final retryWithNewDeliveryId = acknowledgedSessionEventKey({
+        'type': 'tool_call',
+        'sessionId': 'session-1',
+        'toolUseId': 'tool-1',
+        'tool': 'Bash',
+        'input': {'command': 'npm test'},
+        'deliveryId': 'delivery-2',
+      });
 
-    expect(first, retryWithNewDeliveryId);
-  });
+      expect(first, retryWithNewDeliveryId);
+    },
+  );
 
   test('missing secure-input history status remains actionable', () {
     expect(secureInputHistoryStatus(null, null), 'pending');
@@ -213,6 +216,68 @@ void main() {
 
     expect(reconciled, contains(same(currentUser)));
     expect(reconciled, contains(same(currentReply)));
-    expect(reconciled.indexOf(currentUser), lessThan(reconciled.indexOf(currentReply)));
+    expect(
+      reconciled.indexOf(currentUser),
+      lessThan(reconciled.indexOf(currentReply)),
+    );
+  });
+
+  test(
+    'does not append cards that fell off the front of a sliding snapshot',
+    () {
+      final droppedOldTool = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: const {'command': 'old command'},
+        toolUseId: 'old-tool',
+      )..toolStreaming = false;
+      final overlap = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: const {'command': 'overlapping command'},
+        toolUseId: 'overlap-tool',
+      )..toolStreaming = false;
+      final newLiveTool = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: const {'command': 'new command'},
+        toolUseId: 'new-tool',
+      )..toolStreaming = true;
+
+      final snapshotOverlap = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: const {'command': 'overlapping command'},
+        toolUseId: 'overlap-tool',
+      )..toolStreaming = false;
+      final persistedAfterOverlap = ChatMessage.assistantText('session')
+        ..textContent = 'persisted reply';
+
+      final reconciled = reconcileLiveTranscriptWithSnapshot(
+        [snapshotOverlap, persistedAfterOverlap],
+        [droppedOldTool, overlap, newLiveTool],
+      );
+
+      expect(reconciled, isNot(contains(same(droppedOldTool))));
+      expect(reconciled, contains(same(overlap)));
+      expect(reconciled.last, same(newLiveTool));
+    },
+  );
+
+  test('non-overlapping snapshot keeps active stream but drops old cards', () {
+    final oldTool = ChatMessage.toolCall(
+      tool: 'Bash',
+      input: const {'command': 'old'},
+      toolUseId: 'old-tool',
+    )..toolStreaming = false;
+    final activeReply = ChatMessage.assistantText('session')
+      ..streamId = 'current-stream'
+      ..textContent = 'current reply';
+    final snapshot = ChatMessage.assistantText('session')
+      ..textContent = 'new history window';
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot(
+      [snapshot],
+      [oldTool, activeReply],
+    );
+
+    expect(reconciled, isNot(contains(same(oldTool))));
+    expect(reconciled.last, same(activeReply));
   });
 }
