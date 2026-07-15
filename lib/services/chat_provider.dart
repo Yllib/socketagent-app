@@ -17,6 +17,7 @@ import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import 'websocket_service.dart';
+import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
 import 'sherpa_speech_service.dart';
 import 'asr_model_manager.dart';
@@ -561,6 +562,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<SecretMetadata> _secretInventory = [];
   bool _secretInventoryLoading = false;
   String? _secretInventoryError;
+  final SecretInventoryRequestTracker _secretInventoryRequestTracker =
+      SecretInventoryRequestTracker();
   final Map<String, Completer<SecretMetadata>> _secretWriteCompleters = {};
   final Map<String, Completer<void>> _secretDeleteCompleters = {};
   double? _uploadProgress;
@@ -583,6 +586,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<Session>> _perServerSessions = {};
   // Per-server installed plugin names (from status_sync)
   final Map<String, List<String>> _serverPlugins = {};
+  final Map<String, int> _serverSecretManagementVersions = {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -3314,6 +3318,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'archive_restore_failed',
       'archive_deleted',
       'server_capabilities',
+      'secret_inventory',
       'server_settings',
       'backend_install_progress',
       'backend_auth_required',
@@ -3425,7 +3430,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _handleSecureInputCancelled(msg);
         break;
       case 'secret_inventory':
-        _handleSecretInventory(msg);
+        _handleSecretInventory(msg, serverId);
         break;
       case 'secret_operation_result':
         _handleSecretOperationResult(msg);
@@ -3456,6 +3461,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               : <String>['claude'];
           if (serverId != null) {
             _serverBackends[serverId] = backends;
+            final secretManagement = msg['secretManagement'];
+            _serverSecretManagementVersions[serverId] = secretManagement is Map
+                ? (secretManagement['version'] as num?)?.toInt() ?? 0
+                : 0;
             _captureCodexDriverSettings(msg, serverId);
             unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
             notifyListeners();
@@ -5573,7 +5582,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _handleSecretInventory(Map<String, dynamic> msg) {
+  void _handleSecretInventory(Map<String, dynamic> msg, String? serverId) {
+    if (serverId == null ||
+        !_secretInventoryRequestTracker.accept(
+          serverId: serverId,
+          requestId: msg['requestId'] as String?,
+          sessionId: msg['sessionId'] as String?,
+        )) {
+      return;
+    }
     _secretInventory = (msg['secrets'] as List? ?? const [])
         .whereType<Map>()
         .map(
@@ -8123,10 +8140,57 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void refreshSecretInventory() {
+    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
+    _secretInventoryRequestTracker.cancel();
+    if (serverId == null || serverId.isEmpty) {
+      _secretInventoryLoading = false;
+      _secretInventoryError = 'No server is selected for this session.';
+      notifyListeners();
+      return;
+    }
+
+    final serverName = _serverConfigs
+        .where((config) => config.id == serverId)
+        .map((config) => config.name.trim())
+        .where((name) => name.isNotEmpty)
+        .firstOrNull;
+    final serverLabel = serverName ?? 'The selected server';
+    if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) {
+      _secretInventoryLoading = false;
+      _secretInventoryError =
+          '$serverLabel is offline. Reconnect it, then tap Refresh.';
+      notifyListeners();
+      return;
+    }
+
+    if (_serverSecretManagementVersions[serverId] == 0) {
+      _secretInventoryLoading = false;
+      _secretInventoryError =
+          '$serverLabel is running an older SocketAgent server that does not '
+          'support managed secrets. Update that server, then tap Refresh.';
+      notifyListeners();
+      return;
+    }
+
+    final requestId =
+        'secret_inventory_${DateTime.now().microsecondsSinceEpoch}';
     _secretInventoryLoading = true;
     _secretInventoryError = null;
-    _sendToActiveSessionServer({
+    _secretInventoryRequestTracker.begin(
+      requestId: requestId,
+      serverId: serverId,
+      sessionId: _activeSessionId,
+      onTimeout: (timeout) {
+        _secretInventoryLoading = false;
+        _secretInventoryError =
+            '$serverLabel did not answer the managed-secrets request. Its '
+            'connection may have dropped; reconnect it and tap Refresh.';
+        notifyListeners();
+      },
+    );
+    _connMgr.sendToServer(serverId, {
       'type': 'secret_inventory_request',
+      'requestId': requestId,
       if (_activeSessionId != null) 'sessionId': _activeSessionId,
       if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
     });
@@ -8185,6 +8249,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Clear file attachment state (without notifyListeners)
   void _clearAttachment() {
+    _secretInventoryRequestTracker.cancel();
     for (final secret in _pendingSecretAttachments) {
       secret.clearValue();
     }
@@ -11749,6 +11814,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     PushNotificationService.shouldDisplayForegroundNotification = null;
     _promptRuntimeTimer?.cancel();
     _foregroundResumeTimer?.cancel();
+    _secretInventoryRequestTracker.cancel();
     _messageSub?.cancel();
     _statusSub?.cancel();
     _speechResultSub?.cancel();

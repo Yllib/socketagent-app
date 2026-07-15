@@ -402,7 +402,11 @@ class _SecretManagerSheetState extends State<SecretManagerSheet> {
                   child: SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
-                      onPressed: _createSecret,
+                      onPressed:
+                          widget.provider.secretInventoryLoading ||
+                              widget.provider.secretInventoryError != null
+                          ? null
+                          : _createSecret,
                       icon: const Icon(Icons.add),
                       label: const Text('Create secret'),
                     ),
