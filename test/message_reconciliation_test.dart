@@ -3,6 +3,27 @@ import 'package:app/models/message_reconciliation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('deduplicates the same tracked transcript event across delivery ids', () {
+    final first = acknowledgedSessionEventKey({
+      'type': 'tool_call',
+      'sessionId': 'session-1',
+      'toolUseId': 'tool-1',
+      'tool': 'Bash',
+      'input': {'command': 'npm test'},
+      'deliveryId': 'delivery-1',
+    });
+    final retryWithNewDeliveryId = acknowledgedSessionEventKey({
+      'type': 'tool_call',
+      'sessionId': 'session-1',
+      'toolUseId': 'tool-1',
+      'tool': 'Bash',
+      'input': {'command': 'npm test'},
+      'deliveryId': 'delivery-2',
+    });
+
+    expect(first, retryWithNewDeliveryId);
+  });
+
   test('missing secure-input history status remains actionable', () {
     expect(secureInputHistoryStatus(null, null), 'pending');
   });

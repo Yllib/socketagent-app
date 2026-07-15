@@ -547,6 +547,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, ChatMessage> _thinkingMessagesByStreamKey = {};
   final Set<String> _appliedSessionDeliveryIds = {};
   final List<String> _appliedSessionDeliveryOrder = [];
+  final Set<String> _appliedSessionEventKeys = {};
+  final List<String> _appliedSessionEventKeyOrder = [];
   // Tool events can straddle a reconnect/history replacement. Keep results
   // keyed by toolUseId until their call card is present instead of rendering a
   // nameless standalone Tool card.
@@ -3416,8 +3418,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             type == 'tool_result' ||
             type == 'text' ||
             type == 'thinking');
+    final deliveryEventKey = acknowledgesDelivery
+        ? acknowledgedSessionEventKey(msg)
+        : null;
     if (acknowledgesDelivery &&
-        _appliedSessionDeliveryIds.contains(deliveryId!)) {
+        (_appliedSessionDeliveryIds.contains(deliveryId!) ||
+            (deliveryEventKey != null &&
+                _appliedSessionEventKeys.contains(deliveryEventKey)))) {
       _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
       return;
     }
@@ -4818,6 +4825,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // can otherwise discard a tool card while ordinary text keeps streaming.
     if (acknowledgesDelivery) {
       _rememberAppliedSessionDelivery(deliveryId!);
+      if (deliveryEventKey != null) {
+        _rememberAppliedSessionEventKey(deliveryEventKey);
+      }
       _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
     }
   }
@@ -4828,6 +4838,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     while (_appliedSessionDeliveryOrder.length > 2000) {
       final oldest = _appliedSessionDeliveryOrder.removeAt(0);
       _appliedSessionDeliveryIds.remove(oldest);
+    }
+  }
+
+  void _rememberAppliedSessionEventKey(String eventKey) {
+    if (!_appliedSessionEventKeys.add(eventKey)) return;
+    _appliedSessionEventKeyOrder.add(eventKey);
+    while (_appliedSessionEventKeyOrder.length > 2000) {
+      final oldest = _appliedSessionEventKeyOrder.removeAt(0);
+      _appliedSessionEventKeys.remove(oldest);
     }
   }
 
@@ -5079,7 +5098,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _currentThinkingMessage = null;
     }
 
-    if (isReplay) {
+    // Cumulative snapshots, including the final durable frame, must reconcile
+    // with a bubble that was already created by deltas. A tool event can close
+    // the stream maps before item/completed arrives; treating only retries as
+    // snapshots creates a second full assistant bubble at that boundary.
+    if (isSnapshot) {
       final existing =
           _streamingMessagesByKey[streamKey] ??
           _assistantMessagesByStreamKey[streamKey] ??

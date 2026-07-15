@@ -1,5 +1,34 @@
 import 'message.dart';
 
+/// Stable identity for a fully-applied, acknowledgement-tracked event. The
+/// transport delivery ID identifies one send attempt, while this key also
+/// collapses an accidental second send of the same transcript event with a
+/// different delivery ID.
+String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
+  final sessionId = message['sessionId'] as String? ?? '';
+  final type = message['type'] as String? ?? '';
+  if (sessionId.isEmpty) return null;
+
+  if (type == 'tool_call' || type == 'tool_result') {
+    final toolUseId = message['toolUseId'] as String? ?? '';
+    if (toolUseId.isEmpty) return null;
+    if (type == 'tool_call') {
+      return '$type:$sessionId:$toolUseId:${message['tool']}:${message['input']}';
+    }
+    final output = message['output'] as String? ?? '';
+    return '$type:$sessionId:$toolUseId:${output.length}:${output.hashCode}';
+  }
+
+  if ((type == 'text' || type == 'thinking') &&
+      message['finalSnapshot'] == true) {
+    final streamId = message['streamId'] as String? ?? '';
+    final content = message['content'] as String? ?? '';
+    if (streamId.isEmpty) return null;
+    return '$type:$sessionId:$streamId:${content.length}:${content.hashCode}';
+  }
+  return null;
+}
+
 /// A replay frame is a complete cached snapshot of one in-flight stream, not
 /// another delta. This matters when a late-joining client receives a new delta
 /// just before the replay frame: appending would put the suffix before the
