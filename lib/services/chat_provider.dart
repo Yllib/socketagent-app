@@ -3429,7 +3429,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    switch (type) {
+    try {
+      switch (type) {
       case 'text':
         _handleTextMessage(msg);
         break;
@@ -4817,6 +4818,59 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _subscriptionRequiredController.add(null);
         notifyListeners();
         break;
+      }
+    } catch (error, stackTrace) {
+      final activeServer = serverId ?? _connMgr.activeServerId;
+      final errorText = error.toString();
+      debugPrint(
+        '[SessionEvent] Failed to apply $type delivery=$deliveryId: '
+        '$errorText\n$stackTrace',
+      );
+      if (activeServer != null && activeServer.isNotEmpty) {
+        _connMgr.sendToServer(activeServer, {
+          'type': 'client_event_error',
+          'sessionId': deliverySessionId ?? messageSessionId ?? '',
+          'eventType': type,
+          'deliveryId': deliveryId ?? '',
+          'toolUseId': msg['toolUseId']?.toString() ?? '',
+          'message': errorText,
+        });
+      }
+
+      // A malformed or unexpectedly typed optional field must never erase the
+      // whole tool event. Render the stable core fields so the result can still
+      // reconcile into a visible, resumable card.
+      if (type == 'tool_call') {
+        final fallbackToolUseId = msg['toolUseId']?.toString() ?? '';
+        final existing = fallbackToolUseId.isEmpty
+            ? -1
+            : _messages.lastIndexWhere(
+                (message) =>
+                    message.type == MessageType.toolCall &&
+                    message.toolUseId == fallbackToolUseId,
+              );
+        if (existing < 0) {
+          final rawInput = msg['input'];
+          final fallbackInput = rawInput is Map
+              ? Map<String, dynamic>.fromEntries(
+                  rawInput.entries.map(
+                    (entry) => MapEntry(entry.key.toString(), entry.value),
+                  ),
+                )
+              : <String, dynamic>{};
+          final fallback = ChatMessage.toolCall(
+            tool: normalizeSocketAgentToolName(
+              msg['tool']?.toString() ?? 'Tool',
+            ),
+            input: fallbackInput,
+            toolUseId: fallbackToolUseId,
+          );
+          fallback.toolStreaming = true;
+          fallback.parentToolUseId = msg['parentToolUseId']?.toString();
+          _messages.add(fallback);
+          notifyListeners();
+        }
+      }
     }
 
     // Card-defining session events are retained and retried by the server
@@ -5266,11 +5320,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleToolCall(Map<String, dynamic> msg) {
     _processingSetAt = null; // server confirmed processing
 
-    final rawTool = msg['tool'] ?? 'Unknown';
-    final tool = normalizeSocketAgentToolName(rawTool as String);
-    final input = Map<String, dynamic>.from(
-      (msg['input'] as Map<String, dynamic>?) ?? {},
+    final tool = normalizeSocketAgentToolName(
+      msg['tool']?.toString() ?? 'Unknown',
     );
+    final rawInput = msg['input'];
+    final input = rawInput is Map
+        ? Map<String, dynamic>.fromEntries(
+            rawInput.entries.map(
+              (entry) => MapEntry(entry.key.toString(), entry.value),
+            ),
+          )
+        : <String, dynamic>{};
 
     // Enrich TaskOutput with the original task's description
     if (tool == 'TaskOutput') {
@@ -5289,7 +5349,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    final toolUseId = msg['toolUseId'] as String? ?? '';
+    final toolUseId = msg['toolUseId']?.toString() ?? '';
     if (tool.endsWith('RequestSecureInput')) {
       if (toolUseId.isNotEmpty) {
         _toolEventReconciler.discard(toolUseId);
@@ -5303,8 +5363,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       toolUseId: toolUseId,
     );
     toolMsg.toolStreaming = true; // tool is actively running
-    toolMsg.parentToolUseId = msg['parentToolUseId'] as String?;
-    toolMsg.uuid = msg['uuid'] as String?;
+    toolMsg.parentToolUseId = msg['parentToolUseId']?.toString();
+    toolMsg.uuid = msg['uuid']?.toString();
     final existingIndex = toolUseId.isEmpty
         ? -1
         : _messages.lastIndexWhere(
@@ -5315,7 +5375,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Retransmission is the same transcript event. Only a genuinely new tool
     // call closes the preceding assistant stream.
     if (existingIndex < 0) {
-      _closeLiveStreamsForParent(msg['parentToolUseId'] as String?);
+      _closeLiveStreamsForParent(msg['parentToolUseId']?.toString());
     }
     if (existingIndex >= 0) {
       final existing = _messages[existingIndex];
@@ -5333,8 +5393,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         toolMsg = existing;
         toolMsg.toolStreaming = toolMsg.toolOutput == null;
-        toolMsg.parentToolUseId ??= msg['parentToolUseId'] as String?;
-        toolMsg.uuid ??= msg['uuid'] as String?;
+        toolMsg.parentToolUseId ??= msg['parentToolUseId']?.toString();
+        toolMsg.uuid ??= msg['uuid']?.toString();
       }
     }
     final pendingResult = _toolEventReconciler.takeResult(toolUseId);
@@ -5352,7 +5412,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     // Track Task/Agent tool calls as subagent tasks
-    final subagentType = input['subagent_type'] as String? ?? '';
+    final subagentType = input['subagent_type']?.toString() ?? '';
     if ((tool == 'Task' || tool == 'Agent') &&
         !_codexAgentControlTypes.contains(subagentType)) {
       final desc = input['description'] as String? ?? 'Sub agent task';
