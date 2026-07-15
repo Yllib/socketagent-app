@@ -10,6 +10,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../models/message_reconciliation.dart';
+import '../models/composer_attachment.dart';
 import '../models/archive_entry.dart';
 import '../models/file_manager_entry.dart';
 import '../screens/pair_screen.dart' show PairingResult;
@@ -555,8 +556,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _rawThrottle;
 
   // File upload state
-  String? _pendingAttachmentPath;
-  String? _pendingAttachmentName;
+  final List<PendingFileAttachment> _pendingFileAttachments = [];
+  final List<PendingSecretAttachment> _pendingSecretAttachments = [];
+  List<SecretMetadata> _secretInventory = [];
+  bool _secretInventoryLoading = false;
+  String? _secretInventoryError;
+  final Map<String, Completer<SecretMetadata>> _secretWriteCompleters = {};
+  final Map<String, Completer<void>> _secretDeleteCompleters = {};
   double? _uploadProgress;
   String? _pendingUploadId;
   Completer<String>? _uploadCompleter;
@@ -1435,8 +1441,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _messages.where((m) => m.parentToolUseId == toolUseId).toList();
   }
 
-  bool get hasAttachment => _pendingAttachmentPath != null;
-  String? get pendingAttachmentName => _pendingAttachmentName;
+  bool get hasAttachment =>
+      _pendingFileAttachments.isNotEmpty ||
+      _pendingSecretAttachments.isNotEmpty;
+  List<PendingFileAttachment> get pendingFileAttachments =>
+      List.unmodifiable(_pendingFileAttachments);
+  List<PendingSecretAttachment> get pendingSecretAttachments =>
+      List.unmodifiable(_pendingSecretAttachments);
+  List<SecretMetadata> get secretInventory =>
+      List.unmodifiable(_secretInventory);
+  bool get secretInventoryLoading => _secretInventoryLoading;
+  String? get secretInventoryError => _secretInventoryError;
   double? get uploadProgress => _uploadProgress;
   List<TtsVoice> get ttsVoices => _tts.availableVoices;
   TtsVoice? get selectedTtsVoice => _tts.selectedVoice;
@@ -1600,10 +1615,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ws.status != ConnectionStatus.connected) {
         ws.connect();
       } else {
-        _connMgr.sendToServer(serverId, {
-          'type': 'resume_session',
-          'sessionId': sessionId,
-        });
+        // The still-open socket is already attached to this session. Asking
+        // for a full resume here creates a history snapshot on every brief
+        // Android lifecycle wobble, which can race live stream events.
         _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
       }
     });
@@ -3272,7 +3286,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final isForVisibleSession =
         messageSessionId != null &&
         messageSessionId.isNotEmpty &&
-        _appInForeground &&
         _viewingSessionId == messageSessionId &&
         (_viewingServerId == null ||
             serverId == null ||
@@ -3410,6 +3423,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'secure_input_cancelled':
         _handleSecureInputCancelled(msg);
+        break;
+      case 'secret_inventory':
+        _handleSecretInventory(msg);
+        break;
+      case 'secret_operation_result':
+        _handleSecretOperationResult(msg);
         break;
       case 'result':
         _handleResult(msg);
@@ -4647,7 +4666,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             debugPrint(
               '[Upload] ack: chunks=$receivedChunks bytes=$received/$total',
             );
-            state.target.uploadProgress = (received / total).clamp(0.0, 1.0);
+            state.target.uploadProgress =
+                state.progressBase +
+                (received / total).clamp(0.0, 1.0) * state.progressSpan;
             state.noteAck(receivedChunks);
             notifyListeners();
           }
@@ -5518,6 +5539,46 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _messages[idx].toolInput?['status'] = 'cancelled';
       notifyListeners();
     }
+  }
+
+  void _handleSecretInventory(Map<String, dynamic> msg) {
+    _secretInventory = (msg['secrets'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (entry) => SecretMetadata.fromJson(Map<String, dynamic>.from(entry)),
+        )
+        .where((entry) => entry.secretId.isNotEmpty)
+        .toList();
+    _secretInventoryLoading = false;
+    _secretInventoryError = null;
+    notifyListeners();
+  }
+
+  void _handleSecretOperationResult(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String? ?? '';
+    final ok = msg['ok'] == true;
+    final error = msg['error'] as String? ?? 'Secret operation failed';
+    final writeCompleter = _secretWriteCompleters.remove(requestId);
+    if (writeCompleter != null && !writeCompleter.isCompleted) {
+      if (ok && msg['secret'] is Map) {
+        writeCompleter.complete(
+          SecretMetadata.fromJson(
+            Map<String, dynamic>.from(msg['secret'] as Map),
+          ),
+        );
+      } else {
+        writeCompleter.completeError(Exception(error));
+      }
+    }
+    final deleteCompleter = _secretDeleteCompleters.remove(requestId);
+    if (deleteCompleter != null && !deleteCompleter.isCompleted) {
+      if (ok) {
+        deleteCompleter.complete();
+      } else {
+        deleteCompleter.completeError(Exception(error));
+      }
+    }
+    refreshSecretInventory();
   }
 
   void _handleResult(Map<String, dynamic> msg) {
@@ -6447,15 +6508,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleSessionHistory(Map<String, dynamic> msg) {
+    final liveBeforeSnapshot = [..._messages];
     final historySessionId = msg['sessionId'] as String?;
     final rawMessages = msg['messages'] as List? ?? [];
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
     final isAppend = msg['append'] == true;
     final isPrepend = _isLoadingMore && _messages.isNotEmpty;
-    if (!isAppend && !isPrepend) {
-      _toolEventReconciler.clear();
-    }
-
     if (historySessionId != null &&
         _locallyClearedSessions.contains(historySessionId) &&
         rawMessages.isNotEmpty) {
@@ -6548,24 +6606,58 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             );
           }
 
-          // Strip file attachment prefix and show an upload indicator
-          final attachMatch = RegExp(
-            r'^\[Attached file: (.+?)\]\n?',
-          ).firstMatch(userText);
-          if (attachMatch != null) {
-            final filePath = attachMatch.group(1)!;
-            final fileName = filePath.split('/').last;
-            userText = userText.substring(attachMatch.end);
-            loaded.add(
-              ChatMessage(
-                id: 'upload_${DateTime.now().microsecondsSinceEpoch}_$offset',
-                sender: MessageSender.system,
-                type: MessageType.taskNotification,
-                timestamp: DateTime.now(),
-                textContent: 'Uploaded: $fileName',
-                toolName: 'uploaded',
-              ),
-            );
+          // Strip all queued attachment prefixes and recreate their visible
+          // metadata-only cards. Secret values are never part of this text.
+          var attachmentIndex = 0;
+          while (true) {
+            final fileMatch = RegExp(
+              r'^\[Attached file: (.+?)\]\n?',
+            ).firstMatch(userText);
+            if (fileMatch != null) {
+              final filePath = fileMatch.group(1)!;
+              final fileName = filePath.split('/').last;
+              userText = userText.substring(fileMatch.end);
+              loaded.add(
+                ChatMessage(
+                  id: 'upload_${DateTime.now().microsecondsSinceEpoch}_${offset}_$attachmentIndex',
+                  sender: MessageSender.system,
+                  type: MessageType.taskNotification,
+                  timestamp: DateTime.now(),
+                  textContent: 'Uploaded: $fileName',
+                  toolName: 'uploaded',
+                ),
+              );
+              attachmentIndex++;
+              continue;
+            }
+            final secretMatch = RegExp(
+              r'^\[Attached secret: (.+)\]\n?',
+            ).firstMatch(userText);
+            if (secretMatch != null) {
+              try {
+                final metadata = Map<String, dynamic>.from(
+                  jsonDecode(secretMatch.group(1)!) as Map,
+                );
+                final label = metadata['label'] as String? ?? 'Secret';
+                final scope = metadata['scope'] as String? ?? 'session';
+                loaded.add(
+                  ChatMessage(
+                    id: 'secret_attach_${DateTime.now().microsecondsSinceEpoch}_${offset}_$attachmentIndex',
+                    sender: MessageSender.system,
+                    type: MessageType.taskNotification,
+                    timestamp: DateTime.now(),
+                    textContent: 'Attached secret: $label ($scope)',
+                    toolName: 'secure_attached',
+                  ),
+                );
+              } catch (_) {
+                // The prefix is still hidden if metadata was malformed.
+              }
+              userText = userText.substring(secretMatch.end);
+              attachmentIndex++;
+              continue;
+            }
+            break;
           }
 
           // Strip monitor injection messages — these are displayed as MonitorCards via monitor_output
@@ -7211,15 +7303,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _isLoadingMore = false;
     } else {
       // Initial load — replace
-      _clearLiveMessageStreams();
+      // Reconcile the full visible live transcript. ChatMessage timestamps
+      // can originate on the server, so comparing them with the local receipt
+      // time loses completed tool/text events that raced this snapshot.
+      loaded = reconcileLiveTranscriptWithSnapshot(loaded, liveBeforeSnapshot);
       final localPendingUserPrompts = _messages
           .where(_isPendingLocalUserPrompt)
           .where((m) => !_hasEquivalentUserMessage(loaded, m))
           .toList();
-      final localPendingInteractions = pendingInteractionsMissingFromSnapshot(
-        _messages,
-        loaded,
-      );
       for (final m in _messages.where(_isPendingLocalUserPrompt)) {
         if (_hasEquivalentUserMessage(loaded, m)) {
           _pendingLocalUserMessageIds.remove(m.id);
@@ -7238,12 +7329,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               l.toolInput.toString() == m.toolInput.toString(),
         );
       }).toList();
-      _messages = [
-        ...loaded,
-        ...localPendingInteractions,
-        ...localPendingUserPrompts,
-        ...localOnlyCards,
-      ];
+      _messages = [...loaded, ...localPendingUserPrompts, ...localOnlyCards];
       _backgroundTasks.clear();
       _subagentTasks.clear();
       _isLoadingHistory = false;
@@ -7467,25 +7553,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> sendPrompt(String text, {String? priority}) async {
-    if (text.trim().isEmpty && _pendingAttachmentPath == null) return;
+    if (text.trim().isEmpty && !hasAttachment) return;
 
     final knownSlashCommand = _knownCodexSlashCommand(text);
-    if (knownSlashCommand != null &&
-        _pendingAttachmentPath == null &&
-        priority == null) {
+    if (knownSlashCommand != null && !hasAttachment && priority == null) {
       _sendCodexSlashCommand(text);
       return;
     }
 
-    // Snapshot attachment fields up front so we can clear the input chip
-    // immediately while we still have the path to actually upload from.
-    final attachPath = _pendingAttachmentPath;
-    final attachName = _pendingAttachmentName;
-    final hasAttachmentForSend = attachPath != null;
+    // Snapshot the entire composer queue. Values remain memory-only until the
+    // server acknowledges storage, and are never included in prompt/history.
+    final fileAttachments = [..._pendingFileAttachments];
+    final secretAttachments = [..._pendingSecretAttachments];
+    final attachmentCount = fileAttachments.length + secretAttachments.length;
+    final hasAttachmentsForSend = attachmentCount > 0;
 
     // Show the user's message immediately (original text only)
     final displayText = text.trim().isEmpty
-        ? '📎 ${attachName ?? "file"}'
+        ? [
+            if (fileAttachments.isNotEmpty)
+              '📎 ${fileAttachments.length} ${fileAttachments.length == 1 ? "file" : "files"}',
+            if (secretAttachments.isNotEmpty)
+              '🔐 ${secretAttachments.length} ${secretAttachments.length == 1 ? "secret" : "secrets"}',
+          ].join(' · ')
         : text;
     final userMsg = _buildUserDisplayMessage(displayText);
     _pendingLocalUserMessageIds.add(userMsg.id);
@@ -7497,10 +7587,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       userMsg.injectionPriority = priority;
       _pendingInjectedMessageCount++;
     }
-    if (hasAttachmentForSend) {
+    if (hasAttachmentsForSend) {
       userMsg.isPending = true;
-      userMsg.uploadProgress = 0.0;
-      userMsg.uploadFileName = attachName;
+      if (fileAttachments.isNotEmpty) {
+        userMsg.uploadProgress = 0.0;
+        userMsg.uploadFileName = fileAttachments.length == 1
+            ? fileAttachments.first.name
+            : '${fileAttachments.length} files';
+      }
     }
     _messages.add(userMsg);
     // Don't null _currentStreamingMessage here — if Claude is mid-stream,
@@ -7513,49 +7607,94 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _startPromptRuntime(startedAt: promptStartedAt);
     _promptSuggestions = [];
 
-    // Drop the input-area chip now — the file is committed to this bubble.
-    // Progress now lives on the bubble itself.
-    if (hasAttachmentForSend) {
-      _pendingAttachmentPath = null;
-      _pendingAttachmentName = null;
-      _uploadProgress = null;
-      _pendingUploadId = null;
-    }
+    // The queue is now committed to this bubble. Do not clear the snapshotted
+    // secret values until each has either been stored or the send has failed.
+    _pendingFileAttachments.clear();
+    _pendingSecretAttachments.clear();
+    _uploadProgress = null;
+    _pendingUploadId = null;
     notifyListeners();
 
     String prompt = text;
+    final uploadedPaths = <String>[];
+    final attachedSecrets = <SecretMetadata>[];
+    final attachmentCards = <ChatMessage>[];
 
-    if (hasAttachmentForSend) {
+    if (hasAttachmentsForSend) {
       try {
-        final serverPath = await _uploadFromPath(
-          path: attachPath,
-          name: attachName ?? 'file',
-          progressTarget: userMsg,
-        );
-        prompt = '[Attached file: $serverPath]\n$prompt';
-        // Inline an "Uploaded: filename" card just above the user bubble so
-        // the chat shows the file inline (matching what history-restore
-        // produces from the saved `[Attached file: ...]` prefix).
-        final fileName = serverPath.split('/').last;
-        final uploadCard = ChatMessage(
-          id: 'upload_${DateTime.now().microsecondsSinceEpoch}',
-          sender: MessageSender.system,
-          type: MessageType.taskNotification,
-          timestamp: DateTime.now(),
-          textContent: 'Uploaded: $fileName',
-          toolName: 'uploaded',
-        );
+        for (var i = 0; i < fileAttachments.length; i++) {
+          final attachment = fileAttachments[i];
+          if (!attachment.exists) {
+            throw Exception('File is no longer available: ${attachment.name}');
+          }
+          final count = fileAttachments.length;
+          final serverPath = await _uploadFromPath(
+            path: attachment.path,
+            name: attachment.name,
+            progressTarget: userMsg,
+            progressBase: count == 0 ? 0 : i / count,
+            progressSpan: count == 0 ? 1 : 1 / count,
+          );
+          uploadedPaths.add(serverPath);
+          attachmentCards.add(
+            ChatMessage(
+              id: 'upload_${DateTime.now().microsecondsSinceEpoch}_$i',
+              sender: MessageSender.system,
+              type: MessageType.taskNotification,
+              timestamp: DateTime.now(),
+              textContent: 'Uploaded: ${serverPath.split('/').last}',
+              toolName: 'uploaded',
+            ),
+          );
+        }
+
+        for (var i = 0; i < secretAttachments.length; i++) {
+          final attachment = secretAttachments[i];
+          final metadata =
+              attachment.metadata ??
+              await storeSecureInput(
+                label: attachment.label,
+                value: attachment.value,
+                scope: attachment.scope,
+                envHint: attachment.envHint,
+              );
+          attachment.clearValue();
+          attachedSecrets.add(metadata);
+          attachmentCards.add(
+            ChatMessage(
+              id: 'secret_attach_${DateTime.now().microsecondsSinceEpoch}_$i',
+              sender: MessageSender.system,
+              type: MessageType.taskNotification,
+              timestamp: DateTime.now(),
+              textContent:
+                  'Attached secret: ${metadata.label} (${metadata.scope})',
+              toolName: 'secure_attached',
+            ),
+          );
+        }
+
+        final prefixes = <String>[
+          for (final serverPath in uploadedPaths)
+            '[Attached file: $serverPath]',
+          for (final secret in attachedSecrets)
+            '[Attached secret: ${jsonEncode({'label': secret.label, 'scope': secret.scope, 'envHint': secret.envHint, 'filePath': secret.filePath})}]',
+        ];
+        prompt = '${prefixes.join('\n')}\n$prompt';
+
         final idx = _messages.indexOf(userMsg);
         if (idx >= 0) {
-          _messages.insert(idx, uploadCard);
+          _messages.insertAll(idx, attachmentCards);
         } else {
-          _messages.add(uploadCard);
+          _messages.addAll(attachmentCards);
         }
       } catch (e) {
+        for (final secret in secretAttachments) {
+          secret.clearValue();
+        }
         _pendingLocalUserMessageIds.remove(userMsg.id);
         userMsg.isPending = false;
         userMsg.uploadProgress = null;
-        _messages.add(ChatMessage.error('Upload failed: $e'));
+        _messages.add(ChatMessage.error('Attachment failed: $e'));
         _isProcessing = false;
         _stopPromptRuntime();
         notifyListeners();
@@ -7585,7 +7724,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Upload + dispatch done — bubble is officially "sent" now (unless it's
     // queued behind a running query, in which case keep the pending state).
-    if (hasAttachmentForSend && userMsg.injectionPriority == null) {
+    if (hasAttachmentsForSend && userMsg.injectionPriority == null) {
       userMsg.isPending = false;
     }
     notifyListeners();
@@ -7615,18 +7754,82 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return text;
   }
 
-  Future<void> pickFile() async {
-    final result = await FilePicker.platform.pickFiles();
-    if (result != null && result.files.single.path != null) {
-      _pendingAttachmentPath = result.files.single.path!;
-      _pendingAttachmentName = result.files.single.name;
-      notifyListeners();
+  Future<void> pickFiles({bool imagesOnly = false}) async {
+    final result = await FilePicker.platform.pickFiles(
+      allowMultiple: true,
+      type: imagesOnly ? FileType.image : FileType.any,
+    );
+    if (result == null) return;
+    final existingPaths = _pendingFileAttachments
+        .map((item) => item.path)
+        .toSet();
+    for (final file in result.files) {
+      final filePath = file.path;
+      if (filePath == null || !existingPaths.add(filePath)) continue;
+      _pendingFileAttachments.add(
+        PendingFileAttachment(
+          path: filePath,
+          name: file.name,
+          isImage:
+              imagesOnly || PendingFileAttachment.looksLikeImage(file.name),
+        ),
+      );
     }
+    notifyListeners();
+  }
+
+  Future<void> pickFile() => pickFiles();
+
+  void removeFileAttachment(String id) {
+    _pendingFileAttachments.removeWhere((item) => item.id == id);
+    notifyListeners();
+  }
+
+  void queueSecureAttachment({
+    required String label,
+    required String value,
+    String scope = 'session',
+    String? envHint,
+  }) {
+    if (label.trim().isEmpty || value.isEmpty) return;
+    _pendingSecretAttachments.add(
+      PendingSecretAttachment.newValue(
+        label: label.trim(),
+        value: value,
+        scope: scope,
+        envHint: (envHint == null || envHint.trim().isEmpty)
+            ? label.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), '_')
+            : envHint.trim(),
+      ),
+    );
+    notifyListeners();
+  }
+
+  void attachStoredSecret(SecretMetadata secret) {
+    if (_pendingSecretAttachments.any(
+      (item) => item.metadata?.secretId == secret.secretId,
+    )) {
+      return;
+    }
+    _pendingSecretAttachments.add(PendingSecretAttachment.stored(secret));
+    notifyListeners();
+  }
+
+  void removeSecretAttachment(String id) {
+    final matches = _pendingSecretAttachments.where((item) => item.id == id);
+    for (final item in matches) {
+      item.clearValue();
+    }
+    _pendingSecretAttachments.removeWhere((item) => item.id == id);
+    notifyListeners();
   }
 
   void removeAttachment() {
-    _pendingAttachmentPath = null;
-    _pendingAttachmentName = null;
+    for (final secret in _pendingSecretAttachments) {
+      secret.clearValue();
+    }
+    _pendingFileAttachments.clear();
+    _pendingSecretAttachments.clear();
     _uploadProgress = null;
     _pendingUploadId = null;
     notifyListeners();
@@ -7636,6 +7839,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String path,
     required String name,
     required ChatMessage progressTarget,
+    double progressBase = 0,
+    double progressSpan = 1,
   }) async {
     final file = File(path);
     final bytes = await file.readAsBytes();
@@ -7660,6 +7865,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // catches the case where the server stops emitting progress events.
     final state = _UploadState(
       target: progressTarget,
+      progressBase: progressBase,
+      progressSpan: progressSpan,
       onStall: () {
         if (!completer.isCompleted) {
           completer.completeError(
@@ -7708,7 +7915,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         });
         // Legacy fallback: drive spinner from chunk-loop iteration so it's
         // not stuck at 0 when the server isn't emitting progress events.
-        progressTarget.uploadProgress = (i + 1) / totalChunks;
+        progressTarget.uploadProgress =
+            progressBase + ((i + 1) / totalChunks) * progressSpan;
         notifyListeners();
       }
     }
@@ -7830,32 +8038,112 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void storeSecureInput({
+  Future<SecretMetadata> storeSecureInput({
     required String label,
     required String value,
     String scope = 'session',
     String? envHint,
-  }) {
-    if (label.trim().isEmpty || value.isEmpty) return;
-    _connMgr.send({
+  }) async {
+    if (label.trim().isEmpty || value.isEmpty) {
+      throw ArgumentError('Label and secret value are required');
+    }
+    final requestId = 'secret_create_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<SecretMetadata>();
+    _secretWriteCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
       'type': 'secure_input_store',
       'label': label.trim(),
       'value': value,
       'scope': scope,
+      'clientRequestId': requestId,
       if (envHint != null && envHint.trim().isNotEmpty)
         'envHint': envHint.trim(),
       if (_activeSessionId != null) 'sessionId': _activeSessionId,
       if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
     });
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        _secretWriteCompleters.remove(requestId);
+        throw TimeoutException('Timed out saving secret');
+      },
+    );
+  }
+
+  void refreshSecretInventory() {
+    _secretInventoryLoading = true;
+    _secretInventoryError = null;
+    _sendToActiveSessionServer({
+      'type': 'secret_inventory_request',
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+      if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
+    });
+    notifyListeners();
+  }
+
+  Future<SecretMetadata> replaceManagedSecret({
+    required SecretMetadata secret,
+    required String value,
+    String? label,
+    String? envHint,
+  }) {
+    if (value.isEmpty) throw ArgumentError('Replacement value is required');
+    final requestId = 'secret_replace_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<SecretMetadata>();
+    _secretWriteCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
+      'type': 'secret_replace',
+      'requestId': requestId,
+      'secretId': secret.secretId,
+      'value': value,
+      if (label != null && label.trim().isNotEmpty) 'label': label.trim(),
+      if (envHint != null && envHint.trim().isNotEmpty)
+        'envHint': envHint.trim(),
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+      if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        _secretWriteCompleters.remove(requestId);
+        throw TimeoutException('Timed out replacing secret');
+      },
+    );
+  }
+
+  Future<void> deleteManagedSecret(SecretMetadata secret) {
+    final requestId = 'secret_delete_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<void>();
+    _secretDeleteCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
+      'type': 'secret_delete',
+      'requestId': requestId,
+      'secretId': secret.secretId,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+      if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        _secretDeleteCompleters.remove(requestId);
+        throw TimeoutException('Timed out deleting secret');
+      },
+    );
   }
 
   /// Clear file attachment state (without notifyListeners)
   void _clearAttachment() {
-    _pendingAttachmentPath = null;
-    _pendingAttachmentName = null;
+    for (final secret in _pendingSecretAttachments) {
+      secret.clearValue();
+    }
+    _pendingFileAttachments.clear();
+    _pendingSecretAttachments.clear();
     _uploadProgress = null;
     _pendingUploadId = null;
     _uploadCompleter = null;
+    _secretInventory = [];
+    _secretInventoryLoading = false;
+    _secretInventoryError = null;
   }
 
   /// Clear raw SDK debug state
@@ -7900,6 +8188,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _contextUsage = null;
     _requiresAction = false;
     _pendingImageLoads.clear();
+    _toolEventReconciler.clear();
     _clearAttachment();
     _clearRawState();
     // Set active server to the target server
@@ -8697,6 +8986,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _contextUsage = null;
     _requiresAction = false;
     _pendingImageLoads.clear();
+    _toolEventReconciler.clear();
     _clearAttachment();
     _clearRawState();
     // Look up which server owns this session and switch active server
@@ -11455,10 +11745,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 /// stall timer that fires the supplied callback if no progress event arrives
 /// for 60s.
 class _UploadState {
-  _UploadState({required this.target, required this.onStall});
+  _UploadState({
+    required this.target,
+    required this.onStall,
+    this.progressBase = 0,
+    this.progressSpan = 1,
+  });
 
   final ChatMessage target;
   final void Function() onStall;
+  final double progressBase;
+  final double progressSpan;
 
   int chunksAcked = 0;
   Completer<void>? _ackWaiter;

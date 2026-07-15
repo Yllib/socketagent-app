@@ -46,4 +46,62 @@ void main() {
       'question:question-1',
     });
   });
+
+  test('keeps a live tool call missing from a stale snapshot', () {
+    final live = ChatMessage.toolCall(
+      tool: 'Bash',
+      input: const {'command': 'npm test'},
+      toolUseId: 'tool-1',
+    )..toolStreaming = true;
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot(const [], [live]);
+
+    expect(reconciled, [same(live)]);
+  });
+
+  test('keeps live tool identity while accepting a newer persisted result', () {
+    final live =
+        ChatMessage.toolCall(
+            tool: 'Bash',
+            input: const {'command': 'npm test'},
+            toolUseId: 'tool-1',
+          )
+          ..toolOutput = 'partial'
+          ..toolStreaming = true;
+    final snapshot =
+        ChatMessage.toolCall(
+            tool: 'Bash',
+            input: const {'command': 'npm test'},
+            toolUseId: 'tool-1',
+          )
+          ..toolOutput = 'partial output'
+          ..toolStreaming = false;
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot([snapshot], [live]);
+
+    expect(reconciled, [same(live)]);
+    expect(live.toolOutput, 'partial output');
+    expect(live.toolStreaming, isFalse);
+  });
+
+  test('reuses a live assistant stream when history contains its prefix', () {
+    final snapshot = ChatMessage.assistantText('session')
+      ..textContent = 'Working on it';
+    final live = ChatMessage.assistantText('session')
+      ..textContent = 'Working on it now';
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot([snapshot], [live]);
+
+    expect(reconciled, [same(live)]);
+    expect(live.textContent, 'Working on it now');
+  });
+
+  test('does not revive an answered live interaction', () {
+    final answered = ChatMessage.secureInput(
+      requestId: 'secure-1',
+      label: 'PASSWORD',
+    )..answered = true;
+
+    expect(reconcileLiveTranscriptWithSnapshot(const [], [answered]), isEmpty);
+  });
 }

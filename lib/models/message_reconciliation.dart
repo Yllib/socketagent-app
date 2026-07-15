@@ -35,3 +35,111 @@ List<ChatMessage> pendingInteractionsMissingFromSnapshot(
     return key != null && !message.answered && !snapshotKeys.contains(key);
   }).toList();
 }
+
+String? _stableLiveKey(ChatMessage message) {
+  final interaction = interactionKey(message);
+  if (interaction != null) return interaction;
+  if (message.type == MessageType.toolCall &&
+      message.toolUseId != null &&
+      message.toolUseId!.isNotEmpty) {
+    return 'tool:${message.toolUseId}';
+  }
+  return null;
+}
+
+bool _isLiveTranscriptMessage(ChatMessage message) {
+  if (message.sender == MessageSender.user) return false;
+  return message.type == MessageType.toolCall ||
+      message.type == MessageType.text ||
+      message.type == MessageType.thinking ||
+      message.type == MessageType.question ||
+      message.type == MessageType.secureInput;
+}
+
+bool _textStreamsMatch(ChatMessage left, ChatMessage right) {
+  if (left.sender != right.sender ||
+      left.type != right.type ||
+      left.parentToolUseId != right.parentToolUseId) {
+    return false;
+  }
+  final leftUuid = left.uuid;
+  final rightUuid = right.uuid;
+  if (leftUuid != null &&
+      leftUuid.isNotEmpty &&
+      rightUuid != null &&
+      rightUuid.isNotEmpty) {
+    return leftUuid == rightUuid;
+  }
+  final leftText = left.textContent.trim();
+  final rightText = right.textContent.trim();
+  if (leftText.isEmpty || rightText.isEmpty) return false;
+  return leftText == rightText ||
+      leftText.startsWith(rightText) ||
+      rightText.startsWith(leftText);
+}
+
+void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
+  if (live.type == MessageType.toolCall) {
+    final liveOutput = live.toolOutput ?? '';
+    final snapshotOutput = snapshot.toolOutput ?? '';
+    final snapshotHasNewerOutput =
+        snapshotOutput.length > liveOutput.length &&
+        (liveOutput.isEmpty || snapshotOutput.startsWith(liveOutput));
+    if (snapshotHasNewerOutput) {
+      live.toolOutput = snapshot.toolOutput;
+    }
+    live.toolStreaming = snapshotHasNewerOutput
+        ? snapshot.toolStreaming
+        : live.toolStreaming || snapshot.toolStreaming;
+    live.parentToolUseId ??= snapshot.parentToolUseId;
+    live.uuid ??= snapshot.uuid;
+    return;
+  }
+
+  final liveText = live.textContent;
+  final snapshotText = snapshot.textContent;
+  if (snapshotText.length > liveText.length &&
+      (liveText.isEmpty || snapshotText.startsWith(liveText))) {
+    live.textContent = snapshotText;
+  }
+  live.parentToolUseId ??= snapshot.parentToolUseId;
+  live.uuid ??= snapshot.uuid;
+}
+
+/// Reconciles events received live around an initial/reconnect history
+/// snapshot. The live object wins so active stream maps keep pointing at the
+/// card already on screen, while any newer persisted content is folded into it.
+List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
+  Iterable<ChatMessage> snapshotMessages,
+  Iterable<ChatMessage> liveCandidates,
+) {
+  final reconciled = snapshotMessages.toList();
+  for (final live in liveCandidates) {
+    if (!_isLiveTranscriptMessage(live)) continue;
+    final stableKey = _stableLiveKey(live);
+    var matchIndex = -1;
+    if (stableKey != null) {
+      matchIndex = reconciled.lastIndexWhere(
+        (snapshot) => _stableLiveKey(snapshot) == stableKey,
+      );
+    } else if (live.type == MessageType.text ||
+        live.type == MessageType.thinking) {
+      matchIndex = reconciled.lastIndexWhere(
+        (snapshot) => _textStreamsMatch(live, snapshot),
+      );
+    }
+
+    if (matchIndex >= 0) {
+      _mergeSnapshotStateIntoLive(live, reconciled[matchIndex]);
+      reconciled[matchIndex] = live;
+      continue;
+    }
+    if ((live.type == MessageType.question ||
+            live.type == MessageType.secureInput) &&
+        live.answered) {
+      continue;
+    }
+    reconciled.add(live);
+  }
+  return reconciled;
+}

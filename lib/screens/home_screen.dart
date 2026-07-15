@@ -12,6 +12,7 @@ import 'settings/voice_speech_screen.dart';
 import '../widgets/chat_view.dart';
 import '../widgets/active_tasks_pane.dart';
 import '../widgets/voice_button.dart';
+import '../widgets/secret_manager_sheet.dart';
 
 class _BarSegment {
   final String label;
@@ -311,19 +312,37 @@ class HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               ListTile(
-                leading: const Icon(Icons.attach_file),
-                title: const Text('File'),
+                leading: const Icon(Icons.photo_library_outlined),
+                title: const Text('Photos'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
-                  provider.pickFile();
+                  provider.pickFiles(imagesOnly: true);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.attach_file),
+                title: const Text('Files'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  provider.pickFiles();
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.lock_outline),
-                title: const Text('Secure input'),
+                title: const Text('Secure value'),
+                subtitle: const Text('Attach to your next message'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
                   _showSecureInputDialog(provider);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.password_outlined),
+                title: const Text('Manage secrets'),
+                subtitle: const Text('Browse, create, replace, or delete'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _showSecretManager(provider);
                 },
               ),
             ],
@@ -358,6 +377,11 @@ class HomeScreenState extends State<HomeScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
+                      const Text(
+                        'This value stays in the composer until you send your next message.',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      const SizedBox(height: 12),
                       TextField(
                         controller: labelController,
                         decoration: const InputDecoration(
@@ -427,12 +451,12 @@ class HomeScreenState extends State<HomeScreen> {
                   ),
                   FilledButton.icon(
                     icon: const Icon(Icons.lock_outline, size: 18),
-                    label: const Text('Save'),
+                    label: const Text('Attach'),
                     onPressed: () {
                       final label = labelController.text.trim();
                       final value = valueController.text;
                       if (label.isEmpty || value.isEmpty) return;
-                      provider.storeSecureInput(
+                      provider.queueSecureAttachment(
                         label: label,
                         value: value,
                         scope: scope,
@@ -453,6 +477,53 @@ class HomeScreenState extends State<HomeScreen> {
       envController.dispose();
       valueController.dispose();
     }
+  }
+
+  Future<void> _showSecretManager(ChatProvider provider) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => SecretManagerSheet(provider: provider),
+    );
+  }
+
+  Widget _buildComposerAttachments(ChatProvider provider) {
+    final attachments = <Widget>[
+      for (final attachment in provider.pendingFileAttachments)
+        InputChip(
+          avatar: Icon(
+            attachment.isImage
+                ? Icons.image_outlined
+                : Icons.insert_drive_file_outlined,
+            size: 16,
+          ),
+          label: Text(attachment.name, overflow: TextOverflow.ellipsis),
+          onDeleted: () => provider.removeFileAttachment(attachment.id),
+        ),
+      for (final attachment in provider.pendingSecretAttachments)
+        InputChip(
+          avatar: const Icon(Icons.lock_outline, size: 16),
+          label: Text(
+            '${attachment.label} (${attachment.scope})',
+            overflow: TextOverflow.ellipsis,
+          ),
+          onDeleted: () => provider.removeSecretAttachment(attachment.id),
+        ),
+    ];
+    return SizedBox(
+      height: 42,
+      child: ListView.separated(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        scrollDirection: Axis.horizontal,
+        itemCount: attachments.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 6),
+        itemBuilder: (_, index) => ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 220),
+          child: attachments[index],
+        ),
+      ),
+    );
   }
 
   @override
@@ -2673,56 +2744,7 @@ class HomeScreenState extends State<HomeScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Attachment chip
-          if (provider.hasAttachment)
-            Container(
-              padding: const EdgeInsets.only(
-                left: 12,
-                right: 4,
-                top: 2,
-                bottom: 4,
-              ),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.attach_file,
-                    size: 14,
-                    color: theme.colorScheme.primary,
-                  ),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      provider.pendingAttachmentName ?? 'File',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: theme.colorScheme.primary,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (provider.uploadProgress != null)
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        value: provider.uploadProgress,
-                        strokeWidth: 2,
-                        color: theme.colorScheme.primary,
-                      ),
-                    )
-                  else
-                    GestureDetector(
-                      onTap: () => provider.removeAttachment(),
-                      child: Icon(
-                        Icons.close,
-                        size: 16,
-                        color: theme.colorScheme.onSurface.withAlpha(128),
-                      ),
-                    ),
-                  const SizedBox(width: 8),
-                ],
-              ),
-            ),
+          if (provider.hasAttachment) _buildComposerAttachments(provider),
           // Slash command picker
           if (_showCommandPicker && provider.slashCommands.isNotEmpty)
             _buildCommandPicker(provider, theme),
