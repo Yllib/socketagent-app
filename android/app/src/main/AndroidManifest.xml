@@ -42,6 +42,13 @@
                 <action android:name="android.intent.action.VOICE_ASSIST"/>
                 <category android:name="android.intent.category.DEFAULT"/>
             </intent-filter>
+            <!-- Open a specific persistent agent session from Feedback Hub. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="socketagent" android:host="session"/>
+            </intent-filter>
         </activity>
 
         <!-- VoiceInteractionService: makes the app appear in

@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'services/chat_provider.dart';
 import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
+import 'services/session_deep_link.dart';
 import 'screens/main_shell_screen.dart';
 import 'screens/home_screen.dart';
 
@@ -79,6 +80,8 @@ class _AppLauncherState extends State<AppLauncher>
     _channel.setMethodCallHandler((call) async {
       if (call.method == 'onAssistIntent') {
         _handleAssistWhileOpen();
+      } else if (call.method == 'onDeepLink') {
+        _handleSessionDeepLink(call.arguments as String?);
       }
     });
   }
@@ -98,9 +101,11 @@ class _AppLauncherState extends State<AppLauncher>
 
   Future<void> _checkLaunchIntent() async {
     bool launchedFromAssist = false;
+    String? deepLink;
     try {
       final result = await _channel.invokeMethod<bool>('isAssistIntent');
       launchedFromAssist = result ?? false;
+      deepLink = await _channel.invokeMethod<String>('takeDeepLink');
     } catch (_) {
       // Method channel not available — normal launch
     }
@@ -113,7 +118,9 @@ class _AppLauncherState extends State<AppLauncher>
     final launchPayload =
         NotificationService().takeLaunchPayload() ??
         PushNotificationService().takeLaunchPayload();
-    if (launchPayload != null) {
+    if (_handleSessionDeepLink(deepLink)) {
+      // The explicit session link takes precedence over other launch intents.
+    } else if (launchPayload != null) {
       _handleNotificationPayload(launchPayload);
     } else if (launchedFromAssist) {
       _openMostRecentSession(autoVoice: provider.autoVoiceOnAssist);
@@ -123,6 +130,21 @@ class _AppLauncherState extends State<AppLauncher>
 
     // Wait for connection + session list before dismissing splash
     _waitForReady(provider);
+  }
+
+  bool _handleSessionDeepLink(String? value) {
+    if (!mounted) return false;
+    final link = SessionDeepLink.parse(value);
+    if (link == null) return false;
+    final provider = context.read<ChatProvider>();
+    provider.resumeSdkSession(
+      link.sessionId,
+      link.cwd,
+      serverId: link.serverId,
+      backend: link.backend,
+    );
+    _navigateToHome(false);
+    return true;
   }
 
   void _waitForReady(ChatProvider provider) {

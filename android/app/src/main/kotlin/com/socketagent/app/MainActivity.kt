@@ -14,17 +14,23 @@ class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.socketagent.app/intent"
     private var wasAssistIntent = false
     private var methodChannel: MethodChannel? = null
+    private var pendingDeepLink: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         wasAssistIntent = intent?.action == Intent.ACTION_ASSIST ||
                           intent?.action == Intent.ACTION_VOICE_COMMAND
+        pendingDeepLink = sessionDeepLink(intent)
 
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel!!.setMethodCallHandler { call, result ->
             when (call.method) {
                 "isAssistIntent" -> result.success(wasAssistIntent)
+                "takeDeepLink" -> {
+                    result.success(pendingDeepLink)
+                    pendingDeepLink = null
+                }
                 "startAdbBridgeForeground" -> {
                     try {
                         val serviceIntent = Intent(this, AdbBridgeForegroundService::class.java)
@@ -252,11 +258,24 @@ class MainActivity : FlutterActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         val isAssist = intent.action == Intent.ACTION_ASSIST ||
                        intent.action == Intent.ACTION_VOICE_COMMAND
         wasAssistIntent = isAssist
+        val deepLink = sessionDeepLink(intent)
+        if (deepLink != null) {
+            pendingDeepLink = null
+            methodChannel?.invokeMethod("onDeepLink", deepLink)
+        }
         if (isAssist) {
             methodChannel?.invokeMethod("onAssistIntent", null)
         }
+    }
+
+    private fun sessionDeepLink(intent: Intent?): String? {
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val uri = intent.data ?: return null
+        if (uri.scheme != "socketagent" || uri.host != "session") return null
+        return uri.toString()
     }
 }
