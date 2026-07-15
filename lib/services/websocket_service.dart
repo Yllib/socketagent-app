@@ -10,6 +10,7 @@ enum ConnectionStatus { disconnected, connecting, connected, error }
 enum ConnectionMode { direct, relay }
 
 class WebSocketService {
+  static const int _sessionEventAckVersion = 1;
   WebSocketChannel? _channel;
   StreamSubscription? _channelSubscription;
   int _connectionGeneration =
@@ -193,7 +194,7 @@ class WebSocketService {
           send({
             'type': 'client_capabilities',
             'binaryEnvelope': true,
-            'sessionEventAck': true,
+            'sessionEventAckVersion': _sessionEventAckVersion,
           });
         });
       }
@@ -367,7 +368,7 @@ class WebSocketService {
         'type': 'direct_auth',
         'token': _token,
         'binaryEnvelope': true,
-        'sessionEventAck': true,
+        'sessionEventAckVersion': _sessionEventAckVersion,
       });
       return;
     }
@@ -376,7 +377,7 @@ class WebSocketService {
     send({
       'type': 'client_capabilities',
       'binaryEnvelope': true,
-      'sessionEventAck': true,
+      'sessionEventAckVersion': _sessionEventAckVersion,
     });
   }
 
