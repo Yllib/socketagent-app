@@ -23,6 +23,7 @@ import 'monitor_card.dart';
 import 'codex_plan_card.dart';
 import 'codex_command_card.dart';
 import 'secure_input_card.dart';
+import '../models/composer_attachment.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -36,7 +37,10 @@ class ChatView extends StatefulWidget {
   final List<Map<String, dynamic>> todos;
   final void Function(String questionId, Map<String, String> answers) onAnswer;
   final void Function(String requestId, String value) onSecureInputSubmit;
+  final void Function(String requestId, SecretMetadata secret)
+  onSecureInputUseStored;
   final void Function(String requestId) onSecureInputCancel;
+  final List<SecretMetadata> availableSecrets;
   final VoidCallback? onLoadMore;
   final void Function(String taskId)? onStopTask;
   final VoidCallback? onDismissTodos;
@@ -62,7 +66,9 @@ class ChatView extends StatefulWidget {
     required this.todos,
     required this.onAnswer,
     required this.onSecureInputSubmit,
+    required this.onSecureInputUseStored,
     required this.onSecureInputCancel,
+    this.availableSecrets = const [],
     this.onLoadMore,
     this.onStopTask,
     this.onDismissTodos,
@@ -632,7 +638,9 @@ class ChatViewState extends State<ChatView> {
         return SecureInputCard(
           message: msg,
           onSubmit: widget.onSecureInputSubmit,
+          onUseStored: widget.onSecureInputUseStored,
           onCancel: widget.onSecureInputCancel,
+          availableSecrets: widget.availableSecrets,
         );
       case MessageType.result:
         return MessageBubble(message: msg);

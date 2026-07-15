@@ -34,6 +34,13 @@ bool shouldReplaceToolCardMetadata({
           incomingInput.isNotEmpty);
 }
 
+String secureInputHistoryStatus(Object? entryStatus, Object? inputStatus) {
+  final persisted = entryStatus is String ? entryStatus.trim() : '';
+  if (persisted.isNotEmpty) return persisted;
+  final nested = inputStatus is String ? inputStatus.trim() : '';
+  return nested.isNotEmpty ? nested : 'pending';
+}
+
 String? interactionKey(ChatMessage message) {
   if (message.type == MessageType.secureInput) {
     return 'secure:${message.questionId ?? message.id}';

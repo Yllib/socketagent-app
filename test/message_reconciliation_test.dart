@@ -3,6 +3,10 @@ import 'package:app/models/message_reconciliation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('missing secure-input history status remains actionable', () {
+    expect(secureInputHistoryStatus(null, null), 'pending');
+  });
+
   test('late-join replay replaces a suffix with the authoritative stream', () {
     expect(
       mergeLiveStreamContent(

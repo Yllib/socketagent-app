@@ -1,16 +1,21 @@
 import 'package:flutter/material.dart';
+import '../models/composer_attachment.dart';
 import '../models/message.dart';
 
 class SecureInputCard extends StatefulWidget {
   final ChatMessage message;
   final void Function(String requestId, String value) onSubmit;
+  final void Function(String requestId, SecretMetadata secret) onUseStored;
   final void Function(String requestId) onCancel;
+  final List<SecretMetadata> availableSecrets;
 
   const SecureInputCard({
     super.key,
     required this.message,
     required this.onSubmit,
+    required this.onUseStored,
     required this.onCancel,
+    required this.availableSecrets,
   });
 
   @override
@@ -51,6 +56,53 @@ class _SecureInputCardState extends State<SecureInputCard> {
     if (_requestId.isEmpty || value.isEmpty) return;
     widget.onSubmit(_requestId, value);
     _controller.clear();
+  }
+
+  List<SecretMetadata> get _rankedSecrets {
+    String normalize(String value) =>
+        value.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), '_');
+    final label = normalize(_label);
+    final envHint = normalize(_envHint);
+    final secrets = [...widget.availableSecrets];
+    int score(SecretMetadata secret) {
+      final secretLabel = normalize(secret.label);
+      final secretEnv = normalize(secret.envHint);
+      if (envHint.isNotEmpty && secretEnv == envHint) return 0;
+      if (label.isNotEmpty && secretLabel == label) return 1;
+      if (secret.scope == _scope) return 2;
+      return 3;
+    }
+
+    secrets.sort((left, right) => score(left).compareTo(score(right)));
+    return secrets;
+  }
+
+  Future<void> _chooseStoredSecret() async {
+    final secrets = _rankedSecrets;
+    if (secrets.isEmpty || _requestId.isEmpty) return;
+    final selected = await showModalBottomSheet<SecretMetadata>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            const ListTile(
+              leading: Icon(Icons.key_outlined),
+              title: Text('Use a stored secret'),
+              subtitle: Text('The value remains hidden on the server.'),
+            ),
+            for (final secret in secrets)
+              ListTile(
+                leading: const Icon(Icons.lock_outline),
+                title: Text(secret.label),
+                subtitle: Text('${secret.scope} · ${secret.envHint}'),
+                onTap: () => Navigator.pop(context, secret),
+              ),
+          ],
+        ),
+      ),
+    );
+    if (selected != null) widget.onUseStored(_requestId, selected);
   }
 
   @override
@@ -116,6 +168,17 @@ class _SecureInputCardState extends State<SecureInputCard> {
               ),
               if (!answered) ...[
                 const SizedBox(height: 12),
+                if (widget.availableSecrets.isNotEmpty) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _chooseStoredSecret,
+                      icon: const Icon(Icons.key_outlined),
+                      label: const Text('Use stored secret'),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 TextField(
                   controller: _controller,
                   obscureText: _obscure,

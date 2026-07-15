@@ -5507,6 +5507,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
     if (existingIdx >= 0) {
       _messages[existingIdx].answered = false;
+      _messages[existingIdx].toolInput?['status'] = 'pending';
+      refreshSecretInventory();
       notifyListeners();
       return;
     }
@@ -5527,6 +5529,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       title: _sessionTitle(),
       body: 'Secure input requested: $label',
     );
+    refreshSecretInventory();
     notifyListeners();
   }
 
@@ -6570,18 +6573,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     var historyPrevTodos = <Map<String, dynamic>>[];
     final skippedToolUseIds = <String>{};
     final loadedSendFilePaths = <String>{};
-    String secureInputHistoryKey(Map input) => [
-      input['label']?.toString() ?? '',
-      input['reason']?.toString() ?? '',
-      input['scope']?.toString() ?? 'session',
-    ].join('\u0000');
-    final persistedSecureInputKeys = <String>{};
-    for (final entry in rawMessages) {
-      if (entry['role'] != 'secure_input') continue;
-      final input = (entry['toolInput'] as Map?) ?? const {};
-      persistedSecureInputKeys.add(secureInputHistoryKey(input));
-    }
-
     for (final entry in rawMessages) {
       final role = entry['role'] as String? ?? '';
       final content = entry['content'] as String? ?? '';
@@ -7091,19 +7082,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           if (toolName.endsWith('RequestSecureInput')) {
             if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
-            final historyKey = secureInputHistoryKey(toolInput);
-            if (!persistedSecureInputKeys.contains(historyKey)) {
-              final legacyCard = ChatMessage.secureInput(
-                requestId: 'legacy_$toolUseId',
-                label: toolInput['label'] as String? ?? 'Secret',
-                reason: toolInput['reason'] as String? ?? '',
-                envHint: toolInput['envHint'] as String? ?? '',
-                scope: toolInput['scope'] as String? ?? 'session',
-                status: 'interrupted',
-              );
-              legacyCard.answered = true;
-              loaded.add(legacyCard);
-            }
             break;
           }
           final toolCallMsg = ChatMessage.toolCall(
@@ -7235,10 +7213,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final input = Map<String, dynamic>.from(
             (entry['toolInput'] as Map?) ?? const {},
           );
-          final status =
-              entry['status'] as String? ??
-              input['status'] as String? ??
-              'interrupted';
+          final status = secureInputHistoryStatus(
+            entry['status'],
+            input['status'],
+          );
           final existingIdx = loaded.lastIndexWhere(
             (m) =>
                 m.type == MessageType.secureInput && m.questionId == requestId,
@@ -7689,6 +7667,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               );
           attachment.clearValue();
           attachedSecrets.add(metadata);
+          _resolveMatchingSecureInput(metadata);
           attachmentCards.add(
             ChatMessage(
               id: 'secret_attach_${DateTime.now().microsecondsSinceEpoch}_$i',
@@ -8043,10 +8022,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       (m) => m.type == MessageType.secureInput && m.questionId == requestId,
     );
     if (idx >= 0) _messages[idx].answered = true;
-    _connMgr.send({
+    _sendToActiveSessionServer({
       'type': 'secure_input_response',
       'requestId': requestId,
       'value': value,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
     });
     notifyListeners();
   }
@@ -8059,12 +8039,55 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (idx >= 0) {
       _messages[idx].answered = true;
     }
-    _connMgr.send({
+    _sendToActiveSessionServer({
       'type': 'secure_input_response',
       'requestId': requestId,
       'cancelled': true,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
     });
     notifyListeners();
+  }
+
+  void submitStoredSecureInput(String requestId, SecretMetadata secret) {
+    if (requestId.isEmpty || secret.secretId.isEmpty) return;
+    final idx = _messages.indexWhere(
+      (message) =>
+          message.type == MessageType.secureInput &&
+          message.questionId == requestId,
+    );
+    if (idx >= 0) {
+      _messages[idx].answered = true;
+      _messages[idx].toolInput?['status'] = 'saved';
+    }
+    _sendToActiveSessionServer({
+      'type': 'secure_input_response',
+      'requestId': requestId,
+      'secretId': secret.secretId,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+    });
+    notifyListeners();
+  }
+
+  void _resolveMatchingSecureInput(SecretMetadata secret) {
+    String normalize(String value) =>
+        value.trim().toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]+'), '_');
+    final secretLabel = normalize(secret.label);
+    final secretEnv = normalize(secret.envHint);
+    final pending = _messages.where((message) {
+      if (message.type != MessageType.secureInput || message.answered) {
+        return false;
+      }
+      final status = message.toolInput?['status'] as String? ?? 'pending';
+      if (status != 'pending') return false;
+      final label = normalize(message.toolInput?['label'] as String? ?? '');
+      final envHint = normalize(message.toolInput?['envHint'] as String? ?? '');
+      return (secretEnv.isNotEmpty && envHint == secretEnv) ||
+          (secretLabel.isNotEmpty && label == secretLabel);
+    }).firstOrNull;
+    final requestId = pending?.questionId;
+    if (requestId != null && requestId.isNotEmpty) {
+      submitStoredSecureInput(requestId, secret);
+    }
   }
 
   Future<SecretMetadata> storeSecureInput({
