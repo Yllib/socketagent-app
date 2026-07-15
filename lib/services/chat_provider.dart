@@ -10,6 +10,7 @@ import 'package:open_filex/open_filex.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../models/message_reconciliation.dart';
+import '../models/history_response_gate.dart';
 import '../models/composer_attachment.dart';
 import '../models/archive_entry.dart';
 import '../models/file_manager_entry.dart';
@@ -517,6 +518,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isLoadingHistory = false;
   bool _isLoadingMore = false;
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
+  String? _initialHistoryRequestId;
+  String? _olderHistoryRequestId;
+  int _historyRequestSequence = 0;
   bool _ttsEnabled = false;
   String _effort = 'high';
   bool _codexFastMode = false;
@@ -2457,9 +2461,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSessionId != null &&
         serverId != null &&
         serverId == _connMgr.activeServerId) {
+      final historyRequestId = _beginInitialHistoryRequest(_activeSessionId!);
       _connMgr.sendToServer(serverId, {
         'type': 'resume_session',
         'sessionId': _activeSessionId,
+        'historyRequestId': historyRequestId,
       });
       _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
     }
@@ -3395,7 +3401,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final deliveryId = msg['deliveryId'] as String?;
     final deliverySessionId = msg['sessionId'] as String?;
-    final acknowledgesDelivery = deliveryId != null &&
+    final acknowledgesDelivery =
+        deliveryId != null &&
         deliveryId.isNotEmpty &&
         deliverySessionId != null &&
         deliverySessionId.isNotEmpty &&
@@ -6643,12 +6650,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleSessionHistory(Map<String, dynamic> msg) {
-    final liveBeforeSnapshot = [..._messages];
     final historySessionId = msg['sessionId'] as String?;
+    final decision = gateSessionHistoryResponse(
+      responseSessionId: historySessionId,
+      activeSessionId: _activeSessionId,
+      historyKind: msg['historyKind'] as String?,
+      requestId: msg['requestId'] as String?,
+      expectedInitialRequestId: _initialHistoryRequestId,
+      expectedOlderRequestId: _olderHistoryRequestId,
+      legacyAppend: msg['append'] == true,
+      legacyLoadingMore: _isLoadingMore,
+      hasVisibleMessages: _messages.isNotEmpty,
+    );
+    if (!decision.accept) return;
+
+    if (decision.kind == SessionHistoryKind.initial) {
+      _initialHistoryRequestId = null;
+      _olderHistoryRequestId = null;
+      _isLoadingMore = false;
+    } else if (decision.kind == SessionHistoryKind.older) {
+      _olderHistoryRequestId = null;
+    }
+
+    final liveBeforeSnapshot = [..._messages];
     final rawMessages = msg['messages'] as List? ?? [];
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
-    final isAppend = msg['append'] == true;
-    final isPrepend = _isLoadingMore && _messages.isNotEmpty;
+    final isAppend = decision.kind == SessionHistoryKind.append;
+    final isPrepend = decision.kind == SessionHistoryKind.older;
     if (historySessionId != null &&
         _locallyClearedSessions.contains(historySessionId) &&
         rawMessages.isNotEmpty) {
@@ -7370,7 +7398,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     loaded = _dedupeLoadedHistory(loaded);
 
-    _historyOffset = offset;
+    // Appends add newer events and must not move the boundary of the oldest
+    // page already in memory. Moving it here makes the next pagination request
+    // fetch a recent/duplicate slice instead of the preceding page.
+    if (!isAppend) {
+      _historyOffset = offset;
+    }
 
     if (isAppend) {
       // Append missed messages (e.g., from server downtime recovery)
@@ -9180,6 +9213,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isLoadingHistory = true;
     _historyOffset = 0;
     _isLoadingMore = false;
+    final historyRequestId = _beginInitialHistoryRequest(sessionId);
     _sessionModel = null;
     _supportedModels = [];
     _mcpServers = [];
@@ -9222,6 +9256,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'sessionId': sessionId,
         'cwd': session.cwd,
         if (session.backend != null) 'backend': session.backend,
+        'historyRequestId': historyRequestId,
       });
       _connMgr.sendToServer(session.serverId, {'type': 'get_status_sync'});
     } else {
@@ -9231,9 +9266,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'sessionId': sessionId,
           'cwd': session.cwd,
           if (session.backend != null) 'backend': session.backend,
+          'historyRequestId': historyRequestId,
         });
       } else {
-        _connMgr.send({'type': 'resume_session', 'sessionId': sessionId});
+        _connMgr.send({
+          'type': 'resume_session',
+          'sessionId': sessionId,
+          'historyRequestId': historyRequestId,
+        });
       }
       _connMgr.send({'type': 'get_status_sync'});
     }
@@ -9257,13 +9297,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isLoadingMore = true;
     final limit = 50;
     final newOffset = (_historyOffset - limit).clamp(0, _historyOffset);
-    _ws.send({
+    final sessionId = _activeSessionId!;
+    final requestId = _newHistoryRequestId('older', sessionId);
+    _olderHistoryRequestId = requestId;
+    final message = <String, dynamic>{
       'type': 'load_more_history',
-      'sessionId': _activeSessionId,
+      'sessionId': sessionId,
       'offset': newOffset,
       'limit': _historyOffset - newOffset,
-    });
+      'requestId': requestId,
+    };
+    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, message);
+    } else {
+      _connMgr.send(message);
+    }
     notifyListeners();
+  }
+
+  String _newHistoryRequestId(String kind, String sessionId) {
+    _historyRequestSequence++;
+    return 'history_${kind}_${DateTime.now().microsecondsSinceEpoch}_${_historyRequestSequence}_$sessionId';
+  }
+
+  String _beginInitialHistoryRequest(String sessionId) {
+    final requestId = _newHistoryRequestId('initial', sessionId);
+    _initialHistoryRequestId = requestId;
+    _olderHistoryRequestId = null;
+    return requestId;
   }
 
   /// Check if a path exists on the server. Returns true if it exists.
@@ -9879,6 +9941,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _promptSuggestions = [];
     _contextUsage = null;
     _requiresAction = false;
+    final historyRequestId = _beginInitialHistoryRequest(sessionId);
     // Track the backend immediately so chat-header [CODEX] flag is right
     // before session_created comes back; falls through to whatever the
     // server confirms on the SessionInfo write-through.
@@ -9888,6 +9951,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'sessionId': sessionId,
       'cwd': cwd,
       if (backend != null) 'backend': backend,
+      'historyRequestId': historyRequestId,
     };
     if (serverId != null) {
       _connMgr.activeServerId = serverId;
