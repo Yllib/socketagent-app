@@ -4778,6 +4778,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         break;
     }
+
+    // Card-defining session events are retained and retried by the server
+    // until the live reducer confirms it actually applied them. A WebSocket
+    // frame reaching the phone is not enough: session/provider transitions
+    // can otherwise discard a tool card while ordinary text keeps streaming.
+    final deliveryId = msg['deliveryId'] as String?;
+    final deliverySessionId = msg['sessionId'] as String?;
+    if (deliveryId != null &&
+        deliveryId.isNotEmpty &&
+        deliverySessionId != null &&
+        deliverySessionId.isNotEmpty &&
+        (type == 'tool_call' || type == 'tool_result')) {
+      final ack = {
+        'type': 'session_event_ack',
+        'sessionId': deliverySessionId,
+        'deliveryId': deliveryId,
+      };
+      if (serverId != null && serverId.isNotEmpty) {
+        _connMgr.sendToServer(serverId, ack);
+      } else {
+        _connMgr.send(ack);
+      }
+    }
   }
 
   void _rememberAuthRequestRoute(
