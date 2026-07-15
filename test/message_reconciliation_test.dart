@@ -190,4 +190,29 @@ void main() {
 
     expect(reconcileLiveTranscriptWithSnapshot(const [], [answered]), isEmpty);
   });
+
+  test('preserves the current user turn after a stale reconnect snapshot', () {
+    final previousUser = ChatMessage.userText('previous prompt')
+      ..uuid = 'previous-user';
+    final previousReply = ChatMessage.assistantText('session')
+      ..textContent = 'previous reply';
+    final currentUser = ChatMessage.userText('current prompt')
+      ..uuid = 'current-user';
+    final currentReply = ChatMessage.assistantText('session')
+      ..textContent = 'current final reply';
+
+    final snapshotUser = ChatMessage.userText('previous prompt')
+      ..uuid = 'previous-user';
+    final snapshotReply = ChatMessage.assistantText('session')
+      ..textContent = 'previous reply';
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot(
+      [snapshotUser, snapshotReply],
+      [previousUser, previousReply, currentUser, currentReply],
+    );
+
+    expect(reconciled, contains(same(currentUser)));
+    expect(reconciled, contains(same(currentReply)));
+    expect(reconciled.indexOf(currentUser), lessThan(reconciled.indexOf(currentReply)));
+  });
 }

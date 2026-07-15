@@ -96,13 +96,37 @@ class WebSocketService {
     }
     _setStatus(ConnectionStatus.connecting);
     _reconnectTimer?.cancel();
-    // Cancel old subscription BEFORE closing channel to prevent stale onDone callbacks
-    _channelSubscription?.cancel();
+    // A forced reconnect must finish closing the previous socket before the
+    // replacement is opened. Cancelling/closing without awaiting leaves two
+    // relay peers alive for the same phone; each peer can independently resume
+    // the session and race a history snapshot against the live final message.
+    final previousSubscription = _channelSubscription;
+    final previousChannel = _channel;
     _channelSubscription = null;
-    _channel?.sink.close();
     _channel = null;
     // Increment generation so any lingering async callbacks from old connections are ignored
     final gen = ++_connectionGeneration;
+    unawaited(
+      _connectAfterClosingPrevious(
+        gen,
+        previousSubscription,
+        previousChannel,
+      ),
+    );
+  }
+
+  Future<void> _connectAfterClosingPrevious(
+    int gen,
+    StreamSubscription? previousSubscription,
+    WebSocketChannel? previousChannel,
+  ) async {
+    try {
+      await previousSubscription?.cancel();
+    } catch (_) {}
+    try {
+      await previousChannel?.sink.close().timeout(const Duration(seconds: 2));
+    } catch (_) {}
+    if (gen != _connectionGeneration) return;
 
     try {
       final Uri uri;

@@ -130,6 +130,17 @@ bool _isLiveTranscriptMessage(ChatMessage message) {
       message.type == MessageType.secureInput;
 }
 
+bool _messagesOverlap(ChatMessage live, ChatMessage snapshot) {
+  final liveKey = _stableLiveKey(live);
+  if (liveKey != null) return _stableLiveKey(snapshot) == liveKey;
+  if (live.type == MessageType.text ||
+      live.type == MessageType.thinking ||
+      live.type == MessageType.skillInvocation) {
+    return _textStreamsMatch(live, snapshot);
+  }
+  return false;
+}
+
 bool _textStreamsMatch(ChatMessage left, ChatMessage right) {
   if (left.sender != right.sender ||
       left.type != right.type ||
@@ -188,8 +199,25 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
   Iterable<ChatMessage> liveCandidates,
 ) {
   final reconciled = snapshotMessages.toList();
-  for (final live in liveCandidates) {
-    if (!_isLiveTranscriptMessage(live)) continue;
+  final liveList = liveCandidates.toList();
+  var newestLiveOverlap = -1;
+  for (var i = 0; i < liveList.length; i++) {
+    if (reconciled.any((snapshot) => _messagesOverlap(liveList[i], snapshot))) {
+      newestLiveOverlap = i;
+    }
+  }
+
+  for (var i = 0; i < liveList.length; i++) {
+    final live = liveList[i];
+    // A reconnect snapshot can be generated just before the current prompt is
+    // persisted. Preserve user messages in the live tail after the newest
+    // snapshot overlap so the UI cannot roll back to the previous prompt.
+    final isLiveUserTail =
+        i > newestLiveOverlap &&
+        live.sender == MessageSender.user &&
+        (live.type == MessageType.text ||
+            live.type == MessageType.skillInvocation);
+    if (!_isLiveTranscriptMessage(live) && !isLiveUserTail) continue;
     final stableKey = _stableLiveKey(live);
     var matchIndex = -1;
     if (stableKey != null) {
@@ -197,7 +225,8 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
         (snapshot) => _stableLiveKey(snapshot) == stableKey,
       );
     } else if (live.type == MessageType.text ||
-        live.type == MessageType.thinking) {
+        live.type == MessageType.thinking ||
+        live.type == MessageType.skillInvocation) {
       matchIndex = reconciled.lastIndexWhere(
         (snapshot) => _textStreamsMatch(live, snapshot),
       );

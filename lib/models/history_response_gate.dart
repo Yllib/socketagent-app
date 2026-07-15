@@ -56,6 +56,12 @@ SessionHistoryDecision gateSessionHistoryResponse({
           kind: SessionHistoryKind.older,
         );
       }
+      // An unsolicited legacy snapshot must never replace a visible live
+      // transcript. Old servers still work for an actual initial request (or
+      // an empty view), but late history responses are ignored.
+      if (expectedInitialRequestId == null && hasVisibleMessages) {
+        return const SessionHistoryDecision(accept: false);
+      }
       return const SessionHistoryDecision(
         accept: true,
         kind: SessionHistoryKind.initial,

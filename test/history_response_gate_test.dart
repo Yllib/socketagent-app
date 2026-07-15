@@ -83,4 +83,20 @@ void main() {
     expect(decision.accept, isTrue);
     expect(decision.kind, SessionHistoryKind.append);
   });
+
+  test('rejects an unsolicited legacy snapshot over a visible transcript', () {
+    final decision = gateSessionHistoryResponse(
+      responseSessionId: 'session-1',
+      activeSessionId: 'session-1',
+      historyKind: null,
+      requestId: null,
+      expectedInitialRequestId: null,
+      expectedOlderRequestId: null,
+      legacyAppend: false,
+      legacyLoadingMore: false,
+      hasVisibleMessages: true,
+    );
+
+    expect(decision.accept, isFalse);
+  });
 }
