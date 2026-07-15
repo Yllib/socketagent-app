@@ -190,7 +190,11 @@ class WebSocketService {
           }
           // Probe for binary support. New server replies with server_capabilities;
           // old server ignores the unknown type and we stay on legacy.
-          send({'type': 'client_capabilities', 'binaryEnvelope': true});
+          send({
+            'type': 'client_capabilities',
+            'binaryEnvelope': true,
+            'sessionEventAck': true,
+          });
         });
       }
     } catch (e) {
@@ -359,12 +363,21 @@ class WebSocketService {
           : '[Direct E2E] Key exchange complete — encryption ready',
     );
     if (_mode == ConnectionMode.direct) {
-      send({'type': 'direct_auth', 'token': _token, 'binaryEnvelope': true});
+      send({
+        'type': 'direct_auth',
+        'token': _token,
+        'binaryEnvelope': true,
+        'sessionEventAck': true,
+      });
       return;
     }
     // Announce that we can speak the binary wire format. Older servers will
     // ignore this message and we'll stay on the legacy JSON envelope.
-    send({'type': 'client_capabilities', 'binaryEnvelope': true});
+    send({
+      'type': 'client_capabilities',
+      'binaryEnvelope': true,
+      'sessionEventAck': true,
+    });
   }
 
   /// Send our public key to the server for NaCl key exchange

@@ -4789,7 +4789,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         deliveryId.isNotEmpty &&
         deliverySessionId != null &&
         deliverySessionId.isNotEmpty &&
-        (type == 'tool_call' || type == 'tool_result')) {
+        (type == 'tool_call' ||
+            type == 'tool_result' ||
+            type == 'text' ||
+            type == 'thinking')) {
       final ack = {
         'type': 'session_event_ack',
         'sessionId': deliverySessionId,
@@ -5014,6 +5017,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final content = msg['content'] as String? ?? '';
     final streamId = msg['streamId'] as String?;
     final isReplay = msg['replay'] == true;
+    final isSnapshot = isReplay || msg['snapshot'] == true;
     final parentToolUseId = msg['parentToolUseId'] as String?;
     final streamKey = _hierarchyStreamKey(msg);
 
@@ -5066,7 +5070,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     streamMessage.textContent = mergeLiveStreamContent(
       current: streamMessage.textContent,
       incoming: content,
-      isReplay: isReplay,
+      isReplay: isSnapshot,
       hasStreamId: streamId != null,
     );
 
@@ -5128,6 +5132,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
     final isReplay = msg['replay'] == true;
+    final isSnapshot = isReplay || msg['snapshot'] == true;
     final parentToolUseId = msg['parentToolUseId'] as String?;
     final streamKey = _hierarchyStreamKey(msg);
     if (isReplay) {
@@ -5154,14 +5159,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _thinkingMessagesByKey[streamKey] = thinkingMessage;
       _messages.add(thinkingMessage);
     }
-    thinkingMessage.textContent += content;
+    thinkingMessage.textContent = isSnapshot
+        ? content
+        : thinkingMessage.textContent + content;
     thinkingMessage.toolStreaming = true;
     _currentThinkingMessage = thinkingMessage;
     notifyListeners();
   }
 
   void _handleToolCall(Map<String, dynamic> msg) {
-    _closeLiveStreamsForParent(msg['parentToolUseId'] as String?);
     _processingSetAt = null; // server confirmed processing
 
     final rawTool = msg['tool'] ?? 'Unknown';
@@ -5210,6 +5216,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 message.type == MessageType.toolCall &&
                 message.toolUseId == toolUseId,
           );
+    // Retransmission is the same transcript event. Only a genuinely new tool
+    // call closes the preceding assistant stream.
+    if (existingIndex < 0) {
+      _closeLiveStreamsForParent(msg['parentToolUseId'] as String?);
+    }
     if (existingIndex >= 0) {
       final existing = _messages[existingIndex];
       if (shouldReplaceToolCardMetadata(
