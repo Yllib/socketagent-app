@@ -1625,7 +1625,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Reconnect after a real background stint; otherwise just reattach.
       if (wasAwayFor > const Duration(seconds: 1) ||
           ws.status != ConnectionStatus.connected) {
-        ws.connect();
+        ws.connect(force: wasAwayFor > const Duration(seconds: 1));
       } else {
         // The still-open socket is already attached to this session. Asking
         // for a full resume here creates a history snapshot on every brief
@@ -1711,7 +1711,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         return c;
       }).toList();
-      if (relayMigrated) await _saveServerConfigs();
+      final dedupedConfigs = dedupeServerConfigs(_serverConfigs);
+      final duplicateConfigsRemoved =
+          dedupedConfigs.length != _serverConfigs.length;
+      _serverConfigs = dedupedConfigs;
+      if (relayMigrated || duplicateConfigsRemoved) {
+        await _saveServerConfigs();
+      }
     }
     // Migrate old single-server config if no multi-server configs exist
     if (_serverConfigs.isEmpty && _serverHost.isNotEmpty) {
@@ -5036,6 +5042,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       (_, message) => message.parentToolUseId == parentToolUseId,
     );
     _thinkingMessagesByKey.removeWhere((_, message) {
+      final matches = message.parentToolUseId == parentToolUseId;
+      if (matches) message.toolStreaming = false;
+      return matches;
+    });
+    _assistantMessagesByStreamKey.removeWhere(
+      (_, message) => message.parentToolUseId == parentToolUseId,
+    );
+    _thinkingMessagesByStreamKey.removeWhere((_, message) {
       final matches = message.parentToolUseId == parentToolUseId;
       if (matches) message.toolStreaming = false;
       return matches;

@@ -161,9 +161,13 @@ class ConnectionManager {
 
   /// Connect all configured servers.
   void connectAll() {
+    final connectedIdentities = <String>{};
     for (final entry in _connections.entries) {
       final config = _configs[entry.key];
       if (config == null) continue;
+      // Defend against duplicate stored pairings even before the owning
+      // provider has had a chance to migrate them away.
+      if (!connectedIdentities.add(config.connectionIdentity)) continue;
       entry.value.connect();
     }
   }

@@ -38,6 +38,28 @@ class ServerConfig {
   bool get isRelayPaired =>
       relayUrl.isNotEmpty && pairingToken.isNotEmpty && serverPubkey.isNotEmpty;
 
+  /// Stable identity for the physical SocketAgent server represented by this
+  /// config. Older app versions could migrate/pair the same server more than
+  /// once under different local IDs, which opened duplicate relay sockets and
+  /// caused every live event/history snapshot to arrive more than once.
+  String get connectionIdentity {
+    if (useRelay && isRelayPaired) {
+      return [
+        'relay',
+        relayUrl.trim().toLowerCase(),
+        pairingToken.trim(),
+        serverPubkey.trim(),
+      ].join('\u0001');
+    }
+    return [
+      'direct',
+      host.trim().toLowerCase(),
+      port.toString(),
+      token.trim(),
+      serverPubkey.trim(),
+    ].join('\u0001');
+  }
+
   static String generateId() {
     final now = DateTime.now().millisecondsSinceEpoch;
     final rand = Random().nextInt(0xFFFF).toRadixString(16).padLeft(4, '0');
@@ -122,4 +144,13 @@ class ServerConfig {
       systemPrompt: systemPrompt ?? this.systemPrompt,
     );
   }
+}
+
+/// Keeps the first config for each physical server connection. Config IDs are
+/// app-local, so they cannot be used to detect a duplicate pairing.
+List<ServerConfig> dedupeServerConfigs(Iterable<ServerConfig> configs) {
+  final seen = <String>{};
+  return configs
+      .where((config) => seen.add(config.connectionIdentity))
+      .toList();
 }

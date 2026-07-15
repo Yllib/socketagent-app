@@ -9,6 +9,15 @@ enum ConnectionStatus { disconnected, connecting, connected, error }
 
 enum ConnectionMode { direct, relay }
 
+bool shouldStartWebSocketConnection(
+  ConnectionStatus status, {
+  bool force = false,
+}) {
+  return force ||
+      (status != ConnectionStatus.connecting &&
+          status != ConnectionStatus.connected);
+}
+
 class WebSocketService {
   static const int _sessionEventAckVersion = 1;
   WebSocketChannel? _channel;
@@ -78,8 +87,13 @@ class WebSocketService {
     _mode = mode;
   }
 
-  void connect() {
-    if (_status == ConnectionStatus.connecting) return;
+  void connect({bool force = false}) {
+    // App startup and shell initialization can both request a connection.
+    // Replacing a healthy channel here creates a late resume/history snapshot
+    // and races it against live turn completion.
+    if (!shouldStartWebSocketConnection(_status, force: force)) {
+      return;
+    }
     _setStatus(ConnectionStatus.connecting);
     _reconnectTimer?.cancel();
     // Cancel old subscription BEFORE closing channel to prevent stale onDone callbacks
