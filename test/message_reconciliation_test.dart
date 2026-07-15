@@ -3,6 +3,13 @@ import 'package:app/models/message_reconciliation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('a missing live message never matches a root parent', () {
+    expect(liveMessageMatchesParent(null, null), isFalse);
+
+    final root = ChatMessage.thinking()..parentToolUseId = null;
+    expect(liveMessageMatchesParent(root, null), isTrue);
+  });
+
   test('deduplicates the same tracked transcript event across delivery ids', () {
     final first = acknowledgedSessionEventKey({
       'type': 'tool_call',

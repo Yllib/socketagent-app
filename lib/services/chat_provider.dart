@@ -5127,11 +5127,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (matches) message.toolStreaming = false;
       return matches;
     });
-    if (_currentStreamingMessage?.parentToolUseId == parentToolUseId) {
+    if (liveMessageMatchesParent(
+      _currentStreamingMessage,
+      parentToolUseId,
+    )) {
       _currentStreamingMessage = null;
       _currentStreamingStreamId = null;
     }
-    if (_currentThinkingMessage?.parentToolUseId == parentToolUseId) {
+    if (liveMessageMatchesParent(_currentThinkingMessage, parentToolUseId)) {
       _currentThinkingMessage!.toolStreaming = false;
       _currentThinkingMessage = null;
     }

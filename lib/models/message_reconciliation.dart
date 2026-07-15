@@ -29,6 +29,10 @@ String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
   return null;
 }
 
+bool liveMessageMatchesParent(ChatMessage? message, String? parentToolUseId) {
+  return message != null && message.parentToolUseId == parentToolUseId;
+}
+
 /// A replay frame is a complete cached snapshot of one in-flight stream, not
 /// another delta. This matters when a late-joining client receives a new delta
 /// just before the replay frame: appending would put the suffix before the
