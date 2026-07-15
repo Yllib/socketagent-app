@@ -1,5 +1,39 @@
 import 'message.dart';
 
+/// A replay frame is a complete cached snapshot of one in-flight stream, not
+/// another delta. This matters when a late-joining client receives a new delta
+/// just before the replay frame: appending would put the suffix before the
+/// prefix or lose the prefix entirely.
+String mergeLiveStreamContent({
+  required String current,
+  required String incoming,
+  required bool isReplay,
+  required bool hasStreamId,
+}) {
+  if (isReplay) return incoming;
+  if (!hasStreamId) return current + incoming;
+  if (incoming == current) return current;
+  if (current.isNotEmpty && incoming.startsWith(current)) return incoming;
+  return current + incoming;
+}
+
+bool isGenericToolCardName(String? name) {
+  final normalized = (name ?? '').trim().toLowerCase();
+  return normalized.isEmpty || normalized == 'tool' || normalized == 'unknown';
+}
+
+bool shouldReplaceToolCardMetadata({
+  required String? existingName,
+  required Map<String, dynamic>? existingInput,
+  required String incomingName,
+  required Map<String, dynamic> incomingInput,
+}) {
+  return (isGenericToolCardName(existingName) &&
+          !isGenericToolCardName(incomingName)) ||
+      ((existingInput == null || existingInput.isEmpty) &&
+          incomingInput.isNotEmpty);
+}
+
 String? interactionKey(ChatMessage message) {
   if (message.type == MessageType.secureInput) {
     return 'secure:${message.questionId ?? message.id}';

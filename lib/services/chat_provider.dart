@@ -4992,18 +4992,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (isReplay) {
-      final existing = _findReplayedAssistantMessage(
-        content,
-        parentToolUseId: parentToolUseId,
-      );
+      final existing =
+          _streamingMessagesByKey[streamKey] ??
+          _findReplayedAssistantMessage(
+            content,
+            parentToolUseId: parentToolUseId,
+          );
       if (existing != null) {
-        if (content.length > existing.textContent.length &&
-            content.startsWith(existing.textContent)) {
-          existing.textContent = content;
-        }
+        existing.textContent = mergeLiveStreamContent(
+          current: existing.textContent,
+          incoming: content,
+          isReplay: true,
+          hasStreamId: streamId != null,
+        );
         _streamingMessagesByKey[streamKey] = existing;
         _currentStreamingMessage = existing;
         _currentStreamingStreamId = streamId;
+        if (existing.textContent.trim().isNotEmpty &&
+            !_messages.contains(existing)) {
+          _messages.add(existing);
+        }
         notifyListeners();
         return;
       }
@@ -5023,19 +5031,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _currentStreamingMessage = streamMessage;
 
-    if (streamId != null) {
-      final currentText = streamMessage.textContent;
-      if (content == currentText) {
-        // Live-state replay after reconnect/resume can resend the full text
-        // already shown for this Codex item.
-      } else if (currentText.isNotEmpty && content.startsWith(currentText)) {
-        streamMessage.textContent = content;
-      } else {
-        streamMessage.textContent += content;
-      }
-    } else {
-      streamMessage.textContent += content;
-    }
+    streamMessage.textContent = mergeLiveStreamContent(
+      current: streamMessage.textContent,
+      incoming: content,
+      isReplay: isReplay,
+      hasStreamId: streamId != null,
+    );
 
     // Extract task notifications and create notification messages
     final rawText = streamMessage.textContent;
@@ -5098,15 +5099,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final parentToolUseId = msg['parentToolUseId'] as String?;
     final streamKey = _hierarchyStreamKey(msg);
     if (isReplay) {
-      final existing = _findReplayedThinkingMessage(
-        content,
-        parentToolUseId: parentToolUseId,
-      );
+      final existing =
+          _thinkingMessagesByKey[streamKey] ??
+          _findReplayedThinkingMessage(
+            content,
+            parentToolUseId: parentToolUseId,
+          );
       if (existing != null) {
-        if (content.length > existing.textContent.length &&
-            content.startsWith(existing.textContent)) {
-          existing.textContent = content;
-        }
+        existing.textContent = content;
         existing.toolStreaming = true;
         _thinkingMessagesByKey[streamKey] = existing;
         _currentThinkingMessage = existing;
@@ -5163,7 +5163,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       return;
     }
-    final toolMsg = ChatMessage.toolCall(
+    var toolMsg = ChatMessage.toolCall(
       tool: tool,
       input: input,
       toolUseId: toolUseId,
@@ -5171,6 +5171,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     toolMsg.toolStreaming = true; // tool is actively running
     toolMsg.parentToolUseId = msg['parentToolUseId'] as String?;
     toolMsg.uuid = msg['uuid'] as String?;
+    final existingIndex = toolUseId.isEmpty
+        ? -1
+        : _messages.lastIndexWhere(
+            (message) =>
+                message.type == MessageType.toolCall &&
+                message.toolUseId == toolUseId,
+          );
+    if (existingIndex >= 0) {
+      final existing = _messages[existingIndex];
+      if (shouldReplaceToolCardMetadata(
+        existingName: existing.toolName,
+        existingInput: existing.toolInput,
+        incomingName: tool,
+        incomingInput: input,
+      )) {
+        toolMsg.toolOutput = existing.toolOutput;
+        toolMsg.toolStreaming = existing.toolStreaming;
+        toolMsg.parentToolUseId ??= existing.parentToolUseId;
+        toolMsg.uuid ??= existing.uuid;
+        _messages[existingIndex] = toolMsg;
+      } else {
+        toolMsg = existing;
+        toolMsg.toolStreaming = toolMsg.toolOutput == null;
+        toolMsg.parentToolUseId ??= msg['parentToolUseId'] as String?;
+        toolMsg.uuid ??= msg['uuid'] as String?;
+      }
+    }
     final pendingResult = _toolEventReconciler.takeResult(toolUseId);
     final pendingStream = _toolEventReconciler.takeStream(toolUseId);
     if (pendingResult != null) {
@@ -5181,7 +5208,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       toolMsg.toolOutput = pendingStream.output;
       toolMsg.toolStreaming = !pendingStream.done;
     }
-    _messages.add(toolMsg);
+    if (existingIndex < 0) {
+      _messages.add(toolMsg);
+    }
 
     // Track Task/Agent tool calls as subagent tasks
     final subagentType = input['subagent_type'] as String? ?? '';
