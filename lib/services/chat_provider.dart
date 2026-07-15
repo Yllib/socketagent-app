@@ -539,6 +539,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ChatMessage? _currentThinkingMessage;
   final Map<String, ChatMessage> _streamingMessagesByKey = {};
   final Map<String, ChatMessage> _thinkingMessagesByKey = {};
+  final Map<String, ChatMessage> _assistantMessagesByStreamKey = {};
+  final Map<String, ChatMessage> _thinkingMessagesByStreamKey = {};
+  final Set<String> _appliedSessionDeliveryIds = {};
+  final List<String> _appliedSessionDeliveryOrder = [];
   // Tool events can straddle a reconnect/history replacement. Keep results
   // keyed by toolUseId until their call card is present instead of rendering a
   // nameless standalone Tool card.
@@ -3389,6 +3393,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return; // Don't process sdk_event further — it's debug-only
     }
 
+    final deliveryId = msg['deliveryId'] as String?;
+    final deliverySessionId = msg['sessionId'] as String?;
+    final acknowledgesDelivery = deliveryId != null &&
+        deliveryId.isNotEmpty &&
+        deliverySessionId != null &&
+        deliverySessionId.isNotEmpty &&
+        (type == 'tool_call' ||
+            type == 'tool_result' ||
+            type == 'text' ||
+            type == 'thinking');
+    if (acknowledgesDelivery &&
+        _appliedSessionDeliveryIds.contains(deliveryId!)) {
+      _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
+      return;
+    }
+
     switch (type) {
       case 'text':
         _handleTextMessage(msg);
@@ -4783,26 +4803,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // until the live reducer confirms it actually applied them. A WebSocket
     // frame reaching the phone is not enough: session/provider transitions
     // can otherwise discard a tool card while ordinary text keeps streaming.
-    final deliveryId = msg['deliveryId'] as String?;
-    final deliverySessionId = msg['sessionId'] as String?;
-    if (deliveryId != null &&
-        deliveryId.isNotEmpty &&
-        deliverySessionId != null &&
-        deliverySessionId.isNotEmpty &&
-        (type == 'tool_call' ||
-            type == 'tool_result' ||
-            type == 'text' ||
-            type == 'thinking')) {
-      final ack = {
-        'type': 'session_event_ack',
-        'sessionId': deliverySessionId,
-        'deliveryId': deliveryId,
-      };
-      if (serverId != null && serverId.isNotEmpty) {
-        _connMgr.sendToServer(serverId, ack);
-      } else {
-        _connMgr.send(ack);
-      }
+    if (acknowledgesDelivery) {
+      _rememberAppliedSessionDelivery(deliveryId!);
+      _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
+    }
+  }
+
+  void _rememberAppliedSessionDelivery(String deliveryId) {
+    if (!_appliedSessionDeliveryIds.add(deliveryId)) return;
+    _appliedSessionDeliveryOrder.add(deliveryId);
+    while (_appliedSessionDeliveryOrder.length > 2000) {
+      final oldest = _appliedSessionDeliveryOrder.removeAt(0);
+      _appliedSessionDeliveryIds.remove(oldest);
+    }
+  }
+
+  void _ackSessionDelivery(
+    String sessionId,
+    String deliveryId,
+    String? serverId,
+  ) {
+    final ack = {
+      'type': 'session_event_ack',
+      'sessionId': sessionId,
+      'deliveryId': deliveryId,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, ack);
+    } else {
+      _connMgr.send(ack);
     }
   }
 
@@ -4988,6 +5017,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _clearLiveMessageStreams() {
     _streamingMessagesByKey.clear();
     _thinkingMessagesByKey.clear();
+    _assistantMessagesByStreamKey.clear();
+    _thinkingMessagesByStreamKey.clear();
     _currentStreamingMessage = null;
     _currentStreamingStreamId = null;
     _closeThinkingMessage();
@@ -5030,6 +5061,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (isReplay) {
       final existing =
           _streamingMessagesByKey[streamKey] ??
+          _assistantMessagesByStreamKey[streamKey] ??
           _findReplayedAssistantMessage(
             content,
             parentToolUseId: parentToolUseId,
@@ -5042,6 +5074,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           hasStreamId: streamId != null,
         );
         _streamingMessagesByKey[streamKey] = existing;
+        _assistantMessagesByStreamKey[streamKey] = existing;
+        existing.streamId = streamId;
         _currentStreamingMessage = existing;
         _currentStreamingStreamId = streamId;
         if (existing.textContent.trim().isNotEmpty &&
@@ -5053,18 +5087,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    var streamMessage = _streamingMessagesByKey[streamKey];
+    var streamMessage =
+        _streamingMessagesByKey[streamKey] ??
+        _assistantMessagesByStreamKey[streamKey];
+    if (streamMessage != null && !_messages.contains(streamMessage)) {
+      final reconciled = _findReplayedAssistantMessage(
+        content,
+        parentToolUseId: parentToolUseId,
+      );
+      if (reconciled != null) streamMessage = reconciled;
+    }
     if (streamMessage == null) {
       streamMessage = ChatMessage.assistantText(msg['sessionId'] ?? '');
       _currentStreamingStreamId = streamId;
       // Forward SDK hierarchy fields
       streamMessage.parentToolUseId = parentToolUseId;
       streamMessage.uuid = msg['uuid'] as String?;
-      _streamingMessagesByKey[streamKey] = streamMessage;
       // Don't add to _messages yet — wait until there's visible content
     } else if (_currentStreamingStreamId == null && streamId != null) {
       _currentStreamingStreamId = streamId;
     }
+    streamMessage.streamId = streamId;
+    _streamingMessagesByKey[streamKey] = streamMessage;
+    _assistantMessagesByStreamKey[streamKey] = streamMessage;
     _currentStreamingMessage = streamMessage;
 
     streamMessage.textContent = mergeLiveStreamContent(
@@ -5138,6 +5183,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (isReplay) {
       final existing =
           _thinkingMessagesByKey[streamKey] ??
+          _thinkingMessagesByStreamKey[streamKey] ??
           _findReplayedThinkingMessage(
             content,
             parentToolUseId: parentToolUseId,
@@ -5146,19 +5192,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         existing.textContent = content;
         existing.toolStreaming = true;
         _thinkingMessagesByKey[streamKey] = existing;
+        _thinkingMessagesByStreamKey[streamKey] = existing;
+        existing.streamId = msg['streamId'] as String?;
         _currentThinkingMessage = existing;
         notifyListeners();
         return;
       }
     }
-    var thinkingMessage = _thinkingMessagesByKey[streamKey];
+    var thinkingMessage =
+        _thinkingMessagesByKey[streamKey] ??
+        _thinkingMessagesByStreamKey[streamKey];
     if (thinkingMessage == null) {
       thinkingMessage = ChatMessage.thinking();
       thinkingMessage.parentToolUseId = parentToolUseId;
       thinkingMessage.uuid = msg['uuid'] as String?;
-      _thinkingMessagesByKey[streamKey] = thinkingMessage;
       _messages.add(thinkingMessage);
     }
+    thinkingMessage.streamId = msg['streamId'] as String?;
+    _thinkingMessagesByKey[streamKey] = thinkingMessage;
+    _thinkingMessagesByStreamKey[streamKey] = thinkingMessage;
     thinkingMessage.textContent = isSnapshot
         ? content
         : thinkingMessage.textContent + content;

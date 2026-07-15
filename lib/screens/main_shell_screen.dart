@@ -17,17 +17,25 @@ class MainShellScreen extends StatefulWidget {
   State<MainShellScreen> createState() => MainShellScreenState();
 }
 
-class MainShellScreenState extends State<MainShellScreen> with RouteAware {
+class MainShellScreenState extends State<MainShellScreen>
+    with RouteAware, WidgetsBindingObserver {
+  static const _updateCheckInterval = Duration(minutes: 5);
+  static const _foregroundUpdateThrottle = Duration(minutes: 1);
   int _currentIndex = 0;
   StreamSubscription? _subRequiredSub;
   StreamSubscription? _backendAuthRequiredSub;
   Future<bool>? _paywallFuture;
   final UpdateService _updateService = UpdateService();
   bool _updateBannerDismissed = false;
+  String? _dismissedUpdateVersion;
+  DateTime? _lastUpdateCheckAt;
+  Future<void>? _updateCheckInFlight;
+  Timer? _updateCheckTimer;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _updateService.addListener(_onUpdateChange);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
@@ -68,12 +76,41 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
       provider.refreshSubscriptionStatusIfStale();
       provider.requestSessionList();
       // App release metadata is public on GitHub; do not depend on a server.
-      _checkForAppUpdate();
+      unawaited(_checkForAppUpdate(force: true));
+      _updateCheckTimer = Timer.periodic(
+        _updateCheckInterval,
+        (_) => unawaited(_checkForAppUpdate()),
+      );
     });
   }
 
-  Future<void> _checkForAppUpdate() async {
-    await _updateService.checkForUpdate();
+  Future<void> _checkForAppUpdate({bool force = false}) {
+    final active = _updateCheckInFlight;
+    if (active != null) return active;
+    final lastCheck = _lastUpdateCheckAt;
+    if (!force &&
+        lastCheck != null &&
+        DateTime.now().difference(lastCheck) < _foregroundUpdateThrottle) {
+      return Future.value();
+    }
+
+    late final Future<void> check;
+    check = _runAppUpdateCheck().whenComplete(() {
+      if (identical(_updateCheckInFlight, check)) {
+        _updateCheckInFlight = null;
+      }
+    });
+    _updateCheckInFlight = check;
+    return check;
+  }
+
+  Future<void> _runAppUpdateCheck() async {
+    _lastUpdateCheckAt = DateTime.now();
+    final result = await _updateService.checkForUpdate();
+    if (!mounted || result?.updateAvailable != true) return;
+    if (result!.latestVersion != _dismissedUpdateVersion) {
+      setState(() => _updateBannerDismissed = false);
+    }
   }
 
   void _onUpdateChange() {
@@ -91,11 +128,20 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _updateCheckTimer?.cancel();
     _subRequiredSub?.cancel();
     _backendAuthRequiredSub?.cancel();
     _updateService.removeListener(_onUpdateChange);
     routeObserver.unsubscribe(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_checkForAppUpdate());
+    }
   }
 
   @override
@@ -133,7 +179,10 @@ class MainShellScreenState extends State<MainShellScreen> with RouteAware {
   /// Expose update service to child widgets
   UpdateService get updateService => _updateService;
   bool get updateBannerDismissed => _updateBannerDismissed;
-  void dismissUpdateBanner() => setState(() => _updateBannerDismissed = true);
+  void dismissUpdateBanner() => setState(() {
+    _updateBannerDismissed = true;
+    _dismissedUpdateVersion = _updateService.updateInfo?.latestVersion;
+  });
 
   /// Check subscription — callable from child tabs via context.findAncestorStateOfType
   Future<bool> requireSubscription() async {

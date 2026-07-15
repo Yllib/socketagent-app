@@ -82,6 +82,7 @@ class ChatMessage {
   String? parentToolUseId;
   String? originToolUseId;
   String? uuid;
+  String? streamId;
   String? agentId;
 
   // Tool summary fields
@@ -115,6 +116,7 @@ class ChatMessage {
     this.parentToolUseId,
     this.originToolUseId,
     this.uuid,
+    this.streamId,
     this.agentId,
     this.precedingToolUseIds,
     this.toolImageData,
