@@ -2426,6 +2426,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     sendTo({'type': 'set_tts', 'enabled': _ttsEnabled});
+    sendTo({
+      'type': 'set_raw_mode',
+      'enabled': _rawMode,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+    });
     // Sync TTS engine mode
     final engineStr = _ttsEngineMode == TtsEngineMode.kokoroServer
         ? 'kokoro_server'
@@ -2452,14 +2457,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(serverId, {'type': 'get_server_settings'});
       _connMgr.sendToServer(serverId, {'type': 'list_sessions'});
       _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
-      if (serverId == _connMgr.activeServerId) {
-        _connMgr.sendToServer(serverId, {'type': 'skills_list'});
-        if (_activeSessionBackend == 'codex') {
-          _connMgr.sendToServer(serverId, {
-            'type': 'codex_collaboration_modes',
-          });
-        }
-      }
     } else {
       requestServerSettings();
       requestSessionList();
@@ -2868,6 +2865,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void toggleRawMode() {
     _rawMode = !_rawMode;
+    _ws.send({
+      'type': 'set_raw_mode',
+      'enabled': _rawMode,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+    });
     if (_rawMode && _activeSessionId != null && _rawItems.isEmpty) {
       _ws.send({
         'type': 'get_sdk_event_history',
@@ -8693,7 +8695,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
-    _requestActiveCodexMetadata();
     notifyListeners();
   }
 
@@ -9508,8 +9509,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.send({'type': 'get_status_sync'});
     }
 
-    _requestActiveCodexMetadata();
-
     notifyListeners();
   }
 
@@ -10190,7 +10189,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
-    _requestActiveCodexMetadata();
     notifyListeners();
   }
 
