@@ -84,6 +84,11 @@ class ChatMessage {
   String? uuid;
   String? streamId;
   String? agentId;
+  // Durable transcript ordering assigned by the server. Replays keep the same
+  // entryId/sessionSeq; streamed content advances revision in place.
+  String? entryId;
+  int? sessionSeq;
+  int revision;
 
   // Tool summary fields
   List<String>? precedingToolUseIds;
@@ -118,6 +123,9 @@ class ChatMessage {
     this.uuid,
     this.streamId,
     this.agentId,
+    this.entryId,
+    this.sessionSeq,
+    this.revision = 0,
     this.precedingToolUseIds,
     this.toolImageData,
     this.toolImageMimeType,

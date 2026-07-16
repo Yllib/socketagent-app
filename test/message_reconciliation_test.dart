@@ -68,6 +68,48 @@ void main() {
     );
   });
 
+  test('late replay is inserted at its authoritative transcript position', () {
+    ChatMessage positioned(String id, int sequence) {
+      return ChatMessage.assistantText('')
+        ..entryId = id
+        ..sessionSeq = sequence
+        ..revision = 1
+        ..textContent = id;
+    }
+
+    final ordered = orderByTranscriptPosition([
+      positioned('entry-4628', 4628),
+      positioned('entry-4630', 4630),
+      positioned('entry-4629', 4629),
+    ]);
+
+    expect(
+      ordered.map((message) => message.entryId).toList(),
+      ['entry-4628', 'entry-4629', 'entry-4630'],
+    );
+  });
+
+  test('older replay revision cannot overwrite newer live content', () {
+    final current = ChatMessage.assistantText('')
+      ..entryId = 'entry-7'
+      ..revision = 4;
+
+    expect(
+      isStaleTranscriptRevision([current], {
+        'entryId': 'entry-7',
+        'revision': 3,
+      }),
+      isTrue,
+    );
+    expect(
+      isStaleTranscriptRevision([current], {
+        'entryId': 'entry-7',
+        'revision': 5,
+      }),
+      isFalse,
+    );
+  });
+
   test('tailored replay replaces generic tool-card metadata', () {
     expect(
       shouldReplaceToolCardMetadata(

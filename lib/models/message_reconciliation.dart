@@ -33,6 +33,67 @@ bool liveMessageMatchesParent(ChatMessage? message, String? parentToolUseId) {
   return message != null && message.parentToolUseId == parentToolUseId;
 }
 
+void applyTranscriptPosition(
+  ChatMessage message,
+  Map<String, dynamic> source,
+) {
+  final entryId = source['entryId'];
+  if (entryId is String && entryId.isNotEmpty) message.entryId = entryId;
+  final sessionSeq = source['sessionSeq'];
+  if (sessionSeq is num && sessionSeq.toInt() > 0) {
+    message.sessionSeq = sessionSeq.toInt();
+  }
+  final revision = source['revision'];
+  if (revision is num && revision.toInt() > 0) {
+    message.revision = revision.toInt();
+  }
+}
+
+bool isStaleTranscriptRevision(
+  Iterable<ChatMessage> messages,
+  Map<String, dynamic> incoming,
+) {
+  final entryId = incoming['entryId'];
+  final revision = incoming['revision'];
+  if (entryId is! String ||
+      entryId.isEmpty ||
+      revision is! num ||
+      revision.toInt() <= 0) {
+    return false;
+  }
+  for (final message in messages) {
+    if (message.entryId == entryId) {
+      return message.revision >= revision.toInt();
+    }
+  }
+  return false;
+}
+
+/// Reorders only messages with authoritative server positions. Unpositioned
+/// local UI cards retain their slots until the server confirms their position.
+List<ChatMessage> orderByTranscriptPosition(Iterable<ChatMessage> messages) {
+  final ordered = messages.toList();
+  final slots = <int>[];
+  final positioned = <({int originalIndex, ChatMessage message})>[];
+  for (var index = 0; index < ordered.length; index++) {
+    if (ordered[index].sessionSeq == null) continue;
+    slots.add(index);
+    positioned.add((originalIndex: index, message: ordered[index]));
+  }
+  positioned.sort((left, right) {
+    final bySequence = left.message.sessionSeq!.compareTo(
+      right.message.sessionSeq!,
+    );
+    return bySequence != 0
+        ? bySequence
+        : left.originalIndex.compareTo(right.originalIndex);
+  });
+  for (var index = 0; index < slots.length; index++) {
+    ordered[slots[index]] = positioned[index].message;
+  }
+  return ordered;
+}
+
 /// A replay frame is a complete cached snapshot of one in-flight stream, not
 /// another delta. This matters when a late-joining client receives a new delta
 /// just before the replay frame: appending would put the suffix before the
@@ -111,6 +172,9 @@ List<ChatMessage> pendingInteractionsMissingFromSnapshot(
 }
 
 String? _stableLiveKey(ChatMessage message) {
+  if (message.entryId != null && message.entryId!.isNotEmpty) {
+    return 'entry:${message.entryId}';
+  }
   final interaction = interactionKey(message);
   if (interaction != null) return interaction;
   if (message.type == MessageType.toolCall &&
@@ -177,6 +241,9 @@ bool _textStreamsMatch(ChatMessage left, ChatMessage right) {
 }
 
 void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
+  live.entryId ??= snapshot.entryId;
+  live.sessionSeq ??= snapshot.sessionSeq;
+  if (snapshot.revision > live.revision) live.revision = snapshot.revision;
   if (live.type == MessageType.toolCall) {
     final liveOutput = live.toolOutput ?? '';
     final snapshotOutput = snapshot.toolOutput ?? '';

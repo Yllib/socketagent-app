@@ -3433,6 +3433,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
       return;
     }
+    if (isStaleTranscriptRevision(_messages, msg)) {
+      if (acknowledgesDelivery) {
+        _rememberAppliedSessionDelivery(deliveryId!);
+        if (deliveryEventKey != null) {
+          _rememberAppliedSessionEventKey(deliveryEventKey);
+        }
+        _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
+      }
+      return;
+    }
 
     try {
       switch (type) {
@@ -4872,10 +4882,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
           fallback.toolStreaming = true;
           fallback.parentToolUseId = msg['parentToolUseId']?.toString();
+          applyTranscriptPosition(fallback, msg);
           _messages.add(fallback);
           notifyListeners();
         }
       }
+    }
+
+    final positionOrdered = orderByTranscriptPosition(_messages);
+    var positionChanged = false;
+    for (var index = 0; index < _messages.length; index++) {
+      if (!identical(_messages[index], positionOrdered[index])) {
+        positionChanged = true;
+        break;
+      }
+    }
+    if (positionChanged) {
+      _messages = positionOrdered;
+      notifyListeners();
     }
 
     // Card-defining session events are retained and retried by the server
@@ -5179,6 +5203,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final isSnapshot = isReplay || msg['snapshot'] == true;
     final parentToolUseId = msg['parentToolUseId'] as String?;
     final streamKey = _hierarchyStreamKey(msg);
+    final entryId = msg['entryId'] as String?;
+    ChatMessage? positionedMessage;
+    if (entryId != null && entryId.isNotEmpty) {
+      for (final message in _messages.reversed) {
+        if (message.entryId == entryId) {
+          positionedMessage = message;
+          break;
+        }
+      }
+    }
 
     final thinking = _thinkingMessagesByKey.remove(streamKey);
     if (thinking != null) thinking.toolStreaming = false;
@@ -5192,6 +5226,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // snapshots creates a second full assistant bubble at that boundary.
     if (isSnapshot) {
       final existing =
+          positionedMessage ??
           _streamingMessagesByKey[streamKey] ??
           _assistantMessagesByStreamKey[streamKey] ??
           _findReplayedAssistantMessage(
@@ -5208,6 +5243,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _streamingMessagesByKey[streamKey] = existing;
         _assistantMessagesByStreamKey[streamKey] = existing;
         existing.streamId = streamId;
+        applyTranscriptPosition(existing, msg);
         _currentStreamingMessage = existing;
         _currentStreamingStreamId = streamId;
         if (existing.textContent.trim().isNotEmpty &&
@@ -5220,6 +5256,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     var streamMessage =
+        positionedMessage ??
         _streamingMessagesByKey[streamKey] ??
         _assistantMessagesByStreamKey[streamKey];
     if (streamMessage != null && !_messages.contains(streamMessage)) {
@@ -5240,6 +5277,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _currentStreamingStreamId = streamId;
     }
     streamMessage.streamId = streamId;
+    applyTranscriptPosition(streamMessage, msg);
     _streamingMessagesByKey[streamKey] = streamMessage;
     _assistantMessagesByStreamKey[streamKey] = streamMessage;
     _currentStreamingMessage = streamMessage;
@@ -5312,8 +5350,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final isSnapshot = isReplay || msg['snapshot'] == true;
     final parentToolUseId = msg['parentToolUseId'] as String?;
     final streamKey = _hierarchyStreamKey(msg);
+    final entryId = msg['entryId'] as String?;
+    ChatMessage? positionedMessage;
+    if (entryId != null && entryId.isNotEmpty) {
+      for (final message in _messages.reversed) {
+        if (message.entryId == entryId) {
+          positionedMessage = message;
+          break;
+        }
+      }
+    }
     if (isReplay) {
       final existing =
+          positionedMessage ??
           _thinkingMessagesByKey[streamKey] ??
           _thinkingMessagesByStreamKey[streamKey] ??
           _findReplayedThinkingMessage(
@@ -5326,12 +5375,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _thinkingMessagesByKey[streamKey] = existing;
         _thinkingMessagesByStreamKey[streamKey] = existing;
         existing.streamId = msg['streamId'] as String?;
+        applyTranscriptPosition(existing, msg);
         _currentThinkingMessage = existing;
         notifyListeners();
         return;
       }
     }
     var thinkingMessage =
+        positionedMessage ??
         _thinkingMessagesByKey[streamKey] ??
         _thinkingMessagesByStreamKey[streamKey];
     if (thinkingMessage == null) {
@@ -5341,6 +5392,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _messages.add(thinkingMessage);
     }
     thinkingMessage.streamId = msg['streamId'] as String?;
+    applyTranscriptPosition(thinkingMessage, msg);
     _thinkingMessagesByKey[streamKey] = thinkingMessage;
     _thinkingMessagesByStreamKey[streamKey] = thinkingMessage;
     thinkingMessage.textContent = isSnapshot
@@ -5418,13 +5470,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     toolMsg.toolStreaming = true; // tool is actively running
     toolMsg.parentToolUseId = msg['parentToolUseId']?.toString();
     toolMsg.uuid = msg['uuid']?.toString();
-    var existingIndex = toolUseId.isEmpty
+    applyTranscriptPosition(toolMsg, msg);
+    final entryId = msg['entryId'] as String?;
+    var existingIndex = entryId == null || entryId.isEmpty
         ? -1
-        : _messages.lastIndexWhere(
+        : _messages.lastIndexWhere((message) => message.entryId == entryId);
+    if (existingIndex < 0 && toolUseId.isNotEmpty) {
+      existingIndex = _messages.lastIndexWhere(
             (message) =>
                 message.type == MessageType.toolCall &&
                 message.toolUseId == toolUseId,
           );
+    }
     final replacesSyntheticSendFile =
         existingIndex < 0 && syntheticSendFileIndex >= 0;
     if (replacesSyntheticSendFile) {
@@ -5451,6 +5508,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _messages[existingIndex] = toolMsg;
       } else {
         toolMsg = existing;
+        applyTranscriptPosition(toolMsg, msg);
         toolMsg.toolStreaming = toolMsg.toolOutput == null;
         toolMsg.parentToolUseId ??= msg['parentToolUseId']?.toString();
         toolMsg.uuid ??= msg['uuid']?.toString();
@@ -5711,6 +5769,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (existingIdx >= 0) {
       _messages[existingIdx].answered = false;
       _messages[existingIdx].toolInput?['status'] = 'pending';
+      applyTranscriptPosition(_messages[existingIdx], msg);
       notifyListeners();
       return;
     }
@@ -5735,13 +5794,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       };
     }
 
-    _messages.add(
-      ChatMessage.question(
+    final questionMessage = ChatMessage.question(
         questionId: questionId,
         questions: questions,
         emailPreview: emailPreview,
-      ),
-    );
+      );
+    applyTranscriptPosition(questionMessage, msg);
+    _messages.add(questionMessage);
     // Use the first question's text as notification body
     String questionBody = 'Your agent needs your input';
     if (questions.isNotEmpty) {
@@ -5766,6 +5825,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (existingIdx >= 0) {
       _messages[existingIdx].answered = false;
       _messages[existingIdx].toolInput?['status'] = 'pending';
+      applyTranscriptPosition(_messages[existingIdx], msg);
       refreshSecretInventory();
       notifyListeners();
       return;
@@ -5774,15 +5834,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final reason = msg['reason'] as String? ?? '';
     final envHint = msg['envHint'] as String? ?? '';
     final scope = msg['scope'] as String? ?? 'session';
-    _messages.add(
-      ChatMessage.secureInput(
+    final secureMessage = ChatMessage.secureInput(
         requestId: requestId,
         label: label,
         reason: reason,
         envHint: envHint,
         scope: scope,
-      ),
-    );
+      );
+    applyTranscriptPosition(secureMessage, msg);
+    _messages.add(secureMessage);
     _maybeNotify(
       title: _sessionTitle(),
       body: 'Secure input requested: $label',
@@ -6652,6 +6712,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final idx = _messages.indexWhere((m) => m.id == clientMessageId);
       if (idx >= 0) {
         _messages[idx].uuid = uuid;
+        applyTranscriptPosition(_messages[idx], msg);
+        _messages = orderByTranscriptPosition(_messages);
         _pendingLocalUserMessageIds.remove(clientMessageId);
         if (_isPendingInjectedMessage(_messages[idx]) &&
             _pendingInjectedMessageCount > 0) {
@@ -6672,6 +6734,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               m.type == MessageType.skillInvocation) &&
           m.uuid == null) {
         m.uuid = uuid;
+        applyTranscriptPosition(m, msg);
+        _messages = orderByTranscriptPosition(_messages);
         _pendingLocalUserMessageIds.remove(m.id);
         notifyListeners();
         return;
@@ -6862,6 +6926,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     var historyPrevTodos = <Map<String, dynamic>>[];
     final skippedToolUseIds = <String>{};
     for (final entry in rawMessages) {
+      final loadedStartIndex = loaded.length;
       final role = entry['role'] as String? ?? '';
       final content = entry['content'] as String? ?? '';
 
@@ -7548,6 +7613,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
       }
+      for (var index = loadedStartIndex; index < loaded.length; index++) {
+        applyTranscriptPosition(loaded[index], entry);
+      }
     }
 
     // Clear orphaned tool calls that never got a result (e.g. server was
@@ -7638,6 +7706,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _subagentTasks.clear();
       _isLoadingHistory = false;
     }
+    _messages = orderByTranscriptPosition(_messages);
     _recountPendingInjectedMessages();
     // Fallback: if server didn't include 'todos' field (old server compat),
     // sync _todos from the last todos_update in history for dedup.
