@@ -3373,6 +3373,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         serverId != _connMgr.activeServerId;
     if (fromInactiveServer) {
       _handleNotificationOnlyServerMessage(type, msg, serverId);
+      _ackDeferredSessionDelivery(msg, serverId);
       return;
     }
 
@@ -3393,12 +3394,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_activeSessionId == null) {
         if (!isForVisibleSession && type != 'session_created') {
           _handleNotificationOnlyServerMessage(type, msg, serverId);
+          _ackDeferredSessionDelivery(msg, serverId);
           return;
         }
       } else if (!isForVisibleSession &&
           messageSessionId != _activeSessionId &&
           !replacesActiveSession) {
         _handleNotificationOnlyServerMessage(type, msg, serverId);
+        _ackDeferredSessionDelivery(msg, serverId);
         return;
       }
     }
@@ -4886,6 +4889,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
     }
+  }
+
+  /// The server persists these transcript events before the user can open the
+  /// session again. When an event belongs to another visible chat/server, the
+  /// live reducer intentionally defers it to history; acknowledge that choice
+  /// and remember the identity so queued relay copies cannot later masquerade
+  /// as fresh live cards.
+  void _ackDeferredSessionDelivery(
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) {
+    final type = msg['type'] as String? ?? '';
+    final deliveryId = msg['deliveryId'] as String? ?? '';
+    final sessionId = msg['sessionId'] as String? ?? '';
+    final tracked = deliveryId.isNotEmpty &&
+        sessionId.isNotEmpty &&
+        (type == 'tool_call' ||
+            type == 'tool_result' ||
+            type == 'text' ||
+            type == 'thinking');
+    if (!tracked) return;
+
+    _rememberAppliedSessionDelivery(deliveryId);
+    final eventKey = acknowledgedSessionEventKey(msg);
+    if (eventKey != null) _rememberAppliedSessionEventKey(eventKey);
+    _ackSessionDelivery(sessionId, deliveryId, serverId);
   }
 
   void _rememberAppliedSessionDelivery(String deliveryId) {
