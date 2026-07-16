@@ -5,6 +5,7 @@ import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
 import '../models/server_config.dart';
+import '../models/session_sorting.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'archive_screen.dart';
 import 'home_screen.dart';
@@ -1602,6 +1603,7 @@ class _SessionsTabState extends State<SessionsTab> {
     }
 
     final working = take((session) => session.running);
+    working.sort(compareWorkingSessionsByStart);
     final pinned = take((session) => provider.isSessionPinned(session.id));
     final recent = take((session) => true);
 
