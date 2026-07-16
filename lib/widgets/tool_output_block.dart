@@ -5,6 +5,94 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
 
+bool _isStructuredToolContent(dynamic value) {
+  if (value is List) {
+    return value.isNotEmpty && value.every(_isStructuredToolContent);
+  }
+  if (value is! Map) return false;
+  final type = value['type']?.toString();
+  if (type == 'input_text' || type == 'output_text' || type == 'text') {
+    return true;
+  }
+  const execEnvelopeKeys = {
+    'chunk_id',
+    'session_id',
+    'exit_code',
+    'wall_time_seconds',
+    'original_token_count',
+  };
+  return value.containsKey('output') && value.keys.any(execEnvelopeKeys.contains);
+}
+
+List<String> _structuredToolContentText(dynamic value, [int depth = 0]) {
+  if (value == null || depth > 4) return const [];
+  if (value is List) {
+    return value
+        .expand((item) => _structuredToolContentText(item, depth + 1))
+        .toList();
+  }
+  if (value is String) {
+    final trimmed = value.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+        (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (_isStructuredToolContent(decoded)) {
+          return _structuredToolContentText(decoded, depth + 1);
+        }
+      } catch (_) {
+        // Keep ordinary text that merely resembles JSON.
+      }
+    }
+    return value.isEmpty ? const [] : [value];
+  }
+  if (value is! Map) return [value.toString()];
+
+  const execEnvelopeKeys = {
+    'chunk_id',
+    'session_id',
+    'exit_code',
+    'wall_time_seconds',
+    'original_token_count',
+  };
+  final isExecEnvelope =
+      value.containsKey('output') && value.keys.any(execEnvelopeKeys.contains);
+  if (isExecEnvelope) {
+    final output = value['output'];
+    if (output == null || output == '') return const [];
+    return output is String ? [output] : [const JsonEncoder.withIndent('  ').convert(output)];
+  }
+  if (value['text'] is String) {
+    return _structuredToolContentText(value['text'], depth + 1);
+  }
+  if (value['content'] != null) {
+    final content = _structuredToolContentText(value['content'], depth + 1);
+    if (content.isNotEmpty) return content;
+  }
+  return [const JsonEncoder.withIndent('  ').convert(value)];
+}
+
+/// Converts Codex dynamic-tool content blocks into the readable text the tool
+/// actually returned. Plain JSON produced by the user's command is preserved.
+String normalizeStructuredToolOutput(String raw) {
+  final trimmed = raw.trim();
+  if (!((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']')))) {
+    return raw;
+  }
+  try {
+    final decoded = jsonDecode(trimmed);
+    if (!_isStructuredToolContent(decoded)) return raw;
+    final blocks = _structuredToolContentText(decoded)
+        .map((block) => block.trimRight())
+        .where((block) => block.trim().isNotEmpty)
+        .toList();
+    return blocks.isEmpty ? raw : blocks.join('\n');
+  } catch (_) {
+    return raw;
+  }
+}
+
 class _DiffStats {
   final int added;
   final int removed;
@@ -198,8 +286,11 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               ? 'Waiting'
               : 'Checking Task')
         : rawToolName;
-    final output = widget.message.toolOutput;
-    final gotResult = output != null;
+    final rawOutput = widget.message.toolOutput;
+    final output = rawOutput == null
+        ? null
+        : normalizeStructuredToolOutput(rawOutput);
+    final gotResult = rawOutput != null;
     final hasOutput = output != null && output.isNotEmpty;
     final isStreaming = widget.message.toolStreaming;
     final elapsed = widget.message.toolElapsedSeconds;
@@ -761,6 +852,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   static Color _toolAccentColor(String toolName) {
     switch (toolName) {
       case 'Bash':
+      case 'Exec':
         return const Color(0xFFF9E2AF); // yellow
       case 'Read':
         return const Color(0xFFA6E3A1); // green
@@ -791,6 +883,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   IconData _toolIcon(String toolName) {
     switch (toolName) {
       case 'Bash':
+      case 'Exec':
         return Icons.terminal;
       case 'Read':
         return Icons.description;
