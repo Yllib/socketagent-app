@@ -110,7 +110,7 @@
 
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
-            android:value="session_alerts" />
+            android:value="session_alerts_v2" />
 
         <!-- flutter_local_notifications receivers (must be declared explicitly in v20+) -->
         <receiver android:exported="false" android:name="com.dexterous.flutterlocalnotifications.ScheduledNotificationReceiver" />

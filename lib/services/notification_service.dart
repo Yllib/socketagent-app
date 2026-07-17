@@ -11,6 +11,20 @@ class NotificationService {
   factory NotificationService() => _instance;
   NotificationService._();
 
+  static const activeWorkChannelId = 'active_work_v2';
+  static const alertChannelId = 'session_alerts_v2';
+  static const completionUnreadChannelId = 'session_completions_v1';
+  static const completionReadChannelId = 'session_completions_read_v1';
+  static const reminderChannelId = 'reminders_v2';
+  static const activeSessionsGroup = 'socketagent.active_sessions';
+  static const completedSessionsGroup = 'socketagent.completed_sessions';
+  static final activeSessionsSummaryId = stableId(
+    'notification-summary:active-sessions',
+  );
+  static final completedSessionsSummaryId = stableId(
+    'notification-summary:completed-sessions',
+  );
+
   static int stableId(String key) {
     var hash = 0x811c9dc5;
     for (final unit in key.codeUnits) {
@@ -56,6 +70,7 @@ class NotificationService {
   final Map<int, DateTime> _lastShownAtById = {};
   final Map<int, String> _lastShownSignatureById = {};
   final Map<int, Future<void>> _operationTailsById = {};
+  Future<void> _groupRefreshTail = Future<void>.value();
 
   Future<T> _enqueueForId<T>(int id, Future<T> Function() operation) {
     final previous = _operationTailsById[id] ?? Future<void>.value();
@@ -123,41 +138,72 @@ class NotificationService {
       await androidPlugin?.requestExactAlarmsPermission();
     }
 
-    // Pre-create the reminders channel so it exists when the receiver fires
+    // Pre-create channels so their badge behavior is stable. Channel settings
+    // cannot be changed after Android creates them, hence the versioned IDs.
     await androidPlugin?.createNotificationChannel(
       const AndroidNotificationChannel(
-        'reminders',
+        reminderChannelId,
         'Reminders',
         description: 'Scheduled reminders from your agent',
         importance: Importance.high,
         playSound: true,
         enableVibration: true,
+        showBadge: false,
       ),
     );
 
-    // Session alerts channel (query complete, input needed)
     await androidPlugin?.createNotificationChannel(
       const AndroidNotificationChannel(
-        'session_alerts',
+        alertChannelId,
         'Session Alerts',
         description:
-            'Notifications when your agent completes a query or needs input',
+            'Notifications when your agent needs input or sends an alert',
         importance: Importance.high,
         playSound: true,
         enableVibration: true,
+        showBadge: false,
       ),
     );
 
     await androidPlugin?.createNotificationChannel(
       const AndroidNotificationChannel(
-        'active_work',
+        completionUnreadChannelId,
+        'Unread Completed Sessions',
+        description: 'Sessions that finished and have not been opened yet',
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
+        showBadge: true,
+      ),
+    );
+
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        completionReadChannelId,
+        'Completed Sessions',
+        description: 'Completed session notifications already opened',
+        importance: Importance.high,
+        playSound: false,
+        enableVibration: false,
+        showBadge: false,
+      ),
+    );
+
+    await androidPlugin?.createNotificationChannel(
+      const AndroidNotificationChannel(
+        activeWorkChannelId,
         'Active Work',
         description: 'Ongoing session and download progress',
         importance: Importance.low,
         playSound: false,
         enableVibration: false,
+        showBadge: false,
       ),
     );
+
+    // Remove legacy ongoing notifications from the badge-enabled channel.
+    // Current running sessions are immediately restored from status sync.
+    await androidPlugin?.deleteNotificationChannel(channelId: 'active_work');
 
     _isInitialized = true;
     debugPrint(
@@ -197,14 +243,15 @@ class NotificationService {
         _lastShownSignatureById[id] = signature;
 
         final androidDetails = AndroidNotificationDetails(
-          'session_alerts',
+          alertChannelId,
           'Session Alerts',
           channelDescription:
-              'Notifications when your agent completes a query or needs input',
+              'Notifications when your agent needs input or sends an alert',
           importance: Importance.high,
           priority: Priority.high,
           playSound: true,
           enableVibration: true,
+          channelShowBadge: false,
           autoCancel: autoCancel,
           styleInformation: BigTextStyleInformation(body, contentTitle: title),
           actions: actions,
@@ -227,6 +274,219 @@ class NotificationService {
     });
   }
 
+  Future<bool> showSessionCompletion({
+    required int id,
+    required String title,
+    required String body,
+    required String payload,
+    bool unread = true,
+  }) {
+    return _enqueueForId(id, () async {
+      if (!_isInitialized) await initialize();
+
+      try {
+        final now = DateTime.now();
+        final signature = '$title\n$body\n$payload\n$unread';
+        final lastShownAt = _lastShownAtById[id];
+        if (lastShownAt != null &&
+            now.difference(lastShownAt) < const Duration(seconds: 2) &&
+            _lastShownSignatureById[id] == signature) {
+          return true;
+        }
+        _lastShownAtById[id] = now;
+        _lastShownSignatureById[id] = signature;
+
+        await _showSessionCompletionRaw(
+          id: id,
+          title: title,
+          body: body,
+          payload: payload,
+          unread: unread,
+          alert: true,
+        );
+        await _refreshSessionGroupSummaries();
+        return true;
+      } catch (e) {
+        debugPrint('[Notification] completion show error: $e');
+        return false;
+      }
+    });
+  }
+
+  /// Marks one completion read without discarding its notification. Reposting
+  /// it on the no-badge channel preserves the card until the user swipes it.
+  Future<bool> markSessionCompletionRead(int id) {
+    return _enqueueForId(id, () async {
+      if (!_isInitialized) await initialize();
+
+      try {
+        ActiveNotification? existing;
+        for (final notification in await _plugin.getActiveNotifications()) {
+          if (notification.id == id) {
+            existing = notification;
+            break;
+          }
+        }
+        if (existing == null ||
+            existing.channelId == completionReadChannelId) {
+          return existing != null;
+        }
+
+        await _plugin.cancel(id: id);
+        await _showSessionCompletionRaw(
+          id: id,
+          title: existing.title ?? 'Session finished',
+          body: existing.body ?? '',
+          payload: existing.payload ?? '',
+          unread: false,
+          alert: false,
+        );
+        await _refreshSessionGroupSummaries();
+        return true;
+      } catch (e) {
+        debugPrint('[Notification] completion read error: $e');
+        return false;
+      }
+    });
+  }
+
+  Future<void> _showSessionCompletionRaw({
+    required int id,
+    required String title,
+    required String body,
+    required String payload,
+    required bool unread,
+    required bool alert,
+  }) {
+    final channelId = unread
+        ? completionUnreadChannelId
+        : completionReadChannelId;
+    final channelName = unread
+        ? 'Unread Completed Sessions'
+        : 'Completed Sessions';
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        channelId,
+        channelName,
+        channelDescription: unread
+            ? 'Sessions that finished and have not been opened yet'
+            : 'Completed session notifications already opened',
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: alert && unread,
+        enableVibration: alert && unread,
+        channelShowBadge: unread,
+        groupKey: completedSessionsGroup,
+        groupAlertBehavior: GroupAlertBehavior.children,
+        autoCancel: false,
+        onlyAlertOnce: !alert,
+        silent: !alert,
+        styleInformation: BigTextStyleInformation(body, contentTitle: title),
+      ),
+    );
+    return _plugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: details,
+      payload: payload,
+    );
+  }
+
+  Future<void> _refreshSessionGroupSummaries() {
+    final refresh = _groupRefreshTail.then((_) async {
+      try {
+        final active = await _plugin.getActiveNotifications();
+        final activeSessionCount = active
+            .where(
+              (notification) =>
+                  notification.groupKey == activeSessionsGroup &&
+                  notification.id != activeSessionsSummaryId,
+            )
+            .length;
+        final completedSessionCount = active
+            .where(
+              (notification) =>
+                  notification.groupKey == completedSessionsGroup &&
+                  notification.id != completedSessionsSummaryId,
+            )
+            .length;
+        await _updateGroupSummary(
+          id: activeSessionsSummaryId,
+          groupKey: activeSessionsGroup,
+          count: activeSessionCount,
+          title: activeSessionCount == 1
+              ? '1 active session'
+              : '$activeSessionCount active sessions',
+          body: 'Agents are working',
+          ongoing: true,
+        );
+        await _updateGroupSummary(
+          id: completedSessionsSummaryId,
+          groupKey: completedSessionsGroup,
+          count: completedSessionCount,
+          title: completedSessionCount == 1
+              ? '1 completed session'
+              : '$completedSessionCount completed sessions',
+          body: 'Finished session activity',
+          ongoing: false,
+        );
+      } catch (e) {
+        debugPrint('[Notification] group summary error: $e');
+      }
+    });
+    _groupRefreshTail = refresh;
+    return refresh;
+  }
+
+  Future<void> _updateGroupSummary({
+    required int id,
+    required String groupKey,
+    required int count,
+    required String title,
+    required String body,
+    required bool ongoing,
+  }) async {
+    if (count == 0) {
+      await _plugin.cancel(id: id);
+      return;
+    }
+    final isCompletedGroup = groupKey == completedSessionsGroup;
+    final channelId = isCompletedGroup
+        ? completionReadChannelId
+        : activeWorkChannelId;
+    final channelName = isCompletedGroup ? 'Completed Sessions' : 'Active Work';
+    final channelDescription = isCompletedGroup
+        ? 'Completed session notifications already opened'
+        : 'Ongoing session and download progress';
+    final details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        channelId,
+        channelName,
+        channelDescription: channelDescription,
+        importance: isCompletedGroup ? Importance.high : Importance.low,
+        priority: isCompletedGroup ? Priority.high : Priority.low,
+        playSound: false,
+        enableVibration: false,
+        channelShowBadge: false,
+        groupKey: groupKey,
+        setAsGroupSummary: true,
+        groupAlertBehavior: GroupAlertBehavior.children,
+        ongoing: ongoing,
+        autoCancel: false,
+        onlyAlertOnce: true,
+        silent: true,
+        number: count,
+      ),
+    );
+    await _plugin.show(
+      id: id,
+      title: title,
+      body: body,
+      notificationDetails: details,
+    );
+  }
+
   Future<bool> showOngoingProgress({
     required int id,
     required String title,
@@ -236,6 +496,7 @@ class NotificationService {
     bool indeterminate = false,
     DateTime? startedAt,
     List<AndroidNotificationAction>? actions,
+    String? groupKey,
   }) {
     return _enqueueForId(id, () async {
       if (!_isInitialized) await initialize();
@@ -243,13 +504,16 @@ class NotificationService {
       try {
         final percent = progressPercent(progress);
         final androidDetails = AndroidNotificationDetails(
-          'active_work',
+          activeWorkChannelId,
           'Active Work',
           channelDescription: 'Ongoing session and download progress',
           importance: Importance.low,
           priority: Priority.low,
           playSound: false,
           enableVibration: false,
+          channelShowBadge: false,
+          groupKey: groupKey,
+          groupAlertBehavior: GroupAlertBehavior.children,
           ongoing: true,
           autoCancel: false,
           onlyAlertOnce: true,
@@ -271,6 +535,9 @@ class NotificationService {
           notificationDetails: details,
           payload: payload,
         );
+        if (groupKey == activeSessionsGroup) {
+          await _refreshSessionGroupSummaries();
+        }
         return true;
       } catch (e) {
         debugPrint('[Notification] ongoing/progress show error: $e');
@@ -285,6 +552,7 @@ class NotificationService {
 
       try {
         await _plugin.cancel(id: id);
+        await _refreshSessionGroupSummaries();
         return true;
       } catch (e) {
         debugPrint('[Notification] cancel error: $e');
@@ -304,13 +572,14 @@ class NotificationService {
 
     try {
       const androidDetails = AndroidNotificationDetails(
-        'reminders',
+        reminderChannelId,
         'Reminders',
         channelDescription: 'Scheduled reminders from your agent',
         importance: Importance.high,
         priority: Priority.high,
         playSound: true,
         enableVibration: true,
+        channelShowBadge: false,
       );
       const details = NotificationDetails(android: androidDetails);
 

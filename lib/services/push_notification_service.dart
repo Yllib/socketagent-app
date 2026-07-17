@@ -34,6 +34,8 @@ class PushNotificationService {
   static void Function(String token)? onTokenRefresh;
   static bool Function(Map<String, dynamic> data)?
   shouldDisplayForegroundNotification;
+  static bool Function(Map<String, dynamic> data)?
+  shouldBadgeForegroundSessionCompletion;
 
   String? takeLaunchPayload() {
     final payload = _launchPayload;
@@ -117,6 +119,7 @@ class PushNotificationService {
         payload: payload,
         indeterminate: true,
         startedAt: startedAt,
+        groupKey: NotificationService.activeSessionsGroup,
       );
       return;
     }
@@ -125,11 +128,13 @@ class PushNotificationService {
       await _recordFinishedEvent(data);
       await notifications.cancel(sessionOngoingNotificationIdForData(data));
       if (!shouldDisplay) return;
-      await notifications.showInstant(
+      await notifications.showSessionCompletion(
         id: id,
         title: title,
         body: body,
-        payload: payload,
+        payload: payload ?? '',
+        unread: !foreground ||
+            (shouldBadgeForegroundSessionCompletion?.call(data) ?? true),
       );
       return;
     }

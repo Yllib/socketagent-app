@@ -49,4 +49,19 @@ void main() {
       ),
     );
   });
+
+  test('active and completed sessions use separate Android groups', () {
+    expect(
+      NotificationService.activeSessionsGroup,
+      isNot(NotificationService.completedSessionsGroup),
+    );
+    expect(
+      NotificationService.activeWorkChannelId,
+      isNot(NotificationService.completionUnreadChannelId),
+    );
+    expect(
+      NotificationService.completionReadChannelId,
+      isNot(NotificationService.completionUnreadChannelId),
+    );
+  });
 }

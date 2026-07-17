@@ -711,10 +711,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setViewingSession(String? sessionId, {String? serverId}) {
-    _viewingSessionId = sessionId;
-    _viewingServerId = sessionId == null
+    final resolvedServerId = sessionId == null
         ? null
         : serverId ?? _connMgr.activeServerId;
+    _viewingSessionId = sessionId;
+    _viewingServerId = resolvedServerId;
+    if (sessionId != null) {
+      unawaited(
+        _notifications.markSessionCompletionRead(
+          _sessionCompletionNotificationId(
+            sessionId,
+            serverId: resolvedServerId,
+          ),
+        ),
+      );
+    }
     _syncOngoingSessionNotifications();
   }
 
@@ -899,11 +910,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       sessionId: sessionId,
       serverId: serverId,
     );
-    final shown = await _notifications.showInstant(
+    final shown = await _notifications.showSessionCompletion(
       id: _sessionCompletionNotificationId(sessionId, serverId: serverId),
       title: title,
       body: body,
-      payload: _sessionNotificationPayload(sessionId, serverId: serverId),
+      payload:
+          _sessionNotificationPayload(sessionId, serverId: serverId) ?? '',
+      unread: !_isViewingSession(sessionId, serverId: serverId),
     );
     if (shown) {
       _recordLocalInstantNotification(
@@ -991,6 +1004,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ),
           indeterminate: true,
           startedAt: info.startedAt,
+          groupKey: NotificationService.activeSessionsGroup,
         ),
       );
     }
@@ -1598,6 +1612,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     PushNotificationService.onTokenRefresh = _handlePushTokenRefresh;
     PushNotificationService.shouldDisplayForegroundNotification =
         _shouldDisplayForegroundPushNotification;
+    PushNotificationService.shouldBadgeForegroundSessionCompletion =
+        (data) {
+          final sessionId = data['sessionId'] as String? ?? '';
+          final serverId = data['serverId'] as String?;
+          return sessionId.isEmpty ||
+              !_isViewingSession(sessionId, serverId: serverId);
+        };
     _loadSettings();
     _setupListeners();
     unawaited(AdbBridgeService.instance.restoreLocalAdbConnection());
