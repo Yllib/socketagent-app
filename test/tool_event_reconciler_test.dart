@@ -1,4 +1,5 @@
 import 'package:app/services/tool_event_reconciler.dart';
+import 'package:app/models/message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -43,6 +44,56 @@ void main() {
       reconciler.discard('secret-call');
 
       expect(reconciler.takeResult('secret-call'), isNull);
+    });
+  });
+
+  group('settleIdleToolCards', () {
+    test('stops unresolved foreground cards when the session becomes idle', () {
+      final first = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: {'command': 'first'},
+        toolUseId: 'first',
+      )..toolStreaming = true;
+      final second = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: {'command': 'second'},
+        toolUseId: 'second',
+      )..toolStreaming = true;
+
+      expect(settleIdleToolCards([first, second]), 2);
+      expect(first.toolStreaming, isFalse);
+      expect(first.toolOutput, '');
+      expect(second.toolStreaming, isFalse);
+      expect(second.toolOutput, '');
+    });
+
+    test('keeps only explicitly active background commands spinning', () {
+      final active = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: {'command': 'watch'},
+        toolUseId: 'active',
+      )
+        ..toolStreaming = true
+        ..isBackgrounded = true
+        ..backgroundTaskId = 'task-active';
+      final finished = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: {'command': 'old watch'},
+        toolUseId: 'finished',
+      )
+        ..toolStreaming = true
+        ..isBackgrounded = true
+        ..backgroundTaskId = 'task-finished';
+
+      settleIdleToolCards(
+        [active, finished],
+        activeBackgroundTaskIds: {'task-active'},
+      );
+
+      expect(active.toolStreaming, isTrue);
+      expect(active.toolOutput, isNull);
+      expect(finished.toolStreaming, isFalse);
+      expect(finished.toolOutput, '');
     });
   });
 }

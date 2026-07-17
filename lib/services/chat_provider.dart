@@ -1384,6 +1384,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get claudeAutoCompactEnabled => _claudeAutoCompactEnabled;
   Map<String, dynamic> get thinking => _thinking;
   Map<String, Map<String, dynamic>> get backgroundTasks => _backgroundTasks;
+
+  Set<String> _activeBackgroundTaskIds() {
+    return _backgroundTasks.entries
+        .where((entry) {
+          final status = entry.value['status']?.toString() ?? 'running';
+          return status == 'running' || status == 'started';
+        })
+        .map((entry) => entry.key)
+        .toSet();
+  }
   Map<String, Map<String, dynamic>> get subagentTasks => _subagentTasks;
 
   /// Active tasks for the bottom pane: bg tasks + non-dismissed subagents
@@ -4118,6 +4128,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _processingSetAt = null;
           _stopPromptRuntime();
           _closeLiveStreamsForParent(null);
+          settleIdleToolCards(
+            _messages,
+            activeBackgroundTaskIds: _activeBackgroundTaskIds(),
+          );
         }
         // requires_action keeps _isProcessing true (still mid-query)
         notifyListeners();
@@ -4303,6 +4317,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _isCompacting = false;
           _stopPromptRuntime();
           _closeLiveStreamsForParent(null);
+          settleIdleToolCards(
+            _messages,
+            activeBackgroundTaskIds: _activeBackgroundTaskIds(),
+          );
         } else {
           _markSessionRunning(
             _activeSessionId,
@@ -4464,10 +4482,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _isProcessing = serverSaysRunning;
           if (serverSaysRunning) _processingSetAt = null; // server confirmed
         }
+        final serverTaskIds =
+            (msg['backgroundTaskIds'] as List?)
+                ?.map((e) => e.toString())
+                .toSet() ??
+            <String>{};
         if (!_isProcessing) {
           _isCompacting = false;
           _stopPromptRuntime();
           _closeLiveStreamsForParent(null);
+          settleIdleToolCards(
+            _messages,
+            activeBackgroundTaskIds: serverTaskIds,
+          );
         } else {
           _isCompacting = serverSaysCompacting;
           _startPromptRuntime(
@@ -4478,11 +4505,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
         }
         // Reconcile background tasks — remove any not reported by server
-        final serverTaskIds =
-            (msg['backgroundTaskIds'] as List?)
-                ?.map((e) => e.toString())
-                .toSet() ??
-            <String>{};
         _backgroundTasks.removeWhere((id, _) => !serverTaskIds.contains(id));
         // Update session model from heartbeat
         final sessionModels = msg['sessionModels'] as Map<String, dynamic>?;
@@ -4497,6 +4519,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
         _isProcessing = false;
         _stopPromptRuntime();
+        settleIdleToolCards(_messages);
         notifyListeners();
         break;
       case 'claude_auth':
@@ -5529,6 +5552,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (existingIndex < 0) {
       _messages.add(toolMsg);
     }
+    // A reliable-delivery replay can arrive after the turn's result/idle
+    // event. Do not resurrect a spinner for work the server says is over.
+    if (!_isProcessing && !toolMsg.isBackgrounded) {
+      toolMsg.toolOutput ??= '';
+      toolMsg.toolStreaming = false;
+    }
 
     // Track Task/Agent tool calls as subagent tasks
     final subagentType = input['subagent_type']?.toString() ?? '';
@@ -5539,7 +5568,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'description': desc,
         'prompt': input['prompt'] as String? ?? '',
         'subagentType': subagentType,
-        'status': 'running',
+        'status': toolMsg.toolStreaming ? 'running' : 'completed',
         'toolUseId': toolUseId,
         if (input['agentId'] != null) 'agentId': input['agentId'],
         if (toolMsg.parentToolUseId != null)
@@ -6002,13 +6031,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           : subtype.replaceAll('_', ' ');
       _messages.add(ChatMessage.error(errorText));
     }
-    // Mark any tool calls that never got a result so spinners stop
-    for (final m in _messages) {
-      if (m.type == MessageType.toolCall) {
-        m.toolOutput ??= '';
-        m.toolStreaming = false;
-      }
-    }
+    // Mark any foreground tool calls that never got a result so spinners stop.
+    // Background commands remain live only while their task is still tracked.
+    settleIdleToolCards(
+      _messages,
+      activeBackgroundTaskIds: _activeBackgroundTaskIds(),
+    );
     // Clear completed background tasks
     _backgroundTasks.removeWhere(
       (_, t) =>
@@ -8318,15 +8346,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isProcessing = false;
     _stopPromptRuntime();
     _isCompacting = false;
-    // Stop spinners on any tool cards that never got a result
-    for (final m in _messages) {
-      if (m.type == MessageType.toolCall && m.toolOutput == null) {
-        m.toolOutput = '';
-      }
-      if (m.type == MessageType.toolCall && m.toolStreaming) {
-        m.toolStreaming = false;
-      }
-    }
+    // An explicit abort settles every tool, including background commands.
+    settleIdleToolCards(_messages);
     // Show cancel card immediately
     _messages.add(
       ChatMessage(

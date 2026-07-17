@@ -1,8 +1,38 @@
+import '../models/message.dart';
+
 class PendingToolResult {
   const PendingToolResult({required this.output, this.parentToolUseId});
 
   final String output;
   final String? parentToolUseId;
+}
+
+/// Settles tool cards when the server says the visible session is idle.
+///
+/// Reliable delivery can replay a tool call after the turn's final result, so
+/// completion cannot depend on receiving events in one particular order.
+/// Explicitly active background commands are the only cards allowed to keep
+/// streaming after the foreground turn becomes idle.
+int settleIdleToolCards(
+  Iterable<ChatMessage> messages, {
+  Set<String> activeBackgroundTaskIds = const <String>{},
+}) {
+  var settled = 0;
+  for (final message in messages) {
+    if (message.type != MessageType.toolCall) continue;
+    final backgroundTaskId = message.backgroundTaskId;
+    final backgroundStillRunning =
+        message.isBackgrounded &&
+        backgroundTaskId != null &&
+        activeBackgroundTaskIds.contains(backgroundTaskId);
+    if (backgroundStillRunning) continue;
+    if (message.toolOutput == null || message.toolStreaming) {
+      message.toolOutput ??= '';
+      message.toolStreaming = false;
+      settled++;
+    }
+  }
+  return settled;
 }
 
 class PendingToolStream {
