@@ -9940,6 +9940,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  Future<void> writeFileManagerText({
+    required String path,
+    required String content,
+    String? serverId,
+  }) async {
+    await _sendFileManagerOperation({
+      'type': 'file_manager_write_text',
+      'path': path,
+      'content': content,
+    }, serverId: serverId);
+  }
+
   Future<Map<String, dynamic>> _sendFileManagerOperation(
     Map<String, dynamic> msg, {
     String? serverId,

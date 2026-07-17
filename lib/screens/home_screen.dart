@@ -7,6 +7,7 @@ import '../services/tts_engine.dart';
 import '../services/kokoro_server_engine.dart';
 import '../services/websocket_service.dart';
 import 'file_manager_screen.dart';
+import 'project_instructions_screen.dart';
 import 'terminal_screen.dart';
 import 'settings/voice_speech_screen.dart';
 import '../widgets/chat_view.dart';
@@ -334,15 +335,6 @@ class HomeScreenState extends State<HomeScreen> {
                 onTap: () {
                   Navigator.of(sheetContext).pop();
                   _showSecureInputDialog(provider);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.password_outlined),
-                title: const Text('Manage secrets'),
-                subtitle: const Text('Browse, create, replace, or delete'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _showSecretManager(provider);
                 },
               ),
             ],
@@ -870,6 +862,14 @@ class HomeScreenState extends State<HomeScreen> {
           case 'project_files':
             _openProjectFiles(provider, projectPath);
             break;
+          case 'project_instructions':
+            _openProjectInstructions(provider, projectPath);
+            break;
+          case 'manage_secrets':
+            Future.microtask(() {
+              if (mounted) _showSecretManager(provider);
+            });
+            break;
           case 'terminal':
             _openTerminal(provider, projectPath);
             break;
@@ -943,6 +943,51 @@ class HomeScreenState extends State<HomeScreen> {
                           ).colorScheme.onSurface.withAlpha(140),
                         ),
                       ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'project_instructions',
+          enabled: projectPath != null && projectPath.isNotEmpty,
+          child: const Row(
+            children: [
+              Icon(Icons.description_outlined, size: 18),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Project instructions'),
+                    Text(
+                      'View or edit AGENTS.md and CLAUDE.md',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'manage_secrets',
+          child: const Row(
+            children: [
+              Icon(Icons.password_outlined, size: 18),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Manage secrets'),
+                    Text(
+                      'Browse, create, replace, or delete',
+                      style: TextStyle(fontSize: 11),
+                    ),
                   ],
                 ),
               ),
@@ -1247,6 +1292,22 @@ class HomeScreenState extends State<HomeScreen> {
         builder: (_) => FileManagerScreen(
           serverId: provider.activeServerId,
           initialPath: projectPath,
+        ),
+      ),
+    );
+  }
+
+  void _openProjectInstructions(
+    ChatProvider provider,
+    String? projectPath,
+  ) {
+    final serverId = provider.activeServerId;
+    if (serverId == null || projectPath == null || projectPath.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProjectInstructionsScreen(
+          serverId: serverId,
+          projectPath: projectPath,
         ),
       ),
     );
