@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
@@ -18,6 +20,24 @@ class NotificationService {
     return hash & 0x7fffffff;
   }
 
+  static int sessionOngoingId(String sessionId, {String? serverId}) {
+    return stableId('session:${serverId ?? ''}:$sessionId');
+  }
+
+  /// Completion alerts use a different ID so removing the ongoing card can
+  /// never race with and delete the user's finished notification.
+  static int sessionCompletionId(String sessionId, {String? serverId}) {
+    return stableId('session-complete:${serverId ?? ''}:$sessionId');
+  }
+
+  static int sessionAlertId(
+    String sessionId, {
+    String? serverId,
+    String kind = 'alert',
+  }) {
+    return stableId('session-alert:$kind:${serverId ?? ''}:$sessionId');
+  }
+
   static int progressPercent(double? progress) {
     if (progress == null || !progress.isFinite) return 0;
     final clamped = progress.clamp(0.0, 1.0).toDouble();
@@ -35,6 +55,25 @@ class NotificationService {
   String? _launchPayload;
   final Map<int, DateTime> _lastShownAtById = {};
   final Map<int, String> _lastShownSignatureById = {};
+  final Map<int, Future<void>> _operationTailsById = {};
+
+  Future<T> _enqueueForId<T>(int id, Future<T> Function() operation) {
+    final previous = _operationTailsById[id] ?? Future<void>.value();
+    final result = previous.then<T>((_) => operation());
+    final tail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    _operationTailsById[id] = tail;
+    unawaited(
+      tail.whenComplete(() {
+        if (identical(_operationTailsById[id], tail)) {
+          _operationTailsById.remove(id);
+        }
+      }),
+    );
+    return result;
+  }
 
   /// Set this to handle notification taps (e.g., navigate to a session)
   static void Function(String? payload)? onNotificationTap;
@@ -140,48 +179,52 @@ class NotificationService {
     required String body,
     String? payload,
     List<AndroidNotificationAction>? actions,
-  }) async {
-    if (!_isInitialized) await initialize();
+    bool autoCancel = false,
+  }) {
+    return _enqueueForId(id, () async {
+      if (!_isInitialized) await initialize();
 
-    try {
-      final now = DateTime.now();
-      final signature = '$title\n$body\n${payload ?? ''}';
-      final lastShownAt = _lastShownAtById[id];
-      if (lastShownAt != null &&
-          now.difference(lastShownAt) < const Duration(seconds: 2) &&
-          _lastShownSignatureById[id] == signature) {
+      try {
+        final now = DateTime.now();
+        final signature = '$title\n$body\n${payload ?? ''}';
+        final lastShownAt = _lastShownAtById[id];
+        if (lastShownAt != null &&
+            now.difference(lastShownAt) < const Duration(seconds: 2) &&
+            _lastShownSignatureById[id] == signature) {
+          return true;
+        }
+        _lastShownAtById[id] = now;
+        _lastShownSignatureById[id] = signature;
+
+        final androidDetails = AndroidNotificationDetails(
+          'session_alerts',
+          'Session Alerts',
+          channelDescription:
+              'Notifications when your agent completes a query or needs input',
+          importance: Importance.high,
+          priority: Priority.high,
+          playSound: true,
+          enableVibration: true,
+          autoCancel: autoCancel,
+          styleInformation: BigTextStyleInformation(body, contentTitle: title),
+          actions: actions,
+        );
+        final details = NotificationDetails(android: androidDetails);
+
+        await _plugin.show(
+          id: id,
+          title: title,
+          body: body,
+          notificationDetails: details,
+          payload: payload,
+        );
+        debugPrint('[Notification] shown: "$title" (id=$id)');
         return true;
+      } catch (e) {
+        debugPrint('[Notification] show error: $e');
+        return false;
       }
-      _lastShownAtById[id] = now;
-      _lastShownSignatureById[id] = signature;
-
-      final androidDetails = AndroidNotificationDetails(
-        'session_alerts',
-        'Session Alerts',
-        channelDescription:
-            'Notifications when your agent completes a query or needs input',
-        importance: Importance.high,
-        priority: Priority.high,
-        playSound: true,
-        enableVibration: true,
-        styleInformation: BigTextStyleInformation(body, contentTitle: title),
-        actions: actions,
-      );
-      final details = NotificationDetails(android: androidDetails);
-
-      await _plugin.show(
-        id: id,
-        title: title,
-        body: body,
-        notificationDetails: details,
-        payload: payload,
-      );
-      debugPrint('[Notification] shown: "$title" (id=$id)');
-      return true;
-    } catch (e) {
-      debugPrint('[Notification] show error: $e');
-      return false;
-    }
+    });
   }
 
   Future<bool> showOngoingProgress({
@@ -193,57 +236,61 @@ class NotificationService {
     bool indeterminate = false,
     DateTime? startedAt,
     List<AndroidNotificationAction>? actions,
-  }) async {
-    if (!_isInitialized) await initialize();
+  }) {
+    return _enqueueForId(id, () async {
+      if (!_isInitialized) await initialize();
 
-    try {
-      final percent = progressPercent(progress);
-      final androidDetails = AndroidNotificationDetails(
-        'active_work',
-        'Active Work',
-        channelDescription: 'Ongoing session and download progress',
-        importance: Importance.low,
-        priority: Priority.low,
-        playSound: false,
-        enableVibration: false,
-        ongoing: true,
-        autoCancel: false,
-        onlyAlertOnce: true,
-        showProgress: indeterminate || progress != null,
-        maxProgress: 100,
-        progress: percent,
-        indeterminate: indeterminate,
-        showWhen: startedAt != null,
-        when: startedAt?.millisecondsSinceEpoch,
-        usesChronometer: startedAt != null,
-        styleInformation: BigTextStyleInformation(body, contentTitle: title),
-        actions: actions,
-      );
-      final details = NotificationDetails(android: androidDetails);
-      await _plugin.show(
-        id: id,
-        title: title,
-        body: body,
-        notificationDetails: details,
-        payload: payload,
-      );
-      return true;
-    } catch (e) {
-      debugPrint('[Notification] ongoing/progress show error: $e');
-      return false;
-    }
+      try {
+        final percent = progressPercent(progress);
+        final androidDetails = AndroidNotificationDetails(
+          'active_work',
+          'Active Work',
+          channelDescription: 'Ongoing session and download progress',
+          importance: Importance.low,
+          priority: Priority.low,
+          playSound: false,
+          enableVibration: false,
+          ongoing: true,
+          autoCancel: false,
+          onlyAlertOnce: true,
+          showProgress: indeterminate || progress != null,
+          maxProgress: 100,
+          progress: percent,
+          indeterminate: indeterminate,
+          showWhen: startedAt != null,
+          when: startedAt?.millisecondsSinceEpoch,
+          usesChronometer: startedAt != null,
+          styleInformation: BigTextStyleInformation(body, contentTitle: title),
+          actions: actions,
+        );
+        final details = NotificationDetails(android: androidDetails);
+        await _plugin.show(
+          id: id,
+          title: title,
+          body: body,
+          notificationDetails: details,
+          payload: payload,
+        );
+        return true;
+      } catch (e) {
+        debugPrint('[Notification] ongoing/progress show error: $e');
+        return false;
+      }
+    });
   }
 
-  Future<bool> cancel(int id) async {
-    if (!_isInitialized) await initialize();
+  Future<bool> cancel(int id) {
+    return _enqueueForId(id, () async {
+      if (!_isInitialized) await initialize();
 
-    try {
-      await _plugin.cancel(id: id);
-      return true;
-    } catch (e) {
-      debugPrint('[Notification] cancel error: $e');
-      return false;
-    }
+      try {
+        await _plugin.cancel(id: id);
+        return true;
+      } catch (e) {
+        debugPrint('[Notification] cancel error: $e');
+        return false;
+      }
+    });
   }
 
   Future<bool> scheduleReminder({

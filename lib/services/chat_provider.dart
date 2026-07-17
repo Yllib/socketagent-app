@@ -811,8 +811,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.sendToServer(sid, {'type': 'terminal_kill'});
   }
 
-  int _sessionNotificationId(String sessionId, {String? serverId}) {
-    return NotificationService.stableId('session:${serverId ?? ''}:$sessionId');
+  int _sessionOngoingNotificationId(String sessionId, {String? serverId}) {
+    return NotificationService.sessionOngoingId(sessionId, serverId: serverId);
+  }
+
+  int _sessionCompletionNotificationId(String sessionId, {String? serverId}) {
+    return NotificationService.sessionCompletionId(
+      sessionId,
+      serverId: serverId,
+    );
   }
 
   String _localInstantKey(String kind, String sessionId, {String? serverId}) {
@@ -871,22 +878,40 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     if (sessionId.isEmpty) return;
     if (_notifMutedSessions.contains(sessionId)) return;
-    if (_isViewingSession(sessionId, serverId: serverId)) return;
 
-    final notifId = _sessionNotificationId(sessionId, serverId: serverId);
-    _recordLocalInstantNotification(
-      'session_finished',
-      sessionId,
+    unawaited(
+      _publishSessionCompletionNotification(
+        sessionId,
+        serverId: serverId,
+        title: title,
+        body: body,
+      ),
+    );
+  }
+
+  Future<void> _publishSessionCompletionNotification(
+    String sessionId, {
+    String? serverId,
+    required String title,
+    required String body,
+  }) async {
+    await PushNotificationService.recordSessionFinished(
+      sessionId: sessionId,
       serverId: serverId,
     );
-    _notifications.showInstant(
-      id: notifId,
+    final shown = await _notifications.showInstant(
+      id: _sessionCompletionNotificationId(sessionId, serverId: serverId),
       title: title,
       body: body,
-      payload:
-          'session:${Uri.encodeComponent(sessionId)}'
-          '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}',
+      payload: _sessionNotificationPayload(sessionId, serverId: serverId),
     );
+    if (shown) {
+      _recordLocalInstantNotification(
+        'session_finished',
+        sessionId,
+        serverId: serverId,
+      );
+    }
   }
 
   void _maybeNotify({required String title, required String body}) {
@@ -917,16 +942,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final serverId = info?.serverId ?? (parts.length > 1 ? parts.first : null);
     if (sessionId.isEmpty) return Future.value();
     return _notifications.cancel(
-      _sessionNotificationId(sessionId, serverId: serverId),
+      _sessionOngoingNotificationId(sessionId, serverId: serverId),
     );
   }
 
   bool _shouldShowOngoingSessionNotification(_RunningSessionInfo info) {
     if (info.suppressOngoingNotification) return false;
     if (_notifMutedSessions.contains(info.sessionId)) return false;
-    if (_isViewingSession(info.sessionId, serverId: info.serverId)) {
-      return false;
-    }
     return true;
   }
 
@@ -953,7 +975,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _shownOngoingSessionNotificationKeys.add(key);
       unawaited(
         _notifications.showOngoingProgress(
-          id: _sessionNotificationId(info.sessionId, serverId: info.serverId),
+          id: _sessionOngoingNotificationId(
+            info.sessionId,
+            serverId: info.serverId,
+          ),
           title: info.title.isEmpty ? 'Session' : info.title,
           body: info.compacting
               ? 'Compacting context'
@@ -1083,6 +1108,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return false;
     }
     if (kind == 'tool_notification') return true;
+    if (kind == 'session_started' || kind == 'session_running') return true;
+    if (kind == 'session_finished') return true;
     if (_isViewingSession(sessionId, serverId: serverId)) return false;
     return true;
   }
@@ -4702,38 +4729,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         break;
       case 'scheduled_task_notification':
-        final title = msg['title'] as String? ?? 'Scheduled Task';
-        final status = msg['status'] as String? ?? '';
-        final isManual = status == 'manual';
-        final isLifecycleStart =
-            status == 'started' ||
-            status == 'running' ||
-            (!isManual && title.toLowerCase().contains('started'));
-        if (isLifecycleStart) {
-          break;
-        }
-        final body = msg['body'] as String? ?? '';
-        final sid = msg['sessionId'] as String? ?? '';
-        if (sid.isNotEmpty) {
-          _recordLocalInstantNotification(
-            'tool_notification',
-            sid,
-            serverId: serverId,
+          final title = msg['title'] as String? ?? 'Scheduled Task';
+          final status = msg['status'] as String? ?? '';
+          final isManual = status == 'manual';
+          final isLifecycleStart =
+              status == 'started' ||
+              status == 'running' ||
+              (!isManual && title.toLowerCase().contains('started'));
+          if (isLifecycleStart) {
+            break;
+          }
+          final body = msg['body'] as String? ?? '';
+          final sid = msg['sessionId'] as String? ?? '';
+          if (sid.isNotEmpty) {
+            _recordLocalInstantNotification(
+              'tool_notification',
+              sid,
+              serverId: serverId,
+            );
+          }
+          _notifications.showInstant(
+            id: sid.isNotEmpty
+                ? NotificationService.sessionAlertId(
+                    sid,
+                    serverId: serverId,
+                    kind: 'scheduled_task',
+                  )
+                : NotificationService.stableId(title),
+            title: title,
+            body: body,
+            payload: sid.isNotEmpty
+                ? 'session:${Uri.encodeComponent(sid)}'
+                      '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}'
+                : null,
           );
-        }
-        _notifications.showInstant(
-          id: sid.isNotEmpty
-              ? _sessionNotificationId(sid, serverId: serverId)
-              : NotificationService.stableId(title),
-          title: title,
-          body: body,
-          payload: sid.isNotEmpty
-              ? 'session:${Uri.encodeComponent(sid)}'
-                    '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}'
-              : null,
-        );
-        break;
-      case 'upload_complete':
+          break;
+        case 'upload_complete':
         final uploadId = msg['uploadId'] as String?;
         final serverPath = msg['serverPath'] as String?;
         if (uploadId == _pendingUploadId && serverPath != null) {

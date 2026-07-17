@@ -123,7 +123,7 @@ class PushNotificationService {
 
     if (kind == 'session_finished') {
       await _recordFinishedEvent(data);
-      await notifications.cancel(id);
+      await notifications.cancel(sessionOngoingNotificationIdForData(data));
       if (!shouldDisplay) return;
       await notifications.showInstant(
         id: id,
@@ -154,10 +154,33 @@ class PushNotificationService {
   static int notificationIdForData(Map<String, dynamic> data, String title) {
     final sessionId = data['sessionId'] as String?;
     final serverId = data['serverId'] as String?;
-    final key = sessionId != null && sessionId.isNotEmpty
-        ? 'session:${serverId ?? ''}:$sessionId'
-        : title;
-    return NotificationService.stableId(key);
+    if (sessionId == null || sessionId.isEmpty) {
+      return NotificationService.stableId(title);
+    }
+    final kind = data['kind'] as String? ?? '';
+    if (kind == 'session_started' || kind == 'session_running') {
+      return NotificationService.sessionOngoingId(
+        sessionId,
+        serverId: serverId,
+      );
+    }
+    if (kind == 'session_finished') {
+      return NotificationService.sessionCompletionId(
+        sessionId,
+        serverId: serverId,
+      );
+    }
+    return NotificationService.sessionAlertId(
+      sessionId,
+      serverId: serverId,
+      kind: kind.isEmpty ? 'alert' : kind,
+    );
+  }
+
+  static int sessionOngoingNotificationIdForData(Map<String, dynamic> data) {
+    final sessionId = data['sessionId'] as String? ?? '';
+    final serverId = data['serverId'] as String?;
+    return NotificationService.sessionOngoingId(sessionId, serverId: serverId);
   }
 
   static String? _sessionStateKey(Map<String, dynamic> data) {
@@ -175,6 +198,20 @@ class PushNotificationService {
         DateTime.now().toUtc();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(key, finishedAt.toUtc().toIso8601String());
+  }
+
+  static Future<void> recordSessionFinished({
+    required String sessionId,
+    String? serverId,
+    DateTime? finishedAt,
+  }) {
+    return _recordFinishedEvent({
+      'sessionId': sessionId,
+      if (serverId != null) 'serverId': serverId,
+      'finishedAt': (finishedAt ?? DateTime.now().toUtc())
+          .toUtc()
+          .toIso8601String(),
+    });
   }
 
   static Future<bool> _isStaleRunningEvent(Map<String, dynamic> data) async {
