@@ -304,7 +304,7 @@ class NotificationService {
           unread: unread,
           alert: true,
         );
-        await _refreshSessionGroupSummaries();
+        await _refreshCompletedSessionSummary();
         return true;
       } catch (e) {
         debugPrint('[Notification] completion show error: $e');
@@ -341,7 +341,7 @@ class NotificationService {
           unread: false,
           alert: false,
         );
-        await _refreshSessionGroupSummaries();
+        await _refreshCompletedSessionSummary();
         return true;
       } catch (e) {
         debugPrint('[Notification] completion read error: $e');
@@ -393,17 +393,10 @@ class NotificationService {
     );
   }
 
-  Future<void> _refreshSessionGroupSummaries() {
+  Future<void> _refreshCompletedSessionSummary() {
     final refresh = _groupRefreshTail.then((_) async {
       try {
         final active = await _plugin.getActiveNotifications();
-        final activeSessionCount = active
-            .where(
-              (notification) =>
-                  notification.groupKey == activeSessionsGroup &&
-                  notification.id != activeSessionsSummaryId,
-            )
-            .length;
         final completedSessionCount = active
             .where(
               (notification) =>
@@ -411,16 +404,6 @@ class NotificationService {
                   notification.id != completedSessionsSummaryId,
             )
             .length;
-        await _updateGroupSummary(
-          id: activeSessionsSummaryId,
-          groupKey: activeSessionsGroup,
-          count: activeSessionCount,
-          title: activeSessionCount == 1
-              ? '1 active session'
-              : '$activeSessionCount active sessions',
-          body: 'Agents are working',
-          ongoing: true,
-        );
         await _updateGroupSummary(
           id: completedSessionsSummaryId,
           groupKey: completedSessionsGroup,
@@ -437,6 +420,81 @@ class NotificationService {
     });
     _groupRefreshTail = refresh;
     return refresh;
+  }
+
+  Future<bool> syncActiveSessionSummary(int count) {
+    return _enqueueForId(activeSessionsSummaryId, () async {
+      if (!_isInitialized) await initialize();
+      try {
+        await _updateGroupSummary(
+          id: activeSessionsSummaryId,
+          groupKey: activeSessionsGroup,
+          count: count,
+          title: count == 1 ? '1 active session' : '$count active sessions',
+          body: 'Agents are working',
+          ongoing: true,
+        );
+        return true;
+      } catch (e) {
+        debugPrint('[Notification] active summary error: $e');
+        return false;
+      }
+    });
+  }
+
+  /// Removes Android running-session children that are absent from an
+  /// authoritative status sync. The caller converts the returned entries into
+  /// fallback completions so a server/app restart cannot silently lose them.
+  Future<List<RecoveredSessionNotification>>
+  removeStaleActiveSessionsForServer({
+    required String serverId,
+    required Set<int> expectedNotificationIds,
+  }) async {
+    if (!_isInitialized) await initialize();
+    final recovered = <RecoveredSessionNotification>[];
+    try {
+      final active = await _plugin.getActiveNotifications();
+      for (final notification in active) {
+        final notificationId = notification.id;
+        if (notificationId == null) continue;
+        if (notification.groupKey != activeSessionsGroup ||
+            notificationId == activeSessionsSummaryId ||
+            expectedNotificationIds.contains(notificationId)) {
+          continue;
+        }
+        final target = _sessionTargetFromPayload(notification.payload);
+        if (target == null || (target.serverId ?? '') != serverId) continue;
+        await _plugin.cancel(id: notificationId);
+        recovered.add(
+          RecoveredSessionNotification(
+            sessionId: target.sessionId,
+            serverId: target.serverId,
+            title: notification.title ?? 'Session',
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[Notification] active reconciliation error: $e');
+    }
+    return recovered;
+  }
+
+  static ({String sessionId, String? serverId})? _sessionTargetFromPayload(
+    String? payload,
+  ) {
+    if (payload == null || !payload.startsWith('session:')) return null;
+    final parts = payload.split(':');
+    if (parts.length < 2 || parts[1].isEmpty) return null;
+    try {
+      return (
+        sessionId: Uri.decodeComponent(parts[1]),
+        serverId: parts.length > 2 && parts[2].isNotEmpty
+            ? Uri.decodeComponent(parts.sublist(2).join(':'))
+            : null,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _updateGroupSummary({
@@ -535,9 +593,6 @@ class NotificationService {
           notificationDetails: details,
           payload: payload,
         );
-        if (groupKey == activeSessionsGroup) {
-          await _refreshSessionGroupSummaries();
-        }
         return true;
       } catch (e) {
         debugPrint('[Notification] ongoing/progress show error: $e');
@@ -552,7 +607,6 @@ class NotificationService {
 
       try {
         await _plugin.cancel(id: id);
-        await _refreshSessionGroupSummaries();
         return true;
       } catch (e) {
         debugPrint('[Notification] cancel error: $e');
@@ -604,4 +658,16 @@ class NotificationService {
       return false;
     }
   }
+}
+
+class RecoveredSessionNotification {
+  const RecoveredSessionNotification({
+    required this.sessionId,
+    required this.serverId,
+    required this.title,
+  });
+
+  final String sessionId;
+  final String? serverId;
+  final String title;
 }

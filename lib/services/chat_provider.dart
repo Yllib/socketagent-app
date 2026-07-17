@@ -482,6 +482,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
   final Set<String> _shownOngoingSessionNotificationKeys = {};
+  final Map<String, Timer> _sessionCompletionFallbackTimers = {};
   final Map<String, DateTime> _recentLocalInstantNotifications = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
@@ -888,6 +889,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String body,
   }) {
     if (sessionId.isEmpty) return;
+    _cancelSessionCompletionFallback(sessionId, serverId: serverId);
     if (_notifMutedSessions.contains(sessionId)) return;
 
     unawaited(
@@ -946,6 +948,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   String _runningSessionKey(String serverId, String sessionId) {
     return '$serverId\u0001$sessionId';
+  }
+
+  void _cancelSessionCompletionFallback(
+    String sessionId, {
+    String? serverId,
+  }) {
+    if (serverId != null) {
+      _sessionCompletionFallbackTimers
+          .remove(_runningSessionKey(serverId, sessionId))
+          ?.cancel();
+      return;
+    }
+    final matchingKeys = _sessionCompletionFallbackTimers.keys.where((key) {
+      return key.split('\u0001').last == sessionId;
+    }).toList();
+    for (final key in matchingKeys) {
+      _sessionCompletionFallbackTimers.remove(key)?.cancel();
+    }
+  }
+
+  void _scheduleSessionCompletionFallback(_RunningSessionInfo info) {
+    final key = _runningSessionKey(info.serverId, info.sessionId);
+    _sessionCompletionFallbackTimers.remove(key)?.cancel();
+    _sessionCompletionFallbackTimers[key] = Timer(
+      const Duration(seconds: 1),
+      () {
+        _sessionCompletionFallbackTimers.remove(key);
+        if (_runningSessionNotifications.containsKey(key)) return;
+        _showSessionCompletionNotification(
+          info.sessionId,
+          serverId: info.serverId,
+          title: info.title.isEmpty ? 'Session' : info.title,
+          body: 'Session finished',
+        );
+      },
+    );
   }
 
   Future<void> _cancelSessionOngoingNotificationByKey(String key) {
@@ -1008,6 +1046,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ),
       );
     }
+    final visibleCount = _runningSessionNotifications.values
+        .where(_shouldShowOngoingSessionNotification)
+        .length;
+    unawaited(_notifications.syncActiveSessionSummary(visibleCount));
   }
 
   String _sessionTitleFor(String sessionId, {String? serverId}) {
@@ -1036,6 +1078,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     if (sessionId == null || sessionId.isEmpty) return;
     final sid = serverId ?? _connMgr.activeServerId ?? '';
+    _cancelSessionCompletionFallback(sessionId, serverId: sid);
     final config = sid.isEmpty
         ? null
         : _serverConfigs.where((c) => c.id == sid).firstOrNull;
@@ -1065,7 +1108,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return info.serverId == serverId;
     }).toList();
     for (final key in matchingKeys) {
-      _runningSessionNotifications.remove(key);
+      final info = _runningSessionNotifications.remove(key);
+      if (info != null) _scheduleSessionCompletionFallback(info);
     }
     _syncOngoingSessionNotifications();
   }
@@ -1080,6 +1124,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final sid = serverId ?? '';
     final prefix = '$sid\u0001';
+    final previous = Map<String, _RunningSessionInfo>.fromEntries(
+      _runningSessionNotifications.entries.where(
+        (entry) => entry.key.startsWith(prefix),
+      ),
+    );
     _runningSessionNotifications.removeWhere(
       (key, _) => key.startsWith(prefix),
     );
@@ -1096,7 +1145,51 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sync: false,
       );
     }
+    for (final entry in previous.entries) {
+      if (!_runningSessionNotifications.containsKey(entry.key)) {
+        _scheduleSessionCompletionFallback(entry.value);
+      }
+    }
     _syncOngoingSessionNotifications();
+    unawaited(
+      _reconcileAuthoritativeRunningNotifications(
+        serverId: sid,
+        runningSessionIds: runningSessionIds,
+      ),
+    );
+  }
+
+  Future<void> _reconcileAuthoritativeRunningNotifications({
+    required String serverId,
+    required Set<String> runningSessionIds,
+  }) async {
+    final expectedNotificationIds = <int>{};
+    for (final sessionId in runningSessionIds) {
+      final info =
+          _runningSessionNotifications[
+            _runningSessionKey(serverId, sessionId)
+          ];
+      if (info != null && _shouldShowOngoingSessionNotification(info)) {
+        expectedNotificationIds.add(
+          _sessionOngoingNotificationId(sessionId, serverId: serverId),
+        );
+      }
+    }
+    final recovered = await _notifications
+        .removeStaleActiveSessionsForServer(
+          serverId: serverId,
+          expectedNotificationIds: expectedNotificationIds,
+        );
+    for (final notification in recovered) {
+      final key = _runningSessionKey(serverId, notification.sessionId);
+      if (_runningSessionNotifications.containsKey(key)) continue;
+      _showSessionCompletionNotification(
+        notification.sessionId,
+        serverId: serverId,
+        title: notification.title,
+        body: 'Session finished',
+      );
+    }
   }
 
   bool _shouldDisplayForegroundPushNotification(Map<String, dynamic> data) {
@@ -12278,7 +12371,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   @override
-  @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     PushNotificationService.onTokenRefresh = null;
@@ -12298,6 +12390,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _backendInstallAckTimers.clear();
+    for (final timer in _sessionCompletionFallbackTimers.values) {
+      timer.cancel();
+    }
+    _sessionCompletionFallbackTimers.clear();
     for (final completer in _adbBridgeSidecarCompleters.values) {
       if (!completer.isCompleted) {
         completer.complete(<String, dynamic>{
