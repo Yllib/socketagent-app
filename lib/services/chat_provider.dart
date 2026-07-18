@@ -19,6 +19,7 @@ import '../models/file_manager_entry.dart';
 import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
+import '../models/session_notification_policy.dart';
 import 'websocket_service.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
@@ -1021,6 +1022,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final key = _runningSessionKey(info.serverId, info.sessionId);
     _sessionCompletionFallbackTimers.remove(key)?.cancel();
+    if (!shouldScheduleSessionCompletionFallback(
+      sessionId: info.sessionId,
+      suppressAutomaticNotifications: info.suppressOngoingNotification,
+    )) {
+      return;
+    }
     _sessionCompletionFallbackTimers[key] = Timer(delay, () {
       _sessionCompletionFallbackTimers.remove(key);
       if (_runningSessionNotifications.containsKey(key)) return;
@@ -4903,6 +4910,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           final body = msg['body'] as String? ?? '';
           final sid = msg['sessionId'] as String? ?? '';
+          if (msg['sessionCompletion'] == true && sid.isNotEmpty) {
+            _markSessionIdle(sid, serverId: serverId);
+            _showSessionCompletionNotification(
+              sid,
+              serverId: serverId,
+              title: title,
+              body: body,
+            );
+            break;
+          }
           if (sid.isNotEmpty) {
             _recordLocalInstantNotification(
               'tool_notification',
@@ -10430,6 +10447,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void scheduleTask({
+    String? name,
     required String prompt,
     required String cwd,
     required String scheduledTime,
@@ -10445,6 +10463,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final msg = <String, dynamic>{
       'type': 'schedule_task',
+      if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
       'prompt': prompt,
       'cwd': cwd,
       'backend': backend ?? preferredBackendForServer(serverId),
@@ -10471,6 +10490,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void updateScheduledTask({
     required String taskId,
+    String? name,
     String? prompt,
     String? cwd,
     String? backend,
@@ -10487,6 +10507,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'update_scheduled_task',
       'taskId': taskId,
     };
+    if (name != null) msg['name'] = name.trim();
     if (prompt != null) msg['prompt'] = prompt;
     if (cwd != null) msg['cwd'] = cwd;
     if (backend != null) msg['backend'] = backend;

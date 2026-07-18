@@ -465,6 +465,7 @@ class NotificationService {
         final target = _sessionTargetFromPayload(notification.payload);
         if (target == null || (target.serverId ?? '') != serverId) continue;
         await _plugin.cancel(id: notificationId);
+        if (target.sessionId.startsWith('scheduled-')) continue;
         recovered.add(
           RecoveredSessionNotification(
             sessionId: target.sessionId,

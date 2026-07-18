@@ -429,6 +429,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
 
   void _showCreateDialog() {
     final provider = context.read<ChatProvider>();
+    final nameController = TextEditingController();
     final promptController = TextEditingController();
     final cwdController = TextEditingController(text: provider.defaultCwd);
     DateTime selectedDate = DateTime.now().add(const Duration(hours: 1));
@@ -494,6 +495,22 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       ),
                     ),
 
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Name',
+                          hintText: 'Short label, e.g. Nightly backup check',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.label_outline),
+                        ),
+                        maxLength: 100,
+                        autofocus: true,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+
                     // Prompt
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -507,7 +524,6 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                         ),
                         maxLines: 4,
                         minLines: 2,
-                        autofocus: true,
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -917,6 +933,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             final cwd = cwdController.text.trim();
                             if (prompt.isEmpty || cwd.isEmpty) return;
                             provider.scheduleTask(
+                              name: nameController.text.trim(),
                               prompt: prompt,
                               cwd: cwd,
                               backend: selectedBackend,
@@ -956,6 +973,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
         );
       },
     ).then((_) {
+      nameController.dispose();
       promptController.dispose();
       cwdController.dispose();
       hoursController.dispose();
@@ -1049,6 +1067,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
   void _showEditDialog(Map<String, dynamic> task) {
     final provider = context.read<ChatProvider>();
     final taskId = task['id'] as String;
+    final nameController = TextEditingController(
+      text: task['name'] as String? ?? '',
+    );
     final promptController = TextEditingController(
       text: task['prompt'] as String? ?? '',
     );
@@ -1128,6 +1149,21 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
                     ),
+
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: TextField(
+                        controller: nameController,
+                        decoration: const InputDecoration(
+                          labelText: 'Name',
+                          hintText: 'Short label for lists and notifications',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.label_outline),
+                        ),
+                        maxLength: 100,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
 
                     // Prompt
                     Padding(
@@ -1493,6 +1529,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             if (prompt.isEmpty || cwd.isEmpty) return;
                             provider.updateScheduledTask(
                               taskId: taskId,
+                              name: nameController.text.trim(),
                               prompt: prompt,
                               cwd: cwd,
                               backend: selectedBackend,
@@ -1527,6 +1564,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
         );
       },
     ).then((_) {
+      nameController.dispose();
       promptController.dispose();
       cwdController.dispose();
       hoursController.dispose();
@@ -1697,6 +1735,8 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     final taskId = task['id'] as String? ?? '';
                     final status = task['status'] as String? ?? 'pending';
                     final prompt = task['prompt'] as String? ?? '';
+                    final name = (task['name'] as String? ?? '').trim();
+                    final displayName = name.isNotEmpty ? name : prompt;
                     final cwd = task['cwd'] as String? ?? '';
                     final scheduledTime = task['scheduledTime'] as String?;
                     final resultSummary = task['resultSummary'] as String?;
@@ -1762,16 +1802,31 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                        // Prompt
+                                        // Human-readable task label
                                         Text(
-                                          prompt,
-                                          maxLines: 2,
+                                          displayName,
+                                          maxLines: name.isNotEmpty ? 1 : 2,
                                           overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(
-                                            fontSize: 14,
-                                            fontWeight: FontWeight.w500,
+                                            fontSize: 15,
+                                            fontWeight: FontWeight.w600,
                                           ),
                                         ),
+                                        if (name.isNotEmpty &&
+                                            prompt.isNotEmpty) ...[
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            prompt,
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .onSurfaceVariant,
+                                            ),
+                                          ),
+                                        ],
                                         const SizedBox(height: 4),
                                         // Recurrence + run count badge
                                         if (isRecurring) ...[

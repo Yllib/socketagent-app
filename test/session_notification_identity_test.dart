@@ -1,5 +1,6 @@
 import 'package:app/services/notification_service.dart';
 import 'package:app/services/push_notification_service.dart';
+import 'package:app/models/session_notification_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -62,6 +63,30 @@ void main() {
     expect(
       NotificationService.completionReadChannelId,
       isNot(NotificationService.completionUnreadChannelId),
+    );
+  });
+
+  test('quiet scheduled sessions never create fallback completions', () {
+    expect(
+      shouldScheduleSessionCompletionFallback(
+        sessionId: 'real-session',
+        suppressAutomaticNotifications: true,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldScheduleSessionCompletionFallback(
+        sessionId: 'scheduled-task-placeholder',
+        suppressAutomaticNotifications: false,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldScheduleSessionCompletionFallback(
+        sessionId: 'real-session',
+        suppressAutomaticNotifications: false,
+      ),
+      isTrue,
     );
   });
 }
