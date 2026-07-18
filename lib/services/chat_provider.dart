@@ -609,7 +609,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Per-server installed plugin names (from status_sync)
   final Map<String, List<String>> _serverPlugins = {};
   final Map<String, int> _serverSecretManagementVersions = {};
-  final Map<String, int> _serverHtmlPlanVersions = {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -3752,10 +3751,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             final secretManagement = msg['secretManagement'];
             _serverSecretManagementVersions[serverId] = secretManagement is Map
                 ? (secretManagement['version'] as num?)?.toInt() ?? 0
-                : 0;
-            final htmlPlans = msg['htmlPlans'];
-            _serverHtmlPlanVersions[serverId] = htmlPlans is Map
-                ? (htmlPlans['version'] as num?)?.toInt() ?? 0
                 : 0;
             _captureCodexDriverSettings(msg, serverId);
             unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
@@ -8978,12 +8973,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       return;
     }
-    if ((_serverHtmlPlanVersions[serverId] ?? 0) == 0) {
-      _htmlPlansLoading = false;
-      _htmlPlansError = 'This server needs the latest SocketAgent update to manage HTML plans.';
-      notifyListeners();
-      return;
-    }
     final requestId = 'html_plans_${DateTime.now().microsecondsSinceEpoch}';
     _htmlPlanListRequestId = requestId;
     _htmlPlansLoading = true;
@@ -8997,7 +8986,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_htmlPlanListRequestId != requestId) return;
       _htmlPlanListRequestId = null;
       _htmlPlansLoading = false;
-      _htmlPlansError = 'The server did not answer the HTML plan request. Try Refresh.';
+      _htmlPlansError =
+          'The server did not answer the HTML plan request. Reconnect it, or update that server if it is running an older SocketAgent version.';
       notifyListeners();
     });
     notifyListeners();
