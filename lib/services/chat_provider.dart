@@ -595,6 +595,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Timer? _htmlPlanListTimeout;
   final Map<String, Completer<HtmlPlan>> _htmlPlanRenameCompleters = {};
   final Map<String, Completer<void>> _htmlPlanDeleteCompleters = {};
+  final Map<String, Completer<List<HtmlPlanRevisionSummary>>>
+  _htmlPlanRevisionListCompleters = {};
+  final Map<String, Completer<HtmlPlanRevisionDetail>>
+  _htmlPlanRevisionDetailCompleters = {};
+  final Map<String, Completer<HtmlPlan>> _htmlPlanRollbackCompleters = {};
   double? _uploadProgress;
   String? _pendingUploadId;
   Completer<String>? _uploadCompleter;
@@ -3616,6 +3621,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'secret_inventory',
       'html_plan_list',
       'html_plan_operation_result',
+      'html_plan_revision_list',
+      'html_plan_revision',
       'server_settings',
       'backend_install_progress',
       'backend_auth_required',
@@ -3779,6 +3786,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case 'html_plan_operation_result':
         _handleHtmlPlanOperationResult(msg);
+        break;
+      case 'html_plan_revision_list':
+        _handleHtmlPlanRevisionList(msg);
+        break;
+      case 'html_plan_revision':
+        _handleHtmlPlanRevision(msg);
         break;
       case 'result':
         _handleResult(msg);
@@ -6343,7 +6356,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           (message) => message.type == MessageType.htmlPlan && message.toolUseId == plan.planId,
         );
         if (cardIndex >= 0) {
-          _messages[cardIndex] = ChatMessage.htmlPlan(plan.toJson());
+          _messages[cardIndex] = _updatedHtmlPlanCard(
+            _messages[cardIndex],
+            plan,
+          );
         }
         renameCompleter.complete(plan);
       } else {
@@ -6363,7 +6379,97 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         deleteCompleter.completeError(Exception(error));
       }
     }
+    final rollbackCompleter = _htmlPlanRollbackCompleters.remove(requestId);
+    if (rollbackCompleter != null && !rollbackCompleter.isCompleted) {
+      if (ok && msg['plan'] is Map) {
+        final plan = HtmlPlan.fromJson(
+          Map<String, dynamic>.from(msg['plan'] as Map),
+        );
+        final planIndex = _htmlPlans.indexWhere(
+          (item) => item.planId == plan.planId,
+        );
+        if (planIndex >= 0) {
+          _htmlPlans[planIndex] = plan;
+        } else {
+          _htmlPlans.insert(0, plan);
+        }
+        final cardIndex = _messages.indexWhere(
+          (message) =>
+              message.type == MessageType.htmlPlan &&
+              message.toolUseId == plan.planId,
+        );
+        if (cardIndex >= 0) {
+          _messages[cardIndex] = _updatedHtmlPlanCard(
+            _messages[cardIndex],
+            plan,
+          );
+        }
+        rollbackCompleter.complete(plan);
+      } else {
+        rollbackCompleter.completeError(Exception(error));
+      }
+    }
     notifyListeners();
+  }
+
+  ChatMessage _updatedHtmlPlanCard(ChatMessage previous, HtmlPlan plan) {
+    final updated = ChatMessage.htmlPlan(plan.toJson());
+    updated.entryId = previous.entryId;
+    updated.sessionSeq = previous.sessionSeq;
+    updated.revision = previous.revision + 1;
+    updated.parentToolUseId = previous.parentToolUseId;
+    updated.originToolUseId = previous.originToolUseId;
+    return updated;
+  }
+
+  void _handleHtmlPlanRevisionList(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String? ?? '';
+    final completer = _htmlPlanRevisionListCompleters.remove(requestId);
+    if (completer == null || completer.isCompleted) return;
+    if (msg['ok'] != true) {
+      completer.completeError(
+        Exception(msg['error']?.toString() ?? 'Could not load revisions'),
+      );
+      return;
+    }
+    final revisions = (msg['revisions'] as List? ?? const [])
+        .whereType<Map>()
+        .map(
+          (entry) => HtmlPlanRevisionSummary.fromJson(
+            Map<String, dynamic>.from(entry),
+          ),
+        )
+        .where((revision) => revision.revision > 0)
+        .toList();
+    completer.complete(revisions);
+  }
+
+  void _handleHtmlPlanRevision(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String? ?? '';
+    final completer = _htmlPlanRevisionDetailCompleters.remove(requestId);
+    if (completer == null || completer.isCompleted) return;
+    if (msg['ok'] != true || msg['revision'] is! Map) {
+      completer.completeError(
+        Exception(msg['error']?.toString() ?? 'Could not load revision'),
+      );
+      return;
+    }
+    completer.complete(
+      HtmlPlanRevisionDetail(
+        revision: HtmlPlanRevision.fromJson(
+          Map<String, dynamic>.from(msg['revision'] as Map),
+        ),
+        baseRevision: int.tryParse(msg['baseRevision']?.toString() ?? ''),
+        diff: (msg['diff'] as List? ?? const [])
+            .whereType<Map>()
+            .map(
+              (entry) => HtmlPlanDiffSegment.fromJson(
+                Map<String, dynamic>.from(entry),
+              ),
+            )
+            .toList(),
+      ),
+    );
   }
 
   void _handleResult(Map<String, dynamic> msg) {
@@ -9109,6 +9215,85 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       onTimeout: () {
         _htmlPlanDeleteCompleters.remove(requestId);
         throw TimeoutException('Timed out deleting HTML plan');
+      },
+    );
+  }
+
+  Future<List<HtmlPlanRevisionSummary>> getHtmlPlanRevisions(HtmlPlan plan) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || sessionId.isEmpty) {
+      throw StateError('No active session');
+    }
+    final requestId =
+        'html_plan_revisions_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<List<HtmlPlanRevisionSummary>>();
+    _htmlPlanRevisionListCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
+      'type': 'html_plan_revision_list',
+      'requestId': requestId,
+      'sessionId': sessionId,
+      'planId': plan.planId,
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        _htmlPlanRevisionListCompleters.remove(requestId);
+        throw TimeoutException('Timed out loading HTML plan revisions');
+      },
+    );
+  }
+
+  Future<HtmlPlanRevisionDetail> getHtmlPlanRevision(
+    HtmlPlan plan,
+    int revision, {
+    int? baseRevision,
+  }) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || sessionId.isEmpty) {
+      throw StateError('No active session');
+    }
+    final requestId =
+        'html_plan_revision_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<HtmlPlanRevisionDetail>();
+    _htmlPlanRevisionDetailCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
+      'type': 'html_plan_revision_get',
+      'requestId': requestId,
+      'sessionId': sessionId,
+      'planId': plan.planId,
+      'revision': revision,
+      if (baseRevision != null) 'baseRevision': baseRevision,
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        _htmlPlanRevisionDetailCompleters.remove(requestId);
+        throw TimeoutException('Timed out loading HTML plan revision');
+      },
+    );
+  }
+
+  Future<HtmlPlan> rollbackHtmlPlan(HtmlPlan plan, int revision) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || sessionId.isEmpty) {
+      throw StateError('No active session');
+    }
+    final requestId =
+        'html_plan_rollback_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<HtmlPlan>();
+    _htmlPlanRollbackCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
+      'type': 'html_plan_rollback',
+      'requestId': requestId,
+      'sessionId': sessionId,
+      'planId': plan.planId,
+      'revision': revision,
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        _htmlPlanRollbackCompleters.remove(requestId);
+        throw TimeoutException('Timed out rolling back HTML plan');
       },
     );
   }

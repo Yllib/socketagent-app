@@ -1,6 +1,7 @@
 package com.socketagent.app
 
 import android.content.Intent
+import android.content.ClipData
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -9,6 +10,8 @@ import android.content.ComponentName
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import androidx.core.content.FileProvider
+import java.io.File
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.socketagent.app/intent"
@@ -194,6 +197,30 @@ class MainActivity : FlutterActivity() {
                         }
                     } else {
                         result.error("INVALID_ARG", "url is required", null)
+                    }
+                }
+                "shareHtmlFile" -> {
+                    val requestedPath = call.argument<String>("path") ?: ""
+                    val title = call.argument<String>("title") ?: "HTML plan"
+                    try {
+                        val file = File(requestedPath).canonicalFile
+                        val cacheRoot = cacheDir.canonicalFile
+                        if (!file.exists() || !file.isFile || !file.path.startsWith(cacheRoot.path + File.separator)) {
+                            result.error("SHARE_HTML_INVALID_FILE", "The exported plan is not in the app cache", null)
+                        } else {
+                            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/html"
+                                putExtra(Intent.EXTRA_SUBJECT, title)
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                clipData = ClipData.newRawUri(file.name, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            startActivity(Intent.createChooser(sendIntent, "Share HTML plan"))
+                            result.success(true)
+                        }
+                    } catch (e: Exception) {
+                        result.error("SHARE_HTML_ERROR", e.message, null)
                     }
                 }
                 else -> result.notImplemented()

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../models/html_plan.dart';
 import '../screens/html_plan_viewer_screen.dart';
+import '../screens/html_plan_revision_screen.dart';
 import '../services/chat_provider.dart';
+import '../services/html_plan_export_service.dart';
 
 class HtmlPlanManagerSheet extends StatefulWidget {
   const HtmlPlanManagerSheet({super.key, required this.provider});
@@ -93,6 +95,49 @@ class _HtmlPlanManagerSheetState extends State<HtmlPlanManagerSheet> {
     }
   }
 
+  Future<void> _history(HtmlPlan plan) async {
+    await Navigator.of(context).push<HtmlPlan>(
+      MaterialPageRoute(builder: (_) => HtmlPlanRevisionScreen(plan: plan)),
+    );
+  }
+
+  Future<void> _export(HtmlPlan plan) async {
+    try {
+      final path = await HtmlPlanExportService.export(
+        title: plan.title,
+        html: plan.html,
+        revision: plan.currentRevision,
+      );
+      if (path != null && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Exported ${plan.title}')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not export plan: $error')),
+        );
+      }
+    }
+  }
+
+  Future<void> _share(HtmlPlan plan) async {
+    try {
+      await HtmlPlanExportService.share(
+        title: plan.title,
+        html: plan.html,
+        revision: plan.currentRevision,
+      );
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not share plan: $error')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -146,7 +191,7 @@ class _HtmlPlanManagerSheetState extends State<HtmlPlanManagerSheet> {
                             leading: const Icon(Icons.description_outlined),
                             title: Text(plan.title),
                             subtitle: Text(
-                              'Updated ${_formatDate(plan.updatedAt)}',
+                              'Updated ${_formatDate(plan.updatedAt)} · ${plan.revisionCount} revision${plan.revisionCount == 1 ? '' : 's'}',
                             ),
                             onTap: () => Navigator.of(context).push(
                               MaterialPageRoute(
@@ -156,10 +201,25 @@ class _HtmlPlanManagerSheetState extends State<HtmlPlanManagerSheet> {
                             ),
                             trailing: PopupMenuButton<String>(
                               onSelected: (value) {
+                                if (value == 'history') _history(plan);
+                                if (value == 'export') _export(plan);
+                                if (value == 'share') _share(plan);
                                 if (value == 'rename') _rename(plan);
                                 if (value == 'delete') _delete(plan);
                               },
                               itemBuilder: (_) => const [
+                                PopupMenuItem(
+                                  value: 'history',
+                                  child: Text('Revision history'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'export',
+                                  child: Text('Export HTML'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'share',
+                                  child: Text('Share HTML'),
+                                ),
                                 PopupMenuItem(
                                   value: 'rename',
                                   child: Text('Rename'),
