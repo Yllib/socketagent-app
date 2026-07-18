@@ -490,6 +490,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _shownOngoingSessionNotificationKeys = {};
   final Map<String, Timer> _sessionCompletionFallbackTimers = {};
   final Map<String, Timer> _scheduledTaskRefreshRetries = {};
+  final Map<String, String> _scheduledTaskLoadedRevisions = {};
   final Map<String, DateTime> _recentLocalInstantNotifications = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
@@ -508,6 +509,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
   DateTime? _currentPromptStartedAt;
   Timer? _promptRuntimeTimer;
+  Timer? _initialHistoryTimeout;
   bool _isCompacting = false;
   bool _requiresAction = false; // SDK says session needs user input
   String?
@@ -2353,6 +2355,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _serverConfigs.removeWhere((c) => c.id == serverId);
     _perServerSessions.remove(serverId);
     _perServerScheduledTasks.remove(serverId);
+    _scheduledTaskLoadedRevisions.remove(serverId);
+    _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
     _rebuildScheduledTaskList();
     final removedPushRegistration = _pushRegisteredServers.remove(serverId);
     await _saveServerConfigs();
@@ -4653,6 +4657,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 .toList();
           }
           _captureServerRuntimeInfo(msg, serverId);
+          final taskRevision = msg['scheduledTaskRevision']?.toString();
+          if (scheduledTaskRevisionNeedsRefresh(
+            _scheduledTaskLoadedRevisions[serverId],
+            taskRevision,
+          )) {
+            _requestScheduledTasksFromServer(serverId);
+          }
         }
         final runningSessions = (msg['runningSessions'] as List?)
             ?.map((e) => e.toString())
@@ -4777,6 +4788,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         break;
       case 'error':
+        if (_isLoadingHistory) {
+          _isLoadingHistory = false;
+          _initialHistoryTimeout?.cancel();
+          _initialHistoryTimeout = null;
+        }
         _messages.add(ChatMessage.error(msg['message'] ?? 'Unknown error'));
         _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
         _isProcessing = false;
@@ -4921,6 +4937,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'scheduled_task_list':
         if (serverId != null) {
           _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
+          final revision = msg['revision']?.toString();
+          if (revision != null && revision.isNotEmpty) {
+            _scheduledTaskLoadedRevisions[serverId] = revision;
+          }
         }
         final tasks = (msg['tasks'] as List? ?? [])
             .map(
@@ -7275,6 +7295,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (!decision.accept) return;
 
     if (decision.kind == SessionHistoryKind.initial) {
+      _initialHistoryTimeout?.cancel();
+      _initialHistoryTimeout = null;
       _initialHistoryRequestId = null;
       _olderHistoryRequestId = null;
       _isLoadingMore = false;
@@ -9968,16 +9990,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeSessionBackend = null; // legacy session without backend tag
       _activeSessionServerId = serverId ?? _connMgr.activeServerId;
     }
-    if (session != null && session.serverId.isNotEmpty) {
-      _connMgr.activeServerId = session.serverId;
-      _connMgr.sendToServer(session.serverId, {
+    final targetServerId = session?.serverId.isNotEmpty == true
+        ? session!.serverId
+        : serverId;
+    if (targetServerId != null && targetServerId.isNotEmpty) {
+      _activeSessionServerId = targetServerId;
+      _connMgr.activeServerId = targetServerId;
+      _connMgr.sendToServer(targetServerId, {
         'type': 'resume_session',
         'sessionId': sessionId,
-        'cwd': session.cwd,
-        if (session.backend != null) 'backend': session.backend,
+        if (session != null) 'cwd': session.cwd,
+        if (session?.backend != null) 'backend': session!.backend,
         'historyRequestId': historyRequestId,
       });
-      _connMgr.sendToServer(session.serverId, {'type': 'get_status_sync'});
+      _connMgr.sendToServer(targetServerId, {'type': 'get_status_sync'});
     } else {
       if (session != null) {
         _connMgr.send({
@@ -10042,6 +10068,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final requestId = _newHistoryRequestId('initial', sessionId);
     _initialHistoryRequestId = requestId;
     _olderHistoryRequestId = null;
+    _initialHistoryTimeout?.cancel();
+    _initialHistoryTimeout = Timer(const Duration(seconds: 10), () {
+      if (_initialHistoryRequestId != requestId ||
+          _activeSessionId != sessionId ||
+          !_isLoadingHistory) {
+        return;
+      }
+      _isLoadingHistory = false;
+      _messages.add(
+        ChatMessage.error(
+          'Timed out loading this session from its server. Check the server connection and try again.',
+        ),
+      );
+      notifyListeners();
+    });
     return requestId;
   }
 
@@ -10700,21 +10741,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void requestScheduledTasks() {
     for (final config in _serverConfigs) {
-      final serverId = config.id;
-      if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) continue;
-
-      _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
-      _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
-      _scheduledTaskRefreshRetries[serverId] = Timer(
-        const Duration(seconds: 2),
-        () {
-          _scheduledTaskRefreshRetries.remove(serverId);
-          if (_connMgr.statusOf(serverId) == ConnectionStatus.connected) {
-            _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
-          }
-        },
-      );
+      _requestScheduledTasksFromServer(config.id, force: true);
     }
+  }
+
+  void _requestScheduledTasksFromServer(
+    String serverId, {
+    bool force = false,
+  }) {
+    if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
+    if (!force && _scheduledTaskRefreshRetries.containsKey(serverId)) return;
+
+    _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
+    _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
+    _scheduledTaskRefreshRetries[serverId] = Timer(
+      const Duration(seconds: 2),
+      () {
+        _scheduledTaskRefreshRetries.remove(serverId);
+        if (_connMgr.statusOf(serverId) == ConnectionStatus.connected) {
+          _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
+        }
+      },
+    );
   }
 
   String? _serverIdForScheduledTask(String taskId) {
@@ -12735,6 +12783,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     PushNotificationService.onTokenRefresh = null;
     PushNotificationService.shouldDisplayForegroundNotification = null;
     _promptRuntimeTimer?.cancel();
+    _initialHistoryTimeout?.cancel();
     _foregroundResumeTimer?.cancel();
     _secretInventoryRequestTracker.cancel();
     _htmlPlanListTimeout?.cancel();

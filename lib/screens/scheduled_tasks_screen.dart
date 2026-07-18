@@ -983,6 +983,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
 
   void _showTaskActions(Map<String, dynamic> task) {
     final provider = context.read<ChatProvider>();
+    final taskServerId = task['_serverId'] as String?;
     final status = task['status'] as String? ?? '';
     final sessionId = task['sessionId'] as String?;
     final isRecurring = task['recurrence'] != null;
@@ -1027,7 +1028,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                   title: const Text('View Latest Session'),
                   onTap: () {
                     Navigator.pop(ctx);
-                    provider.resumeSession(sessionId);
+                    provider.resumeSession(sessionId, serverId: taskServerId);
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const HomeScreen()),
                     );
@@ -1572,9 +1573,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     });
   }
 
-  void _viewRunSession(String sessionId) {
+  void _viewRunSession(String sessionId, String? serverId) {
     final provider = context.read<ChatProvider>();
-    provider.resumeSession(sessionId);
+    provider.resumeSession(sessionId, serverId: serverId);
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
@@ -1583,6 +1584,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
   Widget _buildRunHistory(Map<String, dynamic> task) {
     final runs = (task['runs'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     if (runs.isEmpty) return const SizedBox.shrink();
+    final taskServerId = task['_serverId'] as String?;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1608,7 +1610,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
 
           return InkWell(
             onTap: runSessionId.isNotEmpty
-                ? () => _viewRunSession(runSessionId)
+                ? () => _viewRunSession(runSessionId, taskServerId)
                 : null,
             child: Padding(
               padding: const EdgeInsets.only(

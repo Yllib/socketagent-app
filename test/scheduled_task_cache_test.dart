@@ -2,6 +2,13 @@ import 'package:app/models/scheduled_task_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('a new heartbeat revision forces authoritative task refresh', () {
+    expect(scheduledTaskRevisionNeedsRefresh(null, 'rev-1'), isTrue);
+    expect(scheduledTaskRevisionNeedsRefresh('rev-1', 'rev-1'), isFalse);
+    expect(scheduledTaskRevisionNeedsRefresh('rev-1', 'rev-2'), isTrue);
+    expect(scheduledTaskRevisionNeedsRefresh('rev-1', null), isFalse);
+  });
+
   test('retains each configured server task list across reconnects', () {
     final encoded = encodeScheduledTaskCache({
       'server-a': [

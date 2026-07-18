@@ -1,5 +1,15 @@
 import 'dart:convert';
 
+bool scheduledTaskRevisionNeedsRefresh(
+  String? loadedRevision,
+  Object? advertisedRevision,
+) {
+  final advertised = advertisedRevision?.toString();
+  return advertised != null &&
+      advertised.isNotEmpty &&
+      advertised != loadedRevision;
+}
+
 Map<String, List<Map<String, dynamic>>> decodeScheduledTaskCache(
   String? raw,
   Set<String> validServerIds,
