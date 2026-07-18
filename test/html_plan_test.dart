@@ -52,4 +52,26 @@ void main() {
       'release-rollout-revision-4.html',
     );
   });
+
+  test('plan creation is labeled as the original, not revision one', () {
+    final plan = HtmlPlan.fromJson({
+      'planId': 'original',
+      'title': 'Original plan',
+      'html': '<p>Created</p>',
+    });
+    expect(plan.currentRevision, 0);
+    expect(plan.revisionCount, 0);
+    expect(
+      HtmlPlanExportService.safeFileName('Original plan', 0),
+      'original-plan-original.html',
+    );
+    expect(
+      HtmlPlanExportService.buildDocument(
+        title: 'Original plan',
+        html: '<p>Created</p>',
+        revision: 0,
+      ),
+      contains('<title>Original plan — original</title>'),
+    );
+  });
 }

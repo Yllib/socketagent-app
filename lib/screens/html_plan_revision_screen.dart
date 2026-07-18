@@ -74,11 +74,20 @@ class _HtmlPlanRevisionScreenState extends State<HtmlPlanRevisionScreen> {
             itemBuilder: (context, index) {
               final revision = revisions[index];
               final current = revision.revision == widget.plan.currentRevision;
+              final original = revision.revision == 0;
               return ListTile(
-                leading: CircleAvatar(child: Text('${revision.revision}')),
+                leading: CircleAvatar(
+                  child: original
+                      ? const Icon(Icons.add, size: 20)
+                      : Text('${revision.revision}'),
+                ),
                 title: Row(
                   children: [
-                    Expanded(child: Text('Revision ${revision.revision}')),
+                    Expanded(
+                      child: Text(
+                        original ? 'Created' : 'Revision ${revision.revision}',
+                      ),
+                    ),
                     if (current)
                       const Chip(
                         label: Text('Current'),
@@ -91,7 +100,9 @@ class _HtmlPlanRevisionScreenState extends State<HtmlPlanRevisionScreen> {
                     _formatDate(revision.createdAt),
                     _formatBytes(revision.byteSize),
                     if (revision.restoredFromRevision != null)
-                      'Restored from ${revision.restoredFromRevision}',
+                      revision.restoredFromRevision == 0
+                          ? 'Restored from original'
+                          : 'Restored from revision ${revision.restoredFromRevision}',
                   ].join(' · '),
                 ),
                 trailing: const Icon(Icons.chevron_right),
@@ -195,7 +206,11 @@ class _HtmlPlanRevisionDetailScreenState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Restore revision ${revision.revision}?'),
+        title: Text(
+          revision.revision == 0
+              ? 'Restore original plan?'
+              : 'Restore revision ${revision.revision}?',
+        ),
         content: const Text(
           'This keeps every existing revision and creates a new current revision from the selected version.',
         ),
@@ -233,7 +248,11 @@ class _HtmlPlanRevisionDetailScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Revision ${widget.summary.revision}'),
+        title: Text(
+          widget.summary.revision == 0
+              ? 'Created plan'
+              : 'Revision ${widget.summary.revision}',
+        ),
         actions: [
           IconButton(
             tooltip: 'Export HTML',
@@ -336,7 +355,9 @@ class _DiffView extends StatelessWidget {
         children: [
           Text(
             detail.baseRevision == null
-                ? 'Initial revision'
+                ? 'Original plan'
+                : detail.baseRevision == 0
+                ? 'Changes from original'
                 : 'Changes from revision ${detail.baseRevision}',
             style: Theme.of(context).textTheme.titleSmall,
           ),

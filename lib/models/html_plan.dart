@@ -28,8 +28,9 @@ class HtmlPlan {
       html: json['html']?.toString() ?? '',
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? now,
       updatedAt: DateTime.tryParse(json['updatedAt']?.toString() ?? '') ?? now,
-      currentRevision: int.tryParse(json['currentRevision']?.toString() ?? '') ?? 1,
-      revisionCount: int.tryParse(json['revisionCount']?.toString() ?? '') ?? 1,
+      currentRevision:
+          int.tryParse(json['currentRevision']?.toString() ?? '') ?? 0,
+      revisionCount: int.tryParse(json['revisionCount']?.toString() ?? '') ?? 0,
     );
   }
 

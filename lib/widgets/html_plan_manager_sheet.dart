@@ -191,7 +191,7 @@ class _HtmlPlanManagerSheetState extends State<HtmlPlanManagerSheet> {
                             leading: const Icon(Icons.description_outlined),
                             title: Text(plan.title),
                             subtitle: Text(
-                              'Updated ${_formatDate(plan.updatedAt)} · ${plan.revisionCount} revision${plan.revisionCount == 1 ? '' : 's'}',
+                              'Updated ${_formatDate(plan.updatedAt)} · ${plan.revisionCount == 0 ? 'Original plan' : '${plan.revisionCount} revision${plan.revisionCount == 1 ? '' : 's'}'}',
                             ),
                             onTap: () => Navigator.of(context).push(
                               MaterialPageRoute(

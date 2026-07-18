@@ -15,7 +15,8 @@ class HtmlPlanExportService {
         .replaceAll(RegExp(r'-+'), '-')
         .replaceAll(RegExp(r'^[-.]+|[-.]+$'), '')
         .toLowerCase();
-    return '${safe.isEmpty ? 'html-plan' : safe}-revision-$revision.html';
+    final versionLabel = revision == 0 ? 'original' : 'revision-$revision';
+    return '${safe.isEmpty ? 'html-plan' : safe}-$versionLabel.html';
   }
 
   static String buildDocument({
@@ -24,12 +25,13 @@ class HtmlPlanExportService {
     required int revision,
   }) {
     final escapedTitle = const HtmlEscape(HtmlEscapeMode.element).convert(title);
+    final versionLabel = revision == 0 ? 'original' : 'revision $revision';
     return '''<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>$escapedTitle — revision $revision</title>
+<title>$escapedTitle — $versionLabel</title>
 </head>
 <body>
 $html

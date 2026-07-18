@@ -6439,7 +6439,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             Map<String, dynamic>.from(entry),
           ),
         )
-        .where((revision) => revision.revision > 0)
+        .where((revision) => revision.revision >= 0)
         .toList();
     completer.complete(revisions);
   }

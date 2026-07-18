@@ -83,9 +83,9 @@ class _HtmlPlanViewerScreenState extends State<HtmlPlanViewerScreen> {
               if (value == 'share') _share();
             },
             itemBuilder: (_) => [
-              PopupMenuItem(
+              const PopupMenuItem(
                 value: 'history',
-                child: Text('Revision history (${_plan.revisionCount})'),
+                child: Text('Revision history'),
               ),
               const PopupMenuItem(value: 'export', child: Text('Export HTML')),
               const PopupMenuItem(value: 'share', child: Text('Share HTML')),
