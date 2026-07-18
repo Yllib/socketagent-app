@@ -36,6 +36,7 @@ import 'kokoro_device_engine.dart';
 import 'kokoro_model_manager.dart';
 import 'notification_service.dart';
 import 'push_notification_service.dart';
+import 'relay_push_service.dart';
 import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 import 'adb_bridge_service.dart';
@@ -2133,8 +2134,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'platform': 'android',
     };
     if (serverId != null) {
+      final config = _serverConfigs.where((item) => item.id == serverId).firstOrNull;
+      if (config == null) return false;
       final ws = _connMgr.getConnection(serverId);
       if (ws?.status != ConnectionStatus.connected) return false;
+      if (config.isRelayPaired) {
+        final relayRegistered = await RelayPushService.register(
+          relayUrl: config.relayUrl,
+          pairingToken: config.pairingToken,
+          subscriberToken: _subscriberToken,
+          fcmToken: token,
+          serverId: serverId,
+        );
+        if (!relayRegistered) {
+          debugPrint('[Push] Relay FCM registration failed for $serverId');
+          return false;
+        }
+      }
       ws!.send({...message, 'appServerId': serverId});
       return true;
     }
@@ -2143,6 +2159,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (!_pushRegisteredServers.contains(config.id)) continue;
       final ws = _connMgr.getConnection(config.id);
       if (ws?.status == ConnectionStatus.connected) {
+        if (config.isRelayPaired) {
+          final relayRegistered = await RelayPushService.register(
+            relayUrl: config.relayUrl,
+            pairingToken: config.pairingToken,
+            subscriberToken: _subscriberToken,
+            fcmToken: token,
+            serverId: config.id,
+          );
+          if (!relayRegistered) {
+            debugPrint(
+              '[Push] Relay FCM registration failed for ${config.id}',
+            );
+            continue;
+          }
+        }
         ws!.send({...message, 'appServerId': config.id});
         sent = true;
       }
