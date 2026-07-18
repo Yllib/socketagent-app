@@ -21,6 +21,7 @@ import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import '../models/session_notification_policy.dart';
+import '../models/scheduled_task_update.dart';
 import 'websocket_service.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
@@ -10747,6 +10748,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     final serverId = _serverIdForScheduledTask(taskId);
+    final taskIndex = _scheduledTasks.indexWhere((task) => task['id'] == taskId);
+    if (taskIndex >= 0) {
+      final updated = applyScheduledTaskUpdate(_scheduledTasks[taskIndex], msg);
+      _scheduledTasks[taskIndex] = updated;
+
+      if (serverId != null) {
+        final serverTasks = _perServerScheduledTasks[serverId];
+        final serverTaskIndex =
+            serverTasks?.indexWhere((task) => task['id'] == taskId) ?? -1;
+        if (serverTasks != null && serverTaskIndex >= 0) {
+          serverTasks[serverTaskIndex] = updated;
+        }
+      }
+      notifyListeners();
+    }
+
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
     } else {
