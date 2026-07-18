@@ -2,6 +2,12 @@ import 'package:app/models/scheduled_task_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('task state responses remain routable from inactive servers', () {
+    expect(isScheduledTaskStateMessage('scheduled_task_list'), isTrue);
+    expect(isScheduledTaskStateMessage('scheduled_task_update'), isTrue);
+    expect(isScheduledTaskStateMessage('scheduled_task_notification'), isFalse);
+  });
+
   test('a new heartbeat revision forces authoritative task refresh', () {
     expect(scheduledTaskRevisionNeedsRefresh(null, 'rev-1'), isTrue);
     expect(scheduledTaskRevisionNeedsRefresh('rev-1', 'rev-1'), isFalse);

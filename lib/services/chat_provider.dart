@@ -3631,10 +3631,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'scheduled_task_notification',
       'reminder',
     };
+    final isGlobalType =
+        globalTypes.contains(type) || isScheduledTaskStateMessage(type);
 
     // Route: only process non-global messages from the active server
     final fromInactiveServer =
-        !globalTypes.contains(type) &&
+        !isGlobalType &&
         !isForVisibleSession &&
         serverId != null &&
         _connMgr.activeServerId != null &&
@@ -3656,7 +3658,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         replacementSessionId != null &&
         replacementSessionId.isNotEmpty &&
         replacementSessionId == _activeSessionId;
-    if (!globalTypes.contains(type) &&
+    if (!isGlobalType &&
         messageSessionId != null &&
         messageSessionId.isNotEmpty) {
       if (_activeSessionId == null) {

@@ -1,5 +1,9 @@
 import 'dart:convert';
 
+bool isScheduledTaskStateMessage(String? type) {
+  return type == 'scheduled_task_list' || type == 'scheduled_task_update';
+}
+
 bool scheduledTaskRevisionNeedsRefresh(
   String? loadedRevision,
   Object? advertisedRevision,
