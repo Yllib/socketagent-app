@@ -1733,14 +1733,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final completer = Completer<String?>();
     _fileBytesCompleters[fileId] = completer;
     _fileBytesBuffers[fileId] = BytesBuilder(copy: false);
+    final ownerServerId = resolveDownloadServerId(
+      serverId,
+      _connMgr.activeServerId,
+    );
+    if (ownerServerId != null) {
+      _downloadServerIds[fileId] = ownerServerId;
+    }
 
     final request = {
       'type': 'request_file',
       'filePath': filePath,
       'fileId': fileId,
     };
-    if (serverId != null && serverId.isNotEmpty) {
-      _connMgr.sendToServer(serverId, request);
+    if (ownerServerId != null) {
+      _connMgr.sendToServer(ownerServerId, request);
     } else {
       _connMgr.send(request);
     }
@@ -1750,6 +1757,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       onTimeout: () {
         _fileBytesCompleters.remove(fileId);
         _fileBytesBuffers.remove(fileId);
+        _downloadReceivedBytes.remove(fileId);
+        _downloadServerIds.remove(fileId);
         return null;
       },
     );
@@ -11794,9 +11803,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _downloadErrors.remove(fileId);
     _downloadRetryCounts[fileId] = 0;
     _cancelledDownloads.remove(fileId);
-    final currentServerId = _connMgr.activeServerId;
-    if (currentServerId != null && currentServerId.isNotEmpty) {
-      _downloadServerIds[fileId] = currentServerId;
+    final ownerServerId = resolveDownloadServerId(
+      _downloadServerIds[fileId],
+      _connMgr.activeServerId,
+    );
+    if (ownerServerId != null) {
+      _downloadServerIds[fileId] = ownerServerId;
     }
     _downloadingFiles.add(fileId);
     _downloadProgress[fileId] = 0;
@@ -11808,6 +11820,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         fileId: fileId,
         serverPath: serverPath,
         fileName: fileName,
+        serverId: ownerServerId,
       ).then((usedHttp) {
         if (usedHttp || !_downloadingFiles.contains(fileId)) return;
         unawaited(
@@ -12234,13 +12247,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleFileChunk(Map<String, dynamic> msg) {
     final fileId =
         msg['fileId'] as String? ?? msg['fileName'] as String? ?? 'file';
-    final fileName = msg['fileName'] as String? ?? 'file';
+    final fileName =
+        msg['fileName'] as String? ?? _serverFileNames[fileId] ?? 'file';
     final chunkIndex = msg['chunkIndex'] as int? ?? 0;
     final totalChunks = msg['totalChunks'] as int? ?? 1;
     final fileSize = (msg['fileSize'] as num?)?.toInt() ?? 0;
     final chunkOffset = (msg['offsetBytes'] as num?)?.toInt();
     final transferToken = msg['transferToken'] as String?;
-    final base64Data = msg['data'] as String? ?? '';
+    final binaryData = msg['binaryData'];
+    final isBinaryChunk = binaryData is Uint8List;
+    final base64Data = msg['data'] as String?;
 
     try {
       final expectedToken = _socketDownloadTokens[fileId];
@@ -12252,13 +12268,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
         return;
       }
-      var bytes = base64Decode(base64Data);
+      var bytes = binaryData is Uint8List
+          ? binaryData
+          : base64Decode(base64Data ?? '');
       if (fileSize > 0) {
         _downloadExpectedBytes[fileId] = fileSize;
       }
       final byteCompleter = _fileBytesCompleters[fileId];
       if (byteCompleter != null) {
         _fileBytesBuffers[fileId]?.add(bytes);
+        final receivedBytes =
+            (_downloadReceivedBytes[fileId] ?? chunkOffset ?? 0) + bytes.length;
+        _downloadReceivedBytes[fileId] = receivedBytes;
+        if (isBinaryChunk) {
+          _sendFileDownloadAck(fileId, transferToken, receivedBytes);
+        }
         return;
       }
       if (!_downloadingFiles.contains(fileId)) {
@@ -12288,6 +12312,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (chunkOffset < savedBytes) {
           final overlap = savedBytes - chunkOffset;
           if (overlap >= bytes.length) {
+            if (isBinaryChunk) {
+              _sendFileDownloadAck(fileId, transferToken, savedBytes);
+            }
             _armDownloadWatchdog(fileId);
             return;
           }
@@ -12305,6 +12332,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final receivedBytes =
           (_downloadReceivedBytes[fileId] ?? 0) + bytes.length;
       _downloadReceivedBytes[fileId] = receivedBytes;
+      if (isBinaryChunk) {
+        _sendFileDownloadAck(fileId, transferToken, receivedBytes);
+      }
 
       _downloadErrors.remove(fileId);
       _armDownloadWatchdog(fileId);
@@ -12320,6 +12350,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         '[File] Error handling chunk $chunkIndex/$totalChunks for $fileName: $e',
       );
       _failDownload(fileId, e.toString());
+    }
+  }
+
+  void _sendFileDownloadAck(
+    String fileId,
+    String? transferToken,
+    int receivedBytes,
+  ) {
+    final msg = {
+      'type': 'file_download_ack',
+      'fileId': fileId,
+      if (transferToken != null && transferToken.isNotEmpty)
+        'transferToken': transferToken,
+      'receivedBytes': receivedBytes,
+    };
+    final serverId = _downloadServerIds[fileId];
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _ws.send(msg);
     }
   }
 
@@ -12344,6 +12394,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final byteCompleter = _fileBytesCompleters.remove(fileId);
       if (byteCompleter != null) {
         final bytes = _fileBytesBuffers.remove(fileId)?.takeBytes();
+        _downloadReceivedBytes.remove(fileId);
+        _downloadServerIds.remove(fileId);
         if (!byteCompleter.isCompleted) {
           byteCompleter.complete(bytes == null ? null : base64Encode(bytes));
         }

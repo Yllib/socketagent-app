@@ -1,5 +1,12 @@
 const _fileMetadataKeys = {'_file_id', '_file_name', '_file_size'};
 
+String? resolveDownloadServerId(String? recordedServerId, String? activeServerId) {
+  final recorded = recordedServerId?.trim() ?? '';
+  if (recorded.isNotEmpty) return recorded;
+  final active = activeServerId?.trim() ?? '';
+  return active.isEmpty ? null : active;
+}
+
 /// A raw file-availability packet may register download transport globally,
 /// but it may only create a visible card for its exact owning session.
 bool fileEventBelongsToVisibleSession({

@@ -2,6 +2,12 @@ import 'package:app/models/file_event_routing.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('download routing preserves the file owning server', () {
+    expect(resolveDownloadServerId('server-mac', 'server-active'), 'server-mac');
+    expect(resolveDownloadServerId(null, 'server-active'), 'server-active');
+    expect(resolveDownloadServerId('', ''), isNull);
+  });
+
   test('file card requires an explicit matching session', () {
     expect(
       fileEventBelongsToVisibleSession(

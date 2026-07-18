@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../models/file_download_frame.dart';
 import 'crypto_service.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, error }
@@ -232,6 +233,7 @@ class WebSocketService {
           send({
             'type': 'client_capabilities',
             'binaryEnvelope': true,
+            'binaryFileDownloadVersion': binaryFileDownloadVersion,
             'sessionEventAckVersion': _sessionEventAckVersion,
           });
         });
@@ -347,8 +349,10 @@ class WebSocketService {
           final json = utf8.decode(plaintext.sublist(1));
           final msg = jsonDecode(json) as Map<String, dynamic>;
           _routeDecryptedMessage(msg);
+        } else if (marker == binaryFileDownloadMarker) {
+          final msg = decodeBinaryFileDownloadFrame(plaintext);
+          if (msg != null) _routeDecryptedMessage(msg);
         }
-        // We don't expect upload chunks coming back from the server today.
       } catch (e) {
         debugPrint('[Relay] Binary decryption failed: $e');
       }
@@ -365,6 +369,9 @@ class WebSocketService {
           final json = utf8.decode(plaintext.sublist(1));
           final msg = jsonDecode(json) as Map<String, dynamic>;
           _routeDecryptedMessage(msg);
+        } else if (marker == binaryFileDownloadMarker) {
+          final msg = decodeBinaryFileDownloadFrame(plaintext);
+          if (msg != null) _routeDecryptedMessage(msg);
         }
       } catch (e) {
         debugPrint('[Direct E2E] Binary decryption failed: $e');
@@ -372,7 +379,8 @@ class WebSocketService {
       return;
     }
 
-    // Direct legacy mode: server doesn't currently push binary frames. Ignore.
+    final msg = decodeBinaryFileDownloadFrame(bytes);
+    if (msg != null) _routeDecryptedMessage(msg);
   }
 
   /// Common post-decrypt routing: surfaces the message to listeners and
@@ -406,6 +414,7 @@ class WebSocketService {
         'type': 'direct_auth',
         'token': _token,
         'binaryEnvelope': true,
+        'binaryFileDownloadVersion': binaryFileDownloadVersion,
         'sessionEventAckVersion': _sessionEventAckVersion,
       });
       return;
@@ -415,6 +424,7 @@ class WebSocketService {
     send({
       'type': 'client_capabilities',
       'binaryEnvelope': true,
+      'binaryFileDownloadVersion': binaryFileDownloadVersion,
       'sessionEventAckVersion': _sessionEventAckVersion,
     });
   }
