@@ -31,6 +31,7 @@ class MainShellScreenState extends State<MainShellScreen>
   DateTime? _lastUpdateCheckAt;
   Future<void>? _updateCheckInFlight;
   Timer? _updateCheckTimer;
+  Timer? _scheduledTaskRefreshTimer;
 
   @override
   void initState() {
@@ -130,6 +131,7 @@ class MainShellScreenState extends State<MainShellScreen>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _updateCheckTimer?.cancel();
+    _scheduledTaskRefreshTimer?.cancel();
     _subRequiredSub?.cancel();
     _backendAuthRequiredSub?.cancel();
     _updateService.removeListener(_onUpdateChange);
@@ -141,6 +143,10 @@ class MainShellScreenState extends State<MainShellScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       unawaited(_checkForAppUpdate());
+      if (_currentIndex == 1) _startScheduledTaskRefresh();
+    } else {
+      _scheduledTaskRefreshTimer?.cancel();
+      _scheduledTaskRefreshTimer = null;
     }
   }
 
@@ -201,10 +207,25 @@ class MainShellScreenState extends State<MainShellScreen>
 
     final provider = context.read<ChatProvider>();
     if (index == 0) {
+      _scheduledTaskRefreshTimer?.cancel();
+      _scheduledTaskRefreshTimer = null;
       provider.requestSessionList();
     } else if (index == 1) {
-      provider.requestScheduledTasks();
+      _startScheduledTaskRefresh();
+    } else {
+      _scheduledTaskRefreshTimer?.cancel();
+      _scheduledTaskRefreshTimer = null;
     }
+  }
+
+  void _startScheduledTaskRefresh() {
+    final provider = context.read<ChatProvider>();
+    provider.requestScheduledTasks();
+    _scheduledTaskRefreshTimer?.cancel();
+    _scheduledTaskRefreshTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => provider.requestScheduledTasks(),
+    );
   }
 
   @override

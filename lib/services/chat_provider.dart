@@ -21,6 +21,7 @@ import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import '../models/session_notification_policy.dart';
+import '../models/scheduled_task_cache.dart';
 import '../models/scheduled_task_update.dart';
 import 'websocket_service.dart';
 import 'secret_inventory_request_tracker.dart';
@@ -358,6 +359,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
   static const String _sessionCachePrefsKey = 'cached_session_lists_v1';
+  static const String _scheduledTaskCachePrefsKey =
+      'cached_scheduled_task_lists_v1';
   static const String _pushRegisteredServersPrefsKey =
       'push_registered_server_ids';
   static const Duration _downloadNotificationMinInterval = Duration(
@@ -486,6 +489,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
   final Set<String> _shownOngoingSessionNotificationKeys = {};
   final Map<String, Timer> _sessionCompletionFallbackTimers = {};
+  final Map<String, Timer> _scheduledTaskRefreshRetries = {};
   final Map<String, DateTime> _recentLocalInstantNotifications = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
@@ -1972,6 +1976,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     await _loadSessionCache(prefs);
+    _loadScheduledTaskCache(prefs);
     _pushRegisteredServers
       ..clear()
       ..addAll(
@@ -2347,12 +2352,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> removeServer(String serverId) async {
     _serverConfigs.removeWhere((c) => c.id == serverId);
     _perServerSessions.remove(serverId);
+    _perServerScheduledTasks.remove(serverId);
+    _rebuildScheduledTaskList();
     final removedPushRegistration = _pushRegisteredServers.remove(serverId);
     await _saveServerConfigs();
     if (removedPushRegistration) {
       await _savePushRegisteredServers();
     }
     await _saveSessionCache();
+    await _saveScheduledTaskCache();
     await _connMgr.setServers(_serverConfigs);
     await _registerPushNotifications();
     _rebuildSessionList();
@@ -2362,6 +2370,40 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _rebuildSessionList() {
     _sessions = _perServerSessions.values.expand((list) => list).toList()
       ..sort((a, b) => b.lastActive.compareTo(a.lastActive));
+  }
+
+  void _rebuildScheduledTaskList() {
+    _scheduledTasks = combineScheduledTaskLists(_perServerScheduledTasks);
+  }
+
+  void _loadScheduledTaskCache(SharedPreferences prefs) {
+    final loaded = decodeScheduledTaskCache(
+      prefs.getString(_scheduledTaskCachePrefsKey),
+      _serverConfigs.map((config) => config.id).toSet(),
+    );
+    if (loaded.isEmpty) return;
+    _perServerScheduledTasks
+      ..clear()
+      ..addAll(loaded);
+    _rebuildScheduledTaskList();
+  }
+
+  Future<void> _saveScheduledTaskCache() async {
+    try {
+      final prefs = _cachedPrefs ?? await SharedPreferences.getInstance();
+      _cachedPrefs = prefs;
+      final encoded = encodeScheduledTaskCache(
+        _perServerScheduledTasks,
+        _serverConfigs.map((config) => config.id),
+      );
+      await prefs.setString(_scheduledTaskCachePrefsKey, encoded);
+    } catch (e) {
+      debugPrint('[ScheduledTasks] Failed to save task cache: $e');
+    }
+  }
+
+  void _saveScheduledTaskCacheSoon() {
+    unawaited(_saveScheduledTaskCache());
   }
 
   Future<void> _loadSessionCache(SharedPreferences prefs) async {
@@ -4877,6 +4919,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _handleReminder(msg);
         break;
       case 'scheduled_task_list':
+        if (serverId != null) {
+          _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
+        }
         final tasks = (msg['tasks'] as List? ?? [])
             .map(
               (t) =>
@@ -4886,9 +4931,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             .toList();
         if (serverId != null) {
           _perServerScheduledTasks[serverId] = tasks;
-          _scheduledTasks = _perServerScheduledTasks.values
-              .expand((items) => items)
-              .toList();
+          _rebuildScheduledTaskList();
+          _saveScheduledTaskCacheSoon();
         } else {
           _scheduledTasks = tasks;
         }
@@ -4908,9 +4952,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           } else {
             serverTasks.add(task);
           }
-          _scheduledTasks = _perServerScheduledTasks.values
-              .expand((items) => items)
-              .toList();
+          _rebuildScheduledTaskList();
+          _saveScheduledTaskCacheSoon();
         } else {
           final idx = _scheduledTasks.indexWhere((t) => t['id'] == task['id']);
           if (idx >= 0) {
@@ -10656,7 +10699,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void requestScheduledTasks() {
-    _connMgr.sendToAll({'type': 'list_scheduled_tasks'});
+    for (final config in _serverConfigs) {
+      final serverId = config.id;
+      if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) continue;
+
+      _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
+      _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
+      _scheduledTaskRefreshRetries[serverId] = Timer(
+        const Duration(seconds: 2),
+        () {
+          _scheduledTaskRefreshRetries.remove(serverId);
+          if (_connMgr.statusOf(serverId) == ConnectionStatus.connected) {
+            _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
+          }
+        },
+      );
+    }
   }
 
   String? _serverIdForScheduledTask(String taskId) {
@@ -10761,6 +10819,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           serverTasks[serverTaskIndex] = updated;
         }
       }
+      _saveScheduledTaskCacheSoon();
       notifyListeners();
     }
 
@@ -10797,6 +10856,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     for (final tasks in _perServerScheduledTasks.values) {
       tasks.removeWhere((t) => t['id'] == taskId);
     }
+    _saveScheduledTaskCacheSoon();
     final msg = {'type': 'delete_scheduled_task', 'taskId': taskId};
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
@@ -12694,6 +12754,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _sessionCompletionFallbackTimers.clear();
+    for (final timer in _scheduledTaskRefreshRetries.values) {
+      timer.cancel();
+    }
+    _scheduledTaskRefreshRetries.clear();
     for (final completer in _adbBridgeSidecarCompleters.values) {
       if (!completer.isCompleted) {
         completer.complete(<String, dynamic>{
