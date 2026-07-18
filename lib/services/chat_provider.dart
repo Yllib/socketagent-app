@@ -14,6 +14,7 @@ import '../models/file_event_routing.dart';
 import '../models/history_normalization.dart';
 import '../models/history_response_gate.dart';
 import '../models/composer_attachment.dart';
+import '../models/html_plan.dart';
 import '../models/archive_entry.dart';
 import '../models/file_manager_entry.dart';
 import '../screens/pair_screen.dart' show PairingResult;
@@ -580,6 +581,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       SecretInventoryRequestTracker();
   final Map<String, Completer<SecretMetadata>> _secretWriteCompleters = {};
   final Map<String, Completer<void>> _secretDeleteCompleters = {};
+  List<HtmlPlan> _htmlPlans = [];
+  bool _htmlPlansLoading = false;
+  String? _htmlPlansError;
+  String? _htmlPlanListRequestId;
+  Timer? _htmlPlanListTimeout;
+  final Map<String, Completer<HtmlPlan>> _htmlPlanRenameCompleters = {};
+  final Map<String, Completer<void>> _htmlPlanDeleteCompleters = {};
   double? _uploadProgress;
   String? _pendingUploadId;
   Completer<String>? _uploadCompleter;
@@ -601,6 +609,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Per-server installed plugin names (from status_sync)
   final Map<String, List<String>> _serverPlugins = {};
   final Map<String, int> _serverSecretManagementVersions = {};
+  final Map<String, int> _serverHtmlPlanVersions = {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -1675,6 +1684,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       List.unmodifiable(_secretInventory);
   bool get secretInventoryLoading => _secretInventoryLoading;
   String? get secretInventoryError => _secretInventoryError;
+  List<HtmlPlan> get htmlPlans => List.unmodifiable(_htmlPlans);
+  bool get htmlPlansLoading => _htmlPlansLoading;
+  String? get htmlPlansError => _htmlPlansError;
   double? get uploadProgress => _uploadProgress;
   List<TtsVoice> get ttsVoices => _tts.availableVoices;
   TtsVoice? get selectedTtsVoice => _tts.selectedVoice;
@@ -3547,6 +3559,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'archive_deleted',
       'server_capabilities',
       'secret_inventory',
+      'html_plan_list',
+      'html_plan_operation_result',
       'server_settings',
       'backend_install_progress',
       'backend_auth_required',
@@ -3629,25 +3643,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         deliverySessionId.isNotEmpty &&
         (type == 'tool_call' ||
             type == 'tool_result' ||
+            type == 'html_plan' ||
             type == 'text' ||
             type == 'thinking');
     final deliveryEventKey = acknowledgesDelivery
         ? acknowledgedSessionEventKey(msg)
         : null;
     if (acknowledgesDelivery &&
-        (_appliedSessionDeliveryIds.contains(deliveryId!) ||
+        (_appliedSessionDeliveryIds.contains(deliveryId) ||
             (deliveryEventKey != null &&
                 _appliedSessionEventKeys.contains(deliveryEventKey)))) {
-      _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
+      _ackSessionDelivery(deliverySessionId, deliveryId, serverId);
       return;
     }
     if (isStaleTranscriptRevision(_messages, msg)) {
       if (acknowledgesDelivery) {
-        _rememberAppliedSessionDelivery(deliveryId!);
+        _rememberAppliedSessionDelivery(deliveryId);
         if (deliveryEventKey != null) {
           _rememberAppliedSessionEventKey(deliveryEventKey);
         }
-        _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
+        _ackSessionDelivery(deliverySessionId, deliveryId, serverId);
       }
       return;
     }
@@ -3699,6 +3714,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'secret_operation_result':
         _handleSecretOperationResult(msg);
         break;
+      case 'html_plan':
+        _handleHtmlPlan(msg);
+        break;
+      case 'html_plan_list':
+        _handleHtmlPlanList(msg);
+        break;
+      case 'html_plan_operation_result':
+        _handleHtmlPlanOperationResult(msg);
+        break;
       case 'result':
         _handleResult(msg);
         break;
@@ -3728,6 +3752,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             final secretManagement = msg['secretManagement'];
             _serverSecretManagementVersions[serverId] = secretManagement is Map
                 ? (secretManagement['version'] as num?)?.toInt() ?? 0
+                : 0;
+            final htmlPlans = msg['htmlPlans'];
+            _serverHtmlPlanVersions[serverId] = htmlPlans is Map
+                ? (htmlPlans['version'] as num?)?.toInt() ?? 0
                 : 0;
             _captureCodexDriverSettings(msg, serverId);
             unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
@@ -5142,11 +5170,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // frame reaching the phone is not enough: session/provider transitions
     // can otherwise discard a tool card while ordinary text keeps streaming.
     if (acknowledgesDelivery) {
-      _rememberAppliedSessionDelivery(deliveryId!);
+      _rememberAppliedSessionDelivery(deliveryId);
       if (deliveryEventKey != null) {
         _rememberAppliedSessionEventKey(deliveryEventKey);
       }
-      _ackSessionDelivery(deliverySessionId!, deliveryId, serverId);
+      _ackSessionDelivery(deliverySessionId, deliveryId, serverId);
     }
   }
 
@@ -5166,6 +5194,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sessionId.isNotEmpty &&
         (type == 'tool_call' ||
             type == 'tool_result' ||
+            type == 'html_plan' ||
             type == 'text' ||
             type == 'thinking');
     if (!tracked) return;
@@ -5671,6 +5700,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final toolUseId = msg['toolUseId']?.toString() ?? '';
+    if (tool == 'HtmlPlan') {
+      if (toolUseId.isNotEmpty) {
+        _toolEventReconciler.discard(toolUseId);
+        _suppressedToolUseIds.add(toolUseId);
+      }
+      return;
+    }
     if (tool.endsWith('RequestSecureInput')) {
       if (toolUseId.isNotEmpty) {
         _toolEventReconciler.discard(toolUseId);
@@ -6178,6 +6214,86 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     refreshSecretInventory();
+  }
+
+  void _handleHtmlPlan(Map<String, dynamic> msg) {
+    final plan = HtmlPlan.fromJson(msg);
+    if (plan.planId.isEmpty || plan.html.isEmpty) return;
+    final existingPlan = _htmlPlans.indexWhere((item) => item.planId == plan.planId);
+    if (existingPlan >= 0) {
+      _htmlPlans[existingPlan] = plan;
+    } else {
+      _htmlPlans.insert(0, plan);
+    }
+    final card = ChatMessage.htmlPlan(plan.toJson());
+    applyTranscriptPosition(card, msg);
+    final existingCard = _messages.indexWhere(
+      (message) => message.type == MessageType.htmlPlan && message.toolUseId == plan.planId,
+    );
+    if (existingCard >= 0) {
+      _messages[existingCard] = card;
+    } else {
+      _closeLiveStreamsForParent(null);
+      _messages.add(card);
+    }
+    notifyListeners();
+  }
+
+  void _handleHtmlPlanList(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String?;
+    if (_htmlPlanListRequestId != null && requestId != _htmlPlanListRequestId) {
+      return;
+    }
+    final sessionId = msg['sessionId'] as String? ?? '';
+    if (_activeSessionId != null && sessionId != _activeSessionId) return;
+    _htmlPlanListTimeout?.cancel();
+    _htmlPlanListTimeout = null;
+    _htmlPlanListRequestId = null;
+    _htmlPlans = (msg['plans'] as List? ?? const [])
+        .whereType<Map>()
+        .map((entry) => HtmlPlan.fromJson(Map<String, dynamic>.from(entry)))
+        .where((entry) => entry.planId.isNotEmpty)
+        .toList();
+    _htmlPlansLoading = false;
+    _htmlPlansError = null;
+    notifyListeners();
+  }
+
+  void _handleHtmlPlanOperationResult(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String? ?? '';
+    final ok = msg['ok'] == true;
+    final error = msg['error'] as String? ?? 'HTML plan operation failed';
+    final renameCompleter = _htmlPlanRenameCompleters.remove(requestId);
+    if (renameCompleter != null && !renameCompleter.isCompleted) {
+      if (ok && msg['plan'] is Map) {
+        final plan = HtmlPlan.fromJson(Map<String, dynamic>.from(msg['plan'] as Map));
+        final planIndex = _htmlPlans.indexWhere((item) => item.planId == plan.planId);
+        if (planIndex >= 0) _htmlPlans[planIndex] = plan;
+        final cardIndex = _messages.indexWhere(
+          (message) => message.type == MessageType.htmlPlan && message.toolUseId == plan.planId,
+        );
+        if (cardIndex >= 0) {
+          _messages[cardIndex] = ChatMessage.htmlPlan(plan.toJson());
+        }
+        renameCompleter.complete(plan);
+      } else {
+        renameCompleter.completeError(Exception(error));
+      }
+    }
+    final deleteCompleter = _htmlPlanDeleteCompleters.remove(requestId);
+    if (deleteCompleter != null && !deleteCompleter.isCompleted) {
+      if (ok) {
+        final planId = msg['planId'] as String? ?? '';
+        _htmlPlans.removeWhere((plan) => plan.planId == planId);
+        _messages.removeWhere(
+          (message) => message.type == MessageType.htmlPlan && message.toolUseId == planId,
+        );
+        deleteCompleter.complete();
+      } else {
+        deleteCompleter.completeError(Exception(error));
+      }
+    }
+    notifyListeners();
   }
 
   void _handleResult(Map<String, dynamic> msg) {
@@ -7676,6 +7792,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
             break;
           }
+          if (toolName == 'HtmlPlan') {
+            if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
+            break;
+          }
           final toolCallMsg = ChatMessage.toolCall(
             tool: toolName,
             input: toolInput,
@@ -7827,6 +7947,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             );
             secureMessage.answered = status != 'pending';
             loaded.add(secureMessage);
+          }
+          break;
+        case 'html_plan':
+          final rawPlan = entry['toolInput'];
+          if (rawPlan is Map) {
+            final plan = Map<String, dynamic>.from(rawPlan);
+            final planId = plan['planId']?.toString() ?? '';
+            if (planId.isNotEmpty && (plan['html']?.toString() ?? '').isNotEmpty) {
+              final planMessage = ChatMessage.htmlPlan(plan);
+              final existingIndex = loaded.indexWhere(
+                (message) => message.type == MessageType.htmlPlan && message.toolUseId == planId,
+              );
+              if (existingIndex >= 0) {
+                loaded[existingIndex] = planMessage;
+              } else {
+                loaded.add(planMessage);
+              }
+            }
           }
           break;
         case 'elicitation_url':
@@ -8824,6 +8962,90 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  void refreshHtmlPlans() {
+    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
+    final sessionId = _activeSessionId;
+    _htmlPlanListTimeout?.cancel();
+    if (serverId == null || serverId.isEmpty || sessionId == null || sessionId.isEmpty) {
+      _htmlPlansLoading = false;
+      _htmlPlansError = 'Open a saved session to manage its HTML plans.';
+      notifyListeners();
+      return;
+    }
+    if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) {
+      _htmlPlansLoading = false;
+      _htmlPlansError = 'The selected server is offline. Reconnect it and try again.';
+      notifyListeners();
+      return;
+    }
+    if ((_serverHtmlPlanVersions[serverId] ?? 0) == 0) {
+      _htmlPlansLoading = false;
+      _htmlPlansError = 'This server needs the latest SocketAgent update to manage HTML plans.';
+      notifyListeners();
+      return;
+    }
+    final requestId = 'html_plans_${DateTime.now().microsecondsSinceEpoch}';
+    _htmlPlanListRequestId = requestId;
+    _htmlPlansLoading = true;
+    _htmlPlansError = null;
+    _connMgr.sendToServer(serverId, {
+      'type': 'html_plan_list',
+      'requestId': requestId,
+      'sessionId': sessionId,
+    });
+    _htmlPlanListTimeout = Timer(const Duration(seconds: 15), () {
+      if (_htmlPlanListRequestId != requestId) return;
+      _htmlPlanListRequestId = null;
+      _htmlPlansLoading = false;
+      _htmlPlansError = 'The server did not answer the HTML plan request. Try Refresh.';
+      notifyListeners();
+    });
+    notifyListeners();
+  }
+
+  Future<HtmlPlan> renameHtmlPlan(HtmlPlan plan, String title) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || sessionId.isEmpty) throw StateError('No active session');
+    final requestId = 'html_plan_rename_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<HtmlPlan>();
+    _htmlPlanRenameCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
+      'type': 'html_plan_rename',
+      'requestId': requestId,
+      'sessionId': sessionId,
+      'planId': plan.planId,
+      'title': title.trim(),
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        _htmlPlanRenameCompleters.remove(requestId);
+        throw TimeoutException('Timed out renaming HTML plan');
+      },
+    );
+  }
+
+  Future<void> deleteHtmlPlan(HtmlPlan plan) {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || sessionId.isEmpty) throw StateError('No active session');
+    final requestId = 'html_plan_delete_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<void>();
+    _htmlPlanDeleteCompleters[requestId] = completer;
+    _sendToActiveSessionServer({
+      'type': 'html_plan_delete',
+      'requestId': requestId,
+      'sessionId': sessionId,
+      'planId': plan.planId,
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 20),
+      onTimeout: () {
+        _htmlPlanDeleteCompleters.remove(requestId);
+        throw TimeoutException('Timed out deleting HTML plan');
+      },
+    );
+  }
+
   /// Clear file attachment state (without notifyListeners)
   void _clearAttachment() {
     _secretInventoryRequestTracker.cancel();
@@ -8838,6 +9060,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _secretInventory = [];
     _secretInventoryLoading = false;
     _secretInventoryError = null;
+    _htmlPlanListTimeout?.cancel();
+    _htmlPlanListTimeout = null;
+    _htmlPlanListRequestId = null;
+    _htmlPlans = [];
+    _htmlPlansLoading = false;
+    _htmlPlansError = null;
   }
 
   /// Clear raw SDK debug state
@@ -12442,6 +12670,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _promptRuntimeTimer?.cancel();
     _foregroundResumeTimer?.cancel();
     _secretInventoryRequestTracker.cancel();
+    _htmlPlanListTimeout?.cancel();
     _messageSub?.cancel();
     _statusSub?.cancel();
     _speechResultSub?.cancel();

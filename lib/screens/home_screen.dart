@@ -14,6 +14,7 @@ import '../widgets/chat_view.dart';
 import '../widgets/active_tasks_pane.dart';
 import '../widgets/voice_button.dart';
 import '../widgets/secret_manager_sheet.dart';
+import '../widgets/html_plan_manager_sheet.dart';
 
 class _BarSegment {
   final String label;
@@ -480,6 +481,15 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _showHtmlPlanManager(ChatProvider provider) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (context) => HtmlPlanManagerSheet(provider: provider),
+    );
+  }
+
   Widget _buildComposerAttachments(ChatProvider provider) {
     final attachments = <Widget>[
       for (final attachment in provider.pendingFileAttachments)
@@ -870,6 +880,11 @@ class HomeScreenState extends State<HomeScreen> {
               if (mounted) _showSecretManager(provider);
             });
             break;
+          case 'manage_html_plans':
+            Future.microtask(() {
+              if (mounted) _showHtmlPlanManager(provider);
+            });
+            break;
           case 'terminal':
             _openTerminal(provider, projectPath);
             break;
@@ -986,6 +1001,29 @@ class HomeScreenState extends State<HomeScreen> {
                     Text('Manage secrets'),
                     Text(
                       'Browse, create, replace, or delete',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'manage_html_plans',
+          enabled: provider.activeSessionId != null,
+          child: const Row(
+            children: [
+              Icon(Icons.view_quilt_outlined, size: 18),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('HTML plans'),
+                    Text(
+                      'View, rename, or delete session plans',
                       style: TextStyle(fontSize: 11),
                     ),
                   ],

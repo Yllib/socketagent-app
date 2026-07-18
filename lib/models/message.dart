@@ -33,6 +33,7 @@ enum MessageType {
   skillInvocation,
   codexPlan,
   codexCommand,
+  htmlPlan,
 }
 
 class ChatMessage {
@@ -199,6 +200,22 @@ class ChatMessage {
       toolName: command,
       toolInput: {'command': command, 'status': status, 'payload': payload},
       parentToolUseId: 'codex_slash_$command',
+    );
+  }
+
+  factory ChatMessage.htmlPlan(Map<String, dynamic> plan) {
+    final planId = plan['planId']?.toString() ?? '';
+    return ChatMessage(
+      id: 'html_plan_$planId',
+      sender: MessageSender.system,
+      type: MessageType.htmlPlan,
+      timestamp:
+          DateTime.tryParse(plan['updatedAt']?.toString() ?? '') ??
+          DateTime.now(),
+      textContent: plan['title']?.toString() ?? 'Plan',
+      toolName: 'HtmlPlan',
+      toolUseId: planId,
+      toolInput: Map<String, dynamic>.from(plan),
     );
   }
 

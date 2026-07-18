@@ -23,6 +23,7 @@ import 'monitor_card.dart';
 import 'codex_plan_card.dart';
 import 'codex_command_card.dart';
 import 'secure_input_card.dart';
+import 'html_plan_card.dart';
 import '../models/composer_attachment.dart';
 
 class ChatView extends StatefulWidget {
@@ -670,6 +671,8 @@ class ChatViewState extends State<ChatView> {
         return CodexPlanCard(msg: msg);
       case MessageType.codexCommand:
         return CodexCommandCard(message: msg);
+      case MessageType.htmlPlan:
+        return HtmlPlanCard(message: msg);
     }
   }
 

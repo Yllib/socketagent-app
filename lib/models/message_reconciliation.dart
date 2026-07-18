@@ -19,6 +19,13 @@ String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
     return '$type:$sessionId:$toolUseId:${output.length}:${output.hashCode}';
   }
 
+  if (type == 'html_plan') {
+    final planId = message['planId'] as String? ?? '';
+    final updatedAt = message['updatedAt'] as String? ?? '';
+    if (planId.isEmpty) return null;
+    return '$type:$sessionId:$planId:$updatedAt';
+  }
+
   if ((type == 'text' || type == 'thinking') &&
       message['finalSnapshot'] == true) {
     final streamId = message['streamId'] as String? ?? '';
