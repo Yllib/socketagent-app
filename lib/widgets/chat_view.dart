@@ -106,6 +106,9 @@ class ChatViewState extends State<ChatView> {
   Set<String> _knownPendingInteractionKeys = {};
   final GlobalKey _scrollViewportKey = GlobalKey();
   final Map<String, GlobalKey> _taskKeys = {};
+  double? _historyLoadAnchorPixels;
+  bool _historyLoadUserInteracted = false;
+  bool _historyPrefetchScheduled = false;
 
   bool get _hasActiveImageInspection =>
       _imageInspectionActive || _expandedImageCardIds.isNotEmpty;
@@ -144,6 +147,7 @@ class ChatViewState extends State<ChatView> {
     if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
       _autoScrollHeldForInspection = false;
     }
+    _scheduleHistoryPrefetchIfNeeded();
   }
 
   /// Scroll to a task card in the chat by its toolUseId
@@ -201,14 +205,40 @@ class ChatViewState extends State<ChatView> {
       _lastKnownProcessing = widget.isProcessing;
       _userScrolledUp = false;
       _jumpToBottom();
+      _maybeBackfillViewport();
       return;
     }
 
-    // "Load more" just finished — preserve scroll position
+    if (!oldWidget.isLoadingMore && widget.isLoadingMore) {
+      _historyLoadAnchorPixels = _scrollController.hasClients
+          ? _scrollController.position.pixels
+          : null;
+      _historyLoadUserInteracted = false;
+    }
+
+    // "Load more" just finished — restore the exact reverse-list offset.
+    // Prepending should be stationary, but lazy row measurement and swapping
+    // the loading control can otherwise nudge the viewport after layout.
     if (oldWidget.isLoadingMore && !widget.isLoadingMore) {
       _lastKnownMessageCount = widget.messages.length;
-      // The list is reverse-anchored. Adding older entries extends its far
-      // edge without moving the currently visible latest transcript.
+      final anchor = _historyLoadAnchorPixels;
+      _historyLoadAnchorPixels = null;
+      if (anchor != null && !_historyLoadUserInteracted) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!_scrollController.hasClients) return;
+          final position = _scrollController.position;
+          _scrollController.jumpTo(
+            anchor
+                .clamp(position.minScrollExtent, position.maxScrollExtent)
+                .toDouble(),
+          );
+          _maybeBackfillViewport();
+          _scheduleHistoryPrefetchIfNeeded();
+        });
+      } else {
+        _maybeBackfillViewport();
+        _scheduleHistoryPrefetchIfNeeded();
+      }
       return;
     }
 
@@ -243,6 +273,54 @@ class ChatViewState extends State<ChatView> {
         !_autoScrollHeldForInspection) {
       _scrollToBottom();
     }
+  }
+
+  void _maybeBackfillViewport() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_scrollController.hasClients ||
+          widget.isLoadingHistory ||
+          widget.isLoadingMore ||
+          !widget.hasMoreHistory ||
+          widget.onLoadMore == null) {
+        return;
+      }
+      final position = _scrollController.position;
+      // Keep at least a page of scrollback beyond the current viewport. The
+      // provider may continue farther to reach the latest user prompt.
+      if (position.maxScrollExtent < position.viewportDimension) {
+        widget.onLoadMore!();
+      }
+    });
+  }
+
+  void _scheduleHistoryPrefetchIfNeeded() {
+    if (_historyPrefetchScheduled ||
+        widget.isLoadingHistory ||
+        widget.isLoadingMore ||
+        !widget.hasMoreHistory ||
+        widget.onLoadMore == null) {
+      return;
+    }
+    _historyPrefetchScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _historyPrefetchScheduled = false;
+      if (!mounted ||
+          !_scrollController.hasClients ||
+          widget.isLoadingHistory ||
+          widget.isLoadingMore ||
+          !widget.hasMoreHistory ||
+          widget.onLoadMore == null) {
+        return;
+      }
+      final position = _scrollController.position;
+      final distanceFromOldestLoaded =
+          position.maxScrollExtent - position.pixels;
+      final prefetchDistance = position.viewportDimension * 1.25;
+      if (distanceFromOldestLoaded <= prefetchDistance) {
+        widget.onLoadMore!();
+      }
+    });
   }
 
   void _handleToolExpansionChanged(
@@ -522,7 +600,12 @@ class ChatViewState extends State<ChatView> {
         Expanded(
           child: Listener(
             key: _scrollViewportKey,
-            onPointerDown: (_) => _userTouching = true,
+            onPointerDown: (_) {
+              _userTouching = true;
+              if (widget.isLoadingMore) {
+                _historyLoadUserInteracted = true;
+              }
+            },
             onPointerUp: (_) => _userTouching = false,
             onPointerCancel: (_) => _userTouching = false,
             child: ListView.builder(
@@ -662,21 +745,24 @@ class ChatViewState extends State<ChatView> {
 
   Widget _buildLoadMoreButton(BuildContext context) {
     return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 8),
+      child: SizedBox(
+        height: 52,
         child: widget.isLoadingMore
-            ? const SizedBox(
-                width: 24,
-                height: 24,
-                child: CircularProgressIndicator(strokeWidth: 2),
+            ? const Center(
+                child: SizedBox(
+                  width: 160,
+                  child: LinearProgressIndicator(minHeight: 2),
+                ),
               )
-            : TextButton.icon(
-                onPressed: widget.onLoadMore,
-                icon: const Icon(Icons.expand_less, size: 18),
-                label: const Text('Load earlier messages'),
-                style: TextButton.styleFrom(
-                  foregroundColor: Theme.of(context).colorScheme.primary,
-                  textStyle: const TextStyle(fontSize: 13),
+            : Center(
+                child: TextButton.icon(
+                  onPressed: widget.onLoadMore,
+                  icon: const Icon(Icons.expand_less, size: 18),
+                  label: const Text('Load earlier messages'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.primary,
+                    textStyle: const TextStyle(fontSize: 13),
+                  ),
                 ),
               ),
       ),

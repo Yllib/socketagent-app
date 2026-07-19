@@ -13,6 +13,7 @@ import '../models/message_reconciliation.dart';
 import '../models/file_event_routing.dart';
 import '../models/history_normalization.dart';
 import '../models/history_response_gate.dart';
+import '../models/history_backfill.dart';
 import '../models/hard_stop_protocol.dart';
 import '../models/composer_attachment.dart';
 import '../models/html_plan.dart';
@@ -563,6 +564,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isRefreshingHistory = false;
   bool _isLoadingMore = false;
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
+  // The server deliberately bounds the first history paint. When that page
+  // stops after the latest user prompt, keep paging in the background until
+  // the prompt is present so opening a busy turn never requires repeated taps.
+  bool _autoBackfillToPrompt = false;
   String? _initialHistoryRequestId;
   String? _olderHistoryRequestId;
   int _historyRequestSequence = 0;
@@ -7885,6 +7890,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     loaded = _dedupeLoadedHistory(loaded);
+    final pageContainsUserPrompt = loaded.any(
+      (message) =>
+          message.sender == MessageSender.user &&
+          (message.type == MessageType.text ||
+              message.type == MessageType.skillInvocation),
+    );
 
     // Appends add newer events and must not move the boundary of the oldest
     // page already in memory. Moving it here makes the next pagination request
@@ -8019,11 +8030,47 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
     }
+
+    if (isPrepend) {
+      _autoBackfillToPrompt = shouldContinueHistoryBackfill(
+        backfillActive: _autoBackfillToPrompt,
+        oldestLoadedOffset: _historyOffset,
+        olderPageContainsUserPrompt: pageContainsUserPrompt,
+      );
+    } else if (decision.kind == SessionHistoryKind.initial || isDelta) {
+      final transcriptContainsUserPrompt = _messages.any(
+        (message) =>
+            message.sender == MessageSender.user &&
+            (message.type == MessageType.text ||
+                message.type == MessageType.skillInvocation),
+      );
+      _autoBackfillToPrompt = shouldBackfillInitialHistory(
+        oldestLoadedOffset: _historyOffset,
+        deferredContextAvailable: msg['deferredContextAvailable'] == true,
+        transcriptContainsUserPrompt: transcriptContainsUserPrompt,
+      );
+    }
     _ensurePendingHardStopCard(
       historySessionId,
       serverId: serverId ?? _activeSessionServerId,
     );
     notifyListeners();
+
+    // A cache paint can arrive before the authoritative initial/delta reply.
+    // Wait for that network reply before paginating so the two request
+    // generations cannot race each other.
+    if (!fromCache &&
+        _autoBackfillToPrompt &&
+        !_isLoadingMore &&
+        _historyOffset > 0) {
+      final sessionId = _activeSessionId;
+      // Yield one event-loop turn so the bounded page paints before any
+      // potentially large older page is requested and parsed.
+      Timer.run(() {
+        if (_activeSessionId != sessionId || !_autoBackfillToPrompt) return;
+        loadMoreHistory();
+      });
+    }
 
     final openTraceId = fromCache
         ? _initialHistoryRequestId
@@ -10082,6 +10129,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isRefreshingHistory = false;
     _historyOffset = 0;
     _isLoadingMore = false;
+    _autoBackfillToPrompt = false;
     final historyRequestId = _beginInitialHistoryRequest(sessionId);
     _sessionModel = null;
     _supportedModels = [];
