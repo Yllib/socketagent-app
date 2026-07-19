@@ -201,15 +201,12 @@ class AdbBridgeService extends ChangeNotifier {
     await _native.invokeMethod('requestOverlayPermission');
   }
 
-  Future<bool> showAdbPairingOverlay({
-    String port = '',
-    String code = '',
-  }) async {
+  Future<bool> showAdbPairingOverlay() async {
     await _native.invokeMethod('startAdbBridgeForeground');
     final shown =
         await _native.invokeMethod<bool>('showAdbPairingOverlay', {
-          'port': port.trim(),
-          'code': code.trim(),
+          'port': '',
+          'code': '',
           'timeoutSeconds': 900,
         }) ??
         false;
