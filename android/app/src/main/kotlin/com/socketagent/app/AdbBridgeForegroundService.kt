@@ -3,21 +3,16 @@ package com.socketagent.app
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
-import android.app.RemoteInput
 
 class AdbBridgeForegroundService : Service() {
     companion object {
         const val CHANNEL_ID = "adb_bridge"
         const val NOTIFICATION_ID = 7301
-        const val ACTION_SHOW_PAIRING_INPUT = "com.socketagent.app.adb.SHOW_PAIRING_INPUT"
-        const val ACTION_PAIRING_INPUT = "com.socketagent.app.adb.PAIRING_INPUT"
-        const val KEY_PAIRING_INPUT = "adb_pairing_input"
         private const val PREFS = "adb_bridge"
         private const val PREF_PENDING_INPUTS = "pending_pairing_inputs"
 
@@ -42,17 +37,12 @@ class AdbBridgeForegroundService : Service() {
         }
     }
 
-    private var waitingForPairingInput = false
-
     override fun onCreate() {
         super.onCreate()
         ensureChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_SHOW_PAIRING_INPUT) {
-            waitingForPairingInput = true
-        }
         startForeground(NOTIFICATION_ID, buildNotification())
         return START_STICKY
     }
@@ -74,21 +64,6 @@ class AdbBridgeForegroundService : Service() {
     }
 
     private fun buildNotification(): Notification {
-        val inputIntent = Intent(this, AdbBridgeActionReceiver::class.java).apply {
-            action = ACTION_PAIRING_INPUT
-        }
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_MUTABLE else 0
-        val inputPendingIntent = PendingIntent.getBroadcast(this, 7302, inputIntent, flags)
-        val remoteInput = RemoteInput.Builder(KEY_PAIRING_INPUT)
-            .setLabel("pairPort code or host:pairPort code")
-            .build()
-        val inputAction = Notification.Action.Builder(
-            android.R.drawable.ic_menu_send,
-            "Enter pairing code",
-            inputPendingIntent
-        ).addRemoteInput(remoteInput).build()
-
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -98,16 +73,9 @@ class AdbBridgeForegroundService : Service() {
 
         return builder
             .setContentTitle("SocketAgent ADB bridge")
-            .setContentText(
-                if (waitingForPairingInput) {
-                    "Open Wireless Debugging, then enter pairPort code here"
-                } else {
-                    "Debug bridge is active"
-                }
-            )
+            .setContentText("Debug bridge is active")
             .setSmallIcon(android.R.drawable.stat_sys_data_bluetooth)
             .setOngoing(true)
-            .addAction(inputAction)
             .build()
     }
 }

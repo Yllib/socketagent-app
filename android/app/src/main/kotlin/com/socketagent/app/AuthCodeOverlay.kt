@@ -3,6 +3,7 @@ package com.socketagent.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -14,6 +15,9 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.inputmethod.EditorInfo
+import android.text.InputType
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -58,6 +62,139 @@ object AuthCodeOverlay {
         }
     }
 
+    fun showAdbPairing(
+        context: Context,
+        initialPort: String,
+        initialCode: String,
+        timeoutMillis: Long,
+        onSubmit: (String, String) -> Unit
+    ): Boolean {
+        if (!canDraw(context)) return false
+
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            return showAdbPairingOnMain(
+                context,
+                initialPort,
+                initialCode,
+                timeoutMillis,
+                onSubmit
+            )
+        }
+
+        val latch = CountDownLatch(1)
+        var shown = false
+        handler.post {
+            shown = showAdbPairingOnMain(
+                context,
+                initialPort,
+                initialCode,
+                timeoutMillis,
+                onSubmit
+            )
+            latch.countDown()
+        }
+        return try {
+            latch.await(2, TimeUnit.SECONDS)
+            shown
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+    }
+
+    private fun showAdbPairingOnMain(
+        context: Context,
+        initialPort: String,
+        initialCode: String,
+        timeoutMillis: Long,
+        onSubmit: (String, String) -> Unit
+    ): Boolean {
+        return try {
+            hideOnMain()
+            val appContext = context.applicationContext
+            val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+            windowManager = wm
+
+            val card = overlayCard(appContext)
+            val header = overlayHeader(appContext, "Pair wireless ADB")
+            header.addView(actionPill(appContext, "Close") { hide() })
+            card.addView(header)
+
+            card.addView(TextView(appContext).apply {
+                text = "Enter the values shown under Pair device with pairing code."
+                setTextColor(Color.argb(205, 255, 255, 255))
+                textSize = 12f
+                setPadding(0, dp(appContext, 8), 0, dp(appContext, 8))
+            })
+
+            val fields = LinearLayout(appContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            val portField = numberField(appContext, "Pairing port", initialPort).apply {
+                imeOptions = EditorInfo.IME_ACTION_NEXT
+            }
+            val codeField = numberField(appContext, "Pairing code", initialCode).apply {
+                imeOptions = EditorInfo.IME_ACTION_DONE
+            }
+            fields.addView(portField, LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ).apply { marginEnd = dp(appContext, 8) })
+            fields.addView(codeField, LinearLayout.LayoutParams(
+                0,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                1f
+            ))
+            card.addView(fields)
+
+            val actions = LinearLayout(appContext).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(appContext, 10), 0, 0)
+            }
+            actions.addView(TextView(appContext).apply {
+                text = "Drag title to move"
+                setTextColor(Color.argb(190, 255, 255, 255))
+                textSize = 12f
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
+            })
+            actions.addView(actionPill(appContext, "Pair") {
+                val port = portField.text.toString().trim()
+                val code = codeField.text.toString().trim()
+                val parsedPort = port.toIntOrNull()
+                if (parsedPort == null || parsedPort !in 1..65535) {
+                    Toast.makeText(appContext, "Enter a valid pairing port", Toast.LENGTH_SHORT).show()
+                    portField.requestFocus()
+                    return@actionPill
+                }
+                if (code.length !in 4..12 || code.any { !it.isDigit() }) {
+                    Toast.makeText(appContext, "Enter the numeric pairing code", Toast.LENGTH_SHORT).show()
+                    codeField.requestFocus()
+                    return@actionPill
+                }
+                onSubmit(port, code)
+                Toast.makeText(appContext, "ADB pairing submitted", Toast.LENGTH_SHORT).show()
+                hide()
+            })
+            card.addView(actions)
+
+            val params = overlayParams(appContext, focusable = true)
+            attachDrag(header, card, params)
+            wm.addView(card, params)
+            overlayView = card
+            scheduleHide(timeoutMillis)
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private fun showOnMain(
         context: Context,
         title: String,
@@ -70,28 +207,9 @@ object AuthCodeOverlay {
             val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             windowManager = wm
 
-            val card = LinearLayout(appContext).apply {
-                orientation = LinearLayout.VERTICAL
-                setPadding(dp(appContext, 16), dp(appContext, 14), dp(appContext, 16), dp(appContext, 12))
-                background = GradientDrawable().apply {
-                    setColor(Color.rgb(35, 29, 26))
-                    cornerRadius = dp(appContext, 16).toFloat()
-                    setStroke(dp(appContext, 1), Color.argb(80, 255, 255, 255))
-                }
-                elevation = dp(appContext, 12).toFloat()
-            }
+            val card = overlayCard(appContext)
 
-            val header = LinearLayout(appContext).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            header.addView(TextView(appContext).apply {
-                text = title.ifBlank { "Device sign-in" }
-                setTextColor(Color.WHITE)
-                textSize = 15f
-                typeface = Typeface.DEFAULT_BOLD
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            })
+            val header = overlayHeader(appContext, title.ifBlank { "Device sign-in" })
             header.addView(actionPill(appContext, "Close") { hide() })
             card.addView(header)
 
@@ -122,56 +240,13 @@ object AuthCodeOverlay {
             })
             card.addView(actions)
 
-            val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                WindowManager.LayoutParams.WRAP_CONTENT,
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WindowManager.LayoutParams.TYPE_PHONE
-                },
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-                android.graphics.PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
-                y = dp(appContext, 72)
-                width = (appContext.resources.displayMetrics.widthPixels * 0.88f).roundToInt()
-            }
-
-            card.setOnTouchListener(object : View.OnTouchListener {
-                private var initialX = 0
-                private var initialY = 0
-                private var initialTouchX = 0f
-                private var initialTouchY = 0f
-
-                override fun onTouch(v: View, event: MotionEvent): Boolean {
-                    when (event.action) {
-                        MotionEvent.ACTION_DOWN -> {
-                            initialX = params.x
-                            initialY = params.y
-                            initialTouchX = event.rawX
-                            initialTouchY = event.rawY
-                            return true
-                        }
-                        MotionEvent.ACTION_MOVE -> {
-                            params.x = initialX + (event.rawX - initialTouchX).roundToInt()
-                            params.y = initialY + (event.rawY - initialTouchY).roundToInt()
-                            windowManager?.updateViewLayout(card, params)
-                            return true
-                        }
-                    }
-                    return false
-                }
-            })
+            val params = overlayParams(appContext, focusable = false)
+            attachDrag(card, card, params)
 
             wm.addView(card, params)
             overlayView = card
 
-            val delay = timeoutMillis.coerceIn(30_000L, 15 * 60_000L)
-            hideRunnable = Runnable { hide() }
-            handler.postDelayed(hideRunnable!!, delay)
+            scheduleHide(timeoutMillis)
             true
         } catch (_: Exception) {
             false
@@ -198,6 +273,114 @@ object AuthCodeOverlay {
 
     private fun dp(context: Context, value: Int): Int {
         return (value * context.resources.displayMetrics.density).roundToInt()
+    }
+
+    private fun overlayCard(context: Context): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(context, 16), dp(context, 14), dp(context, 16), dp(context, 12))
+            background = GradientDrawable().apply {
+                setColor(Color.rgb(35, 29, 26))
+                cornerRadius = dp(context, 16).toFloat()
+                setStroke(dp(context, 1), Color.argb(80, 255, 255, 255))
+            }
+            elevation = dp(context, 12).toFloat()
+        }
+    }
+
+    private fun overlayHeader(context: Context, title: String): LinearLayout {
+        return LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(context).apply {
+                text = title
+                setTextColor(Color.WHITE)
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                layoutParams = LinearLayout.LayoutParams(
+                    0,
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    1f
+                )
+            })
+        }
+    }
+
+    private fun numberField(context: Context, hint: String, value: String): EditText {
+        return EditText(context).apply {
+            setText(value)
+            this.hint = hint
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.argb(155, 255, 255, 255))
+            textSize = 15f
+            inputType = InputType.TYPE_CLASS_NUMBER
+            isSingleLine = true
+            setSelectAllOnFocus(true)
+            backgroundTintList = ColorStateList.valueOf(Color.argb(150, 255, 255, 255))
+        }
+    }
+
+    private fun overlayParams(
+        context: Context,
+        focusable: Boolean
+    ): WindowManager.LayoutParams {
+        val flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            (if (focusable) 0 else WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+        return WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                WindowManager.LayoutParams.TYPE_PHONE
+            },
+            flags,
+            android.graphics.PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+            y = dp(context, 72)
+            width = (context.resources.displayMetrics.widthPixels * 0.88f).roundToInt()
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+    }
+
+    private fun attachDrag(
+        dragView: View,
+        card: View,
+        params: WindowManager.LayoutParams
+    ) {
+        dragView.setOnTouchListener(object : View.OnTouchListener {
+            private var initialX = 0
+            private var initialY = 0
+            private var initialTouchX = 0f
+            private var initialTouchY = 0f
+
+            override fun onTouch(v: View, event: MotionEvent): Boolean {
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        params.x = initialX + (event.rawX - initialTouchX).roundToInt()
+                        params.y = initialY + (event.rawY - initialTouchY).roundToInt()
+                        windowManager?.updateViewLayout(card, params)
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+    }
+
+    private fun scheduleHide(timeoutMillis: Long) {
+        val delay = timeoutMillis.coerceIn(30_000L, 15 * 60_000L)
+        hideRunnable = Runnable { hide() }
+        handler.postDelayed(hideRunnable!!, delay)
     }
 
     private fun actionPill(context: Context, label: String, onClick: () -> Unit): TextView {

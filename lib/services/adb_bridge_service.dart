@@ -44,15 +44,14 @@ class AdbCommandResult {
       if (stderr.trim().isNotEmpty) stderr.trim(),
       if (message.trim().isNotEmpty) message.trim(),
     ];
-    return parts.isEmpty ? (ok ? 'adb $command completed.' : 'adb $command failed.') : parts.join('\n');
+    return parts.isEmpty
+        ? (ok ? 'adb $command completed.' : 'adb $command failed.')
+        : parts.join('\n');
   }
 }
 
 class _LocalAdbStreamState {
-  _LocalAdbStreamState({
-    required this.completer,
-    this.onEvent,
-  });
+  _LocalAdbStreamState({required this.completer, this.onEvent});
 
   final Completer<Map<String, dynamic>> completer;
   final void Function(Map<String, dynamic> event)? onEvent;
@@ -194,9 +193,28 @@ class AdbBridgeService extends ChangeNotifier {
     await _native.invokeMethod('openDeveloperSettings');
   }
 
-  Future<void> showPairingInputNotification() async {
-    await _native.invokeMethod('showAdbPairingInputNotification');
-    _startPairingInputPolling();
+  Future<bool> canDrawOverlays() async {
+    return await _native.invokeMethod<bool>('canDrawOverlays') ?? false;
+  }
+
+  Future<void> requestOverlayPermission() async {
+    await _native.invokeMethod('requestOverlayPermission');
+  }
+
+  Future<bool> showAdbPairingOverlay({
+    String port = '',
+    String code = '',
+  }) async {
+    await _native.invokeMethod('startAdbBridgeForeground');
+    final shown =
+        await _native.invokeMethod<bool>('showAdbPairingOverlay', {
+          'port': port.trim(),
+          'code': code.trim(),
+          'timeoutSeconds': 900,
+        }) ??
+        false;
+    if (shown) _startPairingInputPolling();
+    return shown;
   }
 
   Future<Map<String, dynamic>> localAdbPair({
@@ -236,10 +254,7 @@ class AdbBridgeService extends ChangeNotifier {
     await restoreLocalAdbConnection();
     final result = await _native.invokeMethod<Map<dynamic, dynamic>>(
       'localAdbCommand',
-      {
-        'args': args,
-        'timeoutSeconds': timeoutSeconds,
-      },
+      {'args': args, 'timeoutSeconds': timeoutSeconds},
     );
     return Map<String, dynamic>.from(result ?? const <String, dynamic>{});
   }
@@ -251,10 +266,7 @@ class AdbBridgeService extends ChangeNotifier {
     await restoreLocalAdbConnection();
     final result = await _native.invokeMethod<Map<dynamic, dynamic>>(
       'localAdbInstall',
-      {
-        'apkPath': apkPath,
-        'args': args,
-      },
+      {'apkPath': apkPath, 'args': args},
     );
     return Map<String, dynamic>.from(result ?? const <String, dynamic>{});
   }
@@ -273,15 +285,13 @@ class AdbBridgeService extends ChangeNotifier {
       onEvent: onEvent,
     );
     try {
-      final startResult = await _native.invokeMethod<Map<dynamic, dynamic>>(
-        'localAdbStartStream',
-        {
-          'streamId': streamId,
-          'args': args,
-          'timeoutSeconds': timeoutSeconds,
-          'maxBytes': maxBytes,
-        },
-      );
+      final startResult = await _native
+          .invokeMethod<Map<dynamic, dynamic>>('localAdbStartStream', {
+            'streamId': streamId,
+            'args': args,
+            'timeoutSeconds': timeoutSeconds,
+            'maxBytes': maxBytes,
+          });
       final started = Map<String, dynamic>.from(
         startResult ?? const <String, dynamic>{},
       );
@@ -311,10 +321,9 @@ class AdbBridgeService extends ChangeNotifier {
   }
 
   Future<bool> localAdbStopStream(String streamId) async {
-    final stopped = await _native.invokeMethod<bool>(
-      'localAdbStopStream',
-      {'streamId': streamId},
-    );
+    final stopped = await _native.invokeMethod<bool>('localAdbStopStream', {
+      'streamId': streamId,
+    });
     return stopped ?? false;
   }
 
@@ -327,8 +336,7 @@ class AdbBridgeService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _lastLocalAdbConnectPort = prefs.getInt(_lastConnectPortKey);
     final deviceLine = prefs.getString(_lastDeviceLineKey);
-    _lastLocalAdbDeviceLine =
-        deviceLine != null && deviceLine.trim().isNotEmpty
+    _lastLocalAdbDeviceLine = deviceLine != null && deviceLine.trim().isNotEmpty
         ? deviceLine.trim()
         : null;
     final connectedAt = prefs.getString(_lastConnectedAtKey);
@@ -444,7 +452,8 @@ class AdbBridgeService extends ChangeNotifier {
     final now = DateTime.now();
     if (_lastLocalAdbDeviceLine == deviceLine &&
         _lastLocalAdbConnectedAt != null &&
-        now.difference(_lastLocalAdbConnectedAt!) < const Duration(seconds: 5)) {
+        now.difference(_lastLocalAdbConnectedAt!) <
+            const Duration(seconds: 5)) {
       return;
     }
     _lastLocalAdbDeviceLine = deviceLine;
@@ -498,9 +507,7 @@ class AdbBridgeService extends ChangeNotifier {
       );
       _closeAllStreams();
     }
-    return _sendAdbCommand('pair', {
-      'code': code.trim(),
-    });
+    return _sendAdbCommand('pair', {'code': code.trim()});
   }
 
   Future<AdbCommandResult> connect({
@@ -708,9 +715,7 @@ class AdbBridgeService extends ChangeNotifier {
     final completer = Completer<AdbCommandResult>();
     _commandCompleters[requestId] = completer;
     _sendJson({
-      'type': command == 'pair'
-          ? 'adb_pair_request'
-          : 'adb_connect_request',
+      'type': command == 'pair' ? 'adb_pair_request' : 'adb_connect_request',
       'requestId': requestId,
       ...extra,
     });

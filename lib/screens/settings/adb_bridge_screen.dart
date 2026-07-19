@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../models/adb_pairing_input.dart';
 import '../../services/adb_bridge_service.dart';
 
 class AdbBridgeScreen extends StatefulWidget {
@@ -154,13 +155,16 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
                   OutlinedButton.icon(
                     icon: const Icon(Icons.link_off),
                     label: const Text('Pair Only'),
-                    onPressed: _busy ? null : () => _pairOnlyFromFields(context),
+                    onPressed: _busy
+                        ? null
+                        : () => _pairOnlyFromFields(context),
                   ),
                   OutlinedButton.icon(
-                    icon: const Icon(Icons.password),
-                    label: const Text('Pair Code Notification'),
-                    onPressed:
-                        _busy ? null : () => _showPairingNotification(context),
+                    icon: const Icon(Icons.picture_in_picture_alt),
+                    label: const Text('Pair with Overlay'),
+                    onPressed: _busy
+                        ? null
+                        : () => _showPairingOverlay(context),
                   ),
                 ],
               ),
@@ -211,10 +215,48 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
     setState(() {});
   }
 
-  Future<void> _showPairingNotification(BuildContext context) async {
-    await _service.showPairingInputNotification();
+  Future<void> _showPairingOverlay(BuildContext context) async {
+    bool allowed = false;
+    try {
+      allowed = await _service.canDrawOverlays();
+    } catch (_) {}
     if (!context.mounted) return;
-    _showSnack(context, 'Reply with "pairPort code" or "pairPort code connectPort".');
+    if (!allowed) {
+      final openSettings = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Allow pairing overlay?'),
+          content: const Text(
+            'SocketAgent needs Display over other apps permission to collect the pairing port and pairing code while Wireless Debugging is open.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Not Now'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Open Settings'),
+            ),
+          ],
+        ),
+      );
+      if (openSettings == true) {
+        await _service.requestOverlayPermission();
+      }
+      return;
+    }
+
+    final shown = await _service.showAdbPairingOverlay(
+      port: _pairPortCtrl.text,
+      code: _pairCodeCtrl.text,
+    );
+    if (!context.mounted) return;
+    if (!shown) {
+      _showSnack(context, 'Could not show the ADB pairing overlay.');
+      return;
+    }
+    await _service.openWirelessDebuggingSettings();
   }
 
   Future<void> _pairFromFields(BuildContext context) async {
@@ -353,7 +395,7 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
   }
 
   Future<void> _handlePairingInput(String value) async {
-    final parsed = _parsePairingInput(value);
+    final parsed = parseAdbPairingInput(value);
     if (parsed == null) {
       if (!mounted) return;
       setState(() => _lastMessage = 'Could not parse pairing input: $value');
@@ -368,7 +410,8 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
     final result = await _runPairAndMaybeConnect(
       pairPort: parsed.pairPort,
       code: parsed.code,
-      connectPort: parsed.connectPort ??
+      connectPort:
+          parsed.connectPort ??
           _readPort(_pairConnectPortCtrl.text) ??
           _readPort(_connectPortCtrl.text),
     );
@@ -422,21 +465,6 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
     return parts.join('\n');
   }
 
-  _PairingInput? _parsePairingInput(String value) {
-    final text = value.trim();
-    final hostPort = RegExp(
-      r'(?:[0-9A-Za-z.\-_:]+:)?(\d{2,5})\s+(\d{4,12})(?:\s+(\d{2,5}))?',
-    ).firstMatch(text);
-    if (hostPort != null) {
-      return _PairingInput(
-        pairPort: int.parse(hostPort.group(1)!),
-        code: hostPort.group(2)!,
-        connectPort: int.tryParse(hostPort.group(3) ?? ''),
-      );
-    }
-    return null;
-  }
-
   int? _readPort(String value) {
     final port = int.tryParse(value.trim());
     if (port == null || port <= 0 || port > 65535) return null;
@@ -448,18 +476,6 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
   }
-}
-
-class _PairingInput {
-  const _PairingInput({
-    required this.pairPort,
-    required this.code,
-    this.connectPort,
-  });
-
-  final int pairPort;
-  final String code;
-  final int? connectPort;
 }
 
 class _StatusCard extends StatelessWidget {

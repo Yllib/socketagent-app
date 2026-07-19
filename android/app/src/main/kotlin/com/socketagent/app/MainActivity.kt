@@ -47,21 +47,6 @@ class MainActivity : FlutterActivity() {
                         result.error("ADB_BRIDGE_START_ERROR", e.message, null)
                     }
                 }
-                "showAdbPairingInputNotification" -> {
-                    try {
-                        val serviceIntent = Intent(this, AdbBridgeForegroundService::class.java).apply {
-                            action = AdbBridgeForegroundService.ACTION_SHOW_PAIRING_INPUT
-                        }
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                            startForegroundService(serviceIntent)
-                        } else {
-                            startService(serviceIntent)
-                        }
-                        result.success(true)
-                    } catch (e: Exception) {
-                        result.error("ADB_BRIDGE_PAIRING_INPUT_ERROR", e.message, null)
-                    }
-                }
                 "takeAdbPairingInputs" -> {
                     try {
                         result.success(AdbBridgeForegroundService.takePairingInputs(this))
@@ -179,6 +164,29 @@ class MainActivity : FlutterActivity() {
                         )
                     } catch (e: Exception) {
                         result.error("AUTH_CODE_OVERLAY_ERROR", e.message, null)
+                    }
+                }
+                "showAdbPairingOverlay" -> {
+                    try {
+                        val port = call.argument<String>("port") ?: ""
+                        val code = call.argument<String>("code") ?: ""
+                        val timeoutSeconds = (call.argument<Int>("timeoutSeconds") ?: 900)
+                            .coerceIn(30, 900)
+                        result.success(
+                            AuthCodeOverlay.showAdbPairing(
+                                this,
+                                port,
+                                code,
+                                timeoutSeconds * 1000L
+                            ) { submittedPort, submittedCode ->
+                                AdbBridgeForegroundService.appendPairingInput(
+                                    this,
+                                    "$submittedPort $submittedCode"
+                                )
+                            }
+                        )
+                    } catch (e: Exception) {
+                        result.error("ADB_PAIRING_OVERLAY_ERROR", e.message, null)
                     }
                 }
                 "hideAuthCodeOverlay" -> {
