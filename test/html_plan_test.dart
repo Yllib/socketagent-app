@@ -39,18 +39,36 @@ void main() {
     );
   });
 
-  test('HTML plan export is self-contained and uses a safe revision filename', () {
-    final document = HtmlPlanExportService.buildDocument(
-      title: 'Release & rollout',
-      html: '<h1>Ready</h1>',
-      revision: 4,
+  test(
+    'HTML plan export is self-contained and uses a safe revision filename',
+    () {
+      final document = HtmlPlanExportService.buildDocument(
+        title: 'Release & rollout',
+        html: '<h1>Ready</h1>',
+        revision: 4,
+      );
+      expect(
+        document,
+        contains('<title>Release &amp; rollout — revision 4</title>'),
+      );
+      expect(document, contains('<h1>Ready</h1>'));
+      expect(
+        HtmlPlanExportService.safeFileName('Release / rollout!', 4),
+        'release-rollout-revision-4.html',
+      );
+    },
+  );
+
+  test('HTML plan viewer defaults to a browser-like light document', () {
+    final document = HtmlPlanExportService.buildViewerDocument(
+      '<h1 style="color:#222">Readable</h1>',
     );
-    expect(document, contains('<title>Release &amp; rollout — revision 4</title>'));
-    expect(document, contains('<h1>Ready</h1>'));
-    expect(
-      HtmlPlanExportService.safeFileName('Release / rollout!', 4),
-      'release-rollout-revision-4.html',
-    );
+
+    expect(document, contains(':root { color-scheme: light; }'));
+    expect(document, contains('background: #ffffff; color: #000000;'));
+    expect(document, isNot(contains('#111318')));
+    expect(document, isNot(contains('color-scheme: dark')));
+    expect(document, contains('<h1 style="color:#222">Readable</h1>'));
   });
 
   test('plan creation is labeled as the original, not revision one', () {

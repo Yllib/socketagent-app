@@ -41,9 +41,9 @@ class _HtmlPlanViewerScreenState extends State<HtmlPlanViewerScreen> {
         revision: _plan.currentRevision,
       );
       if (path != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Exported ${_plan.title}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Exported ${_plan.title}')));
       }
     } catch (error) {
       if (mounted) {
@@ -63,9 +63,9 @@ class _HtmlPlanViewerScreenState extends State<HtmlPlanViewerScreen> {
       );
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not share plan: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not share plan: $error')));
       }
     }
   }
@@ -93,7 +93,9 @@ class _HtmlPlanViewerScreenState extends State<HtmlPlanViewerScreen> {
           ),
         ],
       ),
-      body: SafeArea(child: HtmlPlanWebView(key: _webViewKey, html: _plan.html)),
+      body: SafeArea(
+        child: HtmlPlanWebView(key: _webViewKey, html: _plan.html),
+      ),
     );
   }
 }
@@ -115,7 +117,7 @@ class HtmlPlanWebViewState extends State<HtmlPlanWebView> {
     super.initState();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.disabled)
-      ..setBackgroundColor(const Color(0xFF111318))
+      ..setBackgroundColor(Colors.white)
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
@@ -126,54 +128,12 @@ class HtmlPlanWebViewState extends State<HtmlPlanWebView> {
           },
         ),
       )
-      ..loadHtmlString(_document(widget.html));
+      ..loadHtmlString(HtmlPlanExportService.buildViewerDocument(widget.html));
   }
 
-  void load(String html) => _controller.loadHtmlString(_document(html));
-
-  String _document(String source) {
-    final safe = source
-        .replaceAll(
-          RegExp(r'<script\b[^>]*>[\s\S]*?</script\s*>', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(r'<iframe\b[^>]*>[\s\S]*?</iframe\s*>', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'''\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)''',
-            caseSensitive: false,
-          ),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'''\s(?:href|src|srcdoc|action|formaction)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)''',
-            caseSensitive: false,
-          ),
-          '',
-        );
-    return '''<!doctype html>
-<html><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">
-<style>
-:root { color-scheme: dark; }
-* { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; background: #111318; color: #e5e7eb; }
-body { padding: 20px; font: 16px/1.55 system-ui, -apple-system, sans-serif; overflow-wrap: anywhere; }
-h1, h2, h3, h4 { color: #f8fafc; line-height: 1.2; }
-a { color: #8ab4f8; text-decoration: none; }
-pre, code { font-family: ui-monospace, SFMono-Regular, monospace; }
-pre { overflow-x: auto; padding: 12px; border-radius: 10px; background: #191d25; }
-table { width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
-th, td { border: 1px solid #343b49; padding: 8px; text-align: left; }
-img { max-width: 100%; height: auto; }
-</style></head><body>$safe</body></html>''';
-  }
+  void load(String html) => _controller.loadHtmlString(
+    HtmlPlanExportService.buildViewerDocument(html),
+  );
 
   @override
   Widget build(BuildContext context) {
