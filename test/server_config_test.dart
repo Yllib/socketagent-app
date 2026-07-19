@@ -69,4 +69,17 @@ void main() {
 
     expect(dedupeServerConfigs([first, second]), hasLength(2));
   });
+
+  test('an incomplete relay selection never acquires a direct identity', () {
+    final config = ServerConfig(
+      id: 'relay-only',
+      name: 'Relay only',
+      host: '192.0.2.25',
+      port: 8085,
+      token: 'direct-token-that-must-not-be-used',
+      useRelay: true,
+    );
+
+    expect(config.connectionIdentity, startsWith('relay-unconfigured'));
+  });
 }

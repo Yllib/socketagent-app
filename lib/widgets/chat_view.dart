@@ -138,7 +138,7 @@ class ChatViewState extends State<ChatView> {
   void _onScroll() {
     if (!_scrollController.hasClients || _isAutoScrolling) return;
     final pos = _scrollController.position;
-    final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+    final distanceFromBottom = pos.pixels - pos.minScrollExtent;
     _userScrolledUp = distanceFromBottom > 150;
     _collapseExpandedImagesFarFromViewport();
     if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
@@ -185,7 +185,7 @@ class ChatViewState extends State<ChatView> {
     // scroll away from the expanded image."
     if (_scrollController.hasClients && !_isAutoScrolling) {
       final pos = _scrollController.position;
-      final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+      final distanceFromBottom = pos.pixels - pos.minScrollExtent;
       _userScrolledUp = distanceFromBottom > 150;
       if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
         _autoScrollHeldForInspection = false;
@@ -200,27 +200,15 @@ class ChatViewState extends State<ChatView> {
           : '';
       _lastKnownProcessing = widget.isProcessing;
       _userScrolledUp = false;
-      _jumpToBottomRepeatedly();
+      _jumpToBottom();
       return;
     }
 
     // "Load more" just finished — preserve scroll position
     if (oldWidget.isLoadingMore && !widget.isLoadingMore) {
-      final oldMax = _scrollController.hasClients
-          ? _scrollController.position.maxScrollExtent
-          : 0.0;
-      final oldOffset = _scrollController.hasClients
-          ? _scrollController.position.pixels
-          : 0.0;
       _lastKnownMessageCount = widget.messages.length;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_scrollController.hasClients) return;
-        final newMax = _scrollController.position.maxScrollExtent;
-        final addedHeight = newMax - oldMax;
-        if (addedHeight > 0) {
-          _scrollController.jumpTo(oldOffset + addedHeight);
-        }
-      });
+      // The list is reverse-anchored. Adding older entries extends its far
+      // edge without moving the currently visible latest transcript.
       return;
     }
 
@@ -230,7 +218,7 @@ class ChatViewState extends State<ChatView> {
     if (hasNewPendingInteraction) {
       _userScrolledUp = false;
       _autoScrollHeldForInspection = false;
-      _jumpToBottomRepeatedly();
+      _jumpToBottom();
       return;
     }
 
@@ -302,7 +290,7 @@ class ChatViewState extends State<ChatView> {
   void _releaseInspectionHoldIfIdle() {
     if (_hasActiveImageInspection || !_scrollController.hasClients) return;
     final pos = _scrollController.position;
-    final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+    final distanceFromBottom = pos.pixels - pos.minScrollExtent;
     _autoScrollHeldForInspection = false;
     _userScrolledUp = distanceFromBottom > 150;
   }
@@ -413,22 +401,12 @@ class ChatViewState extends State<ChatView> {
     }
   }
 
-  /// After history load, keep jumping to bottom until maxScrollExtent stabilizes.
-  /// ListView is lazy so it keeps laying out more items after each jump.
-  void _jumpToBottomRepeatedly([int attempts = 0]) {
-    if (attempts > 10) return; // safety limit
+  /// The reverse-anchored list keeps the newest transcript at offset zero, so
+  /// one post-frame jump is sufficient even while older rows remain lazy.
+  void _jumpToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
-      final target = _scrollController.position.maxScrollExtent;
-      _scrollController.jumpTo(target);
-      // Check again — if maxScrollExtent changed, more items were laid out
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!_scrollController.hasClients) return;
-        final newTarget = _scrollController.position.maxScrollExtent;
-        if (newTarget > target + 1) {
-          _jumpToBottomRepeatedly(attempts + 1);
-        }
-      });
+      _scrollController.jumpTo(_scrollController.position.minScrollExtent);
     });
   }
 
@@ -440,8 +418,8 @@ class ChatViewState extends State<ChatView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _scrollPending = false;
       if (!_scrollController.hasClients) return;
-      final target = _scrollController.position.maxScrollExtent;
-      final distance = target - _scrollController.position.pixels;
+      final target = _scrollController.position.minScrollExtent;
+      final distance = _scrollController.position.pixels - target;
       if (distance <= 0) return;
 
       if (jump || distance > 2000) {
@@ -527,9 +505,10 @@ class ChatViewState extends State<ChatView> {
     }
 
     final hasLoadMore = widget.hasMoreHistory;
-    final loadMoreOffset = hasLoadMore ? 1 : 0;
     final itemCount =
-        loadMoreOffset + visibleMessages.length + (widget.isProcessing ? 1 : 0);
+        (hasLoadMore ? 1 : 0) +
+        visibleMessages.length +
+        (widget.isProcessing ? 1 : 0);
 
     return Column(
       children: [
@@ -548,19 +527,24 @@ class ChatViewState extends State<ChatView> {
             onPointerCancel: (_) => _userTouching = false,
             child: ListView.builder(
               controller: _scrollController,
+              reverse: true,
               padding: const EdgeInsets.only(top: 8, bottom: 8),
               itemCount: itemCount,
               itemBuilder: (context, index) {
-                // "Load More" button at the top
-                if (hasLoadMore && index == 0) {
-                  return _buildLoadMoreButton(context);
+                var reverseIndex = index;
+                // In a reverse list index zero is the visual bottom.
+                if (widget.isProcessing) {
+                  if (reverseIndex == 0) {
+                    return _buildThinkingIndicator(context);
+                  }
+                  reverseIndex--;
                 }
-                final msgIndex = index - loadMoreOffset;
-                if (msgIndex == visibleMessages.length && widget.isProcessing) {
-                  return _buildThinkingIndicator(context);
+                if (reverseIndex < visibleMessages.length) {
+                  final msgIndex = visibleMessages.length - 1 - reverseIndex;
+                  return _buildMessageWidget(visibleMessages[msgIndex]);
                 }
-                final msg = visibleMessages[msgIndex];
-                return _buildMessageWidget(msg);
+                // The final reverse-list item is the visual top.
+                return _buildLoadMoreButton(context);
               },
             ),
           ),

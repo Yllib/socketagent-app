@@ -17,6 +17,10 @@ class ServerStatusUpdate {
   ServerStatusUpdate(this.serverId, this.status);
 }
 
+ConnectionMode connectionModeForServerConfig(ServerConfig config) {
+  return config.useRelay ? ConnectionMode.relay : ConnectionMode.direct;
+}
+
 /// Manages simultaneous WebSocket connections to multiple SocketAgent servers.
 ///
 /// Each server gets its own [WebSocketService] and (if relay) its own
@@ -88,8 +92,17 @@ class ConnectionManager {
       }
 
       final ws = _connections[config.id]!;
+      final selectedMode = connectionModeForServerConfig(config);
+      // Transport selection is a security boundary. Apply it before touching
+      // credentials so a relay-selected server can never retain or open a
+      // direct socket while relay configuration is incomplete.
+      ws.setMode(selectedMode);
 
-      if (config.useRelay && config.isRelayPaired) {
+      if (selectedMode == ConnectionMode.relay) {
+        if (!config.isRelayPaired) {
+          ws.clearRelayConfiguration();
+          continue;
+        }
         // Per-server relay — each gets its own CryptoService
         var crypto = _cryptoServices[config.id];
         if (crypto == null) {
@@ -104,7 +117,6 @@ class ConnectionManager {
           cryptoService: crypto,
           subscriberToken: _subscriberToken,
         );
-        ws.setMode(ConnectionMode.relay);
       } else {
         CryptoService? crypto;
         if (config.serverPubkey.isNotEmpty) {
@@ -122,7 +134,6 @@ class ConnectionManager {
           token: config.token,
           cryptoService: crypto,
         );
-        ws.setMode(ConnectionMode.direct);
       }
     }
 

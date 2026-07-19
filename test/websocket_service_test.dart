@@ -24,4 +24,43 @@ void main() {
       );
     },
   );
+
+  test('relay transport fails closed without a complete trusted pairing', () {
+    final service = WebSocketService();
+    service.configure(host: '192.0.2.10', port: 8085, token: 'direct-token');
+    service.setMode(ConnectionMode.relay);
+
+    service.connect();
+
+    expect(service.mode, ConnectionMode.relay);
+    expect(service.status, ConnectionStatus.error);
+    service.dispose();
+  });
+
+  test('relay configuration validation rejects missing trust material', () {
+    expect(
+      relayTransportIsConfigured(
+        relayUrl: 'wss://relay.example.test',
+        pairingToken: 'token',
+        cryptoReady: true,
+      ),
+      isTrue,
+    );
+    expect(
+      relayTransportIsConfigured(
+        relayUrl: '',
+        pairingToken: 'token',
+        cryptoReady: true,
+      ),
+      isFalse,
+    );
+    expect(
+      relayTransportIsConfigured(
+        relayUrl: 'wss://relay.example.test',
+        pairingToken: '',
+        cryptoReady: true,
+      ),
+      isFalse,
+    );
+  });
 }

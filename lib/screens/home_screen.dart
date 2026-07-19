@@ -696,6 +696,8 @@ class HomeScreenState extends State<HomeScreen> {
               children: [
                 if (provider.activeSessionId != null)
                   _buildControlChips(provider),
+                if (provider.isRefreshingHistory)
+                  const LinearProgressIndicator(minHeight: 2),
                 Expanded(
                   child: ChatView(
                     key: _chatViewKey,
@@ -1335,10 +1337,7 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _openProjectInstructions(
-    ChatProvider provider,
-    String? projectPath,
-  ) {
+  void _openProjectInstructions(ChatProvider provider, String? projectPath) {
     final serverId = provider.activeServerId;
     if (serverId == null || projectPath == null || projectPath.isEmpty) return;
     Navigator.of(context).push(

@@ -40,6 +40,7 @@ import 'crypto_service.dart';
 import 'secure_storage_service.dart';
 import 'adb_bridge_service.dart';
 import 'tool_event_reconciler.dart';
+import 'session_transcript_cache.dart';
 
 const _codexAgentControlTypes = {
   'wait',
@@ -487,6 +488,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
+  final SessionTranscriptCache _transcriptCache = SessionTranscriptCache();
   final Map<String, Timer> _scheduledTaskRefreshRetries = {};
   final Map<String, String> _scheduledTaskLoadedRevisions = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
@@ -525,11 +527,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final List<Map<String, String>> _pendingImageLoads =
       []; // {toolUseId, filePath}
   bool _isLoadingHistory = false;
+  bool _isRefreshingHistory = false;
   bool _isLoadingMore = false;
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
   String? _initialHistoryRequestId;
   String? _olderHistoryRequestId;
   int _historyRequestSequence = 0;
+  final Map<String, DateTime> _historyOpenTraceStartedAt = {};
   bool _ttsEnabled = false;
   String _effort = 'high';
   bool _codexFastMode = false;
@@ -1257,6 +1261,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool get isLoadingHistory => _isLoadingHistory;
+  bool get isRefreshingHistory => _isRefreshingHistory;
   bool get isLoadingMore => _isLoadingMore;
   bool get hasMoreHistory => _historyOffset > 0;
   bool get rawMode => _rawMode;
@@ -1277,6 +1282,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         .map((entry) => entry.key)
         .toSet();
   }
+
   Map<String, Map<String, dynamic>> get subagentTasks => _subagentTasks;
 
   /// Active tasks for the bottom pane: bg tasks + non-dismissed subagents
@@ -1466,13 +1472,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     PushNotificationService.onTokenRefresh = _handlePushTokenRefresh;
     PushNotificationService.shouldDisplayForegroundNotification =
         _shouldDisplayForegroundPushNotification;
-    PushNotificationService.shouldBadgeForegroundSessionCompletion =
-        (data) {
-          final sessionId = data['sessionId'] as String? ?? '';
-          final serverId = data['serverId'] as String?;
-          return sessionId.isEmpty ||
-              !_isViewingSession(sessionId, serverId: serverId);
-        };
+    PushNotificationService.shouldBadgeForegroundSessionCompletion = (data) {
+      final sessionId = data['sessionId'] as String? ?? '';
+      final serverId = data['serverId'] as String?;
+      return sessionId.isEmpty ||
+          !_isViewingSession(sessionId, serverId: serverId);
+    };
     _loadSettings();
     _setupListeners();
     unawaited(AdbBridgeService.instance.restoreLocalAdbConnection());
@@ -1658,6 +1663,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     await _loadSessionCache(prefs);
+    unawaited(
+      _transcriptCache.prewarm(
+        _sessions
+            .take(SessionTranscriptCache.maxSnapshots)
+            .map(
+              (session) => (serverId: session.serverId, sessionId: session.id),
+            ),
+      ),
+    );
     _loadScheduledTaskCache(prefs);
     _pushRegisteredServers
       ..clear()
@@ -1799,7 +1813,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'platform': 'android',
     };
     if (serverId != null) {
-      final config = _serverConfigs.where((item) => item.id == serverId).firstOrNull;
+      final config = _serverConfigs
+          .where((item) => item.id == serverId)
+          .firstOrNull;
       if (config == null) return false;
       final ws = _connMgr.getConnection(serverId);
       if (ws?.status != ConnectionStatus.connected) return false;
@@ -1833,9 +1849,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             serverId: config.id,
           );
           if (!relayRegistered) {
-            debugPrint(
-              '[Push] Relay FCM registration failed for ${config.id}',
-            );
+            debugPrint('[Push] Relay FCM registration failed for ${config.id}');
             continue;
           }
         }
@@ -2451,10 +2465,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         serverId != null &&
         serverId == _connMgr.activeServerId) {
       final historyRequestId = _beginInitialHistoryRequest(_activeSessionId!);
+      final knownSessionSeq = _latestVisibleSessionSeq();
       _connMgr.sendToServer(serverId, {
         'type': 'resume_session',
         'sessionId': _activeSessionId,
         'historyRequestId': historyRequestId,
+        'openTraceId': historyRequestId,
+        if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
+        if (_historyOffset > 0) 'knownHistoryOffset': _historyOffset,
       });
       _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
     }
@@ -3399,1412 +3417,1423 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     try {
       switch (type) {
-      case 'text':
-        _handleTextMessage(msg);
-        break;
-      case 'thinking':
-        _handleThinkingMessage(msg);
-        break;
-      case 'tool_call':
-        _handleToolCall(msg);
-        break;
-      case 'tool_result':
-        _handleToolResult(msg);
-        break;
-      case 'tool_result_chunk':
-        _handleToolResultChunk(msg);
-        break;
-      case 'tool_image':
-        _handleToolImage(msg);
-        break;
-      case 'codex_plan':
-        _handleCodexPlan(msg);
-        break;
-      case 'tool_progress':
-        _handleToolProgress(msg);
-        break;
-      case 'tool_stderr':
-        _handleToolStderr(msg);
-        break;
-      case 'question':
-        _handleQuestion(msg);
-        break;
-      case 'secure_input_request':
-        _handleSecureInputRequest(msg);
-        break;
-      case 'secure_input_saved':
-        _handleSecureInputSaved(msg);
-        break;
-      case 'secure_input_cancelled':
-        _handleSecureInputCancelled(msg);
-        break;
-      case 'secret_inventory':
-        _handleSecretInventory(msg, serverId);
-        break;
-      case 'secret_operation_result':
-        _handleSecretOperationResult(msg);
-        break;
-      case 'html_plan':
-        _handleHtmlPlan(msg);
-        break;
-      case 'html_plan_list':
-        _handleHtmlPlanList(msg);
-        break;
-      case 'html_plan_operation_result':
-        _handleHtmlPlanOperationResult(msg);
-        break;
-      case 'html_plan_revision_list':
-        _handleHtmlPlanRevisionList(msg);
-        break;
-      case 'html_plan_revision':
-        _handleHtmlPlanRevision(msg);
-        break;
-      case 'result':
-        _handleResult(msg);
-        break;
-      case 'subagent_result':
-        _handleSubagentResult(msg);
-        break;
-      case 'active_subagents':
-        _handleActiveSubagents(msg);
-        break;
-      case 'session_created':
-        _handleSessionCreated(msg, serverId);
-        break;
-      case 'session_history':
-        _handleSessionHistory(msg);
-        break;
-      case 'session_list':
-        _handleSessionList(msg, serverId);
-        break;
-      case 'server_capabilities':
-        {
-          final raw = msg['backends'];
-          final backends = (raw is List)
-              ? raw.whereType<String>().toList()
-              : <String>['claude'];
-          if (serverId != null) {
-            _serverBackends[serverId] = backends;
-            final secretManagement = msg['secretManagement'];
-            _serverSecretManagementVersions[serverId] = secretManagement is Map
-                ? (secretManagement['version'] as num?)?.toInt() ?? 0
-                : 0;
-            _captureCodexDriverSettings(msg, serverId);
-            unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
-            notifyListeners();
-          }
+        case 'text':
+          _handleTextMessage(msg);
           break;
-        }
-      case 'server_settings':
-        {
-          if (serverId != null) {
-            _captureCodexDriverSettings(msg, serverId);
-            notifyListeners();
-          }
+        case 'thinking':
+          _handleThinkingMessage(msg);
           break;
-        }
-      case 'backend_install_progress':
-        _handleBackendInstallProgress(msg, serverId);
-        break;
-      case 'backend_auth_required':
-        _handleBackendAuthRequired(msg, serverId);
-        break;
-      case 'terminal_status':
-      case 'terminal_output':
-      case 'terminal_exited':
-      case 'terminal_error':
-        _handleTerminalMessage(msg, serverId);
-        break;
-      case 'adb_bridge_sidecar_status':
-        _handleAdbBridgeSidecarStatus(msg);
-        break;
-      case 'adb_command_result':
-        _handleAdbCommandResult(msg);
-        break;
-      case 'phone_adb_request':
-        _handlePhoneAdbRequest(msg, serverId);
-        break;
-      case 'phone_adb_file_chunk':
-        _handlePhoneAdbFileChunk(msg);
-        break;
-      case 'phone_adb_file_end':
-        _handlePhoneAdbFileEnd(msg);
-        break;
-      case 'phone_adb_cancel':
-        _handlePhoneAdbCancel(msg);
-        break;
-      case 'push_token_registered':
-        {
-          final appServerId = msg['appServerId'];
-          _markPushRegistered(
-            serverId ?? (appServerId is String ? appServerId : null),
-          );
+        case 'tool_call':
+          _handleToolCall(msg);
           break;
-        }
-      case 'push_token_unregistered':
-        {
-          final appServerId = msg['appServerId'];
-          _markPushUnregistered(
-            serverId ?? (appServerId is String ? appServerId : null),
-          );
+        case 'tool_result':
+          _handleToolResult(msg);
           break;
-        }
-      case 'push_registration_status':
-        {
-          final appServerId = msg['appServerId'];
-          final effectiveServerId =
-              serverId ?? (appServerId is String ? appServerId : null);
-          if (msg['registered'] == true) {
-            _markPushRegistered(effectiveServerId);
-          } else {
-            _markPushUnregistered(effectiveServerId);
-          }
+        case 'tool_result_chunk':
+          _handleToolResultChunk(msg);
           break;
-        }
-      case 'codex_collaboration_modes':
-        {
-          final key = serverId ?? _connMgr.activeServerId;
-          if (key != null) {
-            final modes =
-                (msg['modes'] as List?)
-                    ?.whereType<Map>()
-                    .map((m) => Map<String, dynamic>.from(m))
-                    .toList() ??
-                const <Map<String, dynamic>>[
-                  {'id': 'default', 'name': 'Default'},
-                ];
-            _serverCodexCollaborationModes[key] = modes;
-            final currentMode = msg['currentMode'] as String?;
-            if (currentMode != null && currentMode.isNotEmpty) {
-              _codexCollaborationMode = currentMode;
-            }
-            notifyListeners();
-          }
+        case 'tool_image':
+          _handleToolImage(msg);
           break;
-        }
-      case 'codex_collaboration_mode_changed':
-        {
-          final mode = msg['mode'] as String? ?? 'default';
-          _codexCollaborationMode = mode;
-          _messages.add(
-            ChatMessage(
-              id: 'codex_mode_${DateTime.now().microsecondsSinceEpoch}',
-              sender: MessageSender.system,
-              type: MessageType.taskNotification,
-              timestamp: DateTime.now(),
-              textContent: 'Codex collaboration mode set to $mode',
-              toolName: 'codex_mode',
-            ),
-          );
-          notifyListeners();
+        case 'codex_plan':
+          _handleCodexPlan(msg);
           break;
-        }
-      case 'codex_status':
-        {
-          if (msg['error'] == null && msg['payload'] is Map) {
-            _codexStatus = Map<String, dynamic>.from(msg['payload'] as Map);
-            _pendingCodexStatus?.complete(_codexStatus);
-            _pendingCodexStatus = null;
-            notifyListeners();
-          } else {
-            _pendingCodexStatus?.complete(null);
-            _pendingCodexStatus = null;
-          }
+        case 'tool_progress':
+          _handleToolProgress(msg);
           break;
-        }
-      case 'usage_restore':
-        if (msg['usage'] != null) {
-          _lastUsage = Map<String, dynamic>.from(msg['usage'] as Map);
-          notifyListeners();
-        }
-        break;
-      case 'usage_update':
-        // Mid-query usage update from message_start and message_delta events
-        _lastUsage ??= <String, dynamic>{};
-        _lastUsage!['inputTokens'] = msg['inputTokens'] ?? 0;
-        _lastUsage!['outputTokens'] = msg['outputTokens'] ?? 0;
-        _lastUsage!['cacheReadTokens'] = msg['cacheReadTokens'] ?? 0;
-        _lastUsage!['cacheCreateTokens'] = msg['cacheCreateTokens'] ?? 0;
-        if ((msg['contextWindow'] as num?)?.toInt() != null &&
-            (msg['contextWindow'] as num).toInt() > 0) {
-          _lastUsage!['contextWindow'] = msg['contextWindow'];
-        }
-        notifyListeners();
-        break;
-      case 'speak':
-        final text = msg['text'] as String? ?? '';
-        if (_ttsEnabled && text.isNotEmpty) {
-          if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
-            // Don't speak locally — audio will arrive via tts_audio message
-          } else if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
-            _kokoroDeviceEngine.speak(text);
-          } else {
-            _tts.speak(text);
-          }
-        }
-        if (text.isNotEmpty) {
-          final messageSessionId = msg['sessionId'] as String? ?? '';
-          final belongsToActiveSession =
-              messageSessionId.isEmpty ||
-              _activeSessionId == null ||
-              messageSessionId == _activeSessionId;
-          if (belongsToActiveSession) {
-            final hasVisibleCard = _messages.any(
-              (m) =>
-                  m.type == MessageType.toolCall &&
-                  m.toolName == 'Speak' &&
-                  m.toolInput?['text'] == text,
-            );
-            if (!hasVisibleCard) {
-              _messages.add(
-                ChatMessage.toolCall(
-                  tool: 'Speak',
-                  input: {'text': text},
-                  toolUseId: 'speak_${DateTime.now().microsecondsSinceEpoch}',
-                ),
-              );
+        case 'tool_stderr':
+          _handleToolStderr(msg);
+          break;
+        case 'question':
+          _handleQuestion(msg);
+          break;
+        case 'secure_input_request':
+          _handleSecureInputRequest(msg);
+          break;
+        case 'secure_input_saved':
+          _handleSecureInputSaved(msg);
+          break;
+        case 'secure_input_cancelled':
+          _handleSecureInputCancelled(msg);
+          break;
+        case 'secret_inventory':
+          _handleSecretInventory(msg, serverId);
+          break;
+        case 'secret_operation_result':
+          _handleSecretOperationResult(msg);
+          break;
+        case 'html_plan':
+          _handleHtmlPlan(msg);
+          break;
+        case 'html_plan_list':
+          _handleHtmlPlanList(msg);
+          break;
+        case 'html_plan_operation_result':
+          _handleHtmlPlanOperationResult(msg);
+          break;
+        case 'html_plan_revision_list':
+          _handleHtmlPlanRevisionList(msg);
+          break;
+        case 'html_plan_revision':
+          _handleHtmlPlanRevision(msg);
+          break;
+        case 'result':
+          _handleResult(msg);
+          break;
+        case 'subagent_result':
+          _handleSubagentResult(msg);
+          break;
+        case 'active_subagents':
+          _handleActiveSubagents(msg);
+          break;
+        case 'session_created':
+          _handleSessionCreated(msg, serverId);
+          break;
+        case 'session_history':
+          _handleSessionHistory(msg, serverId: serverId);
+          break;
+        case 'session_list':
+          _handleSessionList(msg, serverId);
+          break;
+        case 'server_capabilities':
+          {
+            final raw = msg['backends'];
+            final backends = (raw is List)
+                ? raw.whereType<String>().toList()
+                : <String>['claude'];
+            if (serverId != null) {
+              _serverBackends[serverId] = backends;
+              final secretManagement = msg['secretManagement'];
+              _serverSecretManagementVersions[serverId] =
+                  secretManagement is Map
+                  ? (secretManagement['version'] as num?)?.toInt() ?? 0
+                  : 0;
+              _captureCodexDriverSettings(msg, serverId);
+              unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
               notifyListeners();
             }
+            break;
           }
-        }
-        break;
-      case 'tts_audio':
-        final audioData = msg['audioData'] as String? ?? '';
-        if (_ttsEnabled &&
-            audioData.isNotEmpty &&
-            _ttsEngineMode == TtsEngineMode.kokoroServer) {
-          _kokoroServerEngine.playAudioData(audioData);
-        }
-        break;
-      case 'file':
-        _handleFileMessage(msg, serverId);
-        break;
-      case 'file_data':
-        _handleFileData(msg);
-        break;
-      case 'file_chunk':
-        _handleFileChunk(msg);
-        break;
-      case 'file_complete':
-        _handleFileComplete(msg);
-        break;
-      case 'file_error':
-        _handleFileError(msg);
-        break;
-      case 'todos':
-        final rawTodos = msg['todos'] as List?;
-        if (rawTodos != null) {
-          final newTodos = rawTodos
-              .map((t) => Map<String, dynamic>.from(t as Map))
-              .toList();
-          // Skip if identical to current state (prevents spurious cards on reconnect/re-send)
-          if (_todosEqual(_todos, newTodos)) break;
-          final diff = _computeTodoDiff(_todos, newTodos);
-          _todos = newTodos;
-          if (diff.isNotEmpty) {
+        case 'server_settings':
+          {
+            if (serverId != null) {
+              _captureCodexDriverSettings(msg, serverId);
+              notifyListeners();
+            }
+            break;
+          }
+        case 'backend_install_progress':
+          _handleBackendInstallProgress(msg, serverId);
+          break;
+        case 'backend_auth_required':
+          _handleBackendAuthRequired(msg, serverId);
+          break;
+        case 'terminal_status':
+        case 'terminal_output':
+        case 'terminal_exited':
+        case 'terminal_error':
+          _handleTerminalMessage(msg, serverId);
+          break;
+        case 'adb_bridge_sidecar_status':
+          _handleAdbBridgeSidecarStatus(msg);
+          break;
+        case 'adb_command_result':
+          _handleAdbCommandResult(msg);
+          break;
+        case 'phone_adb_request':
+          _handlePhoneAdbRequest(msg, serverId);
+          break;
+        case 'phone_adb_file_chunk':
+          _handlePhoneAdbFileChunk(msg);
+          break;
+        case 'phone_adb_file_end':
+          _handlePhoneAdbFileEnd(msg);
+          break;
+        case 'phone_adb_cancel':
+          _handlePhoneAdbCancel(msg);
+          break;
+        case 'push_token_registered':
+          {
+            final appServerId = msg['appServerId'];
+            _markPushRegistered(
+              serverId ?? (appServerId is String ? appServerId : null),
+            );
+            break;
+          }
+        case 'push_token_unregistered':
+          {
+            final appServerId = msg['appServerId'];
+            _markPushUnregistered(
+              serverId ?? (appServerId is String ? appServerId : null),
+            );
+            break;
+          }
+        case 'push_registration_status':
+          {
+            final appServerId = msg['appServerId'];
+            final effectiveServerId =
+                serverId ?? (appServerId is String ? appServerId : null);
+            if (msg['registered'] == true) {
+              _markPushRegistered(effectiveServerId);
+            } else {
+              _markPushUnregistered(effectiveServerId);
+            }
+            break;
+          }
+        case 'codex_collaboration_modes':
+          {
+            final key = serverId ?? _connMgr.activeServerId;
+            if (key != null) {
+              final modes =
+                  (msg['modes'] as List?)
+                      ?.whereType<Map>()
+                      .map((m) => Map<String, dynamic>.from(m))
+                      .toList() ??
+                  const <Map<String, dynamic>>[
+                    {'id': 'default', 'name': 'Default'},
+                  ];
+              _serverCodexCollaborationModes[key] = modes;
+              final currentMode = msg['currentMode'] as String?;
+              if (currentMode != null && currentMode.isNotEmpty) {
+                _codexCollaborationMode = currentMode;
+              }
+              notifyListeners();
+            }
+            break;
+          }
+        case 'codex_collaboration_mode_changed':
+          {
+            final mode = msg['mode'] as String? ?? 'default';
+            _codexCollaborationMode = mode;
             _messages.add(
               ChatMessage(
-                id: 'todo_update_${DateTime.now().microsecondsSinceEpoch}',
+                id: 'codex_mode_${DateTime.now().microsecondsSinceEpoch}',
                 sender: MessageSender.system,
                 type: MessageType.taskNotification,
                 timestamp: DateTime.now(),
-                textContent: diff,
-                toolName: 'todos_updated',
+                textContent: 'Codex collaboration mode set to $mode',
+                toolName: 'codex_mode',
               ),
             );
+            notifyListeners();
+            break;
+          }
+        case 'codex_status':
+          {
+            if (msg['error'] == null && msg['payload'] is Map) {
+              _codexStatus = Map<String, dynamic>.from(msg['payload'] as Map);
+              _pendingCodexStatus?.complete(_codexStatus);
+              _pendingCodexStatus = null;
+              notifyListeners();
+            } else {
+              _pendingCodexStatus?.complete(null);
+              _pendingCodexStatus = null;
+            }
+            break;
+          }
+        case 'usage_restore':
+          if (msg['usage'] != null) {
+            _lastUsage = Map<String, dynamic>.from(msg['usage'] as Map);
+            notifyListeners();
+          }
+          break;
+        case 'usage_update':
+          // Mid-query usage update from message_start and message_delta events
+          _lastUsage ??= <String, dynamic>{};
+          _lastUsage!['inputTokens'] = msg['inputTokens'] ?? 0;
+          _lastUsage!['outputTokens'] = msg['outputTokens'] ?? 0;
+          _lastUsage!['cacheReadTokens'] = msg['cacheReadTokens'] ?? 0;
+          _lastUsage!['cacheCreateTokens'] = msg['cacheCreateTokens'] ?? 0;
+          if ((msg['contextWindow'] as num?)?.toInt() != null &&
+              (msg['contextWindow'] as num).toInt() > 0) {
+            _lastUsage!['contextWindow'] = msg['contextWindow'];
           }
           notifyListeners();
-        }
-        break;
-      case 'sdk_event_history':
-        _restoreSdkEvents(msg['events'] as List? ?? []);
-        break;
-      case 'cwd_check':
-        final result = Map<String, dynamic>.from(msg);
-        if (serverId != null && serverId.isNotEmpty) {
-          result['serverId'] = serverId;
-        }
-        _lastCwdCheck = result;
-        final requestId = result['requestId'] as String?;
-        final responseServerId = result['serverId'] as String?;
-        final serverMatches =
-            _pendingCwdCheckServerId == null ||
-            responseServerId == null ||
-            responseServerId == _pendingCwdCheckServerId;
-        if (_pendingCwdCheck != null &&
-            serverMatches &&
-            (_pendingCwdCheckRequestId == null ||
-                requestId == null ||
-                requestId == _pendingCwdCheckRequestId)) {
-          _pendingCwdCheck?.complete(result);
-          _pendingCwdCheck = null;
-          _pendingCwdCheckRequestId = null;
-          _pendingCwdCheckServerId = null;
-        }
-        break;
-      case 'directory_listing':
-        _pendingDirList?.complete(Map<String, dynamic>.from(msg));
-        _pendingDirList = null;
-        break;
-      case 'file_manager_list_result':
-        {
-          final requestId = msg['requestId'] as String? ?? '';
-          final completer = _fileManagerListCompleters.remove(requestId);
-          if (completer != null && !completer.isCompleted) {
-            if (msg['ok'] == true) {
-              completer.complete(FileManagerListing.fromJson(msg));
+          break;
+        case 'speak':
+          final text = msg['text'] as String? ?? '';
+          if (_ttsEnabled && text.isNotEmpty) {
+            if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
+              // Don't speak locally — audio will arrive via tts_audio message
+            } else if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
+              _kokoroDeviceEngine.speak(text);
             } else {
-              completer.completeError(
-                Exception(msg['error'] as String? ?? 'Failed to list files'),
+              _tts.speak(text);
+            }
+          }
+          if (text.isNotEmpty) {
+            final messageSessionId = msg['sessionId'] as String? ?? '';
+            final belongsToActiveSession =
+                messageSessionId.isEmpty ||
+                _activeSessionId == null ||
+                messageSessionId == _activeSessionId;
+            if (belongsToActiveSession) {
+              final hasVisibleCard = _messages.any(
+                (m) =>
+                    m.type == MessageType.toolCall &&
+                    m.toolName == 'Speak' &&
+                    m.toolInput?['text'] == text,
               );
+              if (!hasVisibleCard) {
+                _messages.add(
+                  ChatMessage.toolCall(
+                    tool: 'Speak',
+                    input: {'text': text},
+                    toolUseId: 'speak_${DateTime.now().microsecondsSinceEpoch}',
+                  ),
+                );
+                notifyListeners();
+              }
             }
           }
           break;
-        }
-      case 'file_manager_protected_result':
-        {
-          final requestId = msg['requestId'] as String? ?? '';
-          final completer = _fileManagerProtectedCompleters.remove(requestId);
-          if (completer != null && !completer.isCompleted) {
-            if (msg['ok'] == true) {
-              completer.complete(Map<String, dynamic>.from(msg));
-            } else {
-              completer.completeError(
-                Exception(
-                  msg['error'] as String? ?? 'Failed to update protection',
+        case 'tts_audio':
+          final audioData = msg['audioData'] as String? ?? '';
+          if (_ttsEnabled &&
+              audioData.isNotEmpty &&
+              _ttsEngineMode == TtsEngineMode.kokoroServer) {
+            _kokoroServerEngine.playAudioData(audioData);
+          }
+          break;
+        case 'file':
+          _handleFileMessage(msg, serverId);
+          break;
+        case 'file_data':
+          _handleFileData(msg);
+          break;
+        case 'file_chunk':
+          _handleFileChunk(msg);
+          break;
+        case 'file_complete':
+          _handleFileComplete(msg);
+          break;
+        case 'file_error':
+          _handleFileError(msg);
+          break;
+        case 'todos':
+          final rawTodos = msg['todos'] as List?;
+          if (rawTodos != null) {
+            final newTodos = rawTodos
+                .map((t) => Map<String, dynamic>.from(t as Map))
+                .toList();
+            // Skip if identical to current state (prevents spurious cards on reconnect/re-send)
+            if (_todosEqual(_todos, newTodos)) break;
+            final diff = _computeTodoDiff(_todos, newTodos);
+            _todos = newTodos;
+            if (diff.isNotEmpty) {
+              _messages.add(
+                ChatMessage(
+                  id: 'todo_update_${DateTime.now().microsecondsSinceEpoch}',
+                  sender: MessageSender.system,
+                  type: MessageType.taskNotification,
+                  timestamp: DateTime.now(),
+                  textContent: diff,
+                  toolName: 'todos_updated',
+                ),
+              );
+            }
+            notifyListeners();
+          }
+          break;
+        case 'sdk_event_history':
+          _restoreSdkEvents(msg['events'] as List? ?? []);
+          break;
+        case 'cwd_check':
+          final result = Map<String, dynamic>.from(msg);
+          if (serverId != null && serverId.isNotEmpty) {
+            result['serverId'] = serverId;
+          }
+          _lastCwdCheck = result;
+          final requestId = result['requestId'] as String?;
+          final responseServerId = result['serverId'] as String?;
+          final serverMatches =
+              _pendingCwdCheckServerId == null ||
+              responseServerId == null ||
+              responseServerId == _pendingCwdCheckServerId;
+          if (_pendingCwdCheck != null &&
+              serverMatches &&
+              (_pendingCwdCheckRequestId == null ||
+                  requestId == null ||
+                  requestId == _pendingCwdCheckRequestId)) {
+            _pendingCwdCheck?.complete(result);
+            _pendingCwdCheck = null;
+            _pendingCwdCheckRequestId = null;
+            _pendingCwdCheckServerId = null;
+          }
+          break;
+        case 'directory_listing':
+          _pendingDirList?.complete(Map<String, dynamic>.from(msg));
+          _pendingDirList = null;
+          break;
+        case 'file_manager_list_result':
+          {
+            final requestId = msg['requestId'] as String? ?? '';
+            final completer = _fileManagerListCompleters.remove(requestId);
+            if (completer != null && !completer.isCompleted) {
+              if (msg['ok'] == true) {
+                completer.complete(FileManagerListing.fromJson(msg));
+              } else {
+                completer.completeError(
+                  Exception(msg['error'] as String? ?? 'Failed to list files'),
+                );
+              }
+            }
+            break;
+          }
+        case 'file_manager_protected_result':
+          {
+            final requestId = msg['requestId'] as String? ?? '';
+            final completer = _fileManagerProtectedCompleters.remove(requestId);
+            if (completer != null && !completer.isCompleted) {
+              if (msg['ok'] == true) {
+                completer.complete(Map<String, dynamic>.from(msg));
+              } else {
+                completer.completeError(
+                  Exception(
+                    msg['error'] as String? ?? 'Failed to update protection',
+                  ),
+                );
+              }
+            }
+            break;
+          }
+        case 'file_manager_operation_result':
+          {
+            final requestId = msg['requestId'] as String? ?? '';
+            final completer = _fileManagerOperationCompleters.remove(requestId);
+            if (completer != null && !completer.isCompleted) {
+              if (msg['ok'] == true) {
+                completer.complete(Map<String, dynamic>.from(msg));
+              } else {
+                completer.completeError(
+                  Exception(msg['error'] as String? ?? 'File operation failed'),
+                );
+              }
+            }
+            break;
+          }
+        case 'file_manager_text_result':
+          {
+            final requestId = msg['requestId'] as String? ?? '';
+            final completer = _fileManagerTextCompleters.remove(requestId);
+            if (completer != null && !completer.isCompleted) {
+              if (msg['ok'] == true) {
+                completer.complete(Map<String, dynamic>.from(msg));
+              } else {
+                completer.completeError(
+                  Exception(msg['error'] as String? ?? 'Failed to read text'),
+                );
+              }
+            }
+            break;
+          }
+        case 'recent_cwds':
+          final cwds = (msg['cwds'] as List?)?.cast<String>() ?? [];
+          final key = serverId ?? '';
+          _recentCwds[key] = cwds;
+          notifyListeners();
+          break;
+        case 'sdk_session_list':
+          final sessions =
+              (msg['sessions'] as List?)
+                  ?.map((e) => Map<String, dynamic>.from(e as Map))
+                  .toList() ??
+              <Map<String, dynamic>>[];
+          final requestId = msg['requestId'] as String?;
+          if (requestId != null && requestId.isNotEmpty) {
+            final expectedServer = _sdkSessionRequestServers[requestId];
+            if (expectedServer != null &&
+                serverId != null &&
+                serverId != expectedServer) {
+              break;
+            }
+            _sdkSessionRequestServers.remove(requestId);
+            _sdkSessionRequestCwds.remove(requestId);
+            final requestedLimit =
+                _sdkSessionRequestLimits.remove(requestId) ?? 30;
+            final completer = _sdkSessionCompleters.remove(requestId);
+            if (completer != null && !completer.isCompleted) {
+              completer.complete(
+                SdkSessionPage(
+                  sessions: sessions,
+                  total: msg['total'] as int? ?? sessions.length,
+                  hasMore:
+                      msg['hasMore'] as bool? ??
+                      sessions.length >= requestedLimit,
+                ),
+              );
+            }
+            break;
+          }
+
+          // Compatibility with servers that predate request IDs. Route by the
+          // echoed cwd/server, preferring the newest identical lookup. Identical
+          // requests have interchangeable results, and the picker separately
+          // ignores callbacks from older UI generations.
+          final responseCwd = msg['cwd'] as String?;
+          final matchingIds = _sdkSessionRequestServers.entries
+              .where(
+                (entry) =>
+                    (entry.value == null ||
+                        serverId == null ||
+                        entry.value == serverId) &&
+                    (responseCwd == null ||
+                        _sdkSessionRequestCwds[entry.key] == responseCwd),
+              )
+              .map((entry) => entry.key)
+              .toList();
+          if (matchingIds.isNotEmpty) {
+            final legacyId = matchingIds.last;
+            _sdkSessionRequestServers.remove(legacyId);
+            _sdkSessionRequestCwds.remove(legacyId);
+            final requestedLimit =
+                _sdkSessionRequestLimits.remove(legacyId) ?? 30;
+            final completer = _sdkSessionCompleters.remove(legacyId);
+            if (completer != null && !completer.isCompleted) {
+              completer.complete(
+                SdkSessionPage(
+                  sessions: sessions,
+                  total: msg['total'] as int? ?? sessions.length,
+                  hasMore:
+                      msg['hasMore'] as bool? ??
+                      sessions.length >= requestedLimit,
                 ),
               );
             }
           }
           break;
-        }
-      case 'file_manager_operation_result':
-        {
-          final requestId = msg['requestId'] as String? ?? '';
-          final completer = _fileManagerOperationCompleters.remove(requestId);
-          if (completer != null && !completer.isCompleted) {
-            if (msg['ok'] == true) {
-              completer.complete(Map<String, dynamic>.from(msg));
-            } else {
-              completer.completeError(
-                Exception(msg['error'] as String? ?? 'File operation failed'),
-              );
-            }
-          }
-          break;
-        }
-      case 'file_manager_text_result':
-        {
-          final requestId = msg['requestId'] as String? ?? '';
-          final completer = _fileManagerTextCompleters.remove(requestId);
-          if (completer != null && !completer.isCompleted) {
-            if (msg['ok'] == true) {
-              completer.complete(Map<String, dynamic>.from(msg));
-            } else {
-              completer.completeError(
-                Exception(msg['error'] as String? ?? 'Failed to read text'),
-              );
-            }
-          }
-          break;
-        }
-      case 'recent_cwds':
-        final cwds = (msg['cwds'] as List?)?.cast<String>() ?? [];
-        final key = serverId ?? '';
-        _recentCwds[key] = cwds;
-        notifyListeners();
-        break;
-      case 'sdk_session_list':
-        final sessions =
-            (msg['sessions'] as List?)
-                ?.map((e) => Map<String, dynamic>.from(e as Map))
-                .toList() ??
-            <Map<String, dynamic>>[];
-        final requestId = msg['requestId'] as String?;
-        if (requestId != null && requestId.isNotEmpty) {
-          final expectedServer = _sdkSessionRequestServers[requestId];
-          if (expectedServer != null &&
+        case 'version_info':
+          if (_pendingVersionCheckServerId != null &&
               serverId != null &&
-              serverId != expectedServer) {
+              serverId != _pendingVersionCheckServerId) {
             break;
           }
-          _sdkSessionRequestServers.remove(requestId);
-          _sdkSessionRequestCwds.remove(requestId);
-          final requestedLimit =
-              _sdkSessionRequestLimits.remove(requestId) ?? 30;
-          final completer = _sdkSessionCompleters.remove(requestId);
-          if (completer != null && !completer.isCompleted) {
-            completer.complete(
-              SdkSessionPage(
-                sessions: sessions,
-                total: msg['total'] as int? ?? sessions.length,
-                hasMore:
-                    msg['hasMore'] as bool? ??
-                    sessions.length >= requestedLimit,
-              ),
-            );
+          if (serverId != null) {
+            _captureServerRuntimeInfo(msg, serverId);
           }
+          _pendingVersionCheck?.complete(Map<String, dynamic>.from(msg));
+          _pendingVersionCheck = null;
+          _pendingVersionCheckServerId = null;
           break;
-        }
-
-        // Compatibility with servers that predate request IDs. Route by the
-        // echoed cwd/server, preferring the newest identical lookup. Identical
-        // requests have interchangeable results, and the picker separately
-        // ignores callbacks from older UI generations.
-        final responseCwd = msg['cwd'] as String?;
-        final matchingIds = _sdkSessionRequestServers.entries
-            .where(
-              (entry) =>
-                  (entry.value == null ||
-                      serverId == null ||
-                      entry.value == serverId) &&
-                  (responseCwd == null ||
-                      _sdkSessionRequestCwds[entry.key] == responseCwd),
-            )
-            .map((entry) => entry.key)
-            .toList();
-        if (matchingIds.isNotEmpty) {
-          final legacyId = matchingIds.last;
-          _sdkSessionRequestServers.remove(legacyId);
-          _sdkSessionRequestCwds.remove(legacyId);
-          final requestedLimit =
-              _sdkSessionRequestLimits.remove(legacyId) ?? 30;
-          final completer = _sdkSessionCompleters.remove(legacyId);
-          if (completer != null && !completer.isCompleted) {
-            completer.complete(
-              SdkSessionPage(
-                sessions: sessions,
-                total: msg['total'] as int? ?? sessions.length,
-                hasMore:
-                    msg['hasMore'] as bool? ??
-                    sessions.length >= requestedLimit,
-              ),
-            );
-          }
-        }
-        break;
-      case 'version_info':
-        if (_pendingVersionCheckServerId != null &&
-            serverId != null &&
-            serverId != _pendingVersionCheckServerId) {
+        case 'update_result':
+          _pendingForceUpdate?.complete(Map<String, dynamic>.from(msg));
+          _pendingForceUpdate = null;
           break;
-        }
-        if (serverId != null) {
-          _captureServerRuntimeInfo(msg, serverId);
-        }
-        _pendingVersionCheck?.complete(Map<String, dynamic>.from(msg));
-        _pendingVersionCheck = null;
-        _pendingVersionCheckServerId = null;
-        break;
-      case 'update_result':
-        _pendingForceUpdate?.complete(Map<String, dynamic>.from(msg));
-        _pendingForceUpdate = null;
-        break;
-      case 'compacting':
-        _isCompacting = msg['active'] == true;
-        notifyListeners();
-        break;
-      case 'rate_limit_event':
-        final rlStatus = msg['status'] as String? ?? 'allowed';
-        _isRateLimited =
-            rlStatus == 'rejected' || rlStatus == 'allowed_warning';
-        _rateLimitUtilization = (msg['utilization'] as num?)?.toDouble();
-        notifyListeners();
-        break;
-      case 'api_retry':
-        _isRetrying = true;
-        notifyListeners();
-        Future.delayed(const Duration(seconds: 10), () {
-          if (_isRetrying) {
-            _isRetrying = false;
+        case 'compacting':
+          _isCompacting = msg['active'] == true;
+          notifyListeners();
+          break;
+        case 'rate_limit_event':
+          final rlStatus = msg['status'] as String? ?? 'allowed';
+          _isRateLimited =
+              rlStatus == 'rejected' || rlStatus == 'allowed_warning';
+          _rateLimitUtilization = (msg['utilization'] as num?)?.toDouble();
+          notifyListeners();
+          break;
+        case 'api_retry':
+          _isRetrying = true;
+          notifyListeners();
+          Future.delayed(const Duration(seconds: 10), () {
+            if (_isRetrying) {
+              _isRetrying = false;
+              notifyListeners();
+            }
+          });
+          break;
+        case 'task_started':
+          // Register monitor-spawned tasks in the background tasks pane
+          final tsTaskType = msg['taskType'] as String?;
+          if (tsTaskType == 'monitor') {
+            final tsTaskId = msg['taskId'] as String? ?? '';
+            final tsDesc = msg['description'] as String? ?? 'Monitored process';
+            final tsToolUseId = msg['toolUseId'] as String?;
+            _backgroundTasks[tsTaskId] = {
+              'status': 'running',
+              'summary': tsDesc,
+              'isMonitor': true,
+              if (tsToolUseId != null) 'originToolUseId': tsToolUseId,
+            };
             notifyListeners();
           }
-        });
-        break;
-      case 'task_started':
-        // Register monitor-spawned tasks in the background tasks pane
-        final tsTaskType = msg['taskType'] as String?;
-        if (tsTaskType == 'monitor') {
-          final tsTaskId = msg['taskId'] as String? ?? '';
-          final tsDesc = msg['description'] as String? ?? 'Monitored process';
-          final tsToolUseId = msg['toolUseId'] as String?;
-          _backgroundTasks[tsTaskId] = {
-            'status': 'running',
-            'summary': tsDesc,
-            'isMonitor': true,
-            if (tsToolUseId != null) 'originToolUseId': tsToolUseId,
-          };
-          notifyListeners();
-        }
-        break;
-      case 'bg_task_progress':
-        // Update subagent with progress summary if available
-        final progressToolId = msg['toolUseId'] as String?;
-        final progressSummary = msg['summary'] as String?;
-        if (progressToolId != null &&
-            _subagentTasks.containsKey(progressToolId)) {
-          if (progressSummary != null) {
-            _subagentTasks[progressToolId]!['progressSummary'] =
-                progressSummary;
-          }
-          final lastTool = msg['lastToolName'] as String?;
-          if (lastTool != null) {
-            _subagentTasks[progressToolId]!['lastToolName'] = lastTool;
-          }
-          notifyListeners();
-        }
-        break;
-      case 'hook_started':
-        _activeHookName = msg['hookName'] as String?;
-        notifyListeners();
-        break;
-      case 'hook_progress':
-        // Hook is still running — keep indicator active
-        break;
-      case 'hook_response':
-        _activeHookName = null;
-        notifyListeners();
-        break;
-      case 'local_command_output':
-        final cmdContent = msg['content'] as String? ?? '';
-        if (cmdContent.isNotEmpty) {
-          _messages.add(
-            ChatMessage(
-              id: 'cmd_${DateTime.now().microsecondsSinceEpoch}',
-              sender: MessageSender.system,
-              type: MessageType.text,
-              timestamp: DateTime.now(),
-              textContent: cmdContent,
-            ),
-          );
-          notifyListeners();
-        }
-        break;
-      case 'prompt_suggestion':
-        final suggestion = msg['suggestion'] as String? ?? '';
-        if (suggestion.isNotEmpty) {
-          _promptSuggestions = [suggestion];
-          notifyListeners();
-        }
-        break;
-      case 'session_lifecycle':
-        final lcEvent = msg['event'] as String? ?? '';
-        final lcModel = msg['model'] as String?;
-        if (lcEvent == 'start' && lcModel != null && lcModel.isNotEmpty) {
-          _sessionModel = lcModel;
-        }
-        // Show as a subtle system notification in chat
-        final lcReason = msg['reason'] as String? ?? '';
-        String lcText;
-        if (lcEvent == 'start') {
-          lcText =
-              'Session started${lcModel != null && lcModel.isNotEmpty ? ' ($lcModel)' : ''}';
-        } else {
-          lcText = 'Session ended${lcReason.isNotEmpty ? ' ($lcReason)' : ''}';
-        }
-        _messages.add(
-          ChatMessage(
-            id: 'lifecycle_${DateTime.now().microsecondsSinceEpoch}',
-            sender: MessageSender.system,
-            type: MessageType.taskNotification,
-            timestamp: DateTime.now(),
-            textContent: lcText,
-            toolName: lcEvent == 'start' ? 'session_start' : 'session_end',
-          ),
-        );
-        notifyListeners();
-        break;
-      case 'session_settings':
-        _handleSessionSettings(msg);
-        break;
-      case 'task_completed_hook':
-        final hookTaskId = msg['taskId'] as String? ?? '';
-        final hookTeammate = msg['teammateName'] as String? ?? '';
-        final hookSubject = msg['subject'] as String? ?? '';
-        // Try to match to a tracked subagent by taskId or teammateName
-        bool matched = false;
-        if (hookTaskId.isNotEmpty && _subagentTasks.containsKey(hookTaskId)) {
-          _subagentTasks[hookTaskId]!['status'] = 'completed';
-          matched = true;
-        }
-        // If not matched by taskId, try matching by teammate name in description
-        if (!matched && hookTeammate.isNotEmpty) {
-          for (final entry in _subagentTasks.entries) {
-            if (entry.value['status'] == 'running' &&
-                (entry.value['description'] as String? ?? '').contains(
-                  hookTeammate,
-                )) {
-              entry.value['status'] = 'completed';
-              matched = true;
-              break;
+          break;
+        case 'bg_task_progress':
+          // Update subagent with progress summary if available
+          final progressToolId = msg['toolUseId'] as String?;
+          final progressSummary = msg['summary'] as String?;
+          if (progressToolId != null &&
+              _subagentTasks.containsKey(progressToolId)) {
+            if (progressSummary != null) {
+              _subagentTasks[progressToolId]!['progressSummary'] =
+                  progressSummary;
             }
+            final lastTool = msg['lastToolName'] as String?;
+            if (lastTool != null) {
+              _subagentTasks[progressToolId]!['lastToolName'] = lastTool;
+            }
+            notifyListeners();
           }
-        }
-        // Show a notification if we have a subject
-        if (hookSubject.isNotEmpty) {
+          break;
+        case 'hook_started':
+          _activeHookName = msg['hookName'] as String?;
+          notifyListeners();
+          break;
+        case 'hook_progress':
+          // Hook is still running — keep indicator active
+          break;
+        case 'hook_response':
+          _activeHookName = null;
+          notifyListeners();
+          break;
+        case 'local_command_output':
+          final cmdContent = msg['content'] as String? ?? '';
+          if (cmdContent.isNotEmpty) {
+            _messages.add(
+              ChatMessage(
+                id: 'cmd_${DateTime.now().microsecondsSinceEpoch}',
+                sender: MessageSender.system,
+                type: MessageType.text,
+                timestamp: DateTime.now(),
+                textContent: cmdContent,
+              ),
+            );
+            notifyListeners();
+          }
+          break;
+        case 'prompt_suggestion':
+          final suggestion = msg['suggestion'] as String? ?? '';
+          if (suggestion.isNotEmpty) {
+            _promptSuggestions = [suggestion];
+            notifyListeners();
+          }
+          break;
+        case 'session_lifecycle':
+          final lcEvent = msg['event'] as String? ?? '';
+          final lcModel = msg['model'] as String?;
+          if (lcEvent == 'start' && lcModel != null && lcModel.isNotEmpty) {
+            _sessionModel = lcModel;
+          }
+          // Show as a subtle system notification in chat
+          final lcReason = msg['reason'] as String? ?? '';
+          String lcText;
+          if (lcEvent == 'start') {
+            lcText =
+                'Session started${lcModel != null && lcModel.isNotEmpty ? ' ($lcModel)' : ''}';
+          } else {
+            lcText =
+                'Session ended${lcReason.isNotEmpty ? ' ($lcReason)' : ''}';
+          }
           _messages.add(
             ChatMessage(
-              id: 'task_hook_${DateTime.now().microsecondsSinceEpoch}',
+              id: 'lifecycle_${DateTime.now().microsecondsSinceEpoch}',
               sender: MessageSender.system,
               type: MessageType.taskNotification,
               timestamp: DateTime.now(),
-              textContent: hookSubject,
-              toolName: 'completed',
+              textContent: lcText,
+              toolName: lcEvent == 'start' ? 'session_start' : 'session_end',
             ),
           );
-        }
-        notifyListeners();
-        break;
-      case 'session_state_changed':
-        final sessionState = msg['state'] as String? ?? 'idle';
-        final stateSessionId = msg['sessionId'] as String? ?? _activeSessionId;
-        final serverActiveStartedAt = _parseServerDateTime(
-          msg['activeStartedAt'],
-        );
-        _requiresAction = sessionState == 'requires_action';
-        // Use SDK state as authoritative source for running status
-        if (sessionState == 'running') {
-          _markSessionRunning(
-            stateSessionId,
-            serverId: serverId ?? _connMgr.activeServerId,
-            startedAt: serverActiveStartedAt,
-          );
-          _isProcessing = true;
-          _processingSetAt = null; // server confirmed
-          _startPromptRuntime(
-            startedAt: serverActiveStartedAt,
-            replace: serverActiveStartedAt != null,
-          );
-        } else if (sessionState == 'idle') {
-          _markSessionIdle(
-            stateSessionId,
-            serverId: serverId ?? _connMgr.activeServerId,
-          );
-          _isProcessing = false;
-          _processingSetAt = null;
-          _stopPromptRuntime();
-          _closeLiveStreamsForParent(null);
-          settleIdleToolCards(
-            _messages,
-            activeBackgroundTaskIds: _activeBackgroundTaskIds(),
-          );
-        }
-        // requires_action keeps _isProcessing true (still mid-query)
-        notifyListeners();
-        break;
-      case 'cwd_changed':
-        final newCwd = msg['newCwd'] as String? ?? '';
-        if (newCwd.isNotEmpty) {
-          _activeSessionCwd = newCwd;
-          // Update the session in the session list too
-          final idx = _sessions.indexWhere((s) => s.id == _activeSessionId);
-          if (idx >= 0) {
-            final old = _sessions[idx];
-            _sessions[idx] = old.copyWith(cwd: newCwd);
-          }
           notifyListeners();
-        }
-        break;
-      case 'context_usage':
-        _contextUsage = Map<String, dynamic>.from(msg);
-        notifyListeners();
-        break;
-      case 'codex_compact_result':
-        _messages.add(
-          ChatMessage(
-            id: 'codex_compact_${DateTime.now().microsecondsSinceEpoch}',
-            sender: MessageSender.system,
-            type: MessageType.taskNotification,
-            timestamp: DateTime.now(),
-            textContent: msg['success'] == true
-                ? 'Codex thread compaction started'
-                : 'Codex compaction failed: ${msg['error'] ?? 'unknown error'}',
-            toolName: msg['success'] == true ? 'success' : 'failed',
-          ),
-        );
-        notifyListeners();
-        break;
-      case 'codex_rollback_result':
-        final turns = (msg['numTurns'] as num?)?.toInt() ?? 1;
-        _messages.add(
-          ChatMessage(
-            id: 'codex_rollback_${DateTime.now().microsecondsSinceEpoch}',
-            sender: MessageSender.system,
-            type: MessageType.taskNotification,
-            timestamp: DateTime.now(),
-            textContent: msg['success'] == true
-                ? 'Rolled back $turns Codex turn${turns == 1 ? '' : 's'}'
-                : 'Codex rollback failed: ${msg['error'] ?? 'unknown error'}',
-            toolName: msg['success'] == true ? 'success' : 'failed',
-          ),
-        );
-        notifyListeners();
-        break;
-      case 'task_created_hook':
-        final createdTaskId = msg['taskId'] as String? ?? '';
-        final createdSubject = msg['subject'] as String? ?? '';
-        final createdTeammate = msg['teammateName'] as String? ?? '';
-        if (createdTaskId.isNotEmpty) {
-          _subagentTasks[createdTaskId] = {
-            'description': createdSubject,
-            'prompt': '',
-            'subagentType': createdTeammate,
-            'status': 'running',
-            'toolUseId': createdTaskId,
-          };
-        }
-        notifyListeners();
-        break;
-      case 'injection_ack':
-        // Server confirmed the injected message was processed by the SDK
-        final ackMsgId = msg['messageId'] as String? ?? '';
-        if (ackMsgId.isNotEmpty) {
-          final idx = _messages.indexWhere(
-            (m) => m.id == ackMsgId && m.isPending,
-          );
-          if (idx >= 0) {
-            if (_isPendingInjectedMessage(_messages[idx]) &&
-                _pendingInjectedMessageCount > 0) {
-              _pendingInjectedMessageCount--;
-            }
-            _messages[idx].isPending = false;
-            _messages[idx].injectionPriority = null;
-            notifyListeners();
+          break;
+        case 'session_settings':
+          _handleSessionSettings(msg);
+          break;
+        case 'task_completed_hook':
+          final hookTaskId = msg['taskId'] as String? ?? '';
+          final hookTeammate = msg['teammateName'] as String? ?? '';
+          final hookSubject = msg['subject'] as String? ?? '';
+          // Try to match to a tracked subagent by taskId or teammateName
+          bool matched = false;
+          if (hookTaskId.isNotEmpty && _subagentTasks.containsKey(hookTaskId)) {
+            _subagentTasks[hookTaskId]!['status'] = 'completed';
+            matched = true;
           }
-        } else {
-          // No messageId — promote the oldest pending message
-          final idx = _messages.indexWhere(_isPendingInjectedMessage);
-          if (idx >= 0) {
-            if (_pendingInjectedMessageCount > 0) {
-              _pendingInjectedMessageCount--;
-            }
-            _messages[idx].isPending = false;
-            _messages[idx].injectionPriority = null;
-            notifyListeners();
-          }
-        }
-        break;
-      case 'injection_failed':
-        final failedMsgId = msg['messageId'] as String? ?? '';
-        final reason = msg['message'] as String? ?? 'Message was not sent';
-        var removed = false;
-        if (failedMsgId.isNotEmpty) {
-          final idx = _messages.indexWhere(
-            (m) => m.id == failedMsgId && m.isPending,
-          );
-          if (idx >= 0) {
-            if (_isPendingInjectedMessage(_messages[idx]) &&
-                _pendingInjectedMessageCount > 0) {
-              _pendingInjectedMessageCount--;
-            }
-            _pendingLocalUserMessageIds.remove(failedMsgId);
-            _messages.removeAt(idx);
-            removed = true;
-          }
-        }
-        if (!removed) {
-          final idx = _messages.indexWhere(_isPendingInjectedMessage);
-          if (idx >= 0) {
-            if (_pendingInjectedMessageCount > 0) {
-              _pendingInjectedMessageCount--;
-            }
-            _pendingLocalUserMessageIds.remove(_messages[idx].id);
-            _messages.removeAt(idx);
-          }
-        }
-        _messages.add(ChatMessage.error('Message was not sent: $reason'));
-        notifyListeners();
-        break;
-      case 'supported_commands':
-        _supportedCommands = msg['commands'] as List<dynamic>?;
-        notifyListeners();
-        break;
-      case 'supported_agents':
-        _supportedAgents = msg['agents'] as List<dynamic>?;
-        notifyListeners();
-        break;
-      case 'skills_list':
-        if (serverId != null) {
-          _skillsByServer[serverId] = (msg['skills'] as List? ?? [])
-              .map((skill) => Map<String, dynamic>.from(skill as Map))
-              .toList();
-          _codexSlashCommandsByServer[serverId] =
-              (msg['codexSlashCommands'] as List? ?? [])
-                  .map((command) => Map<String, dynamic>.from(command as Map))
-                  .toList();
-          notifyListeners();
-        }
-        break;
-      case 'codex_command_result':
-        final command = msg['command'] as String? ?? 'command';
-        final summary = msg['summary'] as String? ?? '';
-        final status = msg['status'] as String? ?? 'completed';
-        final payload = msg['payload'] is Map
-            ? Map<String, dynamic>.from(msg['payload'] as Map)
-            : <String, dynamic>{};
-        _messages.add(
-          ChatMessage.codexCommand(
-            command: command,
-            summary: summary,
-            status: status,
-            payload: payload,
-          ),
-        );
-        notifyListeners();
-        break;
-      case 'permission_mode_changed':
-        final mode = msg['permissionMode'] as String?;
-        if (mode != null && mode.isNotEmpty && mode != _permissionMode) {
-          _permissionMode = mode;
-          _messages.add(_permissionModeMessage(mode));
-        } else {
-          _permissionMode = mode;
-        }
-        notifyListeners();
-        break;
-      case 'status':
-        final serverSaysCompacting = msg['compacting'] == true;
-        final serverActiveStartedAt = _parseServerDateTime(
-          msg['activeStartedAt'],
-        );
-        _isProcessing = msg['running'] == true || serverSaysCompacting;
-        if (!_isProcessing) {
-          _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
-          _isCompacting = false;
-          _stopPromptRuntime();
-          _closeLiveStreamsForParent(null);
-          settleIdleToolCards(
-            _messages,
-            activeBackgroundTaskIds: _activeBackgroundTaskIds(),
-          );
-        } else {
-          _markSessionRunning(
-            _activeSessionId,
-            serverId: _connMgr.activeServerId,
-            startedAt: serverActiveStartedAt,
-            compacting: serverSaysCompacting,
-          );
-          // Restore compacting state on resume. Compacting is active work even
-          // if the agent turn itself is between running status updates.
-          _isCompacting = serverSaysCompacting;
-          _processingSetAt = null; // server confirmed
-          _startPromptRuntime(
-            startedAt: serverActiveStartedAt,
-            replace: serverActiveStartedAt != null,
-          );
-        }
-        // Restore permission mode (e.g., plan mode) on session resume
-        final resumePermMode = msg['permissionMode'] as String?;
-        if (resumePermMode != null) {
-          _permissionMode = resumePermMode;
-        }
-        // Restore spinner on the active tool call after session resume
-        if (_isProcessing) {
-          final activeToolUseId = msg['activeToolUseId'] as String?;
-          if (activeToolUseId != null) {
-            final idx = _messages.lastIndexWhere(
-              (m) =>
-                  m.type == MessageType.toolCall &&
-                  m.toolUseId == activeToolUseId,
-            );
-            if (idx >= 0) {
-              _messages[idx].toolStreaming = true;
-            }
-          }
-        }
-        // Detect server restart
-        final startedAt = msg['serverStartedAt'] as String?;
-        if (startedAt != null &&
-            _lastServerStartedAt != null &&
-            startedAt != _lastServerStartedAt) {
-          final pid = msg['serverPid'] ?? '';
-          _messages.add(
-            ChatMessage(
-              id: 'restart_${DateTime.now().microsecondsSinceEpoch}',
-              sender: MessageSender.system,
-              type: MessageType.taskNotification,
-              timestamp: DateTime.now(),
-              textContent: 'Server restarted (PID $pid)',
-              toolName: 'restarted',
-            ),
-          );
-        }
-        if (startedAt != null) {
-          _lastServerStartedAt = startedAt;
-          SharedPreferences.getInstance().then(
-            (p) => p.setString('server_started_at', startedAt),
-          );
-        }
-        notifyListeners();
-        break;
-      case 'status_sync':
-        // Capture per-server plugin list from ALL servers (needed for server settings)
-        if (serverId != null) {
-          final pluginsList = msg['plugins'] as List?;
-          if (pluginsList != null) {
-            _serverPlugins[serverId] = pluginsList
-                .map((e) => e.toString())
-                .toList();
-          }
-          _captureServerRuntimeInfo(msg, serverId);
-          final taskRevision = msg['scheduledTaskRevision']?.toString();
-          if (scheduledTaskRevisionNeedsRefresh(
-            _scheduledTaskLoadedRevisions[serverId],
-            taskRevision,
-          )) {
-            _requestScheduledTasksFromServer(serverId);
-          }
-        }
-        final runningSessions = (msg['runningSessions'] as List?)
-            ?.map((e) => e.toString())
-            .toSet();
-        final compactingSessions = (msg['compactingSessions'] as List?)
-            ?.map((e) => e.toString())
-            .toSet();
-        final notificationSuppressedSessions =
-            (msg['notificationSuppressedSessions'] as List?)
-                ?.map((e) => e.toString())
-                .toSet();
-        if (serverId != null && runningSessions != null) {
-          final rawStartedAt = msg['sessionActiveStartedAt'];
-          final startedAtBySession = <String, DateTime?>{};
-          if (rawStartedAt is Map) {
-            for (final entry in rawStartedAt.entries) {
-              startedAtBySession[entry.key.toString()] = _parseServerDateTime(
-                entry.value,
-              );
-            }
-          }
-          final rawSessionTitles = msg['sessionTitles'];
-          final titlesBySession = <String, String>{};
-          if (rawSessionTitles is Map) {
-            for (final entry in rawSessionTitles.entries) {
-              final title = entry.value?.toString().trim() ?? '';
-              if (title.isNotEmpty) {
-                titlesBySession[entry.key.toString()] = title;
+          // If not matched by taskId, try matching by teammate name in description
+          if (!matched && hookTeammate.isNotEmpty) {
+            for (final entry in _subagentTasks.entries) {
+              if (entry.value['status'] == 'running' &&
+                  (entry.value['description'] as String? ?? '').contains(
+                    hookTeammate,
+                  )) {
+                entry.value['status'] = 'completed';
+                matched = true;
+                break;
               }
             }
           }
-          _replaceRunningSessionsForServer(
-            serverId,
-            runningSessions,
-            startedAtBySession,
-            titlesBySessionId: titlesBySession,
-            compactingSessionIds: compactingSessions ?? const <String>{},
-            suppressOngoingSessionIds:
-                notificationSuppressedSessions ?? const <String>{},
+          // Show a notification if we have a subject
+          if (hookSubject.isNotEmpty) {
+            _messages.add(
+              ChatMessage(
+                id: 'task_hook_${DateTime.now().microsecondsSinceEpoch}',
+                sender: MessageSender.system,
+                type: MessageType.taskNotification,
+                timestamp: DateTime.now(),
+                textContent: hookSubject,
+                toolName: 'completed',
+              ),
+            );
+          }
+          notifyListeners();
+          break;
+        case 'session_state_changed':
+          final sessionState = msg['state'] as String? ?? 'idle';
+          final stateSessionId =
+              msg['sessionId'] as String? ?? _activeSessionId;
+          final serverActiveStartedAt = _parseServerDateTime(
+            msg['activeStartedAt'],
           );
-        }
-        // Only process remaining status_sync fields from the active server
-        if (serverId != null && serverId != _connMgr.activeServerId) break;
-        // Check if THIS session is running, not just any session
-        final serverActiveStartedAt = _activeStartedAtFromStatusSync(msg);
-        final serverSaysCompacting =
-            compactingSessions != null &&
-            _activeSessionId != null &&
-            compactingSessions.contains(_activeSessionId);
-        final serverSuppressesOngoing =
-            notificationSuppressedSessions != null &&
-            _activeSessionId != null &&
-            notificationSuppressedSessions.contains(_activeSessionId);
-        final rawActiveSessionTitle = msg['sessionTitles'] is Map
-            ? (msg['sessionTitles'] as Map)[_activeSessionId]?.toString()
-            : null;
-        final serverActiveSessionTitle =
-            rawActiveSessionTitle?.trim().isNotEmpty == true
-            ? rawActiveSessionTitle!.trim()
-            : null;
-        bool serverSaysRunning;
-        if (runningSessions != null) {
-          // Modern server sends a per-session list. Our session is running
-          // iff it's in the list. If we don't have a session id yet (e.g.,
-          // brand-new codex session before thread.started fires), it can't
-          // be in the list, so we are NOT running — falling back to the
-          // global msg['running'] would wrongly inherit another session's
-          // running state and trip the "queued:next" UI on the first send.
-          serverSaysRunning =
-              _activeSessionId != null &&
-              runningSessions.contains(_activeSessionId);
-        } else {
-          // Pre-runningSessions servers: best effort with the global flag.
-          serverSaysRunning = msg['running'] == true;
-        }
-        serverSaysRunning = serverSaysRunning || serverSaysCompacting;
-        // Don't let status_sync clear processing during the grace period after
-        // sendPrompt() — the server may not have started the SDK query yet.
-        if (!serverSaysRunning && _isProcessing && _processingSetAt != null) {
-          final elapsed = DateTime.now().difference(_processingSetAt!);
-          if (elapsed.inSeconds < 15) {
-            // Keep _isProcessing true — server hasn't caught up yet
-          } else {
+          _requiresAction = sessionState == 'requires_action';
+          // Use SDK state as authoritative source for running status
+          if (sessionState == 'running') {
+            _markSessionRunning(
+              stateSessionId,
+              serverId: serverId ?? _connMgr.activeServerId,
+              startedAt: serverActiveStartedAt,
+            );
+            _isProcessing = true;
+            _processingSetAt = null; // server confirmed
+            _startPromptRuntime(
+              startedAt: serverActiveStartedAt,
+              replace: serverActiveStartedAt != null,
+            );
+          } else if (sessionState == 'idle') {
+            _markSessionIdle(
+              stateSessionId,
+              serverId: serverId ?? _connMgr.activeServerId,
+            );
             _isProcessing = false;
             _processingSetAt = null;
             _stopPromptRuntime();
+            _closeLiveStreamsForParent(null);
+            settleIdleToolCards(
+              _messages,
+              activeBackgroundTaskIds: _activeBackgroundTaskIds(),
+            );
           }
-        } else {
-          _isProcessing = serverSaysRunning;
-          if (serverSaysRunning) _processingSetAt = null; // server confirmed
-        }
-        final serverTaskIds =
-            (msg['backgroundTaskIds'] as List?)
-                ?.map((e) => e.toString())
-                .toSet() ??
-            <String>{};
-        if (!_isProcessing) {
-          _isCompacting = false;
-          _stopPromptRuntime();
-          _closeLiveStreamsForParent(null);
-          settleIdleToolCards(
-            _messages,
-            activeBackgroundTaskIds: serverTaskIds,
-          );
-        } else {
-          _isCompacting = serverSaysCompacting;
-          _startPromptRuntime(
-            startedAt: serverActiveStartedAt,
-            replace: serverActiveStartedAt != null,
-            titleOverride: serverActiveSessionTitle,
-            suppressOngoingNotification: serverSuppressesOngoing,
-          );
-        }
-        // Reconcile background tasks — remove any not reported by server
-        _backgroundTasks.removeWhere((id, _) => !serverTaskIds.contains(id));
-        // Update session model from heartbeat
-        final sessionModels = msg['sessionModels'] as Map<String, dynamic>?;
-        if (sessionModels != null && _activeSessionId != null) {
-          final model = sessionModels[_activeSessionId] as String?;
-          if (model != null) _sessionModel = model;
-        }
-        notifyListeners();
-        break;
-      case 'error':
-        if (_isLoadingHistory) {
-          _isLoadingHistory = false;
-          _initialHistoryTimeout?.cancel();
-          _initialHistoryTimeout = null;
-        }
-        _messages.add(ChatMessage.error(msg['message'] ?? 'Unknown error'));
-        _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
-        _isProcessing = false;
-        _stopPromptRuntime();
-        settleIdleToolCards(_messages);
-        notifyListeners();
-        break;
-      case 'claude_auth':
-        // Expire all previous auth cards — only the latest is valid
-        for (final m in _messages) {
-          if (m.type == MessageType.claudeAuth && !m.answered) {
-            m.expired = true;
-          }
-        }
-        _messages.add(
-          ChatMessage(
-            id: 'claude_auth_${DateTime.now().microsecondsSinceEpoch}',
-            sender: MessageSender.system,
-            type: MessageType.claudeAuth,
-            timestamp: DateTime.now(),
-            textContent: msg['url'] as String? ?? '',
-            authRequestId: serverId,
-          ),
-        );
-        _isProcessing = false;
-        _stopPromptRuntime();
-        notifyListeners();
-        break;
-      case 'claude_auth_result':
-        final success = msg['success'] == true;
-        _messages.add(
-          ChatMessage(
-            id: 'claude_auth_result_${DateTime.now().microsecondsSinceEpoch}',
-            sender: MessageSender.system,
-            type: MessageType.taskNotification,
-            timestamp: DateTime.now(),
-            textContent: success
-                ? 'Authentication successful. You can send your message again.'
-                : 'Authentication failed.',
-            toolName: success ? 'success' : 'failed',
-          ),
-        );
-        notifyListeners();
-        break;
-      case 'archive_list':
-        final serverConfig = serverId != null
-            ? _serverConfigs.where((c) => c.id == serverId).firstOrNull
-            : null;
-        final archives = (msg['archives'] as List? ?? [])
-            .map(
-              (a) => ArchiveEntry.fromJson(Map<String, dynamic>.from(a as Map))
-                  .withServer(
-                    serverId: serverId ?? '',
-                    serverName: serverConfig?.name ?? '',
-                    serverColor: serverConfig?.colorValue,
-                  ),
-            )
-            .toList();
-        if (serverId != null) {
-          _perServerArchives[serverId] = archives;
-          _archives = _perServerArchives.values
-              .expand((items) => items)
-              .toList();
-        } else {
-          _archives = archives;
-        }
-        _archivesCompleter?.complete(_archives);
-        _archivesCompleter = null;
-        notifyListeners();
-        break;
-      case 'archive_history':
-        final sid = msg['sid'] as String? ?? '';
-        final ts = msg['ts'] as String? ?? '';
-        final messages = (msg['messages'] as List? ?? []).cast<dynamic>();
-        _archiveHistoryCompleters
-            .remove('${serverId ?? ''}_${sid}_$ts')
-            ?.complete(messages);
-        _archiveHistoryCompleters.remove('${sid}_$ts')?.complete(messages);
-        break;
-      case 'session_archived':
-        final archivedId = msg['sessionId'] as String? ?? '';
-        if (archivedId.isNotEmpty) {
-          _dropPendingArchivedSession(serverId, archivedId);
+          // requires_action keeps _isProcessing true (still mid-query)
           notifyListeners();
-        }
-        break;
-      case 'session_archive_failed':
-        final failedId = msg['sessionId'] as String? ?? '';
-        if (failedId.isNotEmpty) {
-          _restorePendingArchivedSession(serverId, failedId);
-        }
-        _messages.add(
-          ChatMessage.error(
-            'Archive failed: ${msg['error'] ?? 'unknown error'}',
-          ),
-        );
-        notifyListeners();
-        break;
-      case 'archive_restored':
-        final restoredId =
-            (msg['session'] as Map?)?['id'] as String? ??
-            msg['sid'] as String? ??
-            '';
-        if (restoredId.isNotEmpty) {
-          _clearArchiveMarkers(serverId, restoredId);
-        }
-        _archiveFeedback.add(
-          'Restored "${(msg['session'] as Map?)?['title'] ?? 'session'}"',
-        );
-        requestSessionList();
-        fetchArchives();
-        break;
-      case 'archive_restore_failed':
-        _archiveFeedback.add(
-          'Restore failed: ${msg['reason'] ?? 'unknown error'}',
-        );
-        fetchArchives();
-        break;
-      case 'archive_deleted':
-        _archiveFeedback.add('Archive deleted');
-        break;
-      case 'context_cleared':
-        final clearedId = msg['sessionId'] as String?;
-        if (clearedId != null && clearedId.isNotEmpty) {
-          _locallyClearedSessions.add(clearedId);
-        }
-        if (clearedId == _activeSessionId) {
-          _messages.clear();
-          _pendingInjectedMessageCount = 0;
-          _pendingLocalUserMessageIds.clear();
-          _todos.clear();
-          _clearLiveMessageStreams();
-          _lastUsage = null;
-        }
-        // Refresh session list to show updated preview
-        requestSessionList();
-        notifyListeners();
-        break;
-      case 'reminder':
-        _handleReminder(msg);
-        break;
-      case 'scheduled_task_list':
-        if (serverId != null) {
-          _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
-          final revision = msg['revision']?.toString();
-          if (revision != null && revision.isNotEmpty) {
-            _scheduledTaskLoadedRevisions[serverId] = revision;
+          break;
+        case 'cwd_changed':
+          final newCwd = msg['newCwd'] as String? ?? '';
+          if (newCwd.isNotEmpty) {
+            _activeSessionCwd = newCwd;
+            // Update the session in the session list too
+            final idx = _sessions.indexWhere((s) => s.id == _activeSessionId);
+            if (idx >= 0) {
+              final old = _sessions[idx];
+              _sessions[idx] = old.copyWith(cwd: newCwd);
+            }
+            notifyListeners();
           }
-        }
-        final tasks = (msg['tasks'] as List? ?? [])
-            .map(
-              (t) =>
-                  Map<String, dynamic>.from(t as Map)
-                    ..['_serverId'] = serverId ?? '',
-            )
-            .toList();
-        if (serverId != null) {
-          _perServerScheduledTasks[serverId] = tasks;
-          _rebuildScheduledTaskList();
-          _saveScheduledTaskCacheSoon();
-        } else {
-          _scheduledTasks = tasks;
-        }
-        notifyListeners();
-        break;
-      case 'scheduled_task_update':
-        final task = Map<String, dynamic>.from(msg['task'] as Map)
-          ..['_serverId'] = serverId ?? '';
-        if (serverId != null) {
-          final serverTasks = _perServerScheduledTasks.putIfAbsent(
-            serverId,
-            () => [],
+          break;
+        case 'context_usage':
+          _contextUsage = Map<String, dynamic>.from(msg);
+          notifyListeners();
+          break;
+        case 'codex_compact_result':
+          _messages.add(
+            ChatMessage(
+              id: 'codex_compact_${DateTime.now().microsecondsSinceEpoch}',
+              sender: MessageSender.system,
+              type: MessageType.taskNotification,
+              timestamp: DateTime.now(),
+              textContent: msg['success'] == true
+                  ? 'Codex thread compaction started'
+                  : 'Codex compaction failed: ${msg['error'] ?? 'unknown error'}',
+              toolName: msg['success'] == true ? 'success' : 'failed',
+            ),
           );
-          final idx = serverTasks.indexWhere((t) => t['id'] == task['id']);
-          if (idx >= 0) {
-            serverTasks[idx] = task;
-          } else {
-            serverTasks.add(task);
+          notifyListeners();
+          break;
+        case 'codex_rollback_result':
+          final turns = (msg['numTurns'] as num?)?.toInt() ?? 1;
+          _messages.add(
+            ChatMessage(
+              id: 'codex_rollback_${DateTime.now().microsecondsSinceEpoch}',
+              sender: MessageSender.system,
+              type: MessageType.taskNotification,
+              timestamp: DateTime.now(),
+              textContent: msg['success'] == true
+                  ? 'Rolled back $turns Codex turn${turns == 1 ? '' : 's'}'
+                  : 'Codex rollback failed: ${msg['error'] ?? 'unknown error'}',
+              toolName: msg['success'] == true ? 'success' : 'failed',
+            ),
+          );
+          notifyListeners();
+          break;
+        case 'task_created_hook':
+          final createdTaskId = msg['taskId'] as String? ?? '';
+          final createdSubject = msg['subject'] as String? ?? '';
+          final createdTeammate = msg['teammateName'] as String? ?? '';
+          if (createdTaskId.isNotEmpty) {
+            _subagentTasks[createdTaskId] = {
+              'description': createdSubject,
+              'prompt': '',
+              'subagentType': createdTeammate,
+              'status': 'running',
+              'toolUseId': createdTaskId,
+            };
           }
-          _rebuildScheduledTaskList();
-          _saveScheduledTaskCacheSoon();
-        } else {
-          final idx = _scheduledTasks.indexWhere((t) => t['id'] == task['id']);
-          if (idx >= 0) {
-            _scheduledTasks[idx] = task;
+          notifyListeners();
+          break;
+        case 'injection_ack':
+          // Server confirmed the injected message was processed by the SDK
+          final ackMsgId = msg['messageId'] as String? ?? '';
+          if (ackMsgId.isNotEmpty) {
+            final idx = _messages.indexWhere(
+              (m) => m.id == ackMsgId && m.isPending,
+            );
+            if (idx >= 0) {
+              if (_isPendingInjectedMessage(_messages[idx]) &&
+                  _pendingInjectedMessageCount > 0) {
+                _pendingInjectedMessageCount--;
+              }
+              _messages[idx].isPending = false;
+              _messages[idx].injectionPriority = null;
+              notifyListeners();
+            }
           } else {
-            _scheduledTasks.add(task);
+            // No messageId — promote the oldest pending message
+            final idx = _messages.indexWhere(_isPendingInjectedMessage);
+            if (idx >= 0) {
+              if (_pendingInjectedMessageCount > 0) {
+                _pendingInjectedMessageCount--;
+              }
+              _messages[idx].isPending = false;
+              _messages[idx].injectionPriority = null;
+              notifyListeners();
+            }
           }
-        }
-        notifyListeners();
-        break;
-      case 'scheduled_task_notification':
+          break;
+        case 'injection_failed':
+          final failedMsgId = msg['messageId'] as String? ?? '';
+          final reason = msg['message'] as String? ?? 'Message was not sent';
+          var removed = false;
+          if (failedMsgId.isNotEmpty) {
+            final idx = _messages.indexWhere(
+              (m) => m.id == failedMsgId && m.isPending,
+            );
+            if (idx >= 0) {
+              if (_isPendingInjectedMessage(_messages[idx]) &&
+                  _pendingInjectedMessageCount > 0) {
+                _pendingInjectedMessageCount--;
+              }
+              _pendingLocalUserMessageIds.remove(failedMsgId);
+              _messages.removeAt(idx);
+              removed = true;
+            }
+          }
+          if (!removed) {
+            final idx = _messages.indexWhere(_isPendingInjectedMessage);
+            if (idx >= 0) {
+              if (_pendingInjectedMessageCount > 0) {
+                _pendingInjectedMessageCount--;
+              }
+              _pendingLocalUserMessageIds.remove(_messages[idx].id);
+              _messages.removeAt(idx);
+            }
+          }
+          _messages.add(ChatMessage.error('Message was not sent: $reason'));
+          notifyListeners();
+          break;
+        case 'supported_commands':
+          _supportedCommands = msg['commands'] as List<dynamic>?;
+          notifyListeners();
+          break;
+        case 'supported_agents':
+          _supportedAgents = msg['agents'] as List<dynamic>?;
+          notifyListeners();
+          break;
+        case 'skills_list':
+          if (serverId != null) {
+            _skillsByServer[serverId] = (msg['skills'] as List? ?? [])
+                .map((skill) => Map<String, dynamic>.from(skill as Map))
+                .toList();
+            _codexSlashCommandsByServer[serverId] =
+                (msg['codexSlashCommands'] as List? ?? [])
+                    .map((command) => Map<String, dynamic>.from(command as Map))
+                    .toList();
+            notifyListeners();
+          }
+          break;
+        case 'codex_command_result':
+          final command = msg['command'] as String? ?? 'command';
+          final summary = msg['summary'] as String? ?? '';
+          final status = msg['status'] as String? ?? 'completed';
+          final payload = msg['payload'] is Map
+              ? Map<String, dynamic>.from(msg['payload'] as Map)
+              : <String, dynamic>{};
+          _messages.add(
+            ChatMessage.codexCommand(
+              command: command,
+              summary: summary,
+              status: status,
+              payload: payload,
+            ),
+          );
+          notifyListeners();
+          break;
+        case 'permission_mode_changed':
+          final mode = msg['permissionMode'] as String?;
+          if (mode != null && mode.isNotEmpty && mode != _permissionMode) {
+            _permissionMode = mode;
+            _messages.add(_permissionModeMessage(mode));
+          } else {
+            _permissionMode = mode;
+          }
+          notifyListeners();
+          break;
+        case 'status':
+          final serverSaysCompacting = msg['compacting'] == true;
+          final serverActiveStartedAt = _parseServerDateTime(
+            msg['activeStartedAt'],
+          );
+          _isProcessing = msg['running'] == true || serverSaysCompacting;
+          if (!_isProcessing) {
+            _markSessionIdle(
+              _activeSessionId,
+              serverId: _connMgr.activeServerId,
+            );
+            _isCompacting = false;
+            _stopPromptRuntime();
+            _closeLiveStreamsForParent(null);
+            settleIdleToolCards(
+              _messages,
+              activeBackgroundTaskIds: _activeBackgroundTaskIds(),
+            );
+          } else {
+            _markSessionRunning(
+              _activeSessionId,
+              serverId: _connMgr.activeServerId,
+              startedAt: serverActiveStartedAt,
+              compacting: serverSaysCompacting,
+            );
+            // Restore compacting state on resume. Compacting is active work even
+            // if the agent turn itself is between running status updates.
+            _isCompacting = serverSaysCompacting;
+            _processingSetAt = null; // server confirmed
+            _startPromptRuntime(
+              startedAt: serverActiveStartedAt,
+              replace: serverActiveStartedAt != null,
+            );
+          }
+          // Restore permission mode (e.g., plan mode) on session resume
+          final resumePermMode = msg['permissionMode'] as String?;
+          if (resumePermMode != null) {
+            _permissionMode = resumePermMode;
+          }
+          // Restore spinner on the active tool call after session resume
+          if (_isProcessing) {
+            final activeToolUseId = msg['activeToolUseId'] as String?;
+            if (activeToolUseId != null) {
+              final idx = _messages.lastIndexWhere(
+                (m) =>
+                    m.type == MessageType.toolCall &&
+                    m.toolUseId == activeToolUseId,
+              );
+              if (idx >= 0) {
+                _messages[idx].toolStreaming = true;
+              }
+            }
+          }
+          // Detect server restart
+          final startedAt = msg['serverStartedAt'] as String?;
+          if (startedAt != null &&
+              _lastServerStartedAt != null &&
+              startedAt != _lastServerStartedAt) {
+            final pid = msg['serverPid'] ?? '';
+            _messages.add(
+              ChatMessage(
+                id: 'restart_${DateTime.now().microsecondsSinceEpoch}',
+                sender: MessageSender.system,
+                type: MessageType.taskNotification,
+                timestamp: DateTime.now(),
+                textContent: 'Server restarted (PID $pid)',
+                toolName: 'restarted',
+              ),
+            );
+          }
+          if (startedAt != null) {
+            _lastServerStartedAt = startedAt;
+            SharedPreferences.getInstance().then(
+              (p) => p.setString('server_started_at', startedAt),
+            );
+          }
+          notifyListeners();
+          break;
+        case 'status_sync':
+          // Capture per-server plugin list from ALL servers (needed for server settings)
+          if (serverId != null) {
+            final pluginsList = msg['plugins'] as List?;
+            if (pluginsList != null) {
+              _serverPlugins[serverId] = pluginsList
+                  .map((e) => e.toString())
+                  .toList();
+            }
+            _captureServerRuntimeInfo(msg, serverId);
+            final taskRevision = msg['scheduledTaskRevision']?.toString();
+            if (scheduledTaskRevisionNeedsRefresh(
+              _scheduledTaskLoadedRevisions[serverId],
+              taskRevision,
+            )) {
+              _requestScheduledTasksFromServer(serverId);
+            }
+          }
+          final runningSessions = (msg['runningSessions'] as List?)
+              ?.map((e) => e.toString())
+              .toSet();
+          final compactingSessions = (msg['compactingSessions'] as List?)
+              ?.map((e) => e.toString())
+              .toSet();
+          final notificationSuppressedSessions =
+              (msg['notificationSuppressedSessions'] as List?)
+                  ?.map((e) => e.toString())
+                  .toSet();
+          if (serverId != null && runningSessions != null) {
+            final rawStartedAt = msg['sessionActiveStartedAt'];
+            final startedAtBySession = <String, DateTime?>{};
+            if (rawStartedAt is Map) {
+              for (final entry in rawStartedAt.entries) {
+                startedAtBySession[entry.key.toString()] = _parseServerDateTime(
+                  entry.value,
+                );
+              }
+            }
+            final rawSessionTitles = msg['sessionTitles'];
+            final titlesBySession = <String, String>{};
+            if (rawSessionTitles is Map) {
+              for (final entry in rawSessionTitles.entries) {
+                final title = entry.value?.toString().trim() ?? '';
+                if (title.isNotEmpty) {
+                  titlesBySession[entry.key.toString()] = title;
+                }
+              }
+            }
+            _replaceRunningSessionsForServer(
+              serverId,
+              runningSessions,
+              startedAtBySession,
+              titlesBySessionId: titlesBySession,
+              compactingSessionIds: compactingSessions ?? const <String>{},
+              suppressOngoingSessionIds:
+                  notificationSuppressedSessions ?? const <String>{},
+            );
+          }
+          // Only process remaining status_sync fields from the active server
+          if (serverId != null && serverId != _connMgr.activeServerId) break;
+          // Check if THIS session is running, not just any session
+          final serverActiveStartedAt = _activeStartedAtFromStatusSync(msg);
+          final serverSaysCompacting =
+              compactingSessions != null &&
+              _activeSessionId != null &&
+              compactingSessions.contains(_activeSessionId);
+          final serverSuppressesOngoing =
+              notificationSuppressedSessions != null &&
+              _activeSessionId != null &&
+              notificationSuppressedSessions.contains(_activeSessionId);
+          final rawActiveSessionTitle = msg['sessionTitles'] is Map
+              ? (msg['sessionTitles'] as Map)[_activeSessionId]?.toString()
+              : null;
+          final serverActiveSessionTitle =
+              rawActiveSessionTitle?.trim().isNotEmpty == true
+              ? rawActiveSessionTitle!.trim()
+              : null;
+          bool serverSaysRunning;
+          if (runningSessions != null) {
+            // Modern server sends a per-session list. Our session is running
+            // iff it's in the list. If we don't have a session id yet (e.g.,
+            // brand-new codex session before thread.started fires), it can't
+            // be in the list, so we are NOT running — falling back to the
+            // global msg['running'] would wrongly inherit another session's
+            // running state and trip the "queued:next" UI on the first send.
+            serverSaysRunning =
+                _activeSessionId != null &&
+                runningSessions.contains(_activeSessionId);
+          } else {
+            // Pre-runningSessions servers: best effort with the global flag.
+            serverSaysRunning = msg['running'] == true;
+          }
+          serverSaysRunning = serverSaysRunning || serverSaysCompacting;
+          // Don't let status_sync clear processing during the grace period after
+          // sendPrompt() — the server may not have started the SDK query yet.
+          if (!serverSaysRunning && _isProcessing && _processingSetAt != null) {
+            final elapsed = DateTime.now().difference(_processingSetAt!);
+            if (elapsed.inSeconds < 15) {
+              // Keep _isProcessing true — server hasn't caught up yet
+            } else {
+              _isProcessing = false;
+              _processingSetAt = null;
+              _stopPromptRuntime();
+            }
+          } else {
+            _isProcessing = serverSaysRunning;
+            if (serverSaysRunning) _processingSetAt = null; // server confirmed
+          }
+          final serverTaskIds =
+              (msg['backgroundTaskIds'] as List?)
+                  ?.map((e) => e.toString())
+                  .toSet() ??
+              <String>{};
+          if (!_isProcessing) {
+            _isCompacting = false;
+            _stopPromptRuntime();
+            _closeLiveStreamsForParent(null);
+            settleIdleToolCards(
+              _messages,
+              activeBackgroundTaskIds: serverTaskIds,
+            );
+          } else {
+            _isCompacting = serverSaysCompacting;
+            _startPromptRuntime(
+              startedAt: serverActiveStartedAt,
+              replace: serverActiveStartedAt != null,
+              titleOverride: serverActiveSessionTitle,
+              suppressOngoingNotification: serverSuppressesOngoing,
+            );
+          }
+          // Reconcile background tasks — remove any not reported by server
+          _backgroundTasks.removeWhere((id, _) => !serverTaskIds.contains(id));
+          // Update session model from heartbeat
+          final sessionModels = msg['sessionModels'] as Map<String, dynamic>?;
+          if (sessionModels != null && _activeSessionId != null) {
+            final model = sessionModels[_activeSessionId] as String?;
+            if (model != null) _sessionModel = model;
+          }
+          notifyListeners();
+          break;
+        case 'error':
+          if (_isLoadingHistory) {
+            _isLoadingHistory = false;
+            _initialHistoryTimeout?.cancel();
+            _initialHistoryTimeout = null;
+          }
+          _messages.add(ChatMessage.error(msg['message'] ?? 'Unknown error'));
+          _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
+          _isProcessing = false;
+          _stopPromptRuntime();
+          settleIdleToolCards(_messages);
+          notifyListeners();
+          break;
+        case 'claude_auth':
+          // Expire all previous auth cards — only the latest is valid
+          for (final m in _messages) {
+            if (m.type == MessageType.claudeAuth && !m.answered) {
+              m.expired = true;
+            }
+          }
+          _messages.add(
+            ChatMessage(
+              id: 'claude_auth_${DateTime.now().microsecondsSinceEpoch}',
+              sender: MessageSender.system,
+              type: MessageType.claudeAuth,
+              timestamp: DateTime.now(),
+              textContent: msg['url'] as String? ?? '',
+              authRequestId: serverId,
+            ),
+          );
+          _isProcessing = false;
+          _stopPromptRuntime();
+          notifyListeners();
+          break;
+        case 'claude_auth_result':
+          final success = msg['success'] == true;
+          _messages.add(
+            ChatMessage(
+              id: 'claude_auth_result_${DateTime.now().microsecondsSinceEpoch}',
+              sender: MessageSender.system,
+              type: MessageType.taskNotification,
+              timestamp: DateTime.now(),
+              textContent: success
+                  ? 'Authentication successful. You can send your message again.'
+                  : 'Authentication failed.',
+              toolName: success ? 'success' : 'failed',
+            ),
+          );
+          notifyListeners();
+          break;
+        case 'archive_list':
+          final serverConfig = serverId != null
+              ? _serverConfigs.where((c) => c.id == serverId).firstOrNull
+              : null;
+          final archives = (msg['archives'] as List? ?? [])
+              .map(
+                (a) =>
+                    ArchiveEntry.fromJson(
+                      Map<String, dynamic>.from(a as Map),
+                    ).withServer(
+                      serverId: serverId ?? '',
+                      serverName: serverConfig?.name ?? '',
+                      serverColor: serverConfig?.colorValue,
+                    ),
+              )
+              .toList();
+          if (serverId != null) {
+            _perServerArchives[serverId] = archives;
+            _archives = _perServerArchives.values
+                .expand((items) => items)
+                .toList();
+          } else {
+            _archives = archives;
+          }
+          _archivesCompleter?.complete(_archives);
+          _archivesCompleter = null;
+          notifyListeners();
+          break;
+        case 'archive_history':
+          final sid = msg['sid'] as String? ?? '';
+          final ts = msg['ts'] as String? ?? '';
+          final messages = (msg['messages'] as List? ?? []).cast<dynamic>();
+          _archiveHistoryCompleters
+              .remove('${serverId ?? ''}_${sid}_$ts')
+              ?.complete(messages);
+          _archiveHistoryCompleters.remove('${sid}_$ts')?.complete(messages);
+          break;
+        case 'session_archived':
+          final archivedId = msg['sessionId'] as String? ?? '';
+          if (archivedId.isNotEmpty) {
+            _dropPendingArchivedSession(serverId, archivedId);
+            notifyListeners();
+          }
+          break;
+        case 'session_archive_failed':
+          final failedId = msg['sessionId'] as String? ?? '';
+          if (failedId.isNotEmpty) {
+            _restorePendingArchivedSession(serverId, failedId);
+          }
+          _messages.add(
+            ChatMessage.error(
+              'Archive failed: ${msg['error'] ?? 'unknown error'}',
+            ),
+          );
+          notifyListeners();
+          break;
+        case 'archive_restored':
+          final restoredId =
+              (msg['session'] as Map?)?['id'] as String? ??
+              msg['sid'] as String? ??
+              '';
+          if (restoredId.isNotEmpty) {
+            _clearArchiveMarkers(serverId, restoredId);
+          }
+          _archiveFeedback.add(
+            'Restored "${(msg['session'] as Map?)?['title'] ?? 'session'}"',
+          );
+          requestSessionList();
+          fetchArchives();
+          break;
+        case 'archive_restore_failed':
+          _archiveFeedback.add(
+            'Restore failed: ${msg['reason'] ?? 'unknown error'}',
+          );
+          fetchArchives();
+          break;
+        case 'archive_deleted':
+          _archiveFeedback.add('Archive deleted');
+          break;
+        case 'context_cleared':
+          final clearedId = msg['sessionId'] as String?;
+          if (clearedId != null && clearedId.isNotEmpty) {
+            _locallyClearedSessions.add(clearedId);
+          }
+          if (clearedId == _activeSessionId) {
+            _messages.clear();
+            _pendingInjectedMessageCount = 0;
+            _pendingLocalUserMessageIds.clear();
+            _todos.clear();
+            _clearLiveMessageStreams();
+            _lastUsage = null;
+          }
+          // Refresh session list to show updated preview
+          requestSessionList();
+          notifyListeners();
+          break;
+        case 'reminder':
+          _handleReminder(msg);
+          break;
+        case 'scheduled_task_list':
+          if (serverId != null) {
+            _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
+            final revision = msg['revision']?.toString();
+            if (revision != null && revision.isNotEmpty) {
+              _scheduledTaskLoadedRevisions[serverId] = revision;
+            }
+          }
+          final tasks = (msg['tasks'] as List? ?? [])
+              .map(
+                (t) =>
+                    Map<String, dynamic>.from(t as Map)
+                      ..['_serverId'] = serverId ?? '',
+              )
+              .toList();
+          if (serverId != null) {
+            _perServerScheduledTasks[serverId] = tasks;
+            _rebuildScheduledTaskList();
+            _saveScheduledTaskCacheSoon();
+          } else {
+            _scheduledTasks = tasks;
+          }
+          notifyListeners();
+          break;
+        case 'scheduled_task_update':
+          final task = Map<String, dynamic>.from(msg['task'] as Map)
+            ..['_serverId'] = serverId ?? '';
+          if (serverId != null) {
+            final serverTasks = _perServerScheduledTasks.putIfAbsent(
+              serverId,
+              () => [],
+            );
+            final idx = serverTasks.indexWhere((t) => t['id'] == task['id']);
+            if (idx >= 0) {
+              serverTasks[idx] = task;
+            } else {
+              serverTasks.add(task);
+            }
+            _rebuildScheduledTaskList();
+            _saveScheduledTaskCacheSoon();
+          } else {
+            final idx = _scheduledTasks.indexWhere(
+              (t) => t['id'] == task['id'],
+            );
+            if (idx >= 0) {
+              _scheduledTasks[idx] = task;
+            } else {
+              _scheduledTasks.add(task);
+            }
+          }
+          notifyListeners();
+          break;
+        case 'scheduled_task_notification':
           final sid = msg['sessionId'] as String? ?? '';
           if (msg['sessionCompletion'] == true && sid.isNotEmpty) {
             _markSessionIdle(sid, serverId: serverId);
           }
           break;
         case 'upload_complete':
-        final uploadId = msg['uploadId'] as String?;
-        final serverPath = msg['serverPath'] as String?;
-        if (uploadId == _pendingUploadId && serverPath != null) {
-          _uploadCompleter?.complete(serverPath);
-          _uploadCompleter = null;
-        }
-        if (uploadId != null) {
-          _uploadStates.remove(uploadId)?.dispose();
-        }
-        break;
-      case 'upload_progress':
-        {
           final uploadId = msg['uploadId'] as String?;
-          final received = (msg['bytesReceived'] as num?)?.toInt() ?? 0;
-          final total = (msg['totalBytes'] as num?)?.toInt() ?? 0;
-          final receivedChunks = (msg['receivedChunks'] as num?)?.toInt() ?? 0;
-          if (uploadId == null || total <= 0) break;
-          final state = _uploadStates[uploadId];
-          if (state != null) {
-            debugPrint(
-              '[Upload] ack: chunks=$receivedChunks bytes=$received/$total',
-            );
-            state.target.uploadProgress =
-                state.progressBase +
-                (received / total).clamp(0.0, 1.0) * state.progressSpan;
-            state.noteAck(receivedChunks);
-            notifyListeners();
+          final serverPath = msg['serverPath'] as String?;
+          if (uploadId == _pendingUploadId && serverPath != null) {
+            _uploadCompleter?.complete(serverPath);
+            _uploadCompleter = null;
+          }
+          if (uploadId != null) {
+            _uploadStates.remove(uploadId)?.dispose();
           }
           break;
-        }
-      case 'compact_boundary':
-        _closeLiveStreamsForParent(null);
-        final trigger = msg['trigger'] as String? ?? 'auto';
-        final preTokens = (msg['preTokens'] as num?)?.toInt() ?? 0;
-        _messages.add(
-          ChatMessage.compactBoundary(trigger: trigger, preTokens: preTokens),
-        );
-        notifyListeners();
-        break;
-      case 'bash_backgrounded':
-        _handleBashBackgrounded(msg);
-        break;
-      case 'task_notification':
-        _handleTaskNotification(msg);
-        break;
-      case 'session_forked':
-        final newId = msg['newSessionId'] as String?;
-        if (newId != null && newId.isNotEmpty) {
-          _activeSessionId = newId;
-          notifyListeners();
-          requestSessionList();
-        }
-        break;
-      case 'outlook_auth':
-        _handleOutlookAuth(msg, serverId);
-        break;
-      case 'ibs_auth':
-        _handleIBSAuth(msg, serverId);
-        break;
-      case 'ibs_auth_result':
-        _handleIBSAuthResult(msg);
-        break;
-      case 'outlook_auth_result':
-        _handleOutlookAuthResult(msg);
-        break;
-      case 'tool_summary':
-        _handleToolSummary(msg);
-        break;
-      case 'session_init':
-        _handleSessionInit(msg);
-        break;
-      case 'supported_models':
-        _handleSupportedModels(msg);
-        break;
-      case 'mcp_status':
-        _handleMcpStatus(msg);
-        break;
-      case 'elicitation_url':
-        _handleElicitationUrl(msg);
-        break;
-      case 'monitor_started':
-        _handleMonitorStarted(msg);
-        break;
-      case 'monitor_output':
-        _handleMonitorOutput(msg);
-        break;
-      case 'files_persisted':
-        // Log but don't surface to user — file persistence is server-internal
-        break;
-      case 'auth_status':
-        _handleAuthStatus(msg);
-        break;
-      case 'rewind_result':
-        _handleRewindResult(msg);
-        break;
-      case 'rewind_conversation_result':
-        _handleRewindConversationResult(msg);
-        break;
-      case 'branch_result':
-        _handleBranchResult(msg);
-        break;
-      case 'user_message_uuid':
-        _handleUserMessageUuid(msg);
-        break;
-      case 'question_answered':
-        final answeredQId = msg['questionId'] as String? ?? '';
-        if (answeredQId.isNotEmpty) {
-          final idx = _messages.indexWhere(
-            (m) =>
-                m.questionId == answeredQId && m.type == MessageType.question,
-          );
-          if (idx >= 0) {
-            _messages[idx].answered = true;
-            notifyListeners();
+        case 'upload_progress':
+          {
+            final uploadId = msg['uploadId'] as String?;
+            final received = (msg['bytesReceived'] as num?)?.toInt() ?? 0;
+            final total = (msg['totalBytes'] as num?)?.toInt() ?? 0;
+            final receivedChunks =
+                (msg['receivedChunks'] as num?)?.toInt() ?? 0;
+            if (uploadId == null || total <= 0) break;
+            final state = _uploadStates[uploadId];
+            if (state != null) {
+              debugPrint(
+                '[Upload] ack: chunks=$receivedChunks bytes=$received/$total',
+              );
+              state.target.uploadProgress =
+                  state.progressBase +
+                  (received / total).clamp(0.0, 1.0) * state.progressSpan;
+              state.noteAck(receivedChunks);
+              notifyListeners();
+            }
+            break;
           }
-        }
-        break;
-      case 'subscription_required':
-        _subscriptionActive = false;
-        _subscriptionChecked = true;
-        _subscriptionCheckedAt = DateTime.now();
-        _subscriptionRequiredController.add(null);
-        notifyListeners();
-        break;
+        case 'compact_boundary':
+          _closeLiveStreamsForParent(null);
+          final trigger = msg['trigger'] as String? ?? 'auto';
+          final preTokens = (msg['preTokens'] as num?)?.toInt() ?? 0;
+          _messages.add(
+            ChatMessage.compactBoundary(trigger: trigger, preTokens: preTokens),
+          );
+          notifyListeners();
+          break;
+        case 'bash_backgrounded':
+          _handleBashBackgrounded(msg);
+          break;
+        case 'task_notification':
+          _handleTaskNotification(msg);
+          break;
+        case 'session_forked':
+          final newId = msg['newSessionId'] as String?;
+          if (newId != null && newId.isNotEmpty) {
+            _activeSessionId = newId;
+            notifyListeners();
+            requestSessionList();
+          }
+          break;
+        case 'outlook_auth':
+          _handleOutlookAuth(msg, serverId);
+          break;
+        case 'ibs_auth':
+          _handleIBSAuth(msg, serverId);
+          break;
+        case 'ibs_auth_result':
+          _handleIBSAuthResult(msg);
+          break;
+        case 'outlook_auth_result':
+          _handleOutlookAuthResult(msg);
+          break;
+        case 'tool_summary':
+          _handleToolSummary(msg);
+          break;
+        case 'session_init':
+          _handleSessionInit(msg);
+          break;
+        case 'supported_models':
+          _handleSupportedModels(msg);
+          break;
+        case 'mcp_status':
+          _handleMcpStatus(msg);
+          break;
+        case 'elicitation_url':
+          _handleElicitationUrl(msg);
+          break;
+        case 'monitor_started':
+          _handleMonitorStarted(msg);
+          break;
+        case 'monitor_output':
+          _handleMonitorOutput(msg);
+          break;
+        case 'files_persisted':
+          // Log but don't surface to user — file persistence is server-internal
+          break;
+        case 'auth_status':
+          _handleAuthStatus(msg);
+          break;
+        case 'rewind_result':
+          _handleRewindResult(msg);
+          break;
+        case 'rewind_conversation_result':
+          _handleRewindConversationResult(msg);
+          break;
+        case 'branch_result':
+          _handleBranchResult(msg);
+          break;
+        case 'user_message_uuid':
+          _handleUserMessageUuid(msg);
+          break;
+        case 'question_answered':
+          final answeredQId = msg['questionId'] as String? ?? '';
+          if (answeredQId.isNotEmpty) {
+            final idx = _messages.indexWhere(
+              (m) =>
+                  m.questionId == answeredQId && m.type == MessageType.question,
+            );
+            if (idx >= 0) {
+              _messages[idx].answered = true;
+              notifyListeners();
+            }
+          }
+          break;
+        case 'subscription_required':
+          _subscriptionActive = false;
+          _subscriptionChecked = true;
+          _subscriptionCheckedAt = DateTime.now();
+          _subscriptionRequiredController.add(null);
+          notifyListeners();
+          break;
       }
     } catch (error, stackTrace) {
       final activeServer = serverId ?? _connMgr.activeServerId;
@@ -4892,14 +4921,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// live reducer intentionally defers it to history; acknowledge that choice
   /// and remember the identity so queued relay copies cannot later masquerade
   /// as fresh live cards.
-  void _ackDeferredSessionDelivery(
-    Map<String, dynamic> msg,
-    String? serverId,
-  ) {
+  void _ackDeferredSessionDelivery(Map<String, dynamic> msg, String? serverId) {
     final type = msg['type'] as String? ?? '';
     final deliveryId = msg['deliveryId'] as String? ?? '';
     final sessionId = msg['sessionId'] as String? ?? '';
-    final tracked = deliveryId.isNotEmpty &&
+    final tracked =
+        deliveryId.isNotEmpty &&
         sessionId.isNotEmpty &&
         (type == 'tool_call' ||
             type == 'tool_result' ||
@@ -5155,10 +5182,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (matches) message.toolStreaming = false;
       return matches;
     });
-    if (liveMessageMatchesParent(
-      _currentStreamingMessage,
-      parentToolUseId,
-    )) {
+    if (liveMessageMatchesParent(_currentStreamingMessage, parentToolUseId)) {
       _currentStreamingMessage = null;
       _currentStreamingStreamId = null;
     }
@@ -5457,10 +5481,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         : _messages.lastIndexWhere((message) => message.entryId == entryId);
     if (existingIndex < 0 && toolUseId.isNotEmpty) {
       existingIndex = _messages.lastIndexWhere(
-            (message) =>
-                message.type == MessageType.toolCall &&
-                message.toolUseId == toolUseId,
-          );
+        (message) =>
+            message.type == MessageType.toolCall &&
+            message.toolUseId == toolUseId,
+      );
     }
     final replacesSyntheticSendFile =
         existingIndex < 0 && syntheticSendFileIndex >= 0;
@@ -5781,10 +5805,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final questionMessage = ChatMessage.question(
-        questionId: questionId,
-        questions: questions,
-        emailPreview: emailPreview,
-      );
+      questionId: questionId,
+      questions: questions,
+      emailPreview: emailPreview,
+    );
     applyTranscriptPosition(questionMessage, msg);
     _messages.add(questionMessage);
     notifyListeners();
@@ -5810,12 +5834,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final envHint = msg['envHint'] as String? ?? '';
     final scope = msg['scope'] as String? ?? 'session';
     final secureMessage = ChatMessage.secureInput(
-        requestId: requestId,
-        label: label,
-        reason: reason,
-        envHint: envHint,
-        scope: scope,
-      );
+      requestId: requestId,
+      label: label,
+      reason: reason,
+      envHint: envHint,
+      scope: scope,
+    );
     applyTranscriptPosition(secureMessage, msg);
     _messages.add(secureMessage);
     refreshSecretInventory();
@@ -5913,7 +5937,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleHtmlPlan(Map<String, dynamic> msg) {
     final plan = HtmlPlan.fromJson(msg);
     if (plan.planId.isEmpty || plan.html.isEmpty) return;
-    final existingPlan = _htmlPlans.indexWhere((item) => item.planId == plan.planId);
+    final existingPlan = _htmlPlans.indexWhere(
+      (item) => item.planId == plan.planId,
+    );
     if (existingPlan >= 0) {
       _htmlPlans[existingPlan] = plan;
     } else {
@@ -5922,7 +5948,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final card = ChatMessage.htmlPlan(plan.toJson());
     applyTranscriptPosition(card, msg);
     final existingCard = _messages.indexWhere(
-      (message) => message.type == MessageType.htmlPlan && message.toolUseId == plan.planId,
+      (message) =>
+          message.type == MessageType.htmlPlan &&
+          message.toolUseId == plan.planId,
     );
     if (existingCard >= 0) {
       _messages[existingCard] = card;
@@ -5960,11 +5988,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final renameCompleter = _htmlPlanRenameCompleters.remove(requestId);
     if (renameCompleter != null && !renameCompleter.isCompleted) {
       if (ok && msg['plan'] is Map) {
-        final plan = HtmlPlan.fromJson(Map<String, dynamic>.from(msg['plan'] as Map));
-        final planIndex = _htmlPlans.indexWhere((item) => item.planId == plan.planId);
+        final plan = HtmlPlan.fromJson(
+          Map<String, dynamic>.from(msg['plan'] as Map),
+        );
+        final planIndex = _htmlPlans.indexWhere(
+          (item) => item.planId == plan.planId,
+        );
         if (planIndex >= 0) _htmlPlans[planIndex] = plan;
         final cardIndex = _messages.indexWhere(
-          (message) => message.type == MessageType.htmlPlan && message.toolUseId == plan.planId,
+          (message) =>
+              message.type == MessageType.htmlPlan &&
+              message.toolUseId == plan.planId,
         );
         if (cardIndex >= 0) {
           _messages[cardIndex] = _updatedHtmlPlanCard(
@@ -5983,7 +6017,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final planId = msg['planId'] as String? ?? '';
         _htmlPlans.removeWhere((plan) => plan.planId == planId);
         _messages.removeWhere(
-          (message) => message.type == MessageType.htmlPlan && message.toolUseId == planId,
+          (message) =>
+              message.type == MessageType.htmlPlan &&
+              message.toolUseId == planId,
         );
         deleteCompleter.complete();
       } else {
@@ -6999,22 +7035,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void _handleSessionHistory(Map<String, dynamic> msg) {
+  void _handleSessionHistory(
+    Map<String, dynamic> msg, {
+    String? serverId,
+    bool fromCache = false,
+  }) {
     final historySessionId = msg['sessionId'] as String?;
-    final decision = gateSessionHistoryResponse(
-      responseSessionId: historySessionId,
-      activeSessionId: _activeSessionId,
-      historyKind: msg['historyKind'] as String?,
-      requestId: msg['requestId'] as String?,
-      expectedInitialRequestId: _initialHistoryRequestId,
-      expectedOlderRequestId: _olderHistoryRequestId,
-      legacyAppend: msg['append'] == true,
-      legacyLoadingMore: _isLoadingMore,
-      hasVisibleMessages: _messages.isNotEmpty,
-    );
+    final decision = fromCache
+        ? const SessionHistoryDecision(
+            accept: true,
+            kind: SessionHistoryKind.initial,
+          )
+        : gateSessionHistoryResponse(
+            responseSessionId: historySessionId,
+            activeSessionId: _activeSessionId,
+            historyKind: msg['historyKind'] as String?,
+            requestId: msg['requestId'] as String?,
+            expectedInitialRequestId: _initialHistoryRequestId,
+            expectedOlderRequestId: _olderHistoryRequestId,
+            legacyAppend: msg['append'] == true,
+            legacyLoadingMore: _isLoadingMore,
+            hasVisibleMessages: _messages.isNotEmpty,
+          );
     if (!decision.accept) return;
 
-    if (decision.kind == SessionHistoryKind.initial) {
+    if ((decision.kind == SessionHistoryKind.initial ||
+            decision.kind == SessionHistoryKind.delta) &&
+        !fromCache) {
       _initialHistoryTimeout?.cancel();
       _initialHistoryTimeout = null;
       _initialHistoryRequestId = null;
@@ -7029,7 +7076,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       msg['messages'] as List? ?? const [],
     );
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
-    final isAppend = decision.kind == SessionHistoryKind.append;
+    final isDelta = decision.kind == SessionHistoryKind.delta;
+    final isAppend = decision.kind == SessionHistoryKind.append || isDelta;
     final isPrepend = decision.kind == SessionHistoryKind.older;
     if (historySessionId != null &&
         _locallyClearedSessions.contains(historySessionId) &&
@@ -7735,10 +7783,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (rawPlan is Map) {
             final plan = Map<String, dynamic>.from(rawPlan);
             final planId = plan['planId']?.toString() ?? '';
-            if (planId.isNotEmpty && (plan['html']?.toString() ?? '').isNotEmpty) {
+            if (planId.isNotEmpty &&
+                (plan['html']?.toString() ?? '').isNotEmpty) {
               final planMessage = ChatMessage.htmlPlan(plan);
               final existingIndex = loaded.indexWhere(
-                (message) => message.type == MessageType.htmlPlan && message.toolUseId == planId,
+                (message) =>
+                    message.type == MessageType.htmlPlan &&
+                    message.toolUseId == planId,
               );
               if (existingIndex >= 0) {
                 loaded[existingIndex] = planMessage;
@@ -7786,6 +7837,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // fetch a recent/duplicate slice instead of the preceding page.
     if (!isAppend) {
       _historyOffset = offset;
+    } else if (isDelta && msg['offset'] is num) {
+      // Preserve the oldest cached boundary. A delta begins after the cached
+      // tail, so its own offset is not a pagination boundary.
+      _historyOffset = _historyOffset
+          .clamp(0, (msg['offset'] as num).toInt())
+          .toInt();
     }
 
     if (isAppend) {
@@ -7890,7 +7947,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _loadDismissedSubagents();
+    if (fromCache) {
+      _isLoadingHistory = false;
+      _isRefreshingHistory = true;
+    } else if (decision.kind == SessionHistoryKind.initial || isDelta) {
+      _isRefreshingHistory = false;
+      final ownerServerId = serverId ?? _activeSessionServerId ?? '';
+      if (historySessionId != null && ownerServerId.isNotEmpty) {
+        if (isDelta) {
+          unawaited(
+            _transcriptCache.mergeDelta(ownerServerId, historySessionId, msg),
+          );
+        } else {
+          unawaited(
+            _transcriptCache.save(ownerServerId, historySessionId, msg),
+          );
+        }
+      }
+    }
     notifyListeners();
+
+    final openTraceId = fromCache
+        ? _initialHistoryRequestId
+        : msg['openTraceId'] as String? ?? msg['requestId'] as String?;
+    final traceStarted = openTraceId == null
+        ? null
+        : _historyOpenTraceStartedAt[openTraceId];
+    if (openTraceId != null && traceStarted != null) {
+      final phase = fromCache ? 'cache-painted' : 'network-reconciled';
+      final elapsedMs = DateTime.now().difference(traceStarted).inMilliseconds;
+      debugPrint(
+        '[SessionOpen] $phase trace=$openTraceId elapsedMs=$elapsedMs '
+        'raw=${rawMessages.length} visible=${_messages.length}',
+      );
+      if (!fromCache) _historyOpenTraceStartedAt.remove(openTraceId);
+    }
 
     // Fetch pending image data from server for history tool_image entries.
     if (_pendingImageLoads.isNotEmpty) {
@@ -8747,7 +8838,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
     final sessionId = _activeSessionId;
     _htmlPlanListTimeout?.cancel();
-    if (serverId == null || serverId.isEmpty || sessionId == null || sessionId.isEmpty) {
+    if (serverId == null ||
+        serverId.isEmpty ||
+        sessionId == null ||
+        sessionId.isEmpty) {
       _htmlPlansLoading = false;
       _htmlPlansError = 'Open a saved session to manage its HTML plans.';
       notifyListeners();
@@ -8755,7 +8849,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) {
       _htmlPlansLoading = false;
-      _htmlPlansError = 'The selected server is offline. Reconnect it and try again.';
+      _htmlPlansError =
+          'The selected server is offline. Reconnect it and try again.';
       notifyListeners();
       return;
     }
@@ -8781,8 +8876,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<HtmlPlan> renameHtmlPlan(HtmlPlan plan, String title) {
     final sessionId = _activeSessionId;
-    if (sessionId == null || sessionId.isEmpty) throw StateError('No active session');
-    final requestId = 'html_plan_rename_${DateTime.now().microsecondsSinceEpoch}';
+    if (sessionId == null || sessionId.isEmpty)
+      throw StateError('No active session');
+    final requestId =
+        'html_plan_rename_${DateTime.now().microsecondsSinceEpoch}';
     final completer = Completer<HtmlPlan>();
     _htmlPlanRenameCompleters[requestId] = completer;
     _sendToActiveSessionServer({
@@ -8803,8 +8900,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> deleteHtmlPlan(HtmlPlan plan) {
     final sessionId = _activeSessionId;
-    if (sessionId == null || sessionId.isEmpty) throw StateError('No active session');
-    final requestId = 'html_plan_delete_${DateTime.now().microsecondsSinceEpoch}';
+    if (sessionId == null || sessionId.isEmpty)
+      throw StateError('No active session');
+    final requestId =
+        'html_plan_delete_${DateTime.now().microsecondsSinceEpoch}';
     final completer = Completer<void>();
     _htmlPlanDeleteCompleters[requestId] = completer;
     _sendToActiveSessionServer({
@@ -9751,6 +9850,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _permissionMode = null;
     _isCompacting = false;
     _isLoadingHistory = true;
+    _isRefreshingHistory = false;
     _historyOffset = 0;
     _isLoadingMore = false;
     final historyRequestId = _beginInitialHistoryRequest(sessionId);
@@ -9792,6 +9892,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final targetServerId = session?.serverId.isNotEmpty == true
         ? session!.serverId
         : serverId;
+    final resolvedServerId = targetServerId ?? _connMgr.activeServerId ?? '';
+    final cachedSnapshot = resolvedServerId.isEmpty
+        ? null
+        : _transcriptCache.peek(resolvedServerId, sessionId);
+    final knownSessionSeq = _transcriptCache.latestSessionSeq(cachedSnapshot);
+    if (cachedSnapshot != null) {
+      _handleSessionHistory(
+        cachedSnapshot,
+        serverId: resolvedServerId,
+        fromCache: true,
+      );
+    } else if (resolvedServerId.isNotEmpty) {
+      unawaited(
+        _loadTranscriptCacheAfterOpen(
+          resolvedServerId,
+          sessionId,
+          historyRequestId,
+        ),
+      );
+    }
     if (targetServerId != null && targetServerId.isNotEmpty) {
       _activeSessionServerId = targetServerId;
       _connMgr.activeServerId = targetServerId;
@@ -9801,6 +9921,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (session != null) 'cwd': session.cwd,
         if (session?.backend != null) 'backend': session!.backend,
         'historyRequestId': historyRequestId,
+        'openTraceId': historyRequestId,
+        if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
+        if (cachedSnapshot?['offset'] is num)
+          'knownHistoryOffset': cachedSnapshot!['offset'],
       });
       _connMgr.sendToServer(targetServerId, {'type': 'get_status_sync'});
     } else {
@@ -9811,18 +9935,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'cwd': session.cwd,
           if (session.backend != null) 'backend': session.backend,
           'historyRequestId': historyRequestId,
+          'openTraceId': historyRequestId,
+          if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
+          if (cachedSnapshot?['offset'] is num)
+            'knownHistoryOffset': cachedSnapshot!['offset'],
         });
       } else {
         _connMgr.send({
           'type': 'resume_session',
           'sessionId': sessionId,
           'historyRequestId': historyRequestId,
+          'openTraceId': historyRequestId,
+          if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
+          if (cachedSnapshot?['offset'] is num)
+            'knownHistoryOffset': cachedSnapshot!['offset'],
         });
       }
       _connMgr.send({'type': 'get_status_sync'});
     }
 
     notifyListeners();
+  }
+
+  Future<void> _loadTranscriptCacheAfterOpen(
+    String serverId,
+    String sessionId,
+    String historyRequestId,
+  ) async {
+    final snapshot = await _transcriptCache.load(serverId, sessionId);
+    if (snapshot == null ||
+        _activeSessionId != sessionId ||
+        _activeSessionServerId != serverId ||
+        _initialHistoryRequestId != historyRequestId ||
+        _messages.isNotEmpty) {
+      return;
+    }
+    _handleSessionHistory(snapshot, serverId: serverId, fromCache: true);
   }
 
   void resumeSessionFromNotification(String sessionId, {String? serverId}) {
@@ -9864,17 +10012,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String _beginInitialHistoryRequest(String sessionId) {
+    final previousRequestId = _initialHistoryRequestId;
+    if (previousRequestId != null) {
+      _historyOpenTraceStartedAt.remove(previousRequestId);
+    }
     final requestId = _newHistoryRequestId('initial', sessionId);
+    _historyOpenTraceStartedAt[requestId] = DateTime.now();
     _initialHistoryRequestId = requestId;
     _olderHistoryRequestId = null;
     _initialHistoryTimeout?.cancel();
     _initialHistoryTimeout = Timer(const Duration(seconds: 10), () {
       if (_initialHistoryRequestId != requestId ||
-          _activeSessionId != sessionId ||
-          !_isLoadingHistory) {
+          _activeSessionId != sessionId) {
+        return;
+      }
+      if (_isRefreshingHistory && !_isLoadingHistory) {
+        _initialHistoryRequestId = null;
+        _isRefreshingHistory = false;
+        _historyOpenTraceStartedAt.remove(requestId);
+        notifyListeners();
+        return;
+      }
+      if (!_isLoadingHistory) {
+        _initialHistoryRequestId = null;
+        _historyOpenTraceStartedAt.remove(requestId);
         return;
       }
       _isLoadingHistory = false;
+      _historyOpenTraceStartedAt.remove(requestId);
       _messages.add(
         ChatMessage.error(
           'Timed out loading this session from its server. Check the server connection and try again.',
@@ -9883,6 +10048,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
     });
     return requestId;
+  }
+
+  int? _latestVisibleSessionSeq() {
+    var latest = -1;
+    for (final message in _messages) {
+      final seq = message.sessionSeq;
+      if (seq != null && seq > latest) latest = seq;
+    }
+    return latest >= 0 ? latest : null;
   }
 
   /// Check if a path exists on the server. Returns true if it exists.
@@ -10544,10 +10718,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _requestScheduledTasksFromServer(
-    String serverId, {
-    bool force = false,
-  }) {
+  void _requestScheduledTasksFromServer(String serverId, {bool force = false}) {
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
     if (!force && _scheduledTaskRefreshRetries.containsKey(serverId)) return;
 
@@ -10653,7 +10824,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     final serverId = _serverIdForScheduledTask(taskId);
-    final taskIndex = _scheduledTasks.indexWhere((task) => task['id'] == taskId);
+    final taskIndex = _scheduledTasks.indexWhere(
+      (task) => task['id'] == taskId,
+    );
     if (taskIndex >= 0) {
       final updated = applyScheduledTaskUpdate(_scheduledTasks[taskIndex], msg);
       _scheduledTasks[taskIndex] = updated;

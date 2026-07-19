@@ -1,4 +1,4 @@
-enum SessionHistoryKind { initial, older, append }
+enum SessionHistoryKind { initial, delta, older, append }
 
 class SessionHistoryDecision {
   const SessionHistoryDecision({required this.accept, this.kind});
@@ -31,6 +31,11 @@ SessionHistoryDecision gateSessionHistoryResponse({
       return SessionHistoryDecision(
         accept: requestId != null && requestId == expectedInitialRequestId,
         kind: SessionHistoryKind.initial,
+      );
+    case 'delta':
+      return SessionHistoryDecision(
+        accept: requestId != null && requestId == expectedInitialRequestId,
+        kind: SessionHistoryKind.delta,
       );
     case 'older':
       return SessionHistoryDecision(

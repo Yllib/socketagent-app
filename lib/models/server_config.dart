@@ -43,7 +43,8 @@ class ServerConfig {
   /// once under different local IDs, which opened duplicate relay sockets and
   /// caused every live event/history snapshot to arrive more than once.
   String get connectionIdentity {
-    if (useRelay && isRelayPaired) {
+    if (useRelay) {
+      if (!isRelayPaired) return ['relay-unconfigured', id].join('\u0001');
       return [
         'relay',
         relayUrl.trim().toLowerCase(),

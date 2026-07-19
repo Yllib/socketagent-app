@@ -84,6 +84,35 @@ void main() {
     expect(decision.kind, SessionHistoryKind.append);
   });
 
+  test('accepts only the delta for the active resume request', () {
+    final accepted = gateSessionHistoryResponse(
+      responseSessionId: 'session-1',
+      activeSessionId: 'session-1',
+      historyKind: 'delta',
+      requestId: 'resume-2',
+      expectedInitialRequestId: 'resume-2',
+      expectedOlderRequestId: null,
+      legacyAppend: false,
+      legacyLoadingMore: false,
+      hasVisibleMessages: true,
+    );
+    final stale = gateSessionHistoryResponse(
+      responseSessionId: 'session-1',
+      activeSessionId: 'session-1',
+      historyKind: 'delta',
+      requestId: 'resume-1',
+      expectedInitialRequestId: 'resume-2',
+      expectedOlderRequestId: null,
+      legacyAppend: false,
+      legacyLoadingMore: false,
+      hasVisibleMessages: true,
+    );
+
+    expect(accepted.accept, isTrue);
+    expect(accepted.kind, SessionHistoryKind.delta);
+    expect(stale.accept, isFalse);
+  });
+
   test('rejects an unsolicited legacy snapshot over a visible transcript', () {
     final decision = gateSessionHistoryResponse(
       responseSessionId: 'session-1',

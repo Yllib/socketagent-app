@@ -19,6 +19,19 @@ bool shouldStartWebSocketConnection(
           status != ConnectionStatus.connected);
 }
 
+bool relayTransportIsConfigured({
+  required String relayUrl,
+  required String pairingToken,
+  required bool cryptoReady,
+}) {
+  final uri = Uri.tryParse(relayUrl.trim());
+  return uri != null &&
+      (uri.scheme == 'wss' || uri.scheme == 'ws') &&
+      uri.host.isNotEmpty &&
+      pairingToken.trim().isNotEmpty &&
+      cryptoReady;
+}
+
 class WebSocketService {
   static const int _sessionEventAckVersion = 1;
   WebSocketChannel? _channel;
@@ -76,10 +89,24 @@ class WebSocketService {
     required CryptoService cryptoService,
     String subscriberToken = '',
   }) {
+    final changed =
+        _relayUrl != relayUrl ||
+        _pairingToken != pairingToken ||
+        !identical(_cryptoService, cryptoService);
+    if (changed && _channel != null) disconnect();
     _relayUrl = relayUrl;
     _pairingToken = pairingToken;
     _cryptoService = cryptoService;
     _subscriberToken = subscriberToken;
+  }
+
+  void clearRelayConfiguration() {
+    disconnect();
+    _relayUrl = '';
+    _pairingToken = '';
+    _subscriberToken = '';
+    _cryptoService = null;
+    _encryptionReady = false;
   }
 
   void setMode(ConnectionMode mode) {
@@ -95,6 +122,19 @@ class WebSocketService {
     if (!shouldStartWebSocketConnection(_status, force: force)) {
       return;
     }
+    if (_mode == ConnectionMode.relay &&
+        !relayTransportIsConfigured(
+          relayUrl: _relayUrl,
+          pairingToken: _pairingToken,
+          cryptoReady: _cryptoService?.isReady == true,
+        )) {
+      debugPrint(
+        '[Relay] Connection blocked: relay transport is selected but its trusted pairing is incomplete',
+      );
+      _reconnectTimer?.cancel();
+      _setStatus(ConnectionStatus.error);
+      return;
+    }
     _setStatus(ConnectionStatus.connecting);
     _reconnectTimer?.cancel();
     // A forced reconnect must finish closing the previous socket before the
@@ -108,11 +148,7 @@ class WebSocketService {
     // Increment generation so any lingering async callbacks from old connections are ignored
     final gen = ++_connectionGeneration;
     unawaited(
-      _connectAfterClosingPrevious(
-        gen,
-        previousSubscription,
-        previousChannel,
-      ),
+      _connectAfterClosingPrevious(gen, previousSubscription, previousChannel),
     );
   }
 
