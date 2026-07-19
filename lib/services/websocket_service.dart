@@ -491,30 +491,37 @@ class WebSocketService {
     _statusController.add(status);
   }
 
-  void send(Map<String, dynamic> message) {
-    if (_channel == null) return;
+  bool send(Map<String, dynamic> message) {
+    if (_channel == null) return false;
 
-    if ((_mode == ConnectionMode.relay ||
-            (_mode == ConnectionMode.direct && _cryptoService != null)) &&
-        _encryptionReady &&
-        _cryptoService != null) {
-      final plaintext = jsonEncode(message);
-      if (_serverSupportsBinary) {
-        // Binary envelope: 1-byte JSON marker + UTF-8 JSON.
-        final jsonBytes = utf8.encode(plaintext);
-        final payload = Uint8List(jsonBytes.length + 1);
-        payload[0] = _binMarkerJson;
-        payload.setRange(1, payload.length, jsonBytes);
-        final envelope = _cryptoService!.encryptBinary(payload);
-        _channel!.sink.add(envelope);
-      } else {
-        // Legacy text-JSON envelope.
-        final envelope = _cryptoService!.encrypt(plaintext);
-        _channel!.sink.add(jsonEncode(envelope));
+    try {
+      if ((_mode == ConnectionMode.relay ||
+              (_mode == ConnectionMode.direct && _cryptoService != null)) &&
+          _encryptionReady &&
+          _cryptoService != null) {
+        final plaintext = jsonEncode(message);
+        if (_serverSupportsBinary) {
+          // Binary envelope: 1-byte JSON marker + UTF-8 JSON.
+          final jsonBytes = utf8.encode(plaintext);
+          final payload = Uint8List(jsonBytes.length + 1);
+          payload[0] = _binMarkerJson;
+          payload.setRange(1, payload.length, jsonBytes);
+          final envelope = _cryptoService!.encryptBinary(payload);
+          _channel!.sink.add(envelope);
+        } else {
+          // Legacy text-JSON envelope.
+          final envelope = _cryptoService!.encrypt(plaintext);
+          _channel!.sink.add(jsonEncode(envelope));
+        }
+        return true;
+      } else if (_mode == ConnectionMode.direct && _cryptoService == null) {
+        _channel!.sink.add(jsonEncode(message));
+        return true;
       }
-    } else if (_mode == ConnectionMode.direct && _cryptoService == null) {
-      _channel!.sink.add(jsonEncode(message));
+    } catch (error) {
+      debugPrint('[WebSocket] Send failed: $error');
     }
+    return false;
   }
 
   /// Whether the server has confirmed it understands the binary wire format.

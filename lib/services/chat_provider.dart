@@ -13,6 +13,7 @@ import '../models/message_reconciliation.dart';
 import '../models/file_event_routing.dart';
 import '../models/history_normalization.dart';
 import '../models/history_response_gate.dart';
+import '../models/hard_stop_protocol.dart';
 import '../models/composer_attachment.dart';
 import '../models/html_plan.dart';
 import '../models/archive_entry.dart';
@@ -356,6 +357,37 @@ class _PhoneAdbFileTransfer {
   int receivedBytes = 0;
 }
 
+class _PendingHardStop {
+  _PendingHardStop({
+    required this.requestId,
+    required this.sessionId,
+    required this.serverId,
+    required this.cardId,
+  });
+
+  final String requestId;
+  final String sessionId;
+  final String serverId;
+  final String cardId;
+  Timer? retryTimer;
+  int attempts = 0;
+
+  PersistedHardStop toPersisted() => PersistedHardStop(
+    requestId: requestId,
+    sessionId: sessionId,
+    serverId: serverId,
+    cardId: cardId,
+  );
+
+  static _PendingHardStop fromPersisted(PersistedHardStop persisted) =>
+      _PendingHardStop(
+        requestId: persisted.requestId,
+        sessionId: persisted.sessionId,
+        serverId: persisted.serverId,
+        cardId: persisted.cardId,
+      );
+}
+
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
@@ -364,6 +396,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'cached_scheduled_task_lists_v1';
   static const String _pushRegisteredServersPrefsKey =
       'push_registered_server_ids';
+  static const String _pendingHardStopsPrefsKey = 'pending_hard_stops_v1';
   static const Duration _downloadNotificationMinInterval = Duration(
     milliseconds: 750,
   );
@@ -534,6 +567,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _olderHistoryRequestId;
   int _historyRequestSequence = 0;
   final Map<String, DateTime> _historyOpenTraceStartedAt = {};
+  final Map<String, _PendingHardStop> _pendingHardStops = {};
+  Future<void> _pendingHardStopPersistence = Future<void>.value();
   bool _ttsEnabled = false;
   String _effort = 'high';
   bool _codexFastMode = false;
@@ -1683,6 +1718,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
+    _restorePendingHardStops(prefs);
     await _registerPushNotifications();
     _lastServerStartedAt = prefs.getString('server_started_at');
     _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
@@ -2391,6 +2427,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       // Auto-sync state on every (re)connect for this server
       if (update.status == ConnectionStatus.connected) {
+        _retryPendingAbortForServer(update.serverId);
         _syncStateToServer(serverId: update.serverId);
         unawaited(_syncPushRegistrationForServer(update.serverId));
       }
@@ -3328,6 +3365,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'push_token_registered',
       'push_token_unregistered',
       'push_registration_status',
+      'abort_ack',
       'scheduled_task_notification',
       'reminder',
     };
@@ -3479,6 +3517,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'result':
           _handleResult(msg);
+          break;
+        case 'abort_ack':
+          _handleAbortAck(msg, serverId);
           break;
         case 'subagent_result':
           _handleSubagentResult(msg);
@@ -4288,7 +4329,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final serverActiveStartedAt = _parseServerDateTime(
             msg['activeStartedAt'],
           );
-          _isProcessing = msg['running'] == true || serverSaysCompacting;
+          final awaitingAbort = _hasPendingHardStop(
+            _activeSessionId,
+            serverId: serverId,
+          );
+          _isProcessing =
+              msg['running'] == true || serverSaysCompacting || awaitingAbort;
           if (!_isProcessing) {
             _markSessionIdle(
               _activeSessionId,
@@ -6120,9 +6166,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleResult(Map<String, dynamic> msg) {
-    _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
+    final awaitingAbort = _hasPendingHardStop(
+      _activeSessionId,
+      serverId: _connMgr.activeServerId,
+    );
+    if (!awaitingAbort) {
+      _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
+    }
     _closeLiveStreamsForParent(null);
-    _isProcessing = false;
+    _isProcessing = awaitingAbort;
     _stopPromptRuntime();
     _isCompacting = false;
     _isRateLimited = false;
@@ -6169,17 +6221,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     // Mark any foreground tool calls that never got a result so spinners stop.
     // Background commands remain live only while their task is still tracked.
-    settleIdleToolCards(
-      _messages,
-      activeBackgroundTaskIds: _activeBackgroundTaskIds(),
-    );
-    // Clear completed background tasks
-    _backgroundTasks.removeWhere(
-      (_, t) =>
-          t['status'] == 'completed' ||
-          t['status'] == 'failed' ||
-          t['status'] == 'stopped',
-    );
+    if (!awaitingAbort) {
+      settleIdleToolCards(
+        _messages,
+        activeBackgroundTaskIds: _activeBackgroundTaskIds(),
+      );
+      // Clear completed background tasks
+      _backgroundTasks.removeWhere(
+        (_, t) =>
+            t['status'] == 'completed' ||
+            t['status'] == 'failed' ||
+            t['status'] == 'stopped',
+      );
+    }
     notifyListeners();
   }
 
@@ -7965,6 +8019,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }
     }
+    _ensurePendingHardStopCard(
+      historySessionId,
+      serverId: serverId ?? _activeSessionServerId,
+    );
     notifyListeners();
 
     final openTraceId = fromCache
@@ -8546,37 +8604,208 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return completer.future;
   }
 
-  void abortQuery() {
-    final msg = {
-      'type': 'abort',
-      if (_activeSessionId != null) 'sessionId': _activeSessionId,
-    };
-    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
-    if (serverId != null && serverId.isNotEmpty) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
+  Future<void> abortQuery() async {
+    final sessionId = _activeSessionId ?? _viewingSessionId;
+    if (sessionId == null || sessionId.isEmpty) return;
+    final serverId =
+        _viewingServerId ??
+        _activeSessionServerId ??
+        _connMgr.activeServerId ??
+        '';
+    final key = _hardStopKey(serverId, sessionId);
+    final existing = _pendingHardStops[key];
+    if (existing != null) {
+      _transmitPendingAbort(existing);
+      return;
     }
-    _clearLiveMessageStreams();
-    _isProcessing = false;
-    _stopPromptRuntime();
-    _isCompacting = false;
-    // An explicit abort settles every tool, including background commands.
-    settleIdleToolCards(_messages);
-    // Show cancel card immediately
+
+    final now = DateTime.now().microsecondsSinceEpoch;
+    final pending = _PendingHardStop(
+      requestId: 'abort_${now}_$sessionId',
+      sessionId: sessionId,
+      serverId: serverId,
+      cardId: 'stopping_$now',
+    );
+    _pendingHardStops[key] = pending;
     _messages.add(
       ChatMessage(
-        id: 'cancel_${DateTime.now().microsecondsSinceEpoch}',
+        id: pending.cardId,
         sender: MessageSender.system,
         type: MessageType.taskNotification,
         timestamp: DateTime.now(),
-        textContent: 'Action cancelled',
-        toolName: 'cancelled',
+        textContent: 'Stopping — waiting for server confirmation…',
+        toolName: 'stopping',
       ),
     );
-    // Hard stop is handled by the server abort/interrupt path. Do not turn it
-    // into a hidden instruction that gets prepended to the next user message.
-    _dropLegacyCancelPrepends();
+    // Keep the session in a stopping state until abort_ack proves that the
+    // backend and its owned work have terminated.
+    _isProcessing = true;
+    _isCompacting = false;
+    notifyListeners();
+    // Persist the cancellation intent before its first network send. If the
+    // app process dies now, startup restores and retransmits the same request.
+    await _persistPendingHardStops();
+    if (!_pendingHardStops.containsValue(pending)) return;
+    _transmitPendingAbort(pending);
+  }
+
+  String _hardStopKey(String serverId, String sessionId) =>
+      '$serverId\u0001$sessionId';
+
+  void _restorePendingHardStops(SharedPreferences prefs) {
+    for (final persisted in decodePersistedHardStops(
+      prefs.getString(_pendingHardStopsPrefsKey),
+    )) {
+      final pending = _PendingHardStop.fromPersisted(persisted);
+      _pendingHardStops[_hardStopKey(pending.serverId, pending.sessionId)] =
+          pending;
+    }
+  }
+
+  Future<void> _persistPendingHardStops() {
+    final snapshot = encodePersistedHardStops(
+      _pendingHardStops.values.map((pending) => pending.toPersisted()),
+    );
+    _pendingHardStopPersistence = _pendingHardStopPersistence.then((_) async {
+      final prefs = _cachedPrefs ?? await SharedPreferences.getInstance();
+      _cachedPrefs = prefs;
+      if (snapshot == '[]') {
+        await prefs.remove(_pendingHardStopsPrefsKey);
+      } else {
+        await prefs.setString(_pendingHardStopsPrefsKey, snapshot);
+      }
+    });
+    return _pendingHardStopPersistence;
+  }
+
+  bool _hasPendingHardStop(String? sessionId, {String? serverId}) {
+    if (sessionId == null || sessionId.isEmpty) return false;
+    return _pendingHardStops.values.any(
+      (pending) =>
+          pending.sessionId == sessionId &&
+          (serverId == null ||
+              serverId.isEmpty ||
+              pending.serverId.isEmpty ||
+              pending.serverId == serverId),
+    );
+  }
+
+  _PendingHardStop? _pendingHardStopFor(String? sessionId, {String? serverId}) {
+    if (sessionId == null || sessionId.isEmpty) return null;
+    return _pendingHardStops.values
+        .where(
+          (pending) =>
+              pending.sessionId == sessionId &&
+              (serverId == null ||
+                  serverId.isEmpty ||
+                  pending.serverId.isEmpty ||
+                  pending.serverId == serverId),
+        )
+        .firstOrNull;
+  }
+
+  void _ensurePendingHardStopCard(String? sessionId, {String? serverId}) {
+    final pending = _pendingHardStopFor(sessionId, serverId: serverId);
+    if (pending == null) return;
+    _isProcessing = true;
+    if (_messages.any((message) => message.id == pending.cardId)) return;
+    _messages.add(
+      ChatMessage(
+        id: pending.cardId,
+        sender: MessageSender.system,
+        type: MessageType.taskNotification,
+        timestamp: DateTime.now(),
+        textContent: 'Stopping — waiting for server confirmation…',
+        toolName: 'stopping',
+      ),
+    );
+  }
+
+  void _transmitPendingAbort(_PendingHardStop pending) {
+    if (!_pendingHardStops.containsValue(pending)) return;
+    final message = {
+      'type': 'abort',
+      'requestId': pending.requestId,
+      'sessionId': pending.sessionId,
+    };
+    final sent = pending.serverId.isNotEmpty
+        ? _connMgr.sendToServer(pending.serverId, message)
+        : _connMgr.send(message);
+    pending.attempts++;
+    if (!sent && pending.serverId.isNotEmpty) {
+      _connMgr.connectServer(pending.serverId);
+    }
+    pending.retryTimer?.cancel();
+    final delay = hardStopRetryDelay(pending.attempts);
+    pending.retryTimer = Timer(delay, () => _transmitPendingAbort(pending));
+  }
+
+  void _retryPendingAbortForServer(String serverId) {
+    for (final pending
+        in _pendingHardStops.values
+            .where((pending) => pending.serverId == serverId)
+            .toList()) {
+      _transmitPendingAbort(pending);
+    }
+  }
+
+  void _handleAbortAck(Map<String, dynamic> msg, String? serverId) {
+    final requestId = msg['requestId'] as String?;
+    final sessionId = msg['sessionId'] as String?;
+    if (requestId == null || sessionId == null) return;
+    final pending = _pendingHardStops.values
+        .where(
+          (candidate) => hardStopAckMatches(
+            pendingRequestId: candidate.requestId,
+            pendingSessionId: candidate.sessionId,
+            pendingServerId: candidate.serverId,
+            responseRequestId: requestId,
+            responseSessionId: sessionId,
+            responseServerId: serverId,
+          ),
+        )
+        .firstOrNull;
+    if (pending == null) return;
+    if (msg['stopped'] != true) {
+      final card = _messages
+          .where((message) => message.id == pending.cardId)
+          .firstOrNull;
+      if (card != null) {
+        card.textContent = 'Stop has not been confirmed; retrying…';
+      }
+      notifyListeners();
+      return;
+    }
+
+    pending.retryTimer?.cancel();
+    _pendingHardStops.remove(_hardStopKey(pending.serverId, pending.sessionId));
+    unawaited(_persistPendingHardStops());
+    _markSessionIdle(pending.sessionId, serverId: pending.serverId);
+    final isVisible =
+        (pending.sessionId == _activeSessionId ||
+            pending.sessionId == _viewingSessionId) &&
+        (pending.serverId.isEmpty ||
+            _activeSessionServerId == null ||
+            pending.serverId == _activeSessionServerId);
+    if (isVisible) {
+      _messages.removeWhere((message) => message.id == pending.cardId);
+      _clearLiveMessageStreams();
+      _isProcessing = false;
+      _stopPromptRuntime();
+      _isCompacting = false;
+      settleIdleToolCards(_messages);
+      _messages.add(
+        ChatMessage(
+          id: 'cancel_${DateTime.now().microsecondsSinceEpoch}',
+          sender: MessageSender.system,
+          type: MessageType.taskNotification,
+          timestamp: DateTime.now(),
+          textContent: 'Action cancelled',
+          toolName: 'cancelled',
+        ),
+      );
+      _dropLegacyCancelPrepends();
+    }
     notifyListeners();
   }
 
@@ -9912,6 +10141,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ),
       );
     }
+    _ensurePendingHardStopCard(sessionId, serverId: resolvedServerId);
     if (targetServerId != null && targetServerId.isNotEmpty) {
       _activeSessionServerId = targetServerId;
       _connMgr.activeServerId = targetServerId;
@@ -12798,6 +13028,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     PushNotificationService.onTokenRefresh = null;
     PushNotificationService.shouldDisplayForegroundNotification = null;
     _promptRuntimeTimer?.cancel();
+    for (final pending in _pendingHardStops.values) {
+      pending.retryTimer?.cancel();
+    }
+    _pendingHardStops.clear();
     _initialHistoryTimeout?.cancel();
     _foregroundResumeTimer?.cancel();
     _secretInventoryRequestTracker.cancel();

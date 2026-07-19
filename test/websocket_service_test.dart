@@ -37,6 +37,19 @@ void main() {
     service.dispose();
   });
 
+  test('critical sends report failure instead of silently disappearing', () {
+    final service = WebSocketService();
+
+    final sent = service.send({
+      'type': 'abort',
+      'requestId': 'abort-1',
+      'sessionId': 'session-1',
+    });
+
+    expect(sent, isFalse);
+    service.dispose();
+  });
+
   test('relay configuration validation rejects missing trust material', () {
     expect(
       relayTransportIsConfigured(

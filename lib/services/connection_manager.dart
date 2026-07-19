@@ -191,13 +191,19 @@ class ConnectionManager {
   }
 
   /// Send a message to the active server.
-  void send(Map<String, dynamic> message) {
-    active?.send(message);
+  bool send(Map<String, dynamic> message) {
+    return active?.send(message) ?? false;
   }
 
   /// Send a message to a specific server.
-  void sendToServer(String serverId, Map<String, dynamic> message) {
-    _connections[serverId]?.send(message);
+  bool sendToServer(String serverId, Map<String, dynamic> message) {
+    return _connections[serverId]?.send(message) ?? false;
+  }
+
+  /// Ensure a specific configured server is connecting. Safe to call while a
+  /// connection is already healthy or in progress.
+  void connectServer(String serverId) {
+    _connections[serverId]?.connect();
   }
 
   /// Send a message to all connected servers.
