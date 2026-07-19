@@ -90,6 +90,7 @@ class PushNotificationService {
     final rawTitle = message.notification?.title ?? data['title'];
     final rawBody = message.notification?.body ?? data['body'];
     if (rawTitle is! String || rawTitle.trim().isEmpty) return;
+    if (!await _claimRemoteEvent(message)) return;
 
     final title = rawTitle.trim();
     final body = rawBody is String ? rawBody : '';
@@ -175,6 +176,12 @@ class PushNotificationService {
         serverId: serverId,
       );
     }
+    final eventId = data['eventId'] as String?;
+    if (eventId != null && eventId.isNotEmpty) {
+      return NotificationService.stableId(
+        'push_event:${data['serverId'] ?? ''}:$eventId',
+      );
+    }
     return NotificationService.sessionAlertId(
       sessionId,
       serverId: serverId,
@@ -234,6 +241,26 @@ class PushNotificationService {
     final prefs = await SharedPreferences.getInstance();
     return (prefs.getStringList('notif_muted_sessions') ?? const <String>[])
         .contains(sessionId);
+  }
+
+  static Future<bool> _claimRemoteEvent(RemoteMessage message) async {
+    final dataEventId = message.data['eventId'] as String?;
+    final eventId = dataEventId?.isNotEmpty == true
+        ? dataEventId!
+        : message.messageId;
+    if (eventId == null || eventId.isEmpty) return true;
+    final serverId = message.data['serverId'] as String? ?? '';
+    final key = '$serverId\u0001$eventId';
+    final prefs = await SharedPreferences.getInstance();
+    const prefKey = 'processed_fcm_event_ids_v1';
+    final processed = prefs.getStringList(prefKey) ?? <String>[];
+    if (processed.contains(key)) return false;
+    processed.add(key);
+    if (processed.length > 256) {
+      processed.removeRange(0, processed.length - 256);
+    }
+    await prefs.setStringList(prefKey, processed);
+    return true;
   }
 
   void dispose() {

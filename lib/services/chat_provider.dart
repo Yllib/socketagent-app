@@ -20,7 +20,6 @@ import '../models/file_manager_entry.dart';
 import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
-import '../models/session_notification_policy.dart';
 import '../models/scheduled_task_cache.dart';
 import '../models/scheduled_task_update.dart';
 import 'websocket_service.dart';
@@ -488,11 +487,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
-  final Set<String> _shownOngoingSessionNotificationKeys = {};
-  final Map<String, Timer> _sessionCompletionFallbackTimers = {};
   final Map<String, Timer> _scheduledTaskRefreshRetries = {};
   final Map<String, String> _scheduledTaskLoadedRevisions = {};
-  final Map<String, DateTime> _recentLocalInstantNotifications = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
   // Surfaced by the chat header so the user knows what they're talking to.
   String? _activeSessionBackend;
@@ -845,51 +841,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.sendToServer(sid, {'type': 'terminal_kill'});
   }
 
-  int _sessionOngoingNotificationId(String sessionId, {String? serverId}) {
-    return NotificationService.sessionOngoingId(sessionId, serverId: serverId);
-  }
-
   int _sessionCompletionNotificationId(String sessionId, {String? serverId}) {
     return NotificationService.sessionCompletionId(
       sessionId,
       serverId: serverId,
     );
-  }
-
-  String _localInstantKey(String kind, String sessionId, {String? serverId}) {
-    return '$kind\u0001${serverId ?? ''}\u0001$sessionId';
-  }
-
-  void _recordLocalInstantNotification(
-    String kind,
-    String sessionId, {
-    String? serverId,
-  }) {
-    final now = DateTime.now();
-    _recentLocalInstantNotifications.removeWhere(
-      (_, at) => now.difference(at) > const Duration(seconds: 10),
-    );
-    _recentLocalInstantNotifications[_localInstantKey(
-          kind,
-          sessionId,
-          serverId: serverId,
-        )] =
-        now;
-  }
-
-  bool _hasRecentLocalInstantNotification(
-    String kind,
-    String sessionId, {
-    String? serverId,
-  }) {
-    final at =
-        _recentLocalInstantNotifications[_localInstantKey(
-          kind,
-          sessionId,
-          serverId: serverId,
-        )];
-    return at != null &&
-        DateTime.now().difference(at) < const Duration(seconds: 5);
   }
 
   bool _isViewingSession(String sessionId, {String? serverId}) {
@@ -904,230 +860,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return true;
   }
 
-  void _showSessionCompletionNotification(
-    String sessionId, {
-    String? serverId,
-    required String title,
-    required String body,
-  }) {
-    if (sessionId.isEmpty) return;
-    _cancelSessionCompletionFallback(sessionId, serverId: serverId);
-    if (_notifMutedSessions.contains(sessionId)) return;
-
-    unawaited(
-      _publishSessionCompletionNotification(
-        sessionId,
-        serverId: serverId,
-        title: title,
-        body: body,
-      ),
-    );
-  }
-
-  Future<void> _publishSessionCompletionNotification(
-    String sessionId, {
-    String? serverId,
-    required String title,
-    required String body,
-  }) async {
-    await PushNotificationService.recordSessionFinished(
-      sessionId: sessionId,
-      serverId: serverId,
-    );
-    final shown = await _notifications.showSessionCompletion(
-      id: _sessionCompletionNotificationId(sessionId, serverId: serverId),
-      title: title,
-      body: body,
-      payload:
-          _sessionNotificationPayload(sessionId, serverId: serverId) ?? '',
-      unread: !_isViewingSession(sessionId, serverId: serverId),
-    );
-    if (shown) {
-      _recordLocalInstantNotification(
-        'session_finished',
-        sessionId,
-        serverId: serverId,
-      );
-    }
-  }
-
-  void _maybeNotify({required String title, required String body}) {
-    final sessionId = _activeSessionId;
-    if (sessionId == null) return;
-
-    _showSessionCompletionNotification(
-      sessionId,
-      serverId: _connMgr.activeServerId,
-      title: title,
-      body: body,
-    );
-  }
-
-  String? _sessionNotificationPayload(String sessionId, {String? serverId}) {
-    return 'session:${Uri.encodeComponent(sessionId)}'
-        '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}';
-  }
-
   String _runningSessionKey(String serverId, String sessionId) {
     return '$serverId\u0001$sessionId';
   }
 
-  void _cancelSessionCompletionFallback(
-    String sessionId, {
-    String? serverId,
-  }) {
-    if (serverId != null) {
-      _sessionCompletionFallbackTimers
-          .remove(_runningSessionKey(serverId, sessionId))
-          ?.cancel();
-      return;
-    }
-    final matchingKeys = _sessionCompletionFallbackTimers.keys.where((key) {
-      return key.split('\u0001').last == sessionId;
-    }).toList();
-    for (final key in matchingKeys) {
-      _sessionCompletionFallbackTimers.remove(key)?.cancel();
-    }
-  }
-
-  String _notificationPreview(String text, {required String fallback}) {
-    final normalized = text.trim().replaceAll(RegExp(r'\s+'), ' ');
-    if (normalized.isEmpty) return fallback;
-    return normalized.length > 220
-        ? '${normalized.substring(0, 217)}...'
-        : normalized;
-  }
-
-  String _latestAgentNotificationBody(
-    String sessionId, {
-    String? serverId,
-    String fallback = 'Session finished',
-  }) {
-    final activeServerMatches =
-        serverId == null ||
-        serverId.isEmpty ||
-        _activeSessionServerId == null ||
-        _activeSessionServerId == serverId;
-    if (_activeSessionId == sessionId && activeServerMatches) {
-      for (int i = _messages.length - 1; i >= 0; i--) {
-        final message = _messages[i];
-        if (message.type == MessageType.text &&
-            message.sender == MessageSender.assistant) {
-          final preview = _notificationPreview(
-            message.textContent,
-            fallback: '',
-          );
-          if (preview.isNotEmpty) return preview;
-        }
-      }
-    }
-
-    final session = _sessions
-        .where(
-          (candidate) =>
-              candidate.id == sessionId &&
-              (serverId == null ||
-                  serverId.isEmpty ||
-                  candidate.serverId == serverId),
-        )
-        .firstOrNull;
-    return _notificationPreview(
-      session?.messagePreview ?? '',
-      fallback: fallback,
-    );
-  }
-
-  void _scheduleSessionCompletionFallback(
-    _RunningSessionInfo info, {
-    Duration delay = const Duration(seconds: 4),
-  }) {
-    final key = _runningSessionKey(info.serverId, info.sessionId);
-    _sessionCompletionFallbackTimers.remove(key)?.cancel();
-    if (!shouldScheduleSessionCompletionFallback(
-      sessionId: info.sessionId,
-      suppressAutomaticNotifications: info.suppressOngoingNotification,
-    )) {
-      return;
-    }
-    _sessionCompletionFallbackTimers[key] = Timer(delay, () {
-      _sessionCompletionFallbackTimers.remove(key);
-      if (_runningSessionNotifications.containsKey(key)) return;
-      _showSessionCompletionNotification(
-        info.sessionId,
-        serverId: info.serverId,
-        title: info.title.isEmpty ? 'Session' : info.title,
-        body: _latestAgentNotificationBody(
-          info.sessionId,
-          serverId: info.serverId,
-        ),
-      );
-    });
-  }
-
-  Future<void> _cancelSessionOngoingNotificationByKey(String key) {
-    final info = _runningSessionNotifications[key];
-    final parts = key.split('\u0001');
-    final sessionId = info?.sessionId ?? parts.last;
-    final serverId = info?.serverId ?? (parts.length > 1 ? parts.first : null);
-    if (sessionId.isEmpty) return Future.value();
-    return _notifications.cancel(
-      _sessionOngoingNotificationId(sessionId, serverId: serverId),
-    );
-  }
-
-  bool _shouldShowOngoingSessionNotification(_RunningSessionInfo info) {
-    if (info.suppressOngoingNotification) return false;
-    if (_notifMutedSessions.contains(info.sessionId)) return false;
-    return true;
-  }
-
   void _syncOngoingSessionNotifications() {
-    final activeKeys = _runningSessionNotifications.keys.toSet();
-    final staleKeys = _shownOngoingSessionNotificationKeys
-        .difference(activeKeys)
-        .toList();
-    for (final key in staleKeys) {
-      _shownOngoingSessionNotificationKeys.remove(key);
-      unawaited(_cancelSessionOngoingNotificationByKey(key));
-    }
-
-    for (final entry in _runningSessionNotifications.entries) {
-      final key = entry.key;
-      final info = entry.value;
-      if (!_shouldShowOngoingSessionNotification(info)) {
-        if (_shownOngoingSessionNotificationKeys.remove(key)) {
-          unawaited(_cancelSessionOngoingNotificationByKey(key));
-        }
-        continue;
-      }
-
-      _shownOngoingSessionNotificationKeys.add(key);
-      unawaited(
-        _notifications.showOngoingProgress(
-          id: _sessionOngoingNotificationId(
-            info.sessionId,
-            serverId: info.serverId,
-          ),
-          title: info.title.isEmpty ? 'Session' : info.title,
-          body: info.compacting
-              ? 'Compacting context'
-              : info.serverName.isEmpty
-              ? 'Agent is working'
-              : 'Agent is working on ${info.serverName}',
-          payload: _sessionNotificationPayload(
-            info.sessionId,
-            serverId: info.serverId,
-          ),
-          indeterminate: true,
-          startedAt: info.startedAt,
-          groupKey: NotificationService.activeSessionsGroup,
-        ),
-      );
-    }
-    final visibleCount = _runningSessionNotifications.values
-        .where(_shouldShowOngoingSessionNotification)
-        .length;
-    unawaited(_notifications.syncActiveSessionSummary(visibleCount));
+    // WebSocket state updates UI only. FCM owns Android notifications.
   }
 
   String _sessionTitleFor(String sessionId, {String? serverId}) {
@@ -1156,7 +894,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     if (sessionId == null || sessionId.isEmpty) return;
     final sid = serverId ?? _connMgr.activeServerId ?? '';
-    _cancelSessionCompletionFallback(sessionId, serverId: sid);
     final config = sid.isEmpty
         ? null
         : _serverConfigs.where((c) => c.id == sid).firstOrNull;
@@ -1186,8 +923,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return info.serverId == serverId;
     }).toList();
     for (final key in matchingKeys) {
-      final info = _runningSessionNotifications.remove(key);
-      if (info != null) _scheduleSessionCompletionFallback(info);
+      _runningSessionNotifications.remove(key);
     }
     _syncOngoingSessionNotifications();
   }
@@ -1202,11 +938,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final sid = serverId ?? '';
     final prefix = '$sid\u0001';
-    final previous = Map<String, _RunningSessionInfo>.fromEntries(
-      _runningSessionNotifications.entries.where(
-        (entry) => entry.key.startsWith(prefix),
-      ),
-    );
     _runningSessionNotifications.removeWhere(
       (key, _) => key.startsWith(prefix),
     );
@@ -1223,54 +954,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sync: false,
       );
     }
-    for (final entry in previous.entries) {
-      if (!_runningSessionNotifications.containsKey(entry.key)) {
-        _scheduleSessionCompletionFallback(entry.value);
-      }
-    }
     _syncOngoingSessionNotifications();
-    unawaited(
-      _reconcileAuthoritativeRunningNotifications(
-        serverId: sid,
-        runningSessionIds: runningSessionIds,
-      ),
-    );
-  }
-
-  Future<void> _reconcileAuthoritativeRunningNotifications({
-    required String serverId,
-    required Set<String> runningSessionIds,
-  }) async {
-    final expectedNotificationIds = <int>{};
-    for (final sessionId in runningSessionIds) {
-      final info =
-          _runningSessionNotifications[
-            _runningSessionKey(serverId, sessionId)
-          ];
-      if (info != null && _shouldShowOngoingSessionNotification(info)) {
-        expectedNotificationIds.add(
-          _sessionOngoingNotificationId(sessionId, serverId: serverId),
-        );
-      }
-    }
-    final recovered = await _notifications
-        .removeStaleActiveSessionsForServer(
-          serverId: serverId,
-          expectedNotificationIds: expectedNotificationIds,
-        );
-    for (final notification in recovered) {
-      final key = _runningSessionKey(serverId, notification.sessionId);
-      if (_runningSessionNotifications.containsKey(key)) continue;
-      _scheduleSessionCompletionFallback(
-        _RunningSessionInfo(
-          sessionId: notification.sessionId,
-          serverId: serverId,
-          serverName: '',
-          title: notification.title,
-        ),
-        delay: const Duration(seconds: 1),
-      );
-    }
   }
 
   bool _shouldDisplayForegroundPushNotification(Map<String, dynamic> data) {
@@ -1279,25 +963,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final serverId = data['serverId'] as String?;
     final kind = data['kind'] as String? ?? '';
     if (_notifMutedSessions.contains(sessionId)) return false;
-    if (kind == 'session_finished') {
-      _cancelSessionCompletionFallback(sessionId, serverId: serverId);
-    }
-    if (kind == 'session_finished' &&
-        _hasRecentLocalInstantNotification(
-          'session_finished',
-          sessionId,
-          serverId: serverId,
-        )) {
-      return false;
-    }
-    if (kind == 'tool_notification' &&
-        _hasRecentLocalInstantNotification(
-          'tool_notification',
-          sessionId,
-          serverId: serverId,
-        )) {
-      return false;
-    }
     if (kind == 'tool_notification') return true;
     if (kind == 'session_started' || kind == 'session_running') return true;
     if (kind == 'session_finished') return true;
@@ -3551,30 +3216,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  String _resultNotificationBody(
-    Map<String, dynamic> msg,
-    String sessionId, {
-    String? serverId,
-  }) {
-    final errors = (msg['errors'] as List?)?.whereType<String>().toList() ?? [];
-    final errorText = errors.join('\n').trim();
-    if (errorText.isNotEmpty) {
-      return errorText.length > 200
-          ? '${errorText.substring(0, 200)}...'
-          : errorText;
-    }
-
-    final content = (msg['content'] as String? ?? '').trim();
-    if (content.isNotEmpty) {
-      return _notificationPreview(content, fallback: 'Query complete');
-    }
-    return _latestAgentNotificationBody(
-      sessionId,
-      serverId: serverId,
-      fallback: 'Query complete',
-    );
-  }
-
   bool _handleNotificationOnlyServerMessage(
     String type,
     Map<String, dynamic> msg,
@@ -3602,12 +3243,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final sessionId = msg['sessionId'] as String? ?? '';
         if (sessionId.isEmpty) return true;
         _markSessionIdle(sessionId, serverId: serverId);
-        _showSessionCompletionNotification(
-          sessionId,
-          serverId: serverId,
-          title: _sessionTitleFor(sessionId, serverId: serverId),
-          body: _resultNotificationBody(msg, sessionId, serverId: serverId),
-        );
         return true;
     }
     return false;
@@ -5040,50 +4675,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         break;
       case 'scheduled_task_notification':
-          final title = msg['title'] as String? ?? 'Scheduled Task';
-          final status = msg['status'] as String? ?? '';
-          final isManual = status == 'manual';
-          final isLifecycleStart =
-              status == 'started' ||
-              status == 'running' ||
-              (!isManual && title.toLowerCase().contains('started'));
-          if (isLifecycleStart) {
-            break;
-          }
-          final body = msg['body'] as String? ?? '';
           final sid = msg['sessionId'] as String? ?? '';
           if (msg['sessionCompletion'] == true && sid.isNotEmpty) {
             _markSessionIdle(sid, serverId: serverId);
-            _showSessionCompletionNotification(
-              sid,
-              serverId: serverId,
-              title: title,
-              body: body,
-            );
-            break;
           }
-          if (sid.isNotEmpty) {
-            _recordLocalInstantNotification(
-              'tool_notification',
-              sid,
-              serverId: serverId,
-            );
-          }
-          _notifications.showInstant(
-            id: sid.isNotEmpty
-                ? NotificationService.sessionAlertId(
-                    sid,
-                    serverId: serverId,
-                    kind: 'scheduled_task',
-                  )
-                : NotificationService.stableId(title),
-            title: title,
-            body: body,
-            payload: sid.isNotEmpty
-                ? 'session:${Uri.encodeComponent(sid)}'
-                      '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}'
-                : null,
-          );
           break;
         case 'upload_complete':
         final uploadId = msg['uploadId'] as String?;
@@ -6192,17 +5787,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     applyTranscriptPosition(questionMessage, msg);
     _messages.add(questionMessage);
-    // Use the first question's text as notification body
-    String questionBody = 'Your agent needs your input';
-    if (questions.isNotEmpty) {
-      final qText = questions[0].question;
-      if (qText.isNotEmpty) {
-        questionBody = qText.length > 200
-            ? '${qText.substring(0, 200)}...'
-            : qText;
-      }
-    }
-    _maybeNotify(title: _sessionTitle(), body: questionBody);
     notifyListeners();
   }
 
@@ -6234,10 +5818,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     applyTranscriptPosition(secureMessage, msg);
     _messages.add(secureMessage);
-    _maybeNotify(
-      title: _sessionTitle(),
-      body: 'Secure input requested: $label',
-    );
     refreshSecretInventory();
     notifyListeners();
   }
@@ -6519,14 +6099,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         m.isPending = false;
       }
     }
-    _maybeNotify(
-      title: _sessionTitle(),
-      body: _resultNotificationBody(
-        msg,
-        _activeSessionId ?? '',
-        serverId: _connMgr.activeServerId,
-      ),
-    );
     if (msg['usage'] != null) {
       _lastUsage = Map<String, dynamic>.from(msg['usage'] as Map);
       _lastUsage!['costUsd'] = msg['costUsd'];
@@ -13069,10 +12641,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _backendInstallAckTimers.clear();
-    for (final timer in _sessionCompletionFallbackTimers.values) {
-      timer.cancel();
-    }
-    _sessionCompletionFallbackTimers.clear();
     for (final timer in _scheduledTaskRefreshRetries.values) {
       timer.cancel();
     }

@@ -51,6 +51,30 @@ void main() {
     );
   });
 
+  test('FCM event ids are stable per event and distinct across events', () {
+    final first = PushNotificationService.notificationIdForData({
+      'kind': 'tool_notification',
+      'sessionId': sessionId,
+      'serverId': serverId,
+      'eventId': 'event-1',
+    }, 'Session');
+    final replay = PushNotificationService.notificationIdForData({
+      'kind': 'tool_notification',
+      'sessionId': sessionId,
+      'serverId': serverId,
+      'eventId': 'event-1',
+    }, 'Session');
+    final next = PushNotificationService.notificationIdForData({
+      'kind': 'tool_notification',
+      'sessionId': sessionId,
+      'serverId': serverId,
+      'eventId': 'event-2',
+    }, 'Session');
+
+    expect(replay, first);
+    expect(next, isNot(first));
+  });
+
   test('active and completed sessions use separate Android groups', () {
     expect(
       NotificationService.activeSessionsGroup,
