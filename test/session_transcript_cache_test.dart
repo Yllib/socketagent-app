@@ -2,6 +2,29 @@ import 'package:app/services/session_transcript_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('rejects pre-backfill transcript caches during upgrade', () {
+    expect(
+      isCurrentTranscriptCacheEnvelope({
+        'schemaVersion': 1,
+        'payload': {
+          'offset': 100,
+          'total': 200,
+          'messages': [
+            {'entryId': 'latest', 'sessionSeq': 200, 'role': 'assistant'},
+          ],
+        },
+      }),
+      isFalse,
+    );
+    expect(
+      isCurrentTranscriptCacheEnvelope({
+        'schemaVersion': SessionTranscriptCache.schemaVersion,
+        'payload': const <String, dynamic>{},
+      }),
+      isTrue,
+    );
+  });
+
   test('merges an older page without losing the newer cached tail', () {
     final merged = mergeTranscriptCachePayloads(
       {

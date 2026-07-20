@@ -54,7 +54,12 @@ Map<String, dynamic> mergeTranscriptCachePayloads(
 }
 
 class SessionTranscriptCache {
-  static const int schemaVersion = 1;
+  // Schema 1 snapshots may contain a current tail sequence while still
+  // missing intervening entries. They predate automatic recent-prompt
+  // backfill, so accepting them can make the server return an empty delta and
+  // permanently hide those prompts. Bump the schema to force one
+  // authoritative resume and rebuild a contiguous cache.
+  static const int schemaVersion = 2;
   static const int maxSnapshots = 10;
   static const int maxSnapshotBytes = 2 * 1024 * 1024;
 
@@ -101,7 +106,7 @@ class SessionTranscriptCache {
       final file = File('${directory.path}/${_fileName(key)}');
       if (!await file.exists()) return null;
       final decoded = jsonDecode(await file.readAsString());
-      if (decoded is! Map || decoded['schemaVersion'] != schemaVersion) {
+      if (!isCurrentTranscriptCacheEnvelope(decoded)) {
         await file.delete().catchError((_) => file);
         return null;
       }
@@ -208,4 +213,9 @@ class SessionTranscriptCache {
       await stale.file.delete().catchError((_) => stale.file);
     }
   }
+}
+
+bool isCurrentTranscriptCacheEnvelope(Object? decoded) {
+  return decoded is Map &&
+      decoded['schemaVersion'] == SessionTranscriptCache.schemaVersion;
 }
