@@ -7,6 +7,7 @@ import 'services/chat_provider.dart';
 import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/session_deep_link.dart';
+import 'models/notification_navigation.dart';
 import 'screens/main_shell_screen.dart';
 import 'screens/home_screen.dart';
 
@@ -61,6 +62,9 @@ class _AppLauncherState extends State<AppLauncher>
   bool _checked = false;
   bool _splashDone = false;
   late final AnimationController _fadeController;
+  final GlobalKey<MainShellScreenState> _mainShellKey = GlobalKey();
+  NotificationParentDestination _mainShellDestination =
+      NotificationParentDestination.sessions;
 
   @override
   void initState() {
@@ -229,15 +233,33 @@ class _AppLauncherState extends State<AppLauncher>
       _openDownloadDefault(download);
       return;
     }
-    final parsed = _parseSessionPayload(payload);
+    final parsed = parseNotificationNavigationPayload(payload);
     if (parsed == null) return;
 
     final provider = context.read<ChatProvider>();
-    provider.resumeSessionFromNotification(
-      parsed.sessionId,
-      serverId: parsed.serverId,
-    );
-    _navigateToHome(false);
+    final sessionId = parsed.sessionId;
+    var parent = parsed.parent;
+    if (sessionId != null &&
+        parent == NotificationParentDestination.sessions &&
+        scheduledTasksContainSession(
+          provider.scheduledTasks,
+          sessionId,
+          serverId: parsed.serverId,
+        )) {
+      parent = NotificationParentDestination.scheduledTasks;
+    }
+    _showNotificationParent(parent);
+    if (sessionId == null) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      return;
+    }
+    if (provider.activeSessionId != sessionId) {
+      provider.resumeSessionFromNotification(
+        sessionId,
+        serverId: parsed.serverId,
+      );
+    }
+    _navigateToNotificationSession();
   }
 
   void _handleNotificationAction(String payload) {
@@ -302,7 +324,8 @@ class _AppLauncherState extends State<AppLauncher>
       sessionId,
       serverId: download['serverId'],
     );
-    _navigateToHome(false);
+    _showNotificationParent(NotificationParentDestination.sessions);
+    _navigateToNotificationSession();
   }
 
   Map<String, String>? _parseDownloadPayload(String payload) {
@@ -322,16 +345,16 @@ class _AppLauncherState extends State<AppLauncher>
     }
   }
 
-  _SessionNotificationPayload? _parseSessionPayload(String payload) {
-    if (payload.startsWith('session_')) {
-      return _SessionNotificationPayload(payload.substring('session_'.length));
-    }
-    if (!payload.startsWith('session:')) return null;
-    final parts = payload.split(':');
-    if (parts.length < 2) return null;
-    return _SessionNotificationPayload(
-      Uri.decodeComponent(parts[1]),
-      serverId: parts.length >= 3 ? Uri.decodeComponent(parts[2]) : null,
+  void _showNotificationParent(NotificationParentDestination destination) {
+    _mainShellDestination = destination;
+    _mainShellKey.currentState?.showNotificationParent(destination);
+  }
+
+  void _navigateToNotificationSession() {
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const HomeScreen()),
+      (route) => route.isFirst,
     );
   }
 
@@ -348,7 +371,15 @@ class _AppLauncherState extends State<AppLauncher>
     return Stack(
       children: [
         // Main app content (renders behind splash)
-        if (_checked) const MainShellScreen(),
+        if (_checked)
+          MainShellScreen(
+            key: _mainShellKey,
+            initialIndex:
+                _mainShellDestination ==
+                    NotificationParentDestination.scheduledTasks
+                ? MainShellScreenState.scheduledTasksIndex
+                : MainShellScreenState.sessionsIndex,
+          ),
 
         // Splash overlay — fades out once ready
         if (!_splashDone)
@@ -400,11 +431,4 @@ class _AppLauncherState extends State<AppLauncher>
       ),
     );
   }
-}
-
-class _SessionNotificationPayload {
-  final String sessionId;
-  final String? serverId;
-
-  _SessionNotificationPayload(this.sessionId, {this.serverId});
 }

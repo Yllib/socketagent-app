@@ -5,13 +5,16 @@ import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
 import '../services/update_service.dart';
 import '../services/websocket_service.dart';
+import '../models/notification_navigation.dart';
 import 'sessions_screen.dart';
 import 'scheduled_tasks_screen.dart';
 import 'settings/settings_v2_screen.dart';
 import 'paywall_screen.dart';
 
 class MainShellScreen extends StatefulWidget {
-  const MainShellScreen({super.key});
+  const MainShellScreen({super.key, this.initialIndex = 0});
+
+  final int initialIndex;
 
   @override
   State<MainShellScreen> createState() => MainShellScreenState();
@@ -19,9 +22,11 @@ class MainShellScreen extends StatefulWidget {
 
 class MainShellScreenState extends State<MainShellScreen>
     with RouteAware, WidgetsBindingObserver {
+  static const sessionsIndex = 0;
+  static const scheduledTasksIndex = 1;
   static const _updateCheckInterval = Duration(minutes: 5);
   static const _foregroundUpdateThrottle = Duration(minutes: 1);
-  int _currentIndex = 0;
+  late int _currentIndex;
   StreamSubscription? _subRequiredSub;
   StreamSubscription? _backendAuthRequiredSub;
   Future<bool>? _paywallFuture;
@@ -36,6 +41,7 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void initState() {
     super.initState();
+    _currentIndex = widget.initialIndex.clamp(0, 2).toInt();
     WidgetsBinding.instance.addObserver(this);
     _updateService.addListener(_onUpdateChange);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -216,6 +222,14 @@ class MainShellScreenState extends State<MainShellScreen>
       _scheduledTaskRefreshTimer?.cancel();
       _scheduledTaskRefreshTimer = null;
     }
+  }
+
+  void showNotificationParent(NotificationParentDestination destination) {
+    _onTabChanged(
+      destination == NotificationParentDestination.scheduledTasks
+          ? scheduledTasksIndex
+          : sessionsIndex,
+    );
   }
 
   void _startScheduledTaskRefresh() {

@@ -151,10 +151,16 @@ class PushNotificationService {
 
   static String? payloadForData(Map<String, dynamic> data) {
     final sessionId = data['sessionId'] as String?;
-    if (sessionId == null || sessionId.isEmpty) return null;
     final serverId = data['serverId'] as String?;
+    final scheduledTarget = data['navigationTarget'] == 'scheduled_tasks';
+    if (sessionId == null || sessionId.isEmpty) {
+      if (!scheduledTarget) return null;
+      return 'scheduled_tasks'
+          '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}';
+    }
     return 'session:${Uri.encodeComponent(sessionId)}'
-        '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}';
+        '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : scheduledTarget ? ':' : ''}'
+        '${scheduledTarget ? ':scheduled_tasks' : ''}';
   }
 
   static int notificationIdForData(Map<String, dynamic> data, String title) {
