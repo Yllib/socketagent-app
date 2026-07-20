@@ -3,6 +3,56 @@ import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
 
+Map<String, dynamic> mergeTranscriptCachePayloads(
+  Map<String, dynamic> current,
+  Map<String, dynamic> incoming,
+) {
+  final mergedByIdentity = <String, Map<String, dynamic>>{};
+  final identityOrder = <String>[];
+  var unsequencedIndex = 0;
+
+  for (final raw in <dynamic>[
+    ...?(current['messages'] as List?),
+    ...?(incoming['messages'] as List?),
+  ]) {
+    if (raw is! Map) continue;
+    final entry = Map<String, dynamic>.from(raw);
+    final entryId = entry['entryId']?.toString() ?? '';
+    final sequence = (entry['sessionSeq'] as num?)?.toInt();
+    final key = entryId.isNotEmpty
+        ? 'entry:$entryId'
+        : sequence != null
+        ? 'seq:$sequence:${entry['role']}:${entry['toolUseId'] ?? ''}:${entry['uuid'] ?? ''}'
+        : 'unsequenced:${unsequencedIndex++}';
+    if (!mergedByIdentity.containsKey(key)) identityOrder.add(key);
+    mergedByIdentity[key] = entry;
+  }
+
+  final mergedEntries =
+      identityOrder.map((key) => mergedByIdentity[key]!).toList()
+        ..sort((left, right) {
+          final leftSequence = (left['sessionSeq'] as num?)?.toInt();
+          final rightSequence = (right['sessionSeq'] as num?)?.toInt();
+          if (leftSequence == null || rightSequence == null) return 0;
+          return leftSequence.compareTo(rightSequence);
+        });
+  final currentOffset = (current['offset'] as num?)?.toInt();
+  final incomingOffset = (incoming['offset'] as num?)?.toInt();
+  final mergedOffset = switch ((currentOffset, incomingOffset)) {
+    (final int left, final int right) => left < right ? left : right,
+    (final int left, null) => left,
+    (null, final int right) => right,
+    _ => 0,
+  };
+
+  return Map<String, dynamic>.from(current)
+    ..addAll(incoming)
+    ..remove('requestId')
+    ..['messages'] = mergedEntries
+    ..['offset'] = mergedOffset
+    ..['historyKind'] = 'initial';
+}
+
 class SessionTranscriptCache {
   static const int schemaVersion = 1;
   static const int maxSnapshots = 10;
@@ -120,31 +170,26 @@ class SessionTranscriptCache {
     final current =
         peek(serverId, sessionId) ?? await load(serverId, sessionId);
     if (current == null) return;
-    final bySequence = <int, Map<String, dynamic>>{};
-    final withoutSequence = <Map<String, dynamic>>[];
-    for (final raw in <dynamic>[
-      ...?(current['messages'] as List?),
-      ...?(delta['messages'] as List?),
-    ]) {
-      if (raw is! Map) continue;
-      final entry = Map<String, dynamic>.from(raw);
-      final sequence = (entry['sessionSeq'] as num?)?.toInt();
-      if (sequence == null) {
-        withoutSequence.add(entry);
-      } else {
-        bySequence[sequence] = entry;
-      }
-    }
-    final sequenced = bySequence.entries.toList()
-      ..sort((left, right) => left.key.compareTo(right.key));
-    final merged = Map<String, dynamic>.from(current)
-      ..['messages'] = [
-        ...withoutSequence,
-        ...sequenced.map((entry) => entry.value),
-      ]
-      ..['total'] = delta['total'] ?? current['total']
-      ..['historyKind'] = 'initial';
-    await save(serverId, sessionId, merged);
+    await save(
+      serverId,
+      sessionId,
+      mergeTranscriptCachePayloads(current, delta),
+    );
+  }
+
+  Future<void> mergeOlderPage(
+    String serverId,
+    String sessionId,
+    Map<String, dynamic> olderPage,
+  ) async {
+    final current =
+        peek(serverId, sessionId) ?? await load(serverId, sessionId);
+    if (current == null) return;
+    await save(
+      serverId,
+      sessionId,
+      mergeTranscriptCachePayloads(current, olderPage),
+    );
   }
 
   Future<void> _prune(Directory directory) async {

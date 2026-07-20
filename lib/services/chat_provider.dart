@@ -564,10 +564,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isRefreshingHistory = false;
   bool _isLoadingMore = false;
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
-  // The server deliberately bounds the first history paint. When that page
-  // stops after the latest user prompt, keep paging in the background until
-  // the prompt is present so opening a busy turn never requires repeated taps.
-  bool _autoBackfillToPrompt = false;
+  // The server deliberately bounds the first history paint. Keep paging after
+  // that paint until a useful recent conversation window is present.
+  bool _autoBackfillRecentPrompts = false;
+  int _historyBackfillTargetUserPrompts = 1;
   String? _initialHistoryRequestId;
   String? _olderHistoryRequestId;
   int _historyRequestSequence = 0;
@@ -7890,13 +7890,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     loaded = _dedupeLoadedHistory(loaded);
-    final pageContainsUserPrompt = loaded.any(
-      (message) =>
-          message.sender == MessageSender.user &&
-          (message.type == MessageType.text ||
-              message.type == MessageType.skillInvocation),
-    );
-
     // Appends add newer events and must not move the boundary of the oldest
     // page already in memory. Moving it here makes the next pagination request
     // fetch a recent/duplicate slice instead of the preceding page.
@@ -8029,25 +8022,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
         }
       }
+    } else if (isPrepend) {
+      final ownerServerId = serverId ?? _activeSessionServerId ?? '';
+      if (historySessionId != null && ownerServerId.isNotEmpty) {
+        unawaited(
+          _transcriptCache.mergeOlderPage(ownerServerId, historySessionId, msg),
+        );
+      }
     }
 
-    if (isPrepend) {
-      _autoBackfillToPrompt = shouldContinueHistoryBackfill(
-        backfillActive: _autoBackfillToPrompt,
-        oldestLoadedOffset: _historyOffset,
-        olderPageContainsUserPrompt: pageContainsUserPrompt,
+    if ((decision.kind == SessionHistoryKind.initial || isDelta) &&
+        msg['totalUserPrompts'] is num) {
+      _historyBackfillTargetUserPrompts = recentUserPromptBackfillTarget(
+        (msg['totalUserPrompts'] as num).toInt(),
       );
-    } else if (decision.kind == SessionHistoryKind.initial || isDelta) {
-      final transcriptContainsUserPrompt = _messages.any(
-        (message) =>
-            message.sender == MessageSender.user &&
-            (message.type == MessageType.text ||
-                message.type == MessageType.skillInvocation),
-      );
-      _autoBackfillToPrompt = shouldBackfillInitialHistory(
+    }
+    if (isPrepend || decision.kind == SessionHistoryKind.initial || isDelta) {
+      _autoBackfillRecentPrompts = shouldBackfillRecentHistory(
         oldestLoadedOffset: _historyOffset,
-        deferredContextAvailable: msg['deferredContextAvailable'] == true,
-        transcriptContainsUserPrompt: transcriptContainsUserPrompt,
+        deferredContextAvailable:
+            !isPrepend && msg['deferredContextAvailable'] == true,
+        loadedUserPrompts: _messages.where(_isUserPromptMessage).length,
+        targetUserPrompts: _historyBackfillTargetUserPrompts,
       );
     }
     _ensurePendingHardStopCard(
@@ -8060,14 +8056,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Wait for that network reply before paginating so the two request
     // generations cannot race each other.
     if (!fromCache &&
-        _autoBackfillToPrompt &&
+        _autoBackfillRecentPrompts &&
         !_isLoadingMore &&
         _historyOffset > 0) {
       final sessionId = _activeSessionId;
       // Yield one event-loop turn so the bounded page paints before any
       // potentially large older page is requested and parsed.
       Timer.run(() {
-        if (_activeSessionId != sessionId || !_autoBackfillToPrompt) return;
+        if (_activeSessionId != sessionId || !_autoBackfillRecentPrompts) {
+          return;
+        }
         loadMoreHistory();
       });
     }
@@ -8187,6 +8185,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isPendingLocalUserPrompt(ChatMessage message) {
     return _pendingLocalUserMessageIds.contains(message.id) &&
         message.sender == MessageSender.user &&
+        (message.type == MessageType.text ||
+            message.type == MessageType.skillInvocation);
+  }
+
+  bool _isUserPromptMessage(ChatMessage message) {
+    return message.sender == MessageSender.user &&
         (message.type == MessageType.text ||
             message.type == MessageType.skillInvocation);
   }
@@ -10129,7 +10133,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _isRefreshingHistory = false;
     _historyOffset = 0;
     _isLoadingMore = false;
-    _autoBackfillToPrompt = false;
+    _autoBackfillRecentPrompts = false;
+    _historyBackfillTargetUserPrompts = 1;
     final historyRequestId = _beginInitialHistoryRequest(sessionId);
     _sessionModel = null;
     _supportedModels = [];

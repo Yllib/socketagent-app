@@ -2,31 +2,44 @@ import 'package:app/models/history_backfill.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('starts background paging when the latest prompt was deferred', () {
+  test(
+    'targets the latest few prompts without exhausting one-prompt sessions',
+    () {
+      expect(recentUserPromptBackfillTarget(null), 1);
+      expect(recentUserPromptBackfillTarget(1), 1);
+      expect(recentUserPromptBackfillTarget(2), 2);
+      expect(recentUserPromptBackfillTarget(20), 3);
+    },
+  );
+
+  test('starts background paging when recent prompts were deferred', () {
     expect(
-      shouldBackfillInitialHistory(
+      shouldBackfillRecentHistory(
         oldestLoadedOffset: 120,
         deferredContextAvailable: true,
-        transcriptContainsUserPrompt: false,
+        loadedUserPrompts: 0,
+        targetUserPrompts: 3,
       ),
       isTrue,
     );
   });
 
-  test('continues older pages until one contains a user prompt', () {
+  test('continues older pages until the recent prompt target is loaded', () {
     expect(
-      shouldContinueHistoryBackfill(
-        backfillActive: true,
+      shouldBackfillRecentHistory(
         oldestLoadedOffset: 70,
-        olderPageContainsUserPrompt: false,
+        deferredContextAvailable: false,
+        loadedUserPrompts: 2,
+        targetUserPrompts: 3,
       ),
       isTrue,
     );
     expect(
-      shouldContinueHistoryBackfill(
-        backfillActive: true,
+      shouldBackfillRecentHistory(
         oldestLoadedOffset: 20,
-        olderPageContainsUserPrompt: true,
+        deferredContextAvailable: false,
+        loadedUserPrompts: 3,
+        targetUserPrompts: 3,
       ),
       isFalse,
     );
@@ -34,10 +47,11 @@ void main() {
 
   test('stops at the beginning of history even without a prompt', () {
     expect(
-      shouldContinueHistoryBackfill(
-        backfillActive: true,
+      shouldBackfillRecentHistory(
         oldestLoadedOffset: 0,
-        olderPageContainsUserPrompt: false,
+        deferredContextAvailable: true,
+        loadedUserPrompts: 0,
+        targetUserPrompts: 3,
       ),
       isFalse,
     );

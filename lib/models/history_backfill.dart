@@ -1,18 +1,16 @@
-bool shouldBackfillInitialHistory({
-  required int oldestLoadedOffset,
-  required bool deferredContextAvailable,
-  required bool transcriptContainsUserPrompt,
-}) {
-  return oldestLoadedOffset > 0 &&
-      (deferredContextAvailable || !transcriptContainsUserPrompt);
+const int desiredRecentUserPrompts = 3;
+
+int recentUserPromptBackfillTarget(int? totalUserPrompts) {
+  if (totalUserPrompts == null) return 1;
+  return totalUserPrompts.clamp(0, desiredRecentUserPrompts);
 }
 
-bool shouldContinueHistoryBackfill({
-  required bool backfillActive,
+bool shouldBackfillRecentHistory({
   required int oldestLoadedOffset,
-  required bool olderPageContainsUserPrompt,
+  required bool deferredContextAvailable,
+  required int loadedUserPrompts,
+  required int targetUserPrompts,
 }) {
-  return backfillActive &&
-      oldestLoadedOffset > 0 &&
-      !olderPageContainsUserPrompt;
+  return oldestLoadedOffset > 0 &&
+      (deferredContextAvailable || loadedUserPrompts < targetUserPrompts);
 }
