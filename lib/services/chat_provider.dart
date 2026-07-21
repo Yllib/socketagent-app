@@ -2507,14 +2507,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         serverId != null &&
         serverId == _connMgr.activeServerId) {
       final historyRequestId = _beginInitialHistoryRequest(_activeSessionId!);
-      final knownSessionSeq = _latestVisibleSessionSeq();
+      final cachedSnapshot = _transcriptCache.peek(serverId, _activeSessionId!);
+      final checkpoint = _transcriptCache.resumeCheckpoint(cachedSnapshot);
       _connMgr.sendToServer(serverId, {
         'type': 'resume_session',
         'sessionId': _activeSessionId,
         'historyRequestId': historyRequestId,
         'openTraceId': historyRequestId,
-        if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
-        if (_historyOffset > 0) 'knownHistoryOffset': _historyOffset,
+        if (checkpoint != null) ...{
+          'knownSessionSeq': checkpoint.latestSessionSeq,
+          'knownHistoryOffset': checkpoint.historyOffset,
+          'knownHistoryEntryCount': checkpoint.entryCount,
+        },
       });
       _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
     }
@@ -10178,7 +10182,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final cachedSnapshot = resolvedServerId.isEmpty
         ? null
         : _transcriptCache.peek(resolvedServerId, sessionId);
-    final knownSessionSeq = _transcriptCache.latestSessionSeq(cachedSnapshot);
+    final checkpoint = _transcriptCache.resumeCheckpoint(cachedSnapshot);
     if (cachedSnapshot != null) {
       _handleSessionHistory(
         cachedSnapshot,
@@ -10205,9 +10209,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (session?.backend != null) 'backend': session!.backend,
         'historyRequestId': historyRequestId,
         'openTraceId': historyRequestId,
-        if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
-        if (cachedSnapshot?['offset'] is num)
-          'knownHistoryOffset': cachedSnapshot!['offset'],
+        if (checkpoint != null) ...{
+          'knownSessionSeq': checkpoint.latestSessionSeq,
+          'knownHistoryOffset': checkpoint.historyOffset,
+          'knownHistoryEntryCount': checkpoint.entryCount,
+        },
       });
       _connMgr.sendToServer(targetServerId, {'type': 'get_status_sync'});
     } else {
@@ -10219,9 +10225,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (session.backend != null) 'backend': session.backend,
           'historyRequestId': historyRequestId,
           'openTraceId': historyRequestId,
-          if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
-          if (cachedSnapshot?['offset'] is num)
-            'knownHistoryOffset': cachedSnapshot!['offset'],
+          if (checkpoint != null) ...{
+            'knownSessionSeq': checkpoint.latestSessionSeq,
+            'knownHistoryOffset': checkpoint.historyOffset,
+            'knownHistoryEntryCount': checkpoint.entryCount,
+          },
         });
       } else {
         _connMgr.send({
@@ -10229,9 +10237,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'sessionId': sessionId,
           'historyRequestId': historyRequestId,
           'openTraceId': historyRequestId,
-          if (knownSessionSeq != null) 'knownSessionSeq': knownSessionSeq,
-          if (cachedSnapshot?['offset'] is num)
-            'knownHistoryOffset': cachedSnapshot!['offset'],
+          if (checkpoint != null) ...{
+            'knownSessionSeq': checkpoint.latestSessionSeq,
+            'knownHistoryOffset': checkpoint.historyOffset,
+            'knownHistoryEntryCount': checkpoint.entryCount,
+          },
         });
       }
       _connMgr.send({'type': 'get_status_sync'});
@@ -10331,15 +10341,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
     });
     return requestId;
-  }
-
-  int? _latestVisibleSessionSeq() {
-    var latest = -1;
-    for (final message in _messages) {
-      final seq = message.sessionSeq;
-      if (seq != null && seq > latest) latest = seq;
-    }
-    return latest >= 0 ? latest : null;
   }
 
   /// Check if a path exists on the server. Returns true if it exists.

@@ -54,12 +54,12 @@ Map<String, dynamic> mergeTranscriptCachePayloads(
 }
 
 class SessionTranscriptCache {
-  // Schema 1 snapshots may contain a current tail sequence while still
-  // missing intervening entries. They predate automatic recent-prompt
-  // backfill, so accepting them can make the server return an empty delta and
-  // permanently hide those prompts. Bump the schema to force one
-  // authoritative resume and rebuild a contiguous cache.
-  static const int schemaVersion = 2;
+  // A cache is only safe as a delta cursor when it contains every durable
+  // entry from offset through total. Older snapshots could retain a latest
+  // sequence while missing intervening entries, making the server return an
+  // empty delta for an incomplete phone transcript. Force one authoritative
+  // resume after upgrades that tighten these invariants.
+  static const int schemaVersion = 3;
   static const int maxSnapshots = 10;
   static const int maxSnapshotBytes = 2 * 1024 * 1024;
 
@@ -87,14 +87,41 @@ class SessionTranscriptCache {
   }
 
   int? latestSessionSeq(Map<String, dynamic>? snapshot) {
+    return resumeCheckpoint(snapshot)?.latestSessionSeq;
+  }
+
+  ({int latestSessionSeq, int historyOffset, int entryCount})? resumeCheckpoint(
+    Map<String, dynamic>? snapshot,
+  ) {
     if (snapshot == null) return null;
-    var latest = -1;
-    for (final raw in snapshot['messages'] as List? ?? const []) {
-      if (raw is! Map) continue;
-      final seq = (raw['sessionSeq'] as num?)?.toInt();
-      if (seq != null && seq > latest) latest = seq;
+    final offset = (snapshot['offset'] as num?)?.toInt();
+    final total = (snapshot['total'] as num?)?.toInt();
+    final rawMessages = snapshot['messages'] as List?;
+    if (offset == null ||
+        total == null ||
+        rawMessages == null ||
+        offset < 0 ||
+        total < offset ||
+        rawMessages.isEmpty ||
+        rawMessages.length != total - offset) {
+      return null;
     }
-    return latest >= 0 ? latest : null;
+
+    int? previousSequence;
+    for (final raw in rawMessages) {
+      if (raw is! Map) return null;
+      final sequence = (raw['sessionSeq'] as num?)?.toInt();
+      if (sequence == null ||
+          (previousSequence != null && sequence <= previousSequence)) {
+        return null;
+      }
+      previousSequence = sequence;
+    }
+    return (
+      latestSessionSeq: previousSequence!,
+      historyOffset: offset,
+      entryCount: rawMessages.length,
+    );
   }
 
   Future<Map<String, dynamic>?> load(String serverId, String sessionId) async {

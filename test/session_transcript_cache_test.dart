@@ -89,4 +89,36 @@ void main() {
     expect((merged['messages'] as List).single['content'], 'complete');
     expect(merged['offset'], 8);
   });
+
+  test('only a complete contiguous cache can be used as a resume cursor', () {
+    final cache = SessionTranscriptCache();
+    final checkpoint = cache.resumeCheckpoint({
+      'offset': 7,
+      'total': 10,
+      'messages': [
+        {'entryId': 'entry-8', 'sessionSeq': 108},
+        {'entryId': 'entry-9', 'sessionSeq': 109},
+        {'entryId': 'entry-10', 'sessionSeq': 110},
+      ],
+    });
+
+    expect(checkpoint?.latestSessionSeq, 110);
+    expect(checkpoint?.historyOffset, 7);
+    expect(checkpoint?.entryCount, 3);
+  });
+
+  test('a cache with a transcript hole cannot suppress server history', () {
+    final cache = SessionTranscriptCache();
+    final snapshot = {
+      'offset': 7,
+      'total': 10,
+      'messages': [
+        {'entryId': 'entry-8', 'sessionSeq': 108},
+        {'entryId': 'entry-10', 'sessionSeq': 110},
+      ],
+    };
+
+    expect(cache.resumeCheckpoint(snapshot), isNull);
+    expect(cache.latestSessionSeq(snapshot), isNull);
+  });
 }

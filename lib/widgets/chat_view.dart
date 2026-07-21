@@ -161,6 +161,7 @@ class ChatViewState extends State<ChatView> {
   bool _userScrolledUp = false;
   bool _isAutoScrolling = false;
   bool _userTouching = false;
+  bool _scrollMotionActive = false;
   bool _autoScrollHeldForInspection = false;
   bool _imageInspectionActive = false;
   final Set<String> _expandedImageCardIds = {};
@@ -195,9 +196,22 @@ class ChatViewState extends State<ChatView> {
     _scrollController.maintainReaderViewport =
         _userScrolledUp &&
         !_isAutoScrolling &&
+        !_userTouching &&
+        !_scrollMotionActive &&
         !_readerAnchoringSuspended &&
         !widget.isLoadingHistory &&
         !widget.isLoadingMore;
+  }
+
+  bool _handleScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification) {
+      _scrollMotionActive = true;
+      _syncReaderViewportMode();
+    } else if (notification is ScrollEndNotification) {
+      _scrollMotionActive = false;
+      _syncReaderViewportMode();
+    }
+    return false;
   }
 
   String _imageStateStorageKeyFor(ChatView source) =>
@@ -766,27 +780,30 @@ class ChatViewState extends State<ChatView> {
               _userTouching = false;
               _syncReaderViewportMode();
             },
-            child: ListView.builder(
-              controller: _scrollController,
-              reverse: true,
-              padding: const EdgeInsets.only(top: 8, bottom: 8),
-              itemCount: itemCount,
-              itemBuilder: (context, index) {
-                var reverseIndex = index;
-                // In a reverse list index zero is the visual bottom.
-                if (widget.isProcessing) {
-                  if (reverseIndex == 0) {
-                    return _buildThinkingIndicator(context);
+            child: NotificationListener<ScrollNotification>(
+              onNotification: _handleScrollNotification,
+              child: ListView.builder(
+                controller: _scrollController,
+                reverse: true,
+                padding: const EdgeInsets.only(top: 8, bottom: 8),
+                itemCount: itemCount,
+                itemBuilder: (context, index) {
+                  var reverseIndex = index;
+                  // In a reverse list index zero is the visual bottom.
+                  if (widget.isProcessing) {
+                    if (reverseIndex == 0) {
+                      return _buildThinkingIndicator(context);
+                    }
+                    reverseIndex--;
                   }
-                  reverseIndex--;
-                }
-                if (reverseIndex < visibleMessages.length) {
-                  final msgIndex = visibleMessages.length - 1 - reverseIndex;
-                  return _buildMessageWidget(visibleMessages[msgIndex]);
-                }
-                // The final reverse-list item is the visual top.
-                return _buildLoadMoreButton(context);
-              },
+                  if (reverseIndex < visibleMessages.length) {
+                    final msgIndex = visibleMessages.length - 1 - reverseIndex;
+                    return _buildMessageWidget(visibleMessages[msgIndex]);
+                  }
+                  // The final reverse-list item is the visual top.
+                  return _buildLoadMoreButton(context);
+                },
+              ),
             ),
           ),
         ),

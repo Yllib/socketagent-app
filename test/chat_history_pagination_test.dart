@@ -93,6 +93,51 @@ void main() {
       closeTo(distanceFromOldestBefore, 0.5),
     );
   });
+
+  testWidgets('streaming text does not fight an active reader drag', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 40,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final scrollable = find.byType(Scrollable).first;
+    final position = tester.state<ScrollableState>(scrollable).position;
+    key.currentState!.appendStreamingText(30);
+    await tester.pump();
+    position.jumpTo(40);
+    await tester.pump();
+
+    final gesture = await tester.startGesture(tester.getCenter(scrollable));
+    await gesture.moveBy(const Offset(0, 80));
+    await tester.pump();
+    final pixelsDuringDrag = position.pixels;
+
+    key.currentState!.appendStreamingText(30);
+    await tester.pump();
+
+    expect(position.pixels, closeTo(pixelsDuringDrag, 0.5));
+
+    await gesture.up();
+    await tester.pumpAndSettle();
+    final distanceFromOldestBefore = position.maxScrollExtent - position.pixels;
+
+    key.currentState!.appendStreamingText(30);
+    await tester.pump();
+
+    expect(
+      position.maxScrollExtent - position.pixels,
+      closeTo(distanceFromOldestBefore, 0.5),
+    );
+  });
 }
 
 class _HistoryHarness extends StatefulWidget {
