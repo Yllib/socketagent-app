@@ -58,6 +58,41 @@ void main() {
 
     expect(position.pixels, closeTo(anchoredPixels, 0.5));
   });
+
+  testWidgets('streaming text preserves the viewport while the reader is up', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 40,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    key.currentState!.appendStreamingText(30);
+    await tester.pump();
+    position.jumpTo(40);
+    await tester.pump();
+    final distanceFromOldestBefore = position.maxScrollExtent - position.pixels;
+    final pixelsBefore = position.pixels;
+
+    key.currentState!.appendStreamingText(30);
+    await tester.pump();
+
+    expect(position.pixels, greaterThan(pixelsBefore));
+    expect(
+      position.maxScrollExtent - position.pixels,
+      closeTo(distanceFromOldestBefore, 0.5),
+    );
+  });
 }
 
 class _HistoryHarness extends StatefulWidget {
@@ -119,6 +154,25 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
       ];
       isLoadingMore = false;
       hasMoreHistory = false;
+    });
+  }
+
+  void appendStreamingText(int lineCount) {
+    final previous = messages.last;
+    setState(() {
+      messages = [
+        ...messages.take(messages.length - 1),
+        ChatMessage(
+          id: previous.id,
+          sender: previous.sender,
+          type: previous.type,
+          timestamp: previous.timestamp,
+          textContent:
+              '${previous.textContent}\n${List.generate(lineCount, (index) => 'Streaming line $index').join('\n')}',
+          streamId: 'streaming-tail',
+          revision: previous.revision + 1,
+        ),
+      ];
     });
   }
 

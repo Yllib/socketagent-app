@@ -26,6 +26,73 @@ import 'secure_input_card.dart';
 import 'html_plan_card.dart';
 import '../models/composer_attachment.dart';
 
+/// A reverse chat list lays its newest row out from the visual bottom. When
+/// that row grows, Flutter normally keeps the numeric scroll offset unchanged,
+/// which moves the text a reader is looking at upward. While follow mode is
+/// disabled, compensate by the content-extent delta during layout so the same
+/// pixels remain under the reader's eyes without a post-frame jump.
+class _ReaderAnchoredScrollController extends ScrollController {
+  bool maintainReaderViewport = false;
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) {
+    return _ReaderAnchoredScrollPosition(
+      physics: physics,
+      context: context,
+      initialPixels: initialScrollOffset,
+      keepScrollOffset: keepScrollOffset,
+      oldPosition: oldPosition,
+      debugLabel: debugLabel,
+      controller: this,
+    );
+  }
+}
+
+class _ReaderAnchoredScrollPosition extends ScrollPositionWithSingleContext {
+  static const double _extentEpsilon = 0.01;
+
+  _ReaderAnchoredScrollPosition({
+    required super.physics,
+    required super.context,
+    super.initialPixels,
+    super.keepScrollOffset,
+    super.oldPosition,
+    super.debugLabel,
+    required this.controller,
+  });
+
+  final _ReaderAnchoredScrollController controller;
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final previousMax = hasContentDimensions ? this.maxScrollExtent : null;
+    final previousPixels = hasContentDimensions ? pixels : null;
+    final accepted = super.applyContentDimensions(
+      minScrollExtent,
+      maxScrollExtent,
+    );
+
+    if (controller.maintainReaderViewport &&
+        previousMax != null &&
+        previousPixels != null) {
+      final extentDelta = maxScrollExtent - previousMax;
+      if (extentDelta.abs() > _extentEpsilon) {
+        final target = (previousPixels + extentDelta)
+            .clamp(minScrollExtent, maxScrollExtent)
+            .toDouble();
+        if ((target - pixels).abs() > _extentEpsilon) {
+          correctPixels(target);
+        }
+      }
+    }
+    return accepted;
+  }
+}
+
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final String? sessionStorageKey;
@@ -88,8 +155,9 @@ class ChatView extends StatefulWidget {
 
 class ChatViewState extends State<ChatView> {
   static final Map<String, Set<String>> _expandedImageCardsBySession = {};
+  static const double _bottomFollowTolerance = 24;
 
-  final ScrollController _scrollController = ScrollController();
+  late final _ReaderAnchoredScrollController _scrollController;
   bool _userScrolledUp = false;
   bool _isAutoScrolling = false;
   bool _userTouching = false;
@@ -109,6 +177,7 @@ class ChatViewState extends State<ChatView> {
   double? _historyLoadAnchorPixels;
   bool _historyLoadUserInteracted = false;
   bool _historyPrefetchScheduled = false;
+  bool _readerAnchoringSuspended = false;
 
   bool get _hasActiveImageInspection =>
       _imageInspectionActive || _expandedImageCardIds.isNotEmpty;
@@ -116,9 +185,19 @@ class ChatViewState extends State<ChatView> {
   @override
   void initState() {
     super.initState();
+    _scrollController = _ReaderAnchoredScrollController();
     _restoreExpandedImageState();
     _knownPendingInteractionKeys = pendingInteractionKeys(widget.messages);
     _scrollController.addListener(_onScroll);
+  }
+
+  void _syncReaderViewportMode() {
+    _scrollController.maintainReaderViewport =
+        _userScrolledUp &&
+        !_isAutoScrolling &&
+        !_readerAnchoringSuspended &&
+        !widget.isLoadingHistory &&
+        !widget.isLoadingMore;
   }
 
   String _imageStateStorageKeyFor(ChatView source) =>
@@ -142,7 +221,8 @@ class ChatViewState extends State<ChatView> {
     if (!_scrollController.hasClients || _isAutoScrolling) return;
     final pos = _scrollController.position;
     final distanceFromBottom = pos.pixels - pos.minScrollExtent;
-    _userScrolledUp = distanceFromBottom > 150;
+    _userScrolledUp = distanceFromBottom > _bottomFollowTolerance;
+    _syncReaderViewportMode();
     _collapseExpandedImagesFarFromViewport();
     if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
       _autoScrollHeldForInspection = false;
@@ -163,9 +243,31 @@ class ChatViewState extends State<ChatView> {
     }
   }
 
+  bool _historyWasPrepended(ChatView oldWidget) {
+    final added = widget.messages.length - oldWidget.messages.length;
+    if (added <= 0 || oldWidget.messages.isEmpty) return false;
+    return _messageRowKey(widget.messages[added]) ==
+            _messageRowKey(oldWidget.messages.first) &&
+        _messageRowKey(widget.messages.last) ==
+            _messageRowKey(oldWidget.messages.last);
+  }
+
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final historyLoadFinished =
+        oldWidget.isLoadingMore && !widget.isLoadingMore;
+    final historyLoadStarted = !oldWidget.isLoadingMore && widget.isLoadingMore;
+    final historyWasPrepended = _historyWasPrepended(oldWidget);
+    if (historyLoadStarted || historyLoadFinished || historyWasPrepended) {
+      _readerAnchoringSuspended = true;
+      _scrollController.maintainReaderViewport = false;
+    }
+    if (historyWasPrepended && _historyLoadAnchorPixels == null) {
+      _historyLoadAnchorPixels = _scrollController.hasClients
+          ? _scrollController.position.pixels
+          : null;
+    }
     final currentPendingInteractionKeys = pendingInteractionKeys(
       widget.messages,
     );
@@ -190,7 +292,12 @@ class ChatViewState extends State<ChatView> {
     if (_scrollController.hasClients && !_isAutoScrolling) {
       final pos = _scrollController.position;
       final distanceFromBottom = pos.pixels - pos.minScrollExtent;
-      _userScrolledUp = distanceFromBottom > 150;
+      _userScrolledUp = distanceFromBottom > _bottomFollowTolerance;
+      if (historyLoadFinished) {
+        _scrollController.maintainReaderViewport = false;
+      } else {
+        _syncReaderViewportMode();
+      }
       if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
         _autoScrollHeldForInspection = false;
       }
@@ -204,12 +311,13 @@ class ChatViewState extends State<ChatView> {
           : '';
       _lastKnownProcessing = widget.isProcessing;
       _userScrolledUp = false;
+      _syncReaderViewportMode();
       _jumpToBottom();
       _maybeBackfillViewport();
       return;
     }
 
-    if (!oldWidget.isLoadingMore && widget.isLoadingMore) {
+    if (historyLoadStarted) {
       _historyLoadAnchorPixels = _scrollController.hasClients
           ? _scrollController.position.pixels
           : null;
@@ -219,13 +327,17 @@ class ChatViewState extends State<ChatView> {
     // "Load more" just finished — restore the exact reverse-list offset.
     // Prepending should be stationary, but lazy row measurement and swapping
     // the loading control can otherwise nudge the viewport after layout.
-    if (oldWidget.isLoadingMore && !widget.isLoadingMore) {
+    if (historyLoadFinished) {
       _lastKnownMessageCount = widget.messages.length;
       final anchor = _historyLoadAnchorPixels;
       _historyLoadAnchorPixels = null;
       if (anchor != null && !_historyLoadUserInteracted) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!_scrollController.hasClients) return;
+          if (!_scrollController.hasClients) {
+            _readerAnchoringSuspended = false;
+            _syncReaderViewportMode();
+            return;
+          }
           final position = _scrollController.position;
           _scrollController.jumpTo(
             anchor
@@ -234,11 +346,41 @@ class ChatViewState extends State<ChatView> {
           );
           _maybeBackfillViewport();
           _scheduleHistoryPrefetchIfNeeded();
+          _readerAnchoringSuspended = false;
+          _syncReaderViewportMode();
         });
       } else {
         _maybeBackfillViewport();
         _scheduleHistoryPrefetchIfNeeded();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _readerAnchoringSuspended = false;
+          _syncReaderViewportMode();
+        });
       }
+      return;
+    }
+
+    // A fast cache/provider can prepend and clear isLoadingMore within one
+    // parent frame. Stable message identities still reveal that layout change,
+    // so preserve the same reverse-list offset without relying on the flag.
+    if (historyWasPrepended) {
+      _lastKnownMessageCount = widget.messages.length;
+      final anchor = _historyLoadAnchorPixels;
+      _historyLoadAnchorPixels = null;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (anchor != null && _scrollController.hasClients) {
+          final position = _scrollController.position;
+          _scrollController.jumpTo(
+            anchor
+                .clamp(position.minScrollExtent, position.maxScrollExtent)
+                .toDouble(),
+          );
+        }
+        _readerAnchoringSuspended = false;
+        _syncReaderViewportMode();
+        _maybeBackfillViewport();
+        _scheduleHistoryPrefetchIfNeeded();
+      });
       return;
     }
 
@@ -248,6 +390,7 @@ class ChatViewState extends State<ChatView> {
     if (hasNewPendingInteraction) {
       _userScrolledUp = false;
       _autoScrollHeldForInspection = false;
+      _syncReaderViewportMode();
       _jumpToBottom();
       return;
     }
@@ -266,6 +409,7 @@ class ChatViewState extends State<ChatView> {
     _lastKnownMessageCount = currentCount;
     _lastKnownText = currentText;
     _lastKnownProcessing = currentProcessing;
+    _syncReaderViewportMode();
 
     if (hasNewContent &&
         !_userScrolledUp &&
@@ -362,6 +506,7 @@ class ChatViewState extends State<ChatView> {
   void _holdAutoScrollForInspection() {
     _autoScrollHeldForInspection = true;
     _userScrolledUp = true;
+    _syncReaderViewportMode();
     _cancelAutoScroll();
   }
 
@@ -370,7 +515,8 @@ class ChatViewState extends State<ChatView> {
     final pos = _scrollController.position;
     final distanceFromBottom = pos.pixels - pos.minScrollExtent;
     _autoScrollHeldForInspection = false;
-    _userScrolledUp = distanceFromBottom > 150;
+    _userScrolledUp = distanceFromBottom > _bottomFollowTolerance;
+    _syncReaderViewportMode();
   }
 
   GlobalKey _imageCardKeyFor(String inspectionId) {
@@ -474,6 +620,7 @@ class ChatViewState extends State<ChatView> {
   void _cancelAutoScroll() {
     _autoScrollGeneration++;
     _isAutoScrolling = false;
+    _syncReaderViewportMode();
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(_scrollController.position.pixels);
     }
@@ -482,6 +629,7 @@ class ChatViewState extends State<ChatView> {
   /// The reverse-anchored list keeps the newest transcript at offset zero, so
   /// one post-frame jump is sufficient even while older rows remain lazy.
   void _jumpToBottom() {
+    _scrollController.maintainReaderViewport = false;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
       _scrollController.jumpTo(_scrollController.position.minScrollExtent);
@@ -509,16 +657,19 @@ class ChatViewState extends State<ChatView> {
             : const Duration(milliseconds: 180);
 
         _isAutoScrolling = true;
+        _scrollController.maintainReaderViewport = false;
         final generation = ++_autoScrollGeneration;
         _scrollController
             .animateTo(target, duration: duration, curve: Curves.easeOut)
             .then((_) {
               if (generation != _autoScrollGeneration) return;
               _isAutoScrolling = false;
+              _syncReaderViewportMode();
             })
             .catchError((_) {
               if (generation != _autoScrollGeneration) return;
               _isAutoScrolling = false;
+              _syncReaderViewportMode();
             });
       }
     });
@@ -602,12 +753,19 @@ class ChatViewState extends State<ChatView> {
             key: _scrollViewportKey,
             onPointerDown: (_) {
               _userTouching = true;
+              _syncReaderViewportMode();
               if (widget.isLoadingMore) {
                 _historyLoadUserInteracted = true;
               }
             },
-            onPointerUp: (_) => _userTouching = false,
-            onPointerCancel: (_) => _userTouching = false,
+            onPointerUp: (_) {
+              _userTouching = false;
+              _syncReaderViewportMode();
+            },
+            onPointerCancel: (_) {
+              _userTouching = false;
+              _syncReaderViewportMode();
+            },
             child: ListView.builder(
               controller: _scrollController,
               reverse: true,
