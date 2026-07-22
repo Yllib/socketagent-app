@@ -1,6 +1,8 @@
 import 'package:app/models/composer_attachment.dart';
 import 'package:app/models/message.dart';
 import 'package:app/widgets/chat_view.dart';
+import 'package:app/widgets/message_bubble.dart';
+import 'package:app/widgets/tool_output_block.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -79,18 +81,20 @@ void main() {
         .position;
     key.currentState!.appendStreamingText(30);
     await tester.pump();
-    position.jumpTo(40);
     await tester.pump();
-    final distanceFromOldestBefore = position.maxScrollExtent - position.pixels;
+    position.jumpTo(8);
+    await tester.pump();
+    final anchorBefore = _topVisibleMessage(tester);
     final pixelsBefore = position.pixels;
 
     key.currentState!.appendStreamingText(30);
     await tester.pump();
+    await tester.pump();
 
     expect(position.pixels, greaterThan(pixelsBefore));
     expect(
-      position.maxScrollExtent - position.pixels,
-      closeTo(distanceFromOldestBefore, 0.5),
+      _messageTop(tester, anchorBefore.id),
+      closeTo(anchorBefore.top, 0.5),
     );
   });
 
@@ -128,16 +132,74 @@ void main() {
 
     await gesture.up();
     await tester.pumpAndSettle();
-    final distanceFromOldestBefore = position.maxScrollExtent - position.pixels;
+    final anchorBefore = _topVisibleMessage(tester);
 
     key.currentState!.appendStreamingText(30);
     await tester.pump();
+    await tester.pump();
 
     expect(
-      position.maxScrollExtent - position.pixels,
-      closeTo(distanceFromOldestBefore, 0.5),
+      _messageTop(tester, anchorBefore.id),
+      closeTo(anchorBefore.top, 0.5),
     );
   });
+
+  testWidgets('expanding an image card never changes the reader offset', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 40,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    key.currentState!.appendPendingImageCard();
+    await tester.pump();
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(25);
+    await tester.pump();
+    final pixelsBefore = position.pixels;
+
+    await tester.tap(find.byType(ToolOutputBlock));
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byIcon(Icons.expand_less), findsOneWidget);
+    expect(position.pixels, closeTo(pixelsBefore, 0.5));
+  });
+}
+
+({String id, double top}) _topVisibleMessage(WidgetTester tester) {
+  ({String id, double top})? best;
+  for (final bubble in tester.widgetList<MessageBubble>(
+    find.byType(MessageBubble),
+  )) {
+    final finder = find.byWidgetPredicate(
+      (widget) =>
+          widget is MessageBubble && widget.message.id == bubble.message.id,
+    );
+    final top = tester.getTopLeft(finder).dy;
+    final bottom = tester.getBottomLeft(finder).dy;
+    if (bottom <= 0 || top >= 600) continue;
+    if (best == null || top < best.top)
+      best = (id: bubble.message.id, top: top);
+  }
+  return best!;
+}
+
+double _messageTop(WidgetTester tester, String id) {
+  final finder = find.byWidgetPredicate(
+    (widget) => widget is MessageBubble && widget.message.id == id,
+  );
+  return tester.getTopLeft(finder).dy;
 }
 
 class _HistoryHarness extends StatefulWidget {
@@ -219,6 +281,18 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
         ),
       ];
     });
+  }
+
+  void appendPendingImageCard() {
+    final image =
+        ChatMessage.toolCall(
+            tool: 'Read',
+            input: const {'file_path': '/tmp/pending-image.png'},
+            toolUseId: 'pending-image',
+          )
+          ..toolOutput = 'Image loaded'
+          ..toolImageFilePath = '/tmp/pending-image.png';
+    setState(() => messages = [...messages, image]);
   }
 
   @override

@@ -26,73 +26,6 @@ import 'secure_input_card.dart';
 import 'html_plan_card.dart';
 import '../models/composer_attachment.dart';
 
-/// A reverse chat list lays its newest row out from the visual bottom. When
-/// that row grows, Flutter normally keeps the numeric scroll offset unchanged,
-/// which moves the text a reader is looking at upward. While follow mode is
-/// disabled, compensate by the content-extent delta during layout so the same
-/// pixels remain under the reader's eyes without a post-frame jump.
-class _ReaderAnchoredScrollController extends ScrollController {
-  bool maintainReaderViewport = false;
-
-  @override
-  ScrollPosition createScrollPosition(
-    ScrollPhysics physics,
-    ScrollContext context,
-    ScrollPosition? oldPosition,
-  ) {
-    return _ReaderAnchoredScrollPosition(
-      physics: physics,
-      context: context,
-      initialPixels: initialScrollOffset,
-      keepScrollOffset: keepScrollOffset,
-      oldPosition: oldPosition,
-      debugLabel: debugLabel,
-      controller: this,
-    );
-  }
-}
-
-class _ReaderAnchoredScrollPosition extends ScrollPositionWithSingleContext {
-  static const double _extentEpsilon = 0.01;
-
-  _ReaderAnchoredScrollPosition({
-    required super.physics,
-    required super.context,
-    super.initialPixels,
-    super.keepScrollOffset,
-    super.oldPosition,
-    super.debugLabel,
-    required this.controller,
-  });
-
-  final _ReaderAnchoredScrollController controller;
-
-  @override
-  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
-    final previousMax = hasContentDimensions ? this.maxScrollExtent : null;
-    final previousPixels = hasContentDimensions ? pixels : null;
-    final accepted = super.applyContentDimensions(
-      minScrollExtent,
-      maxScrollExtent,
-    );
-
-    if (controller.maintainReaderViewport &&
-        previousMax != null &&
-        previousPixels != null) {
-      final extentDelta = maxScrollExtent - previousMax;
-      if (extentDelta.abs() > _extentEpsilon) {
-        final target = (previousPixels + extentDelta)
-            .clamp(minScrollExtent, maxScrollExtent)
-            .toDouble();
-        if ((target - pixels).abs() > _extentEpsilon) {
-          correctPixels(target);
-        }
-      }
-    }
-    return accepted;
-  }
-}
-
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final String? sessionStorageKey;
@@ -155,9 +88,9 @@ class ChatView extends StatefulWidget {
 
 class ChatViewState extends State<ChatView> {
   static final Map<String, Set<String>> _expandedImageCardsBySession = {};
-  static const double _bottomFollowTolerance = 24;
+  static const double _bottomFollowTolerance = 4;
 
-  late final _ReaderAnchoredScrollController _scrollController;
+  late final ScrollController _scrollController;
   bool _userScrolledUp = false;
   bool _isAutoScrolling = false;
   bool _userTouching = false;
@@ -174,11 +107,13 @@ class ChatViewState extends State<ChatView> {
   bool _lastKnownProcessing = false;
   Set<String> _knownPendingInteractionKeys = {};
   final GlobalKey _scrollViewportKey = GlobalKey();
+  final Map<String, GlobalKey> _messageRowKeys = {};
   final Map<String, GlobalKey> _taskKeys = {};
   double? _historyLoadAnchorPixels;
   bool _historyLoadUserInteracted = false;
   bool _historyPrefetchScheduled = false;
   bool _readerAnchoringSuspended = false;
+  int _readerAnchorGeneration = 0;
 
   bool get _hasActiveImageInspection =>
       _imageInspectionActive || _expandedImageCardIds.isNotEmpty;
@@ -186,21 +121,98 @@ class ChatViewState extends State<ChatView> {
   @override
   void initState() {
     super.initState();
-    _scrollController = _ReaderAnchoredScrollController();
+    _scrollController = ScrollController();
     _restoreExpandedImageState();
     _knownPendingInteractionKeys = pendingInteractionKeys(widget.messages);
     _scrollController.addListener(_onScroll);
   }
 
   void _syncReaderViewportMode() {
-    _scrollController.maintainReaderViewport =
-        _userScrolledUp &&
-        !_isAutoScrolling &&
-        !_userTouching &&
-        !_scrollMotionActive &&
-        !_readerAnchoringSuspended &&
-        !widget.isLoadingHistory &&
-        !widget.isLoadingMore;
+    if (_isAutoScrolling ||
+        _userTouching ||
+        _scrollMotionActive ||
+        _readerAnchoringSuspended ||
+        widget.isLoadingHistory ||
+        widget.isLoadingMore) {
+      _readerAnchorGeneration++;
+    }
+  }
+
+  ({String rowKey, double viewportY})? _captureVisibleReaderAnchor() {
+    if (!_userScrolledUp ||
+        _isAutoScrolling ||
+        _userTouching ||
+        _scrollMotionActive ||
+        _readerAnchoringSuspended ||
+        widget.isLoadingHistory ||
+        widget.isLoadingMore ||
+        !_scrollController.hasClients) {
+      return null;
+    }
+    final viewportBox =
+        _scrollViewportKey.currentContext?.findRenderObject() as RenderBox?;
+    if (viewportBox == null || !viewportBox.hasSize) return null;
+    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+    final viewportBottom = viewportTop + viewportBox.size.height;
+
+    String? bestKey;
+    double? bestTop;
+    double bestScore = double.infinity;
+    for (final entry in _messageRowKeys.entries) {
+      final rowBox =
+          entry.value.currentContext?.findRenderObject() as RenderBox?;
+      if (rowBox == null || !rowBox.hasSize) continue;
+      final rowTop = rowBox.localToGlobal(Offset.zero).dy;
+      final rowBottom = rowTop + rowBox.size.height;
+      if (rowBottom <= viewportTop || rowTop >= viewportBottom) continue;
+      final score = rowTop <= viewportTop ? 0.0 : rowTop - viewportTop;
+      if (score < bestScore) {
+        bestScore = score;
+        bestKey = entry.key;
+        bestTop = rowTop - viewportTop;
+      }
+    }
+    if (bestKey == null || bestTop == null) return null;
+    return (rowKey: bestKey, viewportY: bestTop);
+  }
+
+  void _restoreVisibleReaderAnchor(({String rowKey, double viewportY}) anchor) {
+    final generation = ++_readerAnchorGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          generation != _readerAnchorGeneration ||
+          _isAutoScrolling ||
+          _userTouching ||
+          _scrollMotionActive ||
+          _readerAnchoringSuspended ||
+          widget.isLoadingHistory ||
+          widget.isLoadingMore ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final viewportBox =
+          _scrollViewportKey.currentContext?.findRenderObject() as RenderBox?;
+      final rowBox =
+          _messageRowKeys[anchor.rowKey]?.currentContext?.findRenderObject()
+              as RenderBox?;
+      if (viewportBox == null ||
+          !viewportBox.hasSize ||
+          rowBox == null ||
+          !rowBox.hasSize) {
+        return;
+      }
+      final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
+      final currentY = rowBox.localToGlobal(Offset.zero).dy - viewportTop;
+      final correction = anchor.viewportY - currentY;
+      if (correction.abs() < 0.5) return;
+      final position = _scrollController.position;
+      final target = (position.pixels + correction)
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      if ((target - position.pixels).abs() >= 0.5) {
+        _scrollController.jumpTo(target);
+      }
+    });
   }
 
   bool _handleScrollNotification(ScrollNotification notification) {
@@ -269,13 +281,16 @@ class ChatViewState extends State<ChatView> {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final visibleReaderAnchor = _captureVisibleReaderAnchor();
+    final activeRowKeys = widget.messages.map(_messageRowKey).toSet();
+    _messageRowKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
     final historyLoadFinished =
         oldWidget.isLoadingMore && !widget.isLoadingMore;
     final historyLoadStarted = !oldWidget.isLoadingMore && widget.isLoadingMore;
     final historyWasPrepended = _historyWasPrepended(oldWidget);
     if (historyLoadStarted || historyLoadFinished || historyWasPrepended) {
       _readerAnchoringSuspended = true;
-      _scrollController.maintainReaderViewport = false;
+      _readerAnchorGeneration++;
     }
     if (historyWasPrepended && _historyLoadAnchorPixels == null) {
       _historyLoadAnchorPixels = _scrollController.hasClients
@@ -307,11 +322,7 @@ class ChatViewState extends State<ChatView> {
       final pos = _scrollController.position;
       final distanceFromBottom = pos.pixels - pos.minScrollExtent;
       _userScrolledUp = distanceFromBottom > _bottomFollowTolerance;
-      if (historyLoadFinished) {
-        _scrollController.maintainReaderViewport = false;
-      } else {
-        _syncReaderViewportMode();
-      }
+      _syncReaderViewportMode();
       if (distanceFromBottom <= 80 && !_hasActiveImageInspection) {
         _autoScrollHeldForInspection = false;
       }
@@ -424,6 +435,10 @@ class ChatViewState extends State<ChatView> {
     _lastKnownText = currentText;
     _lastKnownProcessing = currentProcessing;
     _syncReaderViewportMode();
+
+    if (visibleReaderAnchor != null && _userScrolledUp) {
+      _restoreVisibleReaderAnchor(visibleReaderAnchor);
+    }
 
     if (hasNewContent &&
         !_userScrolledUp &&
@@ -643,7 +658,7 @@ class ChatViewState extends State<ChatView> {
   /// The reverse-anchored list keeps the newest transcript at offset zero, so
   /// one post-frame jump is sufficient even while older rows remain lazy.
   void _jumpToBottom() {
-    _scrollController.maintainReaderViewport = false;
+    _readerAnchorGeneration++;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
       _scrollController.jumpTo(_scrollController.position.minScrollExtent);
@@ -671,7 +686,7 @@ class ChatViewState extends State<ChatView> {
             : const Duration(milliseconds: 180);
 
         _isAutoScrolling = true;
-        _scrollController.maintainReaderViewport = false;
+        _readerAnchorGeneration++;
         final generation = ++_autoScrollGeneration;
         _scrollController
             .animateTo(target, duration: duration, curve: Curves.easeOut)
@@ -812,8 +827,9 @@ class ChatViewState extends State<ChatView> {
   }
 
   Widget _buildMessageWidget(ChatMessage msg) {
+    final rowKey = _messageRowKey(msg);
     return KeyedSubtree(
-      key: ValueKey(_messageRowKey(msg)),
+      key: _messageRowKeys.putIfAbsent(rowKey, () => GlobalKey()),
       child: _buildMessageContent(msg),
     );
   }
