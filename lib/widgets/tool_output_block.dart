@@ -14,6 +14,17 @@ bool _isStructuredToolContent(dynamic value) {
   if (type == 'input_text' || type == 'output_text' || type == 'text') {
     return true;
   }
+  if (value['content'] is List &&
+      (value['content'] as List).isNotEmpty &&
+      (value['content'] as List).every(_isStructuredToolContent)) {
+    const mcpEnvelopeKeys = {
+      'content',
+      'structuredContent',
+      '_meta',
+      'isError',
+    };
+    if (value.keys.every(mcpEnvelopeKeys.contains)) return true;
+  }
   const execEnvelopeKeys = {
     'chunk_id',
     'session_id',
@@ -21,7 +32,8 @@ bool _isStructuredToolContent(dynamic value) {
     'wall_time_seconds',
     'original_token_count',
   };
-  return value.containsKey('output') && value.keys.any(execEnvelopeKeys.contains);
+  return value.containsKey('output') &&
+      value.keys.any(execEnvelopeKeys.contains);
 }
 
 List<String> _structuredToolContentText(dynamic value, [int depth = 0]) {
@@ -60,7 +72,9 @@ List<String> _structuredToolContentText(dynamic value, [int depth = 0]) {
   if (isExecEnvelope) {
     final output = value['output'];
     if (output == null || output == '') return const [];
-    return output is String ? [output] : [const JsonEncoder.withIndent('  ').convert(output)];
+    return output is String
+        ? [output]
+        : [const JsonEncoder.withIndent('  ').convert(output)];
   }
   if (value['text'] is String) {
     return _structuredToolContentText(value['text'], depth + 1);

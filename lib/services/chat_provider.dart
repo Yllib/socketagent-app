@@ -6414,6 +6414,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final outputFile = msg['outputFile'] as String?;
     final originToolUseId = msg['originToolUseId'] as String?;
 
+    if (taskId.isNotEmpty) {
+      for (final message in _messages.reversed) {
+        if (message.type != MessageType.toolCall ||
+            message.toolName != 'Monitor') {
+          continue;
+        }
+        final knownTaskId = message.toolInput?['_monitorTaskId']?.toString();
+        if (knownTaskId == taskId ||
+            (message.toolOutput?.contains(taskId) ?? false)) {
+          message.toolInput?['_monitorTaskId'] = taskId;
+          message.toolInput?['_monitorStatus'] = status;
+          break;
+        }
+      }
+    }
+
     // Update background tasks map
     if (status == 'completed' || status == 'failed' || status == 'stopped') {
       _backgroundTasks.remove(taskId);
@@ -6482,6 +6498,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final taskId = msg['taskId'] as String? ?? '';
     final description = msg['description'] as String? ?? 'Monitored process';
     final monitoring = msg['monitoring'] as bool? ?? false;
+    final command = msg['command'] as String?;
+
+    for (final message in _messages.reversed) {
+      if (message.type != MessageType.toolCall ||
+          message.toolName != 'Monitor') {
+        continue;
+      }
+      final knownTaskId = message.toolInput?['_monitorTaskId']?.toString();
+      final matchesResult = message.toolOutput?.contains(taskId) ?? false;
+      final matchesStart =
+          monitoring &&
+          knownTaskId == null &&
+          (command == null || message.toolInput?['command'] == command);
+      if (knownTaskId == taskId || matchesResult || matchesStart) {
+        message.toolInput?['_monitorTaskId'] = taskId;
+        message.toolInput?['_monitorStatus'] = monitoring
+            ? 'running'
+            : 'stopped';
+        break;
+      }
+    }
 
     if (monitoring) {
       // Add or update in background tasks
@@ -9160,8 +9197,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<HtmlPlan> renameHtmlPlan(HtmlPlan plan, String title) {
     final sessionId = _activeSessionId;
-    if (sessionId == null || sessionId.isEmpty)
+    if (sessionId == null || sessionId.isEmpty) {
       throw StateError('No active session');
+    }
     final requestId =
         'html_plan_rename_${DateTime.now().microsecondsSinceEpoch}';
     final completer = Completer<HtmlPlan>();
@@ -9184,8 +9222,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> deleteHtmlPlan(HtmlPlan plan) {
     final sessionId = _activeSessionId;
-    if (sessionId == null || sessionId.isEmpty)
+    if (sessionId == null || sessionId.isEmpty) {
       throw StateError('No active session');
+    }
     final requestId =
         'html_plan_delete_${DateTime.now().microsecondsSinceEpoch}';
     final completer = Completer<void>();
@@ -11640,9 +11679,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void stopTask(String taskId) {
     // Remove from background tasks immediately to prevent duplicate taps
+    final isMonitor = _backgroundTasks[taskId]?['isMonitor'] == true;
     _backgroundTasks.remove(taskId);
     notifyListeners();
-    _ws.sendStopTask(taskId);
+    if (isMonitor) {
+      _ws.sendStopMonitor(taskId);
+    } else {
+      _ws.sendStopTask(taskId);
+    }
   }
 
   void forkSession(String sessionId) {

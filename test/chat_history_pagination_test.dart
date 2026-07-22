@@ -241,8 +241,9 @@ void main() {
     final top = tester.getTopLeft(finder).dy;
     final bottom = tester.getBottomLeft(finder).dy;
     if (bottom <= 0 || top >= 600) continue;
-    if (best == null || top < best.top)
+    if (best == null || top < best.top) {
       best = (id: bubble.message.id, top: top);
+    }
   }
   return best!;
 }

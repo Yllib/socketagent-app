@@ -20,6 +20,7 @@ import 'subagent_card.dart';
 import 'thinking_card.dart';
 import 'elicitation_card.dart';
 import 'monitor_card.dart';
+import 'monitor_tool_card.dart';
 import 'codex_plan_card.dart';
 import 'codex_command_card.dart';
 import 'secure_input_card.dart';
@@ -834,6 +835,9 @@ class ChatViewState extends State<ChatView> {
           onRetractPending: widget.onRetractQueuedMessage,
         );
       case MessageType.toolCall:
+        if (msg.toolName == 'Monitor') {
+          return MonitorToolCard(message: msg);
+        }
         if (msg.toolName == 'Speak') {
           return SpeakCard(message: msg);
         }

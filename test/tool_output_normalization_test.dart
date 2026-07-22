@@ -32,4 +32,23 @@ void main() {
     const raw = '{"status":"ok","output":"user data"}';
     expect(normalizeStructuredToolOutput(raw), raw);
   });
+
+  test('extracts text from an MCP call result envelope', () {
+    final raw = jsonEncode({
+      'content': [
+        {
+          'type': 'text',
+          'text':
+              'Process started and monitoring enabled. Task ID: monitor-123.',
+        },
+      ],
+      'structuredContent': null,
+      '_meta': null,
+    });
+
+    expect(
+      normalizeStructuredToolOutput(raw),
+      'Process started and monitoring enabled. Task ID: monitor-123.',
+    );
+  });
 }
