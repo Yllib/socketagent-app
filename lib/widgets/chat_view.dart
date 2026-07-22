@@ -87,7 +87,6 @@ class ChatView extends StatefulWidget {
 }
 
 class ChatViewState extends State<ChatView> {
-  static final Map<String, Set<String>> _expandedImageCardsBySession = {};
   static const double _bottomFollowTolerance = 4;
 
   late final ScrollController _scrollController;
@@ -122,7 +121,6 @@ class ChatViewState extends State<ChatView> {
   void initState() {
     super.initState();
     _scrollController = ScrollController();
-    _restoreExpandedImageState();
     _knownPendingInteractionKeys = pendingInteractionKeys(widget.messages);
     _scrollController.addListener(_onScroll);
   }
@@ -226,23 +224,6 @@ class ChatViewState extends State<ChatView> {
     return false;
   }
 
-  String _imageStateStorageKeyFor(ChatView source) =>
-      source.sessionStorageKey ?? 'default';
-
-  String get _imageStateStorageKey => _imageStateStorageKeyFor(widget);
-
-  void _restoreExpandedImageState() {
-    _expandedImageCardIds
-      ..clear()
-      ..addAll(_expandedImageCardsBySession[_imageStateStorageKey] ?? const {});
-  }
-
-  void _persistExpandedImageState([String? storageKey]) {
-    _expandedImageCardsBySession[storageKey ?? _imageStateStorageKey] = {
-      ..._expandedImageCardIds,
-    };
-  }
-
   void _onScroll() {
     if (!_scrollController.hasClients || _isAutoScrolling) return;
     final pos = _scrollController.position;
@@ -305,9 +286,15 @@ class ChatViewState extends State<ChatView> {
         .isNotEmpty;
     _knownPendingInteractionKeys = currentPendingInteractionKeys;
     if (widget.sessionStorageKey != oldWidget.sessionStorageKey) {
-      _persistExpandedImageState(_imageStateStorageKeyFor(oldWidget));
-      _restoreExpandedImageState();
+      // Expansion is temporary reading state. Restoring it after switching
+      // sessions can resurrect a large image body before its history bytes
+      // reload, leaving a blank slab above the current transcript.
+      _expandedImageCardIds.clear();
+      _imageCardKeys.clear();
+      _imageCollapseSignals.clear();
       _imageCardMissingSince.clear();
+      _imageInspectionActive = false;
+      _autoScrollHeldForInspection = false;
     }
 
     // Resync _userScrolledUp from the current scroll position. _onScroll
@@ -514,7 +501,6 @@ class ChatViewState extends State<ChatView> {
       _releaseInspectionHoldIfIdle();
     }
     if (changed && mounted) {
-      _persistExpandedImageState();
       setState(() {});
     }
   }
@@ -594,7 +580,6 @@ class ChatViewState extends State<ChatView> {
             (_imageCollapseSignals[inspectionId] ?? 0) + 1;
       }
     });
-    _persistExpandedImageState();
     _releaseInspectionHoldIfIdle();
   }
 
@@ -621,7 +606,6 @@ class ChatViewState extends State<ChatView> {
             (_imageCollapseSignals[inspectionId] ?? 0) + 1;
         _imageCardMissingSince.remove(inspectionId);
       });
-      _persistExpandedImageState();
       _releaseInspectionHoldIfIdle();
     });
   }

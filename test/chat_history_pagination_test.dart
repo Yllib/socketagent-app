@@ -172,8 +172,60 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(find.byIcon(Icons.expand_less), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(ToolOutputBlock),
+        matching: find.byIcon(Icons.expand_less),
+      ),
+      findsOneWidget,
+    );
     expect(position.pixels, closeTo(pixelsBefore, 0.5));
+  });
+
+  testWidgets('returning to a session does not restore an expanded image', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 4,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    key.currentState!.appendPendingImageCard();
+    await tester.pump();
+    await tester.tap(find.byType(ToolOutputBlock));
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byType(ToolOutputBlock),
+        matching: find.byIcon(Icons.expand_less),
+      ),
+      findsOneWidget,
+    );
+
+    key.currentState!.switchSession();
+    await tester.pump();
+
+    expect(
+      find.descendant(
+        of: find.byType(ToolOutputBlock),
+        matching: find.byIcon(Icons.expand_more),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(ToolOutputBlock),
+        matching: find.byIcon(Icons.expand_less),
+      ),
+      findsNothing,
+    );
   });
 }
 
@@ -221,6 +273,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   bool isLoadingMore = false;
   bool hasMoreHistory = true;
   int loadMoreCalls = 0;
+  String sessionStorageKey = 'server:session-1';
   late List<ChatMessage> messages;
 
   @override
@@ -295,11 +348,16 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
     setState(() => messages = [...messages, image]);
   }
 
+  void switchSession() {
+    setState(() => sessionStorageKey = 'server:session-2');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: ChatView(
         messages: messages,
+        sessionStorageKey: sessionStorageKey,
         isProcessing: false,
         isLoadingHistory: isLoadingHistory,
         isLoadingMore: isLoadingMore,
