@@ -4529,6 +4529,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   ?.map((e) => e.toString())
                   .toSet() ??
               <String>{};
+          final durableMonitors = msg['durableMonitors'] as List?;
+          if (durableMonitors != null && _activeSessionId != null) {
+            for (final rawMonitor in durableMonitors) {
+              if (rawMonitor is! Map ||
+                  rawMonitor['sessionId']?.toString() != _activeSessionId) {
+                continue;
+              }
+              final taskId = rawMonitor['taskId']?.toString() ?? '';
+              if (taskId.isEmpty) continue;
+              _backgroundTasks[taskId] = {
+                ...?_backgroundTasks[taskId],
+                'status': 'running',
+                'summary':
+                    rawMonitor['description']?.toString() ??
+                    'Monitored process',
+                'isMonitor': true,
+                'startedAt': rawMonitor['startedAt']?.toString(),
+              };
+            }
+          }
           if (!_isProcessing) {
             _isCompacting = false;
             _stopPromptRuntime();
