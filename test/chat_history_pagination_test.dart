@@ -300,8 +300,64 @@ void main() {
     expect(
       find.byWidgetPredicate(
         (widget) =>
-            widget is MessageBubble &&
-            widget.message.id == retainedMessage.id,
+            widget is MessageBubble && widget.message.id == retainedMessage.id,
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('app resume releases a pointer-blocking scroll activity', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    key.currentState!.appendPendingImageCard();
+    await tester.pump();
+
+    final list = find.byType(ListView).first;
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(position.minScrollExtent);
+    final drivenScroll = position.animateTo(
+      position.maxScrollExtent,
+      duration: const Duration(seconds: 10),
+      curve: Curves.linear,
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(position.isScrollingNotifier.value, isTrue);
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    await drivenScroll;
+
+    final beforeDrag = position.pixels;
+    await tester.drag(list, const Offset(0, 120));
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(beforeDrag));
+
+    position.jumpTo(position.minScrollExtent);
+    await tester.pump();
+    await tester.tap(find.byType(ToolOutputBlock));
+    await tester.pump();
+    expect(
+      find.descendant(
+        of: find.byType(ToolOutputBlock),
+        matching: find.byIcon(Icons.expand_less),
       ),
       findsOneWidget,
     );

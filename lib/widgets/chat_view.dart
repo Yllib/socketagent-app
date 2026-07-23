@@ -87,7 +87,7 @@ class ChatView extends StatefulWidget {
   State<ChatView> createState() => ChatViewState();
 }
 
-class ChatViewState extends State<ChatView> {
+class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   static const double _bottomFollowTolerance = 4;
 
   late final ScrollController _scrollController;
@@ -101,7 +101,6 @@ class ChatViewState extends State<ChatView> {
   final Map<String, GlobalKey> _imageCardKeys = {};
   final Map<String, int> _imageCollapseSignals = {};
   final Map<String, DateTime> _imageCardMissingSince = {};
-  int _autoScrollGeneration = 0;
   int _lastKnownMessageCount = 0;
   String _lastKnownText = '';
   bool _lastKnownProcessing = false;
@@ -121,9 +120,44 @@ class ChatViewState extends State<ChatView> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _scrollController = ScrollController();
     _knownPendingInteractionKeys = pendingInteractionKeys(widget.messages);
     _scrollController.addListener(_onScroll);
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) {
+      _releaseScrollInteractionAfterLifecycle();
+      return;
+    }
+
+    // Android can pause Flutter in the middle of ScrollController.animateTo.
+    // DrivenScrollActivity intentionally ignores every pointer in its
+    // Scrollable subtree, including buttons in chat cards. Force the retained
+    // scroll position idle again when its route resumes.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _releaseScrollInteractionAfterLifecycle();
+    });
+  }
+
+  void _releaseScrollInteractionAfterLifecycle() {
+    _readerAnchorGeneration++;
+    _scrollPending = false;
+    _isAutoScrolling = false;
+    _userTouching = false;
+    _scrollMotionActive = false;
+    if (_scrollController.hasClients) {
+      final position = _scrollController.position;
+      _scrollController.jumpTo(
+        position.pixels
+            .clamp(position.minScrollExtent, position.maxScrollExtent)
+            .toDouble(),
+      );
+    }
+    _syncReaderViewportMode();
   }
 
   void _syncReaderViewportMode() {
@@ -632,7 +666,6 @@ class ChatViewState extends State<ChatView> {
   }
 
   void _cancelAutoScroll() {
-    _autoScrollGeneration++;
     _isAutoScrolling = false;
     _syncReaderViewportMode();
     if (_scrollController.hasClients) {
@@ -652,7 +685,7 @@ class ChatViewState extends State<ChatView> {
 
   bool _scrollPending = false;
 
-  void _scrollToBottom({bool jump = false}) {
+  void _scrollToBottom() {
     if (_scrollPending) return;
     _scrollPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -662,35 +695,16 @@ class ChatViewState extends State<ChatView> {
       final distance = _scrollController.position.pixels - target;
       if (distance <= 0) return;
 
-      if (jump || distance > 2000) {
-        // Large jump (history load) — instant, no animation
-        _scrollController.jumpTo(target);
-      } else {
-        final duration = distance < 200
-            ? const Duration(milliseconds: 80)
-            : const Duration(milliseconds: 180);
-
-        _isAutoScrolling = true;
-        _readerAnchorGeneration++;
-        final generation = ++_autoScrollGeneration;
-        _scrollController
-            .animateTo(target, duration: duration, curve: Curves.easeOut)
-            .then((_) {
-              if (generation != _autoScrollGeneration) return;
-              _isAutoScrolling = false;
-              _syncReaderViewportMode();
-            })
-            .catchError((_) {
-              if (generation != _autoScrollGeneration) return;
-              _isAutoScrolling = false;
-              _syncReaderViewportMode();
-            });
-      }
+      // Automatic follow should never put the entire chat subtree into
+      // DrivenScrollActivity's pointer-blocking state. The reverse list keeps
+      // this correction small and an immediate jump is visually stable.
+      _scrollController.jumpTo(target);
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
@@ -819,8 +833,7 @@ class ChatViewState extends State<ChatView> {
                     // children that are already mounted. Tell the sliver where
                     // each stable row moved so it never reuses or strands a
                     // stateful card at its former index.
-                    findChildIndexCallback: (key) =>
-                        listIndexByMessageKey[key],
+                    findChildIndexCallback: (key) => listIndexByMessageKey[key],
                     // Keep visible rows in one paint layer. On Android, rapid
                     // streamed revisions could leave a stale per-row layer
                     // unpainted and expose the gray backing surface.
