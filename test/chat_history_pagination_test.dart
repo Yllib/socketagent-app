@@ -61,6 +61,40 @@ void main() {
     expect(position.pixels, closeTo(anchoredPixels, 0.5));
   });
 
+  testWidgets('authoritative history replacement discards the old extent', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 160,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(position.maxScrollExtent * 0.7);
+    await tester.pump();
+    expect(position.pixels, greaterThan(0));
+
+    // Reproduce a resume whose cached delta exceeded the wire budget: the
+    // authoritative reply replaces a long cached window with a bounded tail
+    // while the same ChatView remains mounted.
+    key.currentState!.replaceHistoryWindow(messageCount: 6);
+    await tester.pump();
+    await tester.pump();
+
+    expect(position.pixels, closeTo(position.minScrollExtent, 0.5));
+    expect(find.text('History response 5'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('streaming text preserves the viewport while the reader is up', (
     WidgetTester tester,
   ) async {
@@ -228,7 +262,7 @@ void main() {
     );
   });
 
-  testWidgets('streaming chat keeps an opaque viewport without row layers', (
+  testWidgets('streaming chat keeps an opaque viewport with isolated rows', (
     WidgetTester tester,
   ) async {
     final key = GlobalKey<_HistoryHarnessState>();
@@ -253,7 +287,7 @@ void main() {
     expect(
       (messageList().childrenDelegate as SliverChildBuilderDelegate)
           .addRepaintBoundaries,
-      isFalse,
+      isTrue,
     );
 
     key.currentState!.appendStreamingText(40);
@@ -410,6 +444,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   bool isLoadingMore = false;
   bool hasMoreHistory = true;
   int loadMoreCalls = 0;
+  int historyWindowRevision = 0;
   String sessionStorageKey = 'server:session-1';
   late List<ChatMessage> messages;
 
@@ -451,6 +486,15 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
       ];
       isLoadingMore = false;
       hasMoreHistory = false;
+    });
+  }
+
+  void replaceHistoryWindow({required int messageCount}) {
+    setState(() {
+      messages = List.generate(messageCount, _message);
+      historyWindowRevision++;
+      hasMoreHistory = true;
+      isLoadingMore = false;
     });
   }
 
@@ -528,6 +572,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
         isLoadingHistory: isLoadingHistory,
         isLoadingMore: isLoadingMore,
         hasMoreHistory: hasMoreHistory,
+        historyWindowRevision: historyWindowRevision,
         todos: const [],
         onAnswer: (_, __) {},
         onSecureInputSubmit: (_, __) {},

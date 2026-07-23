@@ -714,6 +714,7 @@ class HomeScreenState extends State<HomeScreen> {
                       isLoadingHistory: provider.isLoadingHistory,
                       isLoadingMore: provider.isLoadingMore,
                       hasMoreHistory: provider.hasMoreHistory,
+                      historyWindowRevision: provider.historyWindowRevision,
                       todos: provider.todos,
                       onAnswer: provider.answerQuestion,
                       onSecureInputSubmit: provider.submitSecureInput,

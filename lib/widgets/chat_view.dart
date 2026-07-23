@@ -36,6 +36,7 @@ class ChatView extends StatefulWidget {
   final bool isLoadingHistory;
   final bool isLoadingMore;
   final bool hasMoreHistory;
+  final int historyWindowRevision;
   final List<Map<String, dynamic>> todos;
   final void Function(String questionId, Map<String, String> answers) onAnswer;
   final void Function(String requestId, String value) onSecureInputSubmit;
@@ -65,6 +66,7 @@ class ChatView extends StatefulWidget {
     this.isLoadingHistory = false,
     this.isLoadingMore = false,
     this.hasMoreHistory = false,
+    this.historyWindowRevision = 0,
     required this.todos,
     required this.onAnswer,
     required this.onSecureInputSubmit,
@@ -297,6 +299,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final historyWindowWasReplaced =
+        widget.historyWindowRevision != oldWidget.historyWindowRevision;
     final visibleReaderAnchor = _captureVisibleReaderAnchor();
     final activeRowKeys = widget.messages.map(_messageRowKey).toSet();
     _messageRowKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
@@ -358,6 +362,24 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           : '';
       _lastKnownProcessing = widget.isProcessing;
       _userScrolledUp = false;
+      _syncReaderViewportMode();
+      _jumpToBottom();
+      _maybeBackfillViewport();
+      return;
+    }
+
+    if (historyWindowWasReplaced) {
+      _readerAnchorGeneration++;
+      _historyLoadAnchorPixels = null;
+      _historyLoadUserInteracted = false;
+      _readerAnchoringSuspended = false;
+      _lastKnownMessageCount = widget.messages.length;
+      _lastKnownText = widget.messages.isNotEmpty
+          ? widget.messages.last.textContent
+          : '';
+      _lastKnownProcessing = widget.isProcessing;
+      _userScrolledUp = false;
+      _autoScrollHeldForInspection = false;
       _syncReaderViewportMode();
       _jumpToBottom();
       _maybeBackfillViewport();
@@ -834,10 +856,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                     // each stable row moved so it never reuses or strands a
                     // stateful card at its former index.
                     findChildIndexCallback: (key) => listIndexByMessageKey[key],
-                    // Keep visible rows in one paint layer. On Android, rapid
-                    // streamed revisions could leave a stale per-row layer
-                    // unpainted and expose the gray backing surface.
-                    addRepaintBoundaries: false,
                     padding: const EdgeInsets.only(top: 8, bottom: 8),
                     itemCount: itemCount,
                     itemBuilder: (context, index) {
@@ -870,9 +888,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   Widget _buildMessageWidget(ChatMessage msg) {
     final rowKey = _messageRowKey(msg);
     return KeyedSubtree(
-      // Slivers must own a local, stable key. The GlobalKey used to measure
-      // reader anchors lives inside the row; making it the sliver child's key
-      // allowed rapid live insertions to detach/reparent the wrong render row.
       key: _messageSliverKey(msg),
       child: KeyedSubtree(
         key: _messageRowKeys.putIfAbsent(rowKey, () => GlobalKey()),

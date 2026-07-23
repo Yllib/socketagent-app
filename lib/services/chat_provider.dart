@@ -563,6 +563,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isLoadingHistory = false;
   bool _isRefreshingHistory = false;
   bool _isLoadingMore = false;
+  int _historyWindowRevision = 0;
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
   // The server deliberately bounds the first history paint. Keep paging after
   // that paint until a useful recent conversation window is present.
@@ -1303,6 +1304,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get isLoadingHistory => _isLoadingHistory;
   bool get isRefreshingHistory => _isRefreshingHistory;
   bool get isLoadingMore => _isLoadingMore;
+  int get historyWindowRevision => _historyWindowRevision;
   bool get hasMoreHistory => _historyOffset > 0;
   bool get rawMode => _rawMode;
   List<SdkItem> get rawItems => _rawItems;
@@ -8032,6 +8034,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
       }).toList();
       _messages = [...loaded, ...localPendingUserPrompts, ...localOnlyCards];
+      // A cached transcript can already be painted when an authoritative
+      // resume falls back from a large delta to a bounded tail. Replacing that
+      // window changes every scroll extent; tell ChatView to discard the
+      // offset that belonged to the previous window.
+      _historyWindowRevision++;
       _backgroundTasks.clear();
       _subagentTasks.clear();
       _isLoadingHistory = false;
