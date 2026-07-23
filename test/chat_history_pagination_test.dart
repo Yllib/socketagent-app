@@ -227,6 +227,43 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets('streaming chat keeps an opaque viewport without row layers', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 40,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    ColoredBox surface() => tester.widget<ColoredBox>(
+      find.byKey(const ValueKey('chat-scroll-surface')),
+    );
+    ListView messageList() =>
+        tester.widget<ListView>(find.byType(ListView).first);
+
+    expect(surface().color.a, 1.0);
+    expect(
+      (messageList().childrenDelegate as SliverChildBuilderDelegate)
+          .addRepaintBoundaries,
+      isFalse,
+    );
+
+    key.currentState!.appendStreamingText(40);
+    await tester.pump();
+    key.currentState!.switchSession();
+    await tester.pump();
+
+    expect(surface().color.a, 1.0);
+    expect(find.byKey(const ValueKey('chat-surface')), findsOneWidget);
+  });
 }
 
 ({String id, double top}) _topVisibleMessage(WidgetTester tester) {

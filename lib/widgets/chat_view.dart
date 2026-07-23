@@ -698,12 +698,21 @@ class ChatViewState extends State<ChatView> {
 
   @override
   Widget build(BuildContext context) {
+    final chatSurfaceColor = Theme.of(context).colorScheme.surface;
     if (widget.isLoadingHistory) {
-      return const Center(child: CircularProgressIndicator());
+      return ColoredBox(
+        key: const ValueKey('chat-surface'),
+        color: chatSurfaceColor,
+        child: const Center(child: CircularProgressIndicator()),
+      );
     }
 
     if (widget.rawMode) {
-      return _buildRawView(context);
+      return ColoredBox(
+        key: const ValueKey('chat-surface'),
+        color: chatSurfaceColor,
+        child: _buildRawView(context),
+      );
     }
 
     final codexPlanMessages = widget.messages
@@ -717,32 +726,36 @@ class ChatViewState extends State<ChatView> {
         .toList();
 
     if (visibleMessages.isEmpty && activeCodexPlan == null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.chat_outlined,
-              size: 64,
-              color: Theme.of(context).colorScheme.outline,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Start a conversation',
-              style: TextStyle(
-                fontSize: 16,
+      return ColoredBox(
+        key: const ValueKey('chat-surface'),
+        color: chatSurfaceColor,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.chat_outlined,
+                size: 64,
                 color: Theme.of(context).colorScheme.outline,
               ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Type a message or tap the mic',
-              style: TextStyle(
-                fontSize: 13,
-                color: Theme.of(context).colorScheme.outline.withAlpha(178),
+              const SizedBox(height: 16),
+              Text(
+                'Start a conversation',
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              Text(
+                'Type a message or tap the mic',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Theme.of(context).colorScheme.outline.withAlpha(178),
+                ),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -753,61 +766,74 @@ class ChatViewState extends State<ChatView> {
         visibleMessages.length +
         (widget.isProcessing ? 1 : 0);
 
-    return Column(
-      children: [
-        if (widget.todos.isNotEmpty)
-          TodoListCard(todos: widget.todos, onDismiss: widget.onDismissTodos),
-        if (activeCodexPlan != null)
-          CodexPlanCard(
-            key: ValueKey(activeCodexPlan.id),
-            msg: activeCodexPlan,
-          ),
-        Expanded(
-          child: Listener(
-            key: _scrollViewportKey,
-            onPointerDown: (_) {
-              _userTouching = true;
-              _syncReaderViewportMode();
-              if (widget.isLoadingMore) {
-                _historyLoadUserInteracted = true;
-              }
-            },
-            onPointerUp: (_) {
-              _userTouching = false;
-              _syncReaderViewportMode();
-            },
-            onPointerCancel: (_) {
-              _userTouching = false;
-              _syncReaderViewportMode();
-            },
-            child: NotificationListener<ScrollNotification>(
-              onNotification: _handleScrollNotification,
-              child: ListView.builder(
-                controller: _scrollController,
-                reverse: true,
-                padding: const EdgeInsets.only(top: 8, bottom: 8),
-                itemCount: itemCount,
-                itemBuilder: (context, index) {
-                  var reverseIndex = index;
-                  // In a reverse list index zero is the visual bottom.
-                  if (widget.isProcessing) {
-                    if (reverseIndex == 0) {
-                      return _buildThinkingIndicator(context);
-                    }
-                    reverseIndex--;
+    return ColoredBox(
+      key: const ValueKey('chat-surface'),
+      color: chatSurfaceColor,
+      child: Column(
+        children: [
+          if (widget.todos.isNotEmpty)
+            TodoListCard(todos: widget.todos, onDismiss: widget.onDismissTodos),
+          if (activeCodexPlan != null)
+            CodexPlanCard(
+              key: ValueKey(activeCodexPlan.id),
+              msg: activeCodexPlan,
+            ),
+          Expanded(
+            child: ColoredBox(
+              key: const ValueKey('chat-scroll-surface'),
+              color: chatSurfaceColor,
+              child: Listener(
+                key: _scrollViewportKey,
+                onPointerDown: (_) {
+                  _userTouching = true;
+                  _syncReaderViewportMode();
+                  if (widget.isLoadingMore) {
+                    _historyLoadUserInteracted = true;
                   }
-                  if (reverseIndex < visibleMessages.length) {
-                    final msgIndex = visibleMessages.length - 1 - reverseIndex;
-                    return _buildMessageWidget(visibleMessages[msgIndex]);
-                  }
-                  // The final reverse-list item is the visual top.
-                  return _buildLoadMoreButton(context);
                 },
+                onPointerUp: (_) {
+                  _userTouching = false;
+                  _syncReaderViewportMode();
+                },
+                onPointerCancel: (_) {
+                  _userTouching = false;
+                  _syncReaderViewportMode();
+                },
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: _handleScrollNotification,
+                  child: ListView.builder(
+                    controller: _scrollController,
+                    reverse: true,
+                    // Keep visible rows in one paint layer. On Android, rapid
+                    // streamed revisions could leave a stale per-row layer
+                    // unpainted and expose the gray backing surface.
+                    addRepaintBoundaries: false,
+                    padding: const EdgeInsets.only(top: 8, bottom: 8),
+                    itemCount: itemCount,
+                    itemBuilder: (context, index) {
+                      var reverseIndex = index;
+                      // In a reverse list index zero is the visual bottom.
+                      if (widget.isProcessing) {
+                        if (reverseIndex == 0) {
+                          return _buildThinkingIndicator(context);
+                        }
+                        reverseIndex--;
+                      }
+                      if (reverseIndex < visibleMessages.length) {
+                        final msgIndex =
+                            visibleMessages.length - 1 - reverseIndex;
+                        return _buildMessageWidget(visibleMessages[msgIndex]);
+                      }
+                      // The final reverse-list item is the visual top.
+                      return _buildLoadMoreButton(context);
+                    },
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 

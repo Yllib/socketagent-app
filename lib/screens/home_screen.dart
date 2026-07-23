@@ -560,6 +560,7 @@ class HomeScreenState extends State<HomeScreen> {
             provider.activeSessionBackend == 'codex' && provider.codexFastMode
             ? _fastModeTheme()
             : _permissionModeTheme(displayPermMode);
+        final chatSurfaceColor = Theme.of(context).colorScheme.surface;
         return Theme(
           data: sessionTheme != null
               ? Theme.of(context).copyWith(
@@ -570,6 +571,7 @@ class HomeScreenState extends State<HomeScreen> {
                 )
               : Theme.of(context),
           child: Scaffold(
+            backgroundColor: chatSurfaceColor,
             resizeToAvoidBottomInset: true,
             appBar: AppBar(
               title: GestureDetector(
@@ -692,74 +694,77 @@ class HomeScreenState extends State<HomeScreen> {
                 _buildConnectionIndicator(provider.connectionStatus),
               ],
             ),
-            body: Column(
-              children: [
-                if (provider.activeSessionId != null)
-                  _buildControlChips(provider),
-                if (provider.isRefreshingHistory)
-                  const LinearProgressIndicator(minHeight: 2),
-                Expanded(
-                  child: ChatView(
-                    key: _chatViewKey,
-                    messages: provider.filteredMessages,
-                    sessionStorageKey:
-                        '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
-                    isProcessing: provider.isProcessing,
-                    processingElapsed: provider.currentPromptElapsed,
-                    isCompacting: provider.isCompacting,
-                    isLoadingHistory: provider.isLoadingHistory,
-                    isLoadingMore: provider.isLoadingMore,
-                    hasMoreHistory: provider.hasMoreHistory,
-                    todos: provider.todos,
-                    onAnswer: provider.answerQuestion,
-                    onSecureInputSubmit: provider.submitSecureInput,
-                    onSecureInputUseStored: provider.submitStoredSecureInput,
-                    onSecureInputCancel: provider.cancelSecureInput,
-                    availableSecrets: provider.secretInventory,
-                    onLoadMore: provider.loadMoreHistory,
-                    onStopTask: provider.stopTask,
-                    onDismissTodos: provider.dismissTodos,
-                    onRewindConversation:
-                        provider.activeSessionBackend == 'codex'
-                        ? null
-                        : provider.rewindConversation,
-                    onBranch: provider.activeSessionBackend == 'codex'
-                        ? null
-                        : provider.branchFromMessage,
-                    onRetractQueuedMessage: (messageId) {
-                      final text = provider.retractQueuedMessage(messageId);
-                      if (text == null) return;
-                      _textController.text = text;
-                      _textController.selection = TextSelection.fromPosition(
-                        TextPosition(offset: text.length),
-                      );
-                      provider.saveDraft(text.trim());
-                      _focusNode.requestFocus();
-                    },
-                    rawMode: provider.rawMode,
-                    rawItems: provider.rawItems,
-                    subagentTasks: provider.subagentTasks,
-                    allMessages: provider.messages,
+            body: ColoredBox(
+              color: chatSurfaceColor,
+              child: Column(
+                children: [
+                  if (provider.activeSessionId != null)
+                    _buildControlChips(provider),
+                  if (provider.isRefreshingHistory)
+                    const LinearProgressIndicator(minHeight: 2),
+                  Expanded(
+                    child: ChatView(
+                      key: _chatViewKey,
+                      messages: provider.filteredMessages,
+                      sessionStorageKey:
+                          '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
+                      isProcessing: provider.isProcessing,
+                      processingElapsed: provider.currentPromptElapsed,
+                      isCompacting: provider.isCompacting,
+                      isLoadingHistory: provider.isLoadingHistory,
+                      isLoadingMore: provider.isLoadingMore,
+                      hasMoreHistory: provider.hasMoreHistory,
+                      todos: provider.todos,
+                      onAnswer: provider.answerQuestion,
+                      onSecureInputSubmit: provider.submitSecureInput,
+                      onSecureInputUseStored: provider.submitStoredSecureInput,
+                      onSecureInputCancel: provider.cancelSecureInput,
+                      availableSecrets: provider.secretInventory,
+                      onLoadMore: provider.loadMoreHistory,
+                      onStopTask: provider.stopTask,
+                      onDismissTodos: provider.dismissTodos,
+                      onRewindConversation:
+                          provider.activeSessionBackend == 'codex'
+                          ? null
+                          : provider.rewindConversation,
+                      onBranch: provider.activeSessionBackend == 'codex'
+                          ? null
+                          : provider.branchFromMessage,
+                      onRetractQueuedMessage: (messageId) {
+                        final text = provider.retractQueuedMessage(messageId);
+                        if (text == null) return;
+                        _textController.text = text;
+                        _textController.selection = TextSelection.fromPosition(
+                          TextPosition(offset: text.length),
+                        );
+                        provider.saveDraft(text.trim());
+                        _focusNode.requestFocus();
+                      },
+                      rawMode: provider.rawMode,
+                      rawItems: provider.rawItems,
+                      subagentTasks: provider.subagentTasks,
+                      allMessages: provider.messages,
+                    ),
                   ),
-                ),
-                if (provider.isCompacting) _buildCompactingBanner(),
-                if (provider.isRateLimited) _buildRateLimitBanner(provider),
-                if (provider.isRetrying) _buildRetryingBanner(),
-                if (provider.activeHookName != null)
-                  _buildHookBanner(provider.activeHookName!),
-                if (provider.activePaneTasks.isNotEmpty)
-                  ActiveTasksPane(
-                    backgroundTasks: provider.backgroundTasks,
-                    subagentTasks: provider.subagentTasks,
-                    messages: provider.messages,
-                    onStopTask: provider.stopTask,
-                    onScrollToTask: (toolUseId) {
-                      _chatViewKey.currentState?.scrollToTask(toolUseId);
-                    },
-                    onDismissSubagent: provider.dismissSubagent,
-                  ),
-                _buildInputBar(provider),
-              ],
+                  if (provider.isCompacting) _buildCompactingBanner(),
+                  if (provider.isRateLimited) _buildRateLimitBanner(provider),
+                  if (provider.isRetrying) _buildRetryingBanner(),
+                  if (provider.activeHookName != null)
+                    _buildHookBanner(provider.activeHookName!),
+                  if (provider.activePaneTasks.isNotEmpty)
+                    ActiveTasksPane(
+                      backgroundTasks: provider.backgroundTasks,
+                      subagentTasks: provider.subagentTasks,
+                      messages: provider.messages,
+                      onStopTask: provider.stopTask,
+                      onScrollToTask: (toolUseId) {
+                        _chatViewKey.currentState?.scrollToTask(toolUseId);
+                      },
+                      onDismissSubagent: provider.dismissSubagent,
+                    ),
+                  _buildInputBar(provider),
+                ],
+              ),
             ),
           ),
         );
