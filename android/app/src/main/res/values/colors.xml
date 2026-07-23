@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Native window behind Flutter's SurfaceView. -->
+    <color name="socketagent_background">#17120F</color>
+</resources>

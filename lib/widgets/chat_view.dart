@@ -765,6 +765,17 @@ class ChatViewState extends State<ChatView> {
         (hasLoadMore ? 1 : 0) +
         visibleMessages.length +
         (widget.isProcessing ? 1 : 0);
+    final listIndexByMessageKey = <Key, int>{};
+    for (
+      var messageIndex = 0;
+      messageIndex < visibleMessages.length;
+      messageIndex++
+    ) {
+      final reverseIndex = visibleMessages.length - 1 - messageIndex;
+      final listIndex = reverseIndex + (widget.isProcessing ? 1 : 0);
+      listIndexByMessageKey[_messageSliverKey(visibleMessages[messageIndex])] =
+          listIndex;
+    }
 
     return ColoredBox(
       key: const ValueKey('chat-surface'),
@@ -804,6 +815,12 @@ class ChatViewState extends State<ChatView> {
                   child: ListView.builder(
                     controller: _scrollController,
                     reverse: true,
+                    // A live transcript can insert recovered/tool rows before
+                    // children that are already mounted. Tell the sliver where
+                    // each stable row moved so it never reuses or strands a
+                    // stateful card at its former index.
+                    findChildIndexCallback: (key) =>
+                        listIndexByMessageKey[key],
                     // Keep visible rows in one paint layer. On Android, rapid
                     // streamed revisions could leave a stale per-row layer
                     // unpainted and expose the gray backing surface.
@@ -840,10 +857,19 @@ class ChatViewState extends State<ChatView> {
   Widget _buildMessageWidget(ChatMessage msg) {
     final rowKey = _messageRowKey(msg);
     return KeyedSubtree(
-      key: _messageRowKeys.putIfAbsent(rowKey, () => GlobalKey()),
-      child: _buildMessageContent(msg),
+      // Slivers must own a local, stable key. The GlobalKey used to measure
+      // reader anchors lives inside the row; making it the sliver child's key
+      // allowed rapid live insertions to detach/reparent the wrong render row.
+      key: _messageSliverKey(msg),
+      child: KeyedSubtree(
+        key: _messageRowKeys.putIfAbsent(rowKey, () => GlobalKey()),
+        child: _buildMessageContent(msg),
+      ),
     );
   }
+
+  Key _messageSliverKey(ChatMessage msg) =>
+      ValueKey<String>('message-row:${_messageRowKey(msg)}');
 
   String _messageRowKey(ChatMessage msg) {
     final toolId = msg.toolUseId ?? '';

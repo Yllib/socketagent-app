@@ -18,6 +18,15 @@
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:usesCleartextTraffic="true">
+        <!--
+          Flutter's Impeller/Vulkan path can drop large regions of the
+          SurfaceView on some Android GPUs while a busy lazy list is changing.
+          SocketAgent prioritizes transcript correctness over renderer-specific
+          frame optimizations, so use Flutter's supported Skia fallback.
+        -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true"

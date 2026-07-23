@@ -264,6 +264,49 @@ void main() {
     expect(surface().color.a, 1.0);
     expect(find.byKey(const ValueKey('chat-surface')), findsOneWidget);
   });
+
+  testWidgets('live insertions retain stable sliver row ownership', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 8,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final retainedMessage = key.currentState!.messages[5];
+    final retainedKey = ValueKey<String>(
+      'message-row:text:${retainedMessage.id}::',
+    );
+    final delegate =
+        tester.widget<ListView>(find.byType(ListView).first).childrenDelegate
+            as SliverChildBuilderDelegate;
+    expect(delegate.findChildIndexCallback, isNotNull);
+    expect(delegate.findChildIndexCallback!(retainedKey), 2);
+
+    key.currentState!.insertRecoveredToolRows(beforeIndex: 6);
+    await tester.pump();
+
+    final updatedDelegate =
+        tester.widget<ListView>(find.byType(ListView).first).childrenDelegate
+            as SliverChildBuilderDelegate;
+    expect(updatedDelegate.findChildIndexCallback!(retainedKey), 4);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is MessageBubble &&
+            widget.message.id == retainedMessage.id,
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 ({String id, double top}) _topVisibleMessage(WidgetTester tester) {
@@ -384,6 +427,35 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
           ..toolOutput = 'Image loaded'
           ..toolImageFilePath = '/tmp/pending-image.png';
     setState(() => messages = [...messages, image]);
+  }
+
+  void insertRecoveredToolRows({required int beforeIndex}) {
+    final call =
+        ChatMessage.toolCall(
+            tool: 'ViewImage',
+            input: const {'path': '/tmp/recovered.png'},
+            toolUseId: 'recovered-image',
+          )
+          ..toolOutput = 'Image viewed'
+          ..toolImageFilePath = '/tmp/recovered.png';
+    final result = ChatMessage(
+      id: 'recovered-result',
+      sender: MessageSender.assistant,
+      type: MessageType.toolResult,
+      timestamp: DateTime(2026, 1, 1, 0, 1),
+      textContent: '',
+      toolUseId: 'recovered-result',
+      toolName: 'Read',
+      toolOutput: 'Recovered output',
+    );
+    setState(() {
+      messages = [
+        ...messages.take(beforeIndex),
+        call,
+        result,
+        ...messages.skip(beforeIndex),
+      ];
+    });
   }
 
   void switchSession() {
