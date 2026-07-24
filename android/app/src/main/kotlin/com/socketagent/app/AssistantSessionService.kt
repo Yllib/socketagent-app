@@ -117,7 +117,14 @@ class AssistantSession(context: Context) : VoiceInteractionSession(context) {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             setPadding(0, dp(12), 0, 0)
         }
-        actions.addView(actionPill("Pair") {
+        val status = TextView(context).apply {
+            setTextColor(Color.argb(220, 255, 255, 255))
+            textSize = 13f
+            visibility = View.GONE
+            setPadding(0, dp(10), 0, 0)
+        }
+        lateinit var pairButton: TextView
+        pairButton = actionPill("Pair") {
             val port = portField.text.toString().trim()
             val code = codeField.text.toString().trim()
             val parsedPort = port.toIntOrNull()
@@ -131,14 +138,32 @@ class AssistantSession(context: Context) : VoiceInteractionSession(context) {
                 codeField.requestFocus()
                 return@actionPill
             }
-            AdbBridgeForegroundService.appendPairingInput(
-                appContext,
-                "$port $code"
-            )
-            Toast.makeText(appContext, "ADB pairing submitted", Toast.LENGTH_SHORT).show()
-            finish()
-        })
+            portField.isEnabled = false
+            codeField.isEnabled = false
+            pairButton.isEnabled = false
+            pairButton.alpha = 0.55f
+            pairButton.text = "Pairing…"
+            status.visibility = View.VISIBLE
+            status.text = "Running adb pair on this phone…"
+
+            LocalAdb.pair(appContext, port, code) { result ->
+                val succeeded = result["ok"] == true
+                status.text = adbResultMessage(result)
+                pairButton.text = if (succeeded) "Paired" else "Try Again"
+                pairButton.alpha = if (succeeded) 0.7f else 1f
+                pairButton.isEnabled = !succeeded
+                portField.isEnabled = !succeeded
+                codeField.isEnabled = !succeeded
+                Toast.makeText(
+                    appContext,
+                    if (succeeded) "Wireless ADB paired" else "ADB pairing failed",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        actions.addView(pairButton)
         card.addView(actions)
+        card.addView(status)
         pairingCard = card
 
         setContentView(
@@ -187,6 +212,19 @@ class AssistantSession(context: Context) : VoiceInteractionSession(context) {
                 Color.argb(150, 255, 255, 255)
             )
         }
+    }
+
+    private fun adbResultMessage(result: Map<String, Any?>): String {
+        val succeeded = result["ok"] == true
+        val details = listOf("stdout", "stderr", "message")
+            .mapNotNull { key -> result[key]?.toString()?.trim() }
+            .filter { it.isNotEmpty() }
+        val headline = if (succeeded) {
+            "Paired successfully. Use the connect port from the main Wireless Debugging screen next."
+        } else {
+            "Pairing failed."
+        }
+        return if (details.isEmpty()) headline else "$headline\n${details.joinToString("\n")}"
     }
 
     private fun actionPill(label: String, onClick: () -> Unit): TextView {

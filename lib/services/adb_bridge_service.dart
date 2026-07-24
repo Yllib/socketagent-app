@@ -220,11 +220,8 @@ class AdbBridgeService extends ChangeNotifier {
   }
 
   Future<bool> startTrustedAdbPairingFlow() async {
-    await _native.invokeMethod('startAdbBridgeForeground');
-    final started =
-        await _native.invokeMethod<bool>('startTrustedAdbPairingFlow') ?? false;
-    if (started) _startPairingInputPolling();
-    return started;
+    return await _native.invokeMethod<bool>('startTrustedAdbPairingFlow') ??
+        false;
   }
 
   Future<bool> showAdbPairingOverlay() async {
