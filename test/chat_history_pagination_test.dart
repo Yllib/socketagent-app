@@ -132,6 +132,46 @@ void main() {
     );
   });
 
+  testWidgets(
+    'a locally sent prompt cancels reader and pending history anchors',
+    (WidgetTester tester) async {
+      final key = GlobalKey<_HistoryHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _HistoryHarness(
+            key: key,
+            initiallyLoadingHistory: false,
+            messageCount: 80,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      position.jumpTo(position.maxScrollExtent * 0.6);
+      await tester.pump();
+      key.currentState!.beginHistoryLoad();
+      await tester.pump();
+
+      key.currentState!.sendUserPrompt('new local prompt');
+      await tester.pump();
+      await tester.pump();
+
+      expect(position.pixels, closeTo(position.minScrollExtent, 0.5));
+      expect(find.text('new local prompt'), findsOneWidget);
+
+      key.currentState!.completeLoad(prependCount: 20);
+      await tester.pump();
+      await tester.pump();
+
+      expect(position.pixels, closeTo(position.minScrollExtent, 0.5));
+      expect(find.text('new local prompt'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('streaming text does not fight an active reader drag', (
     WidgetTester tester,
   ) async {
@@ -440,6 +480,7 @@ class _HistoryHarness extends StatefulWidget {
 }
 
 class _HistoryHarnessState extends State<_HistoryHarness> {
+  final GlobalKey<ChatViewState> chatViewKey = GlobalKey();
   late bool isLoadingHistory;
   bool isLoadingMore = false;
   bool hasMoreHistory = true;
@@ -473,6 +514,26 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
       isLoadingMore = true;
       loadMoreCalls++;
     });
+  }
+
+  void beginHistoryLoad() {
+    _loadMore();
+  }
+
+  void sendUserPrompt(String text) {
+    setState(() {
+      messages = [
+        ...messages,
+        ChatMessage(
+          id: 'local-user-${messages.length}',
+          sender: MessageSender.user,
+          type: MessageType.text,
+          timestamp: DateTime.now(),
+          textContent: text,
+        ),
+      ];
+    });
+    chatViewKey.currentState?.revealLatestUserPrompt();
   }
 
   void completeLoad({required int prependCount}) {
@@ -566,6 +627,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   Widget build(BuildContext context) {
     return Scaffold(
       body: ChatView(
+        key: chatViewKey,
         messages: messages,
         sessionStorageKey: sessionStorageKey,
         isProcessing: false,

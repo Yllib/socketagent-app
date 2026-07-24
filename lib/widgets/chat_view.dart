@@ -287,6 +287,23 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
   }
 
+  /// A prompt submitted from this phone must be visible immediately. Passive
+  /// stream updates preserve a reader's viewport, but carrying that same rule
+  /// across a local send can strand the new prompt below the viewport. It can
+  /// also let a pending older-history anchor move the chat away again after
+  /// the prompt was appended.
+  void revealLatestUserPrompt() {
+    _readerAnchorGeneration++;
+    _historyLoadAnchorPixels = null;
+    _historyLoadUserInteracted = true;
+    _readerAnchoringSuspended = false;
+    _scrollPending = false;
+    _isAutoScrolling = false;
+    _userScrolledUp = false;
+    _autoScrollHeldForInspection = false;
+    _jumpToBottom();
+  }
+
   bool _historyWasPrepended(ChatView oldWidget) {
     final added = widget.messages.length - oldWidget.messages.length;
     if (added <= 0 || oldWidget.messages.isEmpty) return false;
