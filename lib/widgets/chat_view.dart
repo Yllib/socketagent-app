@@ -110,6 +110,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   final GlobalKey _scrollViewportKey = GlobalKey();
   final Map<String, GlobalKey> _messageRowKeys = {};
   final Map<String, GlobalKey> _taskKeys = {};
+  final Map<String, String> _taskRowKeyByToolUseId = {};
   double? _historyLoadAnchorPixels;
   bool _historyLoadUserInteracted = false;
   bool _historyPrefetchScheduled = false;
@@ -276,7 +277,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
   /// Scroll to a task card in the chat by its toolUseId
   void scrollToTask(String toolUseId) {
-    final key = _taskKeys[toolUseId];
+    final rowKey = _taskRowKeyByToolUseId[toolUseId];
+    final key = rowKey == null ? null : _taskKeys[rowKey];
     if (key?.currentContext != null) {
       Scrollable.ensureVisible(
         key!.currentContext!,
@@ -313,14 +315,43 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             _messageRowKey(oldWidget.messages.last);
   }
 
+  List<({ChatMessage message, String rowKey})> _renderRows(
+    Iterable<ChatMessage> messages,
+  ) {
+    final occurrences = <String, int>{};
+    return [
+      for (final message in messages)
+        (message: message, rowKey: _collisionSafeRowKey(message, occurrences)),
+    ];
+  }
+
+  String _collisionSafeRowKey(
+    ChatMessage message,
+    Map<String, int> occurrences,
+  ) {
+    final base = _messageRowKey(message);
+    final occurrence = occurrences.update(
+      base,
+      (current) => current + 1,
+      ifAbsent: () => 0,
+    );
+    return occurrence == 0 ? base : '$base#duplicate:$occurrence';
+  }
+
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
     final historyWindowWasReplaced =
         widget.historyWindowRevision != oldWidget.historyWindowRevision;
     final visibleReaderAnchor = _captureVisibleReaderAnchor();
-    final activeRowKeys = widget.messages.map(_messageRowKey).toSet();
+    final activeRowKeys = _renderRows(
+      widget.messages,
+    ).map((row) => row.rowKey).toSet();
     _messageRowKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
+    _taskKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
+    _taskRowKeyByToolUseId.removeWhere(
+      (_, rowKey) => !activeRowKeys.contains(rowKey),
+    );
     final historyLoadFinished =
         oldWidget.isLoadingMore && !widget.isLoadingMore;
     final historyLoadStarted = !oldWidget.isLoadingMore && widget.isLoadingMore;
@@ -777,8 +808,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final visibleMessages = widget.messages
         .where((m) => m.type != MessageType.codexPlan)
         .toList();
+    final visibleRows = _renderRows(visibleMessages);
 
-    if (visibleMessages.isEmpty && activeCodexPlan == null) {
+    if (visibleRows.isEmpty && activeCodexPlan == null) {
       return ColoredBox(
         key: const ValueKey('chat-surface'),
         color: chatSurfaceColor,
@@ -816,17 +848,19 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final hasLoadMore = widget.hasMoreHistory;
     final itemCount =
         (hasLoadMore ? 1 : 0) +
-        visibleMessages.length +
+        visibleRows.length +
         (widget.isProcessing ? 1 : 0);
     final listIndexByMessageKey = <Key, int>{};
     for (
       var messageIndex = 0;
-      messageIndex < visibleMessages.length;
+      messageIndex < visibleRows.length;
       messageIndex++
     ) {
-      final reverseIndex = visibleMessages.length - 1 - messageIndex;
+      final reverseIndex = visibleRows.length - 1 - messageIndex;
       final listIndex = reverseIndex + (widget.isProcessing ? 1 : 0);
-      listIndexByMessageKey[_messageSliverKey(visibleMessages[messageIndex])] =
+      listIndexByMessageKey[_messageSliverKey(
+            visibleRows[messageIndex].rowKey,
+          )] =
           listIndex;
     }
 
@@ -884,10 +918,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                         }
                         reverseIndex--;
                       }
-                      if (reverseIndex < visibleMessages.length) {
-                        final msgIndex =
-                            visibleMessages.length - 1 - reverseIndex;
-                        return _buildMessageWidget(visibleMessages[msgIndex]);
+                      if (reverseIndex < visibleRows.length) {
+                        final msgIndex = visibleRows.length - 1 - reverseIndex;
+                        final row = visibleRows[msgIndex];
+                        return _buildMessageWidget(row.message, row.rowKey);
                       }
                       // The final reverse-list item is the visual top.
                       return _buildLoadMoreButton(context);
@@ -902,27 +936,30 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildMessageWidget(ChatMessage msg) {
-    final rowKey = _messageRowKey(msg);
+  Widget _buildMessageWidget(ChatMessage msg, String rowKey) {
     return KeyedSubtree(
-      key: _messageSliverKey(msg),
+      key: _messageSliverKey(rowKey),
       child: KeyedSubtree(
         key: _messageRowKeys.putIfAbsent(rowKey, () => GlobalKey()),
-        child: _buildMessageContent(msg),
+        child: _buildMessageContent(msg, rowKey),
       ),
     );
   }
 
-  Key _messageSliverKey(ChatMessage msg) =>
-      ValueKey<String>('message-row:${_messageRowKey(msg)}');
+  Key _messageSliverKey(String rowKey) =>
+      ValueKey<String>('message-row:$rowKey');
 
   String _messageRowKey(ChatMessage msg) {
+    final entryId = msg.entryId;
+    if (entryId != null && entryId.isNotEmpty) {
+      return '${msg.type.name}:entry:$entryId';
+    }
     final toolId = msg.toolUseId ?? '';
     final parentId = msg.parentToolUseId ?? '';
     return '${msg.type.name}:${msg.id}:$toolId:$parentId';
   }
 
-  Widget _buildMessageContent(ChatMessage msg) {
+  Widget _buildMessageContent(ChatMessage msg, String rowKey) {
     switch (msg.type) {
       case MessageType.text:
         return MessageBubble(
@@ -949,7 +986,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             msg.toolUseId != null &&
             widget.subagentTasks.containsKey(msg.toolUseId)) {
           final toolUseId = msg.toolUseId!;
-          _taskKeys.putIfAbsent(toolUseId, () => GlobalKey());
+          _taskRowKeyByToolUseId.putIfAbsent(toolUseId, () => rowKey);
+          _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
           final isRunning =
               widget.subagentTasks[toolUseId]?['status'] == 'running';
           final children = widget.allMessages
@@ -959,20 +997,21 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             message: msg,
             childMessages: children,
             isRunning: isRunning,
-            scrollKey: _taskKeys[toolUseId],
+            scrollKey: _taskKeys[rowKey],
           );
         }
         // Backgrounded bash — register key for scroll-to
         if (msg.isBackgrounded && msg.toolUseId != null) {
-          _taskKeys.putIfAbsent(msg.toolUseId!, () => GlobalKey());
+          _taskRowKeyByToolUseId.putIfAbsent(msg.toolUseId!, () => rowKey);
+          _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
           return Container(
-            key: _taskKeys[msg.toolUseId!],
-            child: _buildToolOutputBlock(msg),
+            key: _taskKeys[rowKey],
+            child: _buildToolOutputBlock(msg, inspectionId: rowKey),
           );
         }
-        return _buildToolOutputBlock(msg);
+        return _buildToolOutputBlock(msg, inspectionId: rowKey);
       case MessageType.toolResult:
-        return _buildToolOutputBlock(msg);
+        return _buildToolOutputBlock(msg, inspectionId: rowKey);
       case MessageType.question:
         if (msg.emailPreview != null) {
           return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);
@@ -991,7 +1030,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       case MessageType.error:
         return _buildErrorWidget(msg);
       case MessageType.taskNotification:
-        return _buildTaskNotification(msg);
+        return _buildTaskNotification(msg, rowKey);
       case MessageType.compactBoundary:
         return _buildCompactBoundaryDivider(msg);
       case MessageType.outlookAuth:
@@ -1106,7 +1145,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     return '$minutes:$secondsText';
   }
 
-  Widget _buildTaskNotification(ChatMessage msg) {
+  Widget _buildTaskNotification(ChatMessage msg, String rowKey) {
     final theme = Theme.of(context);
     final status = msg.toolName ?? 'unknown'; // status stored in toolName
     final isSuccess = status == 'completed' || status == 'success';
@@ -1135,7 +1174,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         return _buildToolOutputBlock(
           original,
           greenTheme: true,
-          inspectionId: '${original.id}:${msg.id}',
+          inspectionId: rowKey,
         );
       }
     }

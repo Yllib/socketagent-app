@@ -381,6 +381,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('duplicate event identities cannot corrupt the mounted chat', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    key.currentState!.insertDuplicateIdentityRows();
+    await tester.pump();
+
+    expect(find.text('Duplicate row first'), findsOneWidget);
+    expect(find.text('Duplicate row second'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    final beforeDrag = position.pixels;
+    await tester.drag(find.byType(ListView).first, const Offset(0, 160));
+    await tester.pumpAndSettle();
+    expect(position.pixels, greaterThan(beforeDrag));
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('app resume releases a pointer-blocking scroll activity', (
     WidgetTester tester,
   ) async {
@@ -615,6 +647,29 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
         call,
         result,
         ...messages.skip(beforeIndex),
+      ];
+    });
+  }
+
+  void insertDuplicateIdentityRows() {
+    final timestamp = DateTime(2026, 1, 1, 0, 2);
+    setState(() {
+      messages = [
+        ...messages,
+        ChatMessage(
+          id: 'duplicate-event',
+          sender: MessageSender.assistant,
+          type: MessageType.text,
+          timestamp: timestamp,
+          textContent: 'Duplicate row first',
+        ),
+        ChatMessage(
+          id: 'duplicate-event',
+          sender: MessageSender.assistant,
+          type: MessageType.text,
+          timestamp: timestamp,
+          textContent: 'Duplicate row second',
+        ),
       ];
     });
   }
