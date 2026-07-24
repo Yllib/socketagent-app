@@ -102,14 +102,16 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
             title: 'Pair New Device',
             children: [
               const Text(
-                'Android expires the pairing port and code when you leave its pairing screen. Enter both values in the overlay while Wireless Debugging remains open.',
+                'Android expires the pairing port and code when you leave its '
+                'pairing screen. Enter both values in the trusted pairing card '
+                'while Wireless Debugging remains open.',
               ),
               const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
                   icon: const Icon(Icons.picture_in_picture_alt),
-                  label: const Text('Open Pairing Overlay'),
+                  label: const Text('Open Pairing Card'),
                   onPressed: _busy ? null : () => _showPairingOverlay(context),
                 ),
               ),
@@ -161,6 +163,59 @@ class _AdbBridgeScreenState extends State<AdbBridgeScreen> {
   }
 
   Future<void> _showPairingOverlay(BuildContext context) async {
+    bool requiresTrustedOverlay = false;
+    try {
+      requiresTrustedOverlay = await _service
+          .requiresTrustedAdbPairingOverlay();
+    } catch (_) {}
+    if (!context.mounted) return;
+
+    if (requiresTrustedOverlay) {
+      bool trustedOverlayReady = false;
+      try {
+        trustedOverlayReady = await _service.canShowTrustedAdbPairingOverlay();
+      } catch (_) {}
+      if (!context.mounted) return;
+
+      if (!trustedOverlayReady) {
+        final openSettings = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Select SocketAgent as assistant'),
+            content: const Text(
+              'Android blocks ordinary app overlays on Developer Settings. '
+              'Select SocketAgent as the Digital assistant app so its trusted '
+              'pairing card can stay open over Wireless Debugging.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Not Now'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Open Settings'),
+              ),
+            ],
+          ),
+        );
+        if (!context.mounted || openSettings != true) return;
+        await _service.openDigitalAssistantSettings();
+        return;
+      }
+
+      final started = await _service.startTrustedAdbPairingFlow();
+      if (!context.mounted) return;
+      if (!started) {
+        _showSnack(
+          context,
+          'The trusted pairing card could not start. Re-select SocketAgent '
+          'as the Digital assistant app and try again.',
+        );
+      }
+      return;
+    }
+
     bool allowed = false;
     try {
       allowed = await _service.canDrawOverlays();

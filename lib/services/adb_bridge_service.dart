@@ -201,6 +201,32 @@ class AdbBridgeService extends ChangeNotifier {
     await _native.invokeMethod('requestOverlayPermission');
   }
 
+  Future<bool> requiresTrustedAdbPairingOverlay() async {
+    return await _native.invokeMethod<bool>(
+          'requiresTrustedAdbPairingOverlay',
+        ) ??
+        false;
+  }
+
+  Future<bool> canShowTrustedAdbPairingOverlay() async {
+    return await _native.invokeMethod<bool>(
+          'canShowTrustedAdbPairingOverlay',
+        ) ??
+        false;
+  }
+
+  Future<void> openDigitalAssistantSettings() async {
+    await _native.invokeMethod('openDigitalAssistantSettings');
+  }
+
+  Future<bool> startTrustedAdbPairingFlow() async {
+    await _native.invokeMethod('startAdbBridgeForeground');
+    final started =
+        await _native.invokeMethod<bool>('startTrustedAdbPairingFlow') ?? false;
+    if (started) _startPairingInputPolling();
+    return started;
+  }
+
   Future<bool> showAdbPairingOverlay() async {
     await _native.invokeMethod('startAdbBridgeForeground');
     final shown =

@@ -189,6 +189,34 @@ class MainActivity : FlutterActivity() {
                         result.error("ADB_PAIRING_OVERLAY_ERROR", e.message, null)
                     }
                 }
+                "requiresTrustedAdbPairingOverlay" -> {
+                    result.success(Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
+                }
+                "canShowTrustedAdbPairingOverlay" -> {
+                    result.success(AssistantService.isActive(this))
+                }
+                "openDigitalAssistantSettings" -> {
+                    try {
+                        openDigitalAssistantSettings()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("OPEN_ASSISTANT_SETTINGS_ERROR", e.message, null)
+                    }
+                }
+                "startTrustedAdbPairingFlow" -> {
+                    try {
+                        if (!AssistantService.isActive(this)) {
+                            result.success(false)
+                        } else {
+                            openWirelessDebuggingSettings()
+                            result.success(
+                                AssistantService.requestAdbPairingSession()
+                            )
+                        }
+                    } catch (e: Exception) {
+                        result.error("TRUSTED_ADB_PAIRING_ERROR", e.message, null)
+                    }
+                }
                 "hideAuthCodeOverlay" -> {
                     AuthCodeOverlay.hide()
                     result.success(true)
@@ -289,6 +317,24 @@ class MainActivity : FlutterActivity() {
             }
         }
         throw lastError ?: IllegalStateException("Unable to open overlay permission settings.")
+    }
+
+    private fun openDigitalAssistantSettings() {
+        val intents = listOf(
+            Intent(Settings.ACTION_VOICE_INPUT_SETTINGS),
+            Intent(Settings.ACTION_MANAGE_DEFAULT_APPS_SETTINGS)
+        )
+
+        var lastError: Exception? = null
+        for (intent in intents) {
+            try {
+                startActivity(intent)
+                return
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IllegalStateException("Unable to open digital assistant settings.")
     }
 
     override fun onNewIntent(intent: Intent) {
