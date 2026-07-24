@@ -471,6 +471,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _serverFiles = {}; // fileId → server path
   final Map<String, String> _serverFileNames = {}; // fileId → display name
   final Map<String, int> _serverFileSizes = {}; // fileId → bytes
+  final Map<String, String> _serverFileVersions = {}; // fileId → server identity
   final Map<String, String> _downloadServerIds = {}; // fileId → server id
   final Map<String, String> _downloadSessionIds = {}; // fileId → session id
   final Set<String> _downloadingFiles = {}; // fileId set
@@ -10626,6 +10627,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'requestId': requestId,
       'path': path,
       'fileId': fileId,
+      if (_serverFileVersions[fileId]?.isNotEmpty == true)
+        'expectedFileVersion': _serverFileVersions[fileId],
       if (offsetBytes > 0) 'offsetBytes': offsetBytes,
     };
     if (serverId != null) {
@@ -10641,6 +10644,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serverFiles.remove(fileId);
       _serverFileNames.remove(fileId);
       _serverFileSizes.remove(fileId);
+      _serverFileVersions.remove(fileId);
       _downloadServerIds.remove(fileId);
       _downloadRetryCounts.remove(fileId);
       _filePathToId.remove(path);
@@ -12013,11 +12017,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (fileName.isEmpty) fileName = 'file';
     final filePath = msg['filePath'] as String? ?? '';
     final fileSize = (msg['fileSize'] as num?)?.toInt();
+    final fileVersion = msg['fileVersion'] as String?;
     if (filePath.isNotEmpty && fileId.isNotEmpty) {
       _serverFiles[fileId] = filePath;
       _serverFileNames[fileId] = fileName;
       if (fileSize != null && fileSize > 0) {
         _serverFileSizes[fileId] = fileSize;
+      }
+      if (fileVersion != null && fileVersion.isNotEmpty) {
+        _serverFileVersions[fileId] = fileVersion;
       }
       final currentServerId = serverId ?? _connMgr.activeServerId;
       if (currentServerId != null && currentServerId.isNotEmpty) {
@@ -12178,6 +12186,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'filePath': serverPath,
       'fileId': fileId,
       'transferToken': transferToken,
+      if (_serverFileVersions[fileId]?.isNotEmpty == true)
+        'expectedFileVersion': _serverFileVersions[fileId],
       if (offsetBytes > 0) 'offsetBytes': offsetBytes,
     };
     _armDownloadWatchdog(fileId);
@@ -12696,6 +12706,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final fileName = msg['fileName'] as String? ?? 'file';
     final fileSize = (msg['fileSize'] as num?)?.toInt();
     final transferToken = msg['transferToken'] as String?;
+    final fileVersion = msg['fileVersion'] as String?;
 
     try {
       final expectedToken = _socketDownloadTokens[fileId];
@@ -12720,6 +12731,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (!_downloadingFiles.contains(fileId)) {
         debugPrint('[File] Ignoring stale completion for $fileId');
         return;
+      }
+      if (fileVersion != null && fileVersion.isNotEmpty) {
+        _serverFileVersions[fileId] = fileVersion;
       }
 
       // Close the temp file
