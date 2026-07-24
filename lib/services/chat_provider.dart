@@ -7003,7 +7003,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _messages[idx].uuid = uuid;
         applyTranscriptPosition(_messages[idx], msg);
         _messages = orderByTranscriptPosition(_messages);
-        _pendingLocalUserMessageIds.remove(clientMessageId);
+        // The UUID acknowledges that the server persisted this prompt, but an
+        // older history request may still be in flight. Keep protecting the
+        // optimistic bubble until an authoritative history response actually
+        // contains the prompt; otherwise that stale response can erase it.
         if (_isPendingInjectedMessage(_messages[idx]) &&
             _pendingInjectedMessageCount > 0) {
           _pendingInjectedMessageCount--;
@@ -7013,7 +7016,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         return;
       }
-      _pendingLocalUserMessageIds.remove(clientMessageId);
     }
     // Find the most recent user text message without a UUID and assign it
     for (int i = _messages.length - 1; i >= 0; i--) {
@@ -7025,7 +7027,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         m.uuid = uuid;
         applyTranscriptPosition(m, msg);
         _messages = orderByTranscriptPosition(_messages);
-        _pendingLocalUserMessageIds.remove(m.id);
         notifyListeners();
         return;
       }

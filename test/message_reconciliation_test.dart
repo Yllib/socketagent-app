@@ -322,4 +322,25 @@ void main() {
     expect(reconciled, isNot(contains(same(oldTool))));
     expect(reconciled.last, same(activeReply));
   });
+
+  test(
+    'non-overlapping stale snapshot keeps a newer acknowledged user prompt',
+    () {
+      final staleSnapshot = ChatMessage.assistantText('session')
+        ..textContent = 'older bounded history window'
+        ..entryId = 'entry-40'
+        ..sessionSeq = 40;
+      final currentPrompt = ChatMessage.userText('new band scan prompt')
+        ..uuid = 'current-user'
+        ..entryId = 'entry-41'
+        ..sessionSeq = 41;
+
+      final reconciled = reconcileLiveTranscriptWithSnapshot(
+        [staleSnapshot],
+        [currentPrompt],
+      );
+
+      expect(reconciled, [same(staleSnapshot), same(currentPrompt)]);
+    },
+  );
 }

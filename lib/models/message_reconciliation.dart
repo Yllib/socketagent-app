@@ -287,6 +287,14 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
 ) {
   final reconciled = snapshotMessages.toList();
   final liveList = liveCandidates.toList();
+  final positionedSnapshotMessages = reconciled.where(
+    (message) => message.sessionSeq != null,
+  );
+  final newestSnapshotSequence = positionedSnapshotMessages.isEmpty
+      ? null
+      : positionedSnapshotMessages
+            .map((message) => message.sessionSeq!)
+            .reduce((left, right) => left > right ? left : right);
   var newestLiveOverlap = -1;
   for (var i = 0; i < liveList.length; i++) {
     if (reconciled.any((snapshot) => _messagesOverlap(liveList[i], snapshot))) {
@@ -298,13 +306,21 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     final live = liveList[i];
     // A reconnect snapshot can be generated just before the current prompt is
     // persisted. Preserve user messages in the live tail after the newest
-    // snapshot overlap so the UI cannot roll back to the previous prompt.
-    final isLiveUserTail =
-        newestLiveOverlap >= 0 &&
-        i > newestLiveOverlap &&
+    // snapshot overlap so the UI cannot roll back to the previous prompt. A
+    // bounded snapshot may have no overlap with an old cached window at all;
+    // the server-assigned sequence still proves a live prompt is newer.
+    final isUserPrompt =
         live.sender == MessageSender.user &&
         (live.type == MessageType.text ||
             live.type == MessageType.skillInvocation);
+    final isPositionedAfterSnapshot =
+        isUserPrompt &&
+        newestSnapshotSequence != null &&
+        live.sessionSeq != null &&
+        live.sessionSeq! > newestSnapshotSequence;
+    final isLiveUserTail =
+        isPositionedAfterSnapshot ||
+        (newestLiveOverlap >= 0 && i > newestLiveOverlap && isUserPrompt);
     if (!_isLiveTranscriptMessage(live) && !isLiveUserTail) continue;
     final stableKey = _stableLiveKey(live);
     var matchIndex = -1;
