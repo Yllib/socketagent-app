@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -53,6 +54,153 @@ Map<String, dynamic> mergeTranscriptCachePayloads(
     ..['historyKind'] = 'initial';
 }
 
+Map<String, dynamic> boundTranscriptCachePayload(
+  Map<String, dynamic> payload, {
+  required int maxBytes,
+}) {
+  Map<String, dynamic> candidate(int droppedMessages) {
+    final messages = (payload['messages'] as List? ?? const []);
+    final total = (payload['total'] as num?)?.toInt() ?? messages.length;
+    final originalOffset =
+        (payload['offset'] as num?)?.toInt() ??
+        (total - messages.length).clamp(0, total);
+    return Map<String, dynamic>.from(payload)
+      ..remove('requestId')
+      ..['historyKind'] = 'initial'
+      ..['messages'] = messages.skip(droppedMessages).toList()
+      ..['offset'] = originalOffset + droppedMessages;
+  }
+
+  bool fits(Map<String, dynamic> value) =>
+      utf8.encode(jsonEncode(value)).length <= maxBytes;
+
+  final messages = payload['messages'] as List? ?? const [];
+  final untrimmed = candidate(0);
+  if (fits(untrimmed) || messages.isEmpty) return untrimmed;
+
+  // Find the smallest prefix that can be discarded while keeping a complete,
+  // contiguous newest suffix. Advancing offset alongside the trim preserves a
+  // safe resume cursor instead of freezing the previous oversized snapshot.
+  var low = 1;
+  var high = messages.length;
+  var best = messages.length;
+  while (low <= high) {
+    final middle = low + ((high - low) ~/ 2);
+    if (fits(candidate(middle))) {
+      best = middle;
+      high = middle - 1;
+    } else {
+      low = middle + 1;
+    }
+  }
+  return candidate(best);
+}
+
+Map<String, dynamic> mergeLiveTranscriptCacheEntry(
+  Map<String, dynamic> current,
+  Map<String, dynamic> entry,
+) {
+  final entryId = entry['entryId']?.toString() ?? '';
+  final sequence = (entry['sessionSeq'] as num?)?.toInt();
+  if (entryId.isEmpty || sequence == null || sequence <= 0) return current;
+
+  final messages = (current['messages'] as List? ?? const [])
+      .whereType<Map>()
+      .map((message) => Map<String, dynamic>.from(message))
+      .toList();
+  final existingIndex = messages.indexWhere(
+    (message) =>
+        message['entryId'] == entryId ||
+        (message['sessionSeq'] as num?)?.toInt() == sequence,
+  );
+  if (existingIndex >= 0) {
+    final existingRevision =
+        (messages[existingIndex]['revision'] as num?)?.toInt() ?? 0;
+    final incomingRevision = (entry['revision'] as num?)?.toInt() ?? 0;
+    if (incomingRevision >= existingRevision) {
+      messages[existingIndex] = Map<String, dynamic>.from(entry);
+    }
+    return Map<String, dynamic>.from(current)..['messages'] = messages;
+  }
+
+  final latestSequence = messages
+      .map((message) => (message['sessionSeq'] as num?)?.toInt())
+      .whereType<int>()
+      .fold<int>(0, (latest, value) => value > latest ? value : latest);
+  if (sequence <= latestSequence) return current;
+
+  messages.add(Map<String, dynamic>.from(entry));
+  final currentTotal =
+      (current['total'] as num?)?.toInt() ??
+      ((current['offset'] as num?)?.toInt() ?? 0) + messages.length - 1;
+  return Map<String, dynamic>.from(current)
+    ..['messages'] = messages
+    ..['total'] = currentTotal + 1
+    ..['historyKind'] = 'initial';
+}
+
+Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
+  Map<String, dynamic> event, {
+  String? userContent,
+}) {
+  final entryId = event['entryId']?.toString() ?? '';
+  final sessionSeq = (event['sessionSeq'] as num?)?.toInt();
+  if (entryId.isEmpty || sessionSeq == null || sessionSeq <= 0) return null;
+  final type = event['type']?.toString() ?? '';
+  final base = <String, dynamic>{
+    'entryId': entryId,
+    'sessionSeq': sessionSeq,
+    'revision': (event['revision'] as num?)?.toInt() ?? 1,
+    if (event['uuid'] != null) 'uuid': event['uuid'],
+    if (event['parentToolUseId'] != null)
+      'parentToolUseId': event['parentToolUseId'],
+    'timestamp':
+        event['timestamp']?.toString() ??
+        DateTime.now().toUtc().toIso8601String(),
+  };
+  switch (type) {
+    case 'user_message_uuid':
+      if (userContent == null || userContent.trim().isEmpty) return null;
+      return {...base, 'role': 'user', 'content': userContent};
+    case 'text':
+      if (event['finalSnapshot'] != true) return null;
+      return {
+        ...base,
+        'role': 'assistant',
+        'content': event['content']?.toString() ?? '',
+      };
+    case 'thinking':
+      if (event['finalSnapshot'] != true) return null;
+      return {
+        ...base,
+        'role': 'assistant',
+        'content': event['content']?.toString() ?? '',
+        'thinking': true,
+      };
+    case 'tool_call':
+      return {
+        ...base,
+        'role': 'tool_call',
+        'content': '',
+        'toolName': event['tool']?.toString() ?? 'Tool',
+        'toolInput': event['input'] is Map
+            ? Map<String, dynamic>.from(event['input'] as Map)
+            : <String, dynamic>{},
+        'toolUseId': event['toolUseId']?.toString() ?? '',
+      };
+    case 'tool_result':
+      final output = event['output']?.toString() ?? '';
+      return {
+        ...base,
+        'role': 'tool_result',
+        'content': output,
+        'toolOutput': output,
+        'toolUseId': event['toolUseId']?.toString() ?? '',
+      };
+  }
+  return null;
+}
+
 class SessionTranscriptCache {
   // A cache is only safe as a delta cursor when it contains every durable
   // entry from offset through total. Older snapshots could retain a latest
@@ -64,6 +212,8 @@ class SessionTranscriptCache {
   static const int maxSnapshotBytes = 2 * 1024 * 1024;
 
   final Map<String, Map<String, dynamic>> _memory = {};
+  final Map<String, Future<void>> _pendingWrites = {};
+  final Map<String, Timer> _liveWriteTimers = {};
   Directory? _directory;
 
   String _key(String serverId, String sessionId) => '$serverId\u0001$sessionId';
@@ -168,9 +318,11 @@ class SessionTranscriptCache {
     Map<String, dynamic> payload,
   ) async {
     if (serverId.isEmpty || sessionId.isEmpty) return;
-    final cachedPayload = Map<String, dynamic>.from(payload)
-      ..remove('requestId')
-      ..['historyKind'] = 'initial';
+    final cachedPayload = boundTranscriptCachePayload(
+      payload,
+      // Leave room for the versioned envelope and cache-key metadata.
+      maxBytes: maxSnapshotBytes - 1024,
+    );
     final wrapper = <String, dynamic>{
       'schemaVersion': schemaVersion,
       'serverId': serverId,
@@ -182,16 +334,36 @@ class SessionTranscriptCache {
     if (utf8.encode(encoded).length > maxSnapshotBytes) return;
     final key = _key(serverId, sessionId);
     _memory[key] = cachedPayload;
+    final previousWrite = _pendingWrites[key];
+    final write = _persistAfter(previousWrite, key: key, encoded: encoded);
+    _pendingWrites[key] = write;
     try {
-      final directory = await _cacheDirectory();
-      final file = File('${directory.path}/${_fileName(key)}');
-      final temp = File('${file.path}.tmp');
-      await temp.writeAsString(encoded, flush: true);
-      await temp.rename(file.path);
-      await _prune(directory);
+      await write;
     } catch (_) {
       // Cache failures must never prevent opening a session.
+    } finally {
+      if (identical(_pendingWrites[key], write)) {
+        _pendingWrites.remove(key);
+      }
     }
+  }
+
+  Future<void> _persistAfter(
+    Future<void>? previousWrite, {
+    required String key,
+    required String encoded,
+  }) async {
+    if (previousWrite != null) {
+      try {
+        await previousWrite;
+      } catch (_) {}
+    }
+    final directory = await _cacheDirectory();
+    final file = File('${directory.path}/${_fileName(key)}');
+    final temp = File('${file.path}.tmp');
+    await temp.writeAsString(encoded, flush: true);
+    await temp.rename(file.path);
+    await _prune(directory);
   }
 
   Future<void> mergeDelta(
@@ -222,6 +394,37 @@ class SessionTranscriptCache {
       sessionId,
       mergeTranscriptCachePayloads(current, olderPage),
     );
+  }
+
+  Future<void> mergeLiveEntry(
+    String serverId,
+    String sessionId,
+    Map<String, dynamic> entry,
+  ) async {
+    if (serverId.isEmpty || sessionId.isEmpty) return;
+    final current =
+        peek(serverId, sessionId) ?? await load(serverId, sessionId);
+    if (resumeCheckpoint(current) == null) return;
+    final merged = mergeLiveTranscriptCacheEntry(current!, entry);
+    if (identical(merged, current)) return;
+    final bounded = boundTranscriptCachePayload(
+      merged,
+      maxBytes: maxSnapshotBytes - 1024,
+    );
+    final key = _key(serverId, sessionId);
+    _memory[key] = bounded;
+
+    // Live tool events often arrive in tight bursts. Update the memory cursor
+    // immediately for instant reopen, but coalesce durable writes so streaming
+    // does not repeatedly encode and flush a multi-megabyte snapshot.
+    _liveWriteTimers.remove(key)?.cancel();
+    _liveWriteTimers[key] = Timer(const Duration(milliseconds: 750), () {
+      _liveWriteTimers.remove(key);
+      final latest = _memory[key];
+      if (latest != null) {
+        unawaited(save(serverId, sessionId, latest));
+      }
+    });
   }
 
   Future<void> _prune(Directory directory) async {

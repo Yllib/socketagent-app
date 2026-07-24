@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:app/services/session_transcript_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -88,6 +90,121 @@ void main() {
     expect((merged['messages'] as List).length, 1);
     expect((merged['messages'] as List).single['content'], 'complete');
     expect(merged['offset'], 8);
+  });
+
+  test('oversized cache keeps a contiguous newest suffix and advances', () {
+    final payload = {
+      'sessionId': 'bandscan',
+      'offset': 100,
+      'total': 106,
+      'messages': List.generate(
+        6,
+        (index) => {
+          'entryId': 'entry-${101 + index}',
+          'sessionSeq': 1001 + index,
+          'role': index.isEven ? 'assistant' : 'tool_result',
+          'content': List.filled(300, 'x').join(),
+        },
+      ),
+    };
+
+    final bounded = boundTranscriptCachePayload(payload, maxBytes: 1050);
+    final messages = bounded['messages'] as List;
+
+    expect(messages, isNotEmpty);
+    expect(messages.length, lessThan(6));
+    expect(bounded['offset'], 106 - messages.length);
+    expect(
+      messages.map((entry) => (entry as Map)['sessionSeq']).toList(),
+      List.generate(messages.length, (index) => 1007 - messages.length + index),
+    );
+    expect(utf8.encode(jsonEncode(bounded)).length, lessThanOrEqualTo(1050));
+  });
+
+  test(
+    'live durable entries advance the cached total and replace revisions',
+    () {
+      final current = {
+        'offset': 7,
+        'total': 9,
+        'messages': [
+          {
+            'entryId': 'entry-8',
+            'sessionSeq': 108,
+            'revision': 1,
+            'role': 'user',
+            'content': 'prompt',
+          },
+          {
+            'entryId': 'entry-9',
+            'sessionSeq': 109,
+            'revision': 1,
+            'role': 'assistant',
+            'content': 'partial',
+          },
+        ],
+      };
+      final revised = mergeLiveTranscriptCacheEntry(current, {
+        'entryId': 'entry-9',
+        'sessionSeq': 109,
+        'revision': 2,
+        'role': 'assistant',
+        'content': 'complete',
+      });
+      final advanced = mergeLiveTranscriptCacheEntry(revised, {
+        'entryId': 'entry-10',
+        'sessionSeq': 110,
+        'revision': 1,
+        'role': 'tool_call',
+        'toolUseId': 'tool-10',
+      });
+
+      expect((advanced['messages'] as List).length, 3);
+      expect((advanced['messages'] as List)[1]['content'], 'complete');
+      expect(advanced['total'], 10);
+      expect(advanced['offset'], 7);
+    },
+  );
+
+  test('only final text snapshots become live cache entries', () {
+    final partial = transcriptCacheEntryFromServerEvent({
+      'type': 'text',
+      'entryId': 'entry-1',
+      'sessionSeq': 1,
+      'revision': 1,
+      'content': 'par',
+      'snapshot': true,
+    });
+    final complete = transcriptCacheEntryFromServerEvent({
+      'type': 'text',
+      'entryId': 'entry-1',
+      'sessionSeq': 1,
+      'revision': 2,
+      'content': 'complete',
+      'snapshot': true,
+      'finalSnapshot': true,
+    });
+
+    expect(partial, isNull);
+    expect(complete?['role'], 'assistant');
+    expect(complete?['content'], 'complete');
+  });
+
+  test('user live cache entry retains the exact transmitted prompt', () {
+    const transmitted =
+        '[Attached file: /tmp/report.pdf]\n'
+        '[Attached secret: {"label":"TOKEN","scope":"session"}]\n'
+        'Review these';
+    final entry = transcriptCacheEntryFromServerEvent({
+      'type': 'user_message_uuid',
+      'entryId': 'entry-2',
+      'sessionSeq': 2,
+      'revision': 1,
+      'uuid': 'user-2',
+    }, userContent: transmitted);
+
+    expect(entry?['role'], 'user');
+    expect(entry?['content'], transmitted);
   });
 
   test('only a complete contiguous cache can be used as a resume cursor', () {
