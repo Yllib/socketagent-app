@@ -257,9 +257,9 @@ class HomeScreenState extends State<HomeScreen> {
               color: theme.colorScheme.primary,
               size: 20,
             ),
-            title: const Text('Now'),
+            title: const Text('Interrupt'),
             subtitle: const Text(
-              'Interrupt current tool',
+              'Stop the running tool right now',
               style: TextStyle(fontSize: 11),
             ),
             dense: true,
@@ -274,9 +274,9 @@ class HomeScreenState extends State<HomeScreen> {
               color: theme.colorScheme.secondary,
               size: 20,
             ),
-            title: const Text('Next'),
+            title: const Text('Next step'),
             subtitle: const Text(
-              'Between turns',
+              'When the current tool finishes (default)',
               style: TextStyle(fontSize: 11),
             ),
             dense: true,
@@ -293,7 +293,7 @@ class HomeScreenState extends State<HomeScreen> {
             ),
             title: const Text('Later'),
             subtitle: const Text(
-              'After current task',
+              'Not until the whole task is done',
               style: TextStyle(fontSize: 11),
             ),
             dense: true,
