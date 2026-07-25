@@ -1510,6 +1510,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _subscriptionRequiredController.stream;
   String? get sessionModel => _sessionModel;
   List<Map<String, dynamic>> get supportedModels => _supportedModels;
+  bool get isPendingNewSession =>
+      _activeSessionId == null &&
+      _activeSessionBackend != null &&
+      _activeSessionCwd != null;
+  bool get isLoadingNewSessionModels =>
+      isPendingNewSession && _supportedModels.isEmpty;
   List<String> get availableTools => _availableTools;
   List<Map<String, dynamic>> get mcpServers => _mcpServers;
 
@@ -6724,8 +6730,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           }
         }
+        if (_sessionModel == null || _sessionModel!.isEmpty) {
+          final defaultModel = _supportedModels.where((model) {
+            final value = (model['value'] ?? model['id'] ?? '').toString();
+            return value == 'default' || model['isDefault'] == true;
+          }).firstOrNull;
+          final fallback = defaultModel ?? _supportedModels.firstOrNull;
+          final value = (fallback?['value'] ?? fallback?['id'] ?? '').toString();
+          if (value.isNotEmpty) _sessionModel = value;
+        }
       }
-      _normalizeCodexEffortForSelectedModel();
+      _normalizeEffortForSelectedModel();
       notifyListeners();
     }
   }
@@ -6803,15 +6818,36 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     ];
   }
 
-  void _normalizeCodexEffortForSelectedModel() {
-    if (_activeSessionBackend != 'codex') return;
-    final supported = codexReasoningEfforts
-        .map(
-          (entry) =>
-              (entry['reasoningEffort'] ?? entry['effort'] ?? '').toString(),
-        )
-        .where((value) => value.isNotEmpty)
-        .toList();
+  List<String> get selectedModelEffortLevels {
+    if (_activeSessionBackend == 'codex') {
+      return codexReasoningEfforts
+          .map(
+            (entry) =>
+                (entry['reasoningEffort'] ?? entry['effort'] ?? '').toString(),
+          )
+          .where((value) => value.isNotEmpty)
+          .toList();
+    }
+
+    final currentModel = _sessionModel ?? '';
+    for (final model in _supportedModels) {
+      final value = (model['value'] ?? model['id'] ?? '').toString();
+      if (currentModel.isNotEmpty && value != currentModel) continue;
+      final rawEfforts = model['supportedEffortLevels'];
+      if (rawEfforts is List) {
+        final efforts = rawEfforts
+            .map((entry) => entry.toString())
+            .where((value) => value.isNotEmpty)
+            .toList();
+        if (efforts.isNotEmpty) return efforts;
+      }
+      if (currentModel.isNotEmpty) break;
+    }
+    return const ['low', 'medium', 'high', 'xhigh', 'max'];
+  }
+
+  void _normalizeEffortForSelectedModel() {
+    final supported = selectedModelEffortLevels;
     if (supported.isEmpty || supported.contains(_effort)) return;
 
     String? defaultEffort;
@@ -6826,6 +6862,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     setEffort(
       defaultEffort != null && supported.contains(defaultEffort)
           ? defaultEffort
+          : supported.contains('high')
+          ? 'high'
           : supported.first,
     );
   }
@@ -6905,7 +6943,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void setModel(String? model) {
     _connMgr.send({'type': 'set_model', if (model != null) 'model': model});
     if (model != null) _sessionModel = model;
-    _normalizeCodexEffortForSelectedModel();
+    _normalizeEffortForSelectedModel();
     notifyListeners();
   }
 
@@ -8577,7 +8615,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'messageId': userMsg.id,
       if (_activeSessionId == null && _activeSessionCwd != null)
         'cwd': _activeSessionCwd,
+      if (_activeSessionId == null && _activeSessionBackend != null)
+        'backend': _activeSessionBackend,
       if (useCodexFastMode) 'codexFastMode': true,
+      if (_activeSessionId == null)
+        'initialSettings': {
+          if (_sessionModel != null && _sessionModel!.isNotEmpty)
+            'model': _sessionModel,
+          'effort': _effort,
+          'permissionMode': _permissionMode ?? 'bypassPermissions',
+          if (_activeSessionBackend == 'claude') ...{
+            'thinking': _thinking,
+            'claudeAutoCompact': _claudeAutoCompactEnabled,
+          },
+          if (_activeSessionBackend == 'codex') ...{
+            'codexFastMode': _codexFastMode,
+            'codexCollaborationMode': _codexCollaborationMode,
+          },
+        },
     });
 
     // Upload + dispatch done — bubble is officially "sent" now (unless it's
@@ -9465,7 +9520,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _processingSetAt = null;
     _stopPromptRuntime();
     _isCompacting = false;
-    _permissionMode = null;
+    _permissionMode = 'bypassPermissions';
     _historyOffset = 0;
     _isLoadingMore = false;
     _sessionModel = null;
@@ -9507,6 +9562,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (effectiveCwd != null) {
       addRecentCwd(effectiveCwd, serverId: serverId);
     }
+    _activeSessionCwd = effectiveCwd;
+    _activeSessionTitle = 'Untitled';
     final msg = <String, dynamic>{
       'type': 'new_session',
       if (effectiveCwd != null) 'cwd': effectiveCwd,

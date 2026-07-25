@@ -160,7 +160,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
 
   List<String> _effortOptions(String backend) => backend == 'codex'
       ? const ['minimal', 'low', 'medium', 'high', 'max', 'xhigh', 'ultra']
-      : const ['low', 'medium', 'high', 'max'];
+      : const ['low', 'medium', 'high', 'xhigh', 'max'];
 
   String _effortLabel(String effort) {
     switch (effort) {

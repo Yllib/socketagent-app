@@ -641,7 +641,8 @@ class HomeScreenState extends State<HomeScreen> {
                                   .withAlpha(178),
                         ),
                       ),
-                    if (provider.activeSessionId != null)
+                    if (provider.activeSessionId != null ||
+                        provider.isPendingNewSession)
                       GestureDetector(
                         onTap: () => _showPermissionModePicker(provider),
                         child: Padding(
@@ -702,7 +703,8 @@ class HomeScreenState extends State<HomeScreen> {
               color: chatSurfaceColor,
               child: Column(
                 children: [
-                  if (provider.activeSessionId != null)
+                  if (provider.activeSessionId != null ||
+                      provider.isPendingNewSession)
                     _buildControlChips(provider),
                   if (provider.isRefreshingHistory)
                     const LinearProgressIndicator(minHeight: 2),
@@ -798,10 +800,11 @@ class HomeScreenState extends State<HomeScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (provider.supportedModels.isNotEmpty) ...[
-                  _buildModelChip(provider),
-                  const SizedBox(width: 6),
-                ],
+                if (provider.supportedModels.isNotEmpty)
+                  _buildModelChip(provider)
+                else if (provider.isLoadingNewSessionModels)
+                  _buildLoadingModelChip(),
+                const SizedBox(width: 6),
                 _buildEffortChip(provider),
                 const SizedBox(width: 6),
                 if (provider.activeSessionBackend != 'codex') ...[
@@ -857,6 +860,38 @@ class HomeScreenState extends State<HomeScreen> {
             style: TextStyle(
               fontSize: 12,
               color: labelColor ?? theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingModelChip() {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(16),
+        color: theme.colorScheme.surfaceContainerHighest,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 12,
+            height: 12,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'Loading models',
+            style: TextStyle(
+              fontSize: 12,
+              color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
         ],
@@ -1488,16 +1523,7 @@ class HomeScreenState extends State<HomeScreen> {
         color = Theme.of(context).colorScheme.primary;
     }
     final label = _effortLabel(provider.effort);
-    final codexEfforts = provider.codexReasoningEfforts;
-    final options = isCodex
-        ? codexEfforts
-              .map(
-                (entry) => (entry['reasoningEffort'] ?? entry['effort'] ?? '')
-                    .toString(),
-              )
-              .where((value) => value.isNotEmpty)
-              .toList()
-        : const ['low', 'medium', 'high', 'max'];
+    final options = provider.selectedModelEffortLevels;
 
     return PopupMenuButton<String>(
       onSelected: (value) => provider.setEffort(value),
