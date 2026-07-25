@@ -60,6 +60,7 @@ class ChatMessage {
   // Thinking fields. When extended thinking is redacted the server never sends
   // any thinking text, so this running token estimate is all we can show.
   int thinkingTokens = 0;
+  int thinkingDurationMs = 0;
 
   // Question fields
   final String? questionId;

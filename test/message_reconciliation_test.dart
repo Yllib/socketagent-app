@@ -10,6 +10,29 @@ void main() {
     expect(liveMessageMatchesParent(root, null), isTrue);
   });
 
+  test('completed thinking metadata survives history reconciliation', () {
+    final live = ChatMessage.thinking()
+      ..entryId = 'thinking-1'
+      ..sessionSeq = 10
+      ..revision = 1
+      ..thinkingTokens = 200
+      ..toolStreaming = true;
+    final history = ChatMessage.thinking()
+      ..entryId = 'thinking-1'
+      ..sessionSeq = 10
+      ..revision = 2
+      ..thinkingTokens = 640
+      ..thinkingDurationMs = 12340
+      ..toolStreaming = false;
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot([history], [live]);
+
+    expect(reconciled, hasLength(1));
+    expect(reconciled.single.thinkingTokens, 640);
+    expect(reconciled.single.thinkingDurationMs, 12340);
+    expect(reconciled.single.toolStreaming, isFalse);
+  });
+
   test(
     'deduplicates the same tracked transcript event across delivery ids',
     () {
@@ -83,10 +106,11 @@ void main() {
       positioned('entry-4629', 4629),
     ]);
 
-    expect(
-      ordered.map((message) => message.entryId).toList(),
-      ['entry-4628', 'entry-4629', 'entry-4630'],
-    );
+    expect(ordered.map((message) => message.entryId).toList(), [
+      'entry-4628',
+      'entry-4629',
+      'entry-4630',
+    ]);
   });
 
   test('older replay revision cannot overwrite newer live content', () {
@@ -95,17 +119,17 @@ void main() {
       ..revision = 4;
 
     expect(
-      isStaleTranscriptRevision([current], {
-        'entryId': 'entry-7',
-        'revision': 3,
-      }),
+      isStaleTranscriptRevision(
+        [current],
+        {'entryId': 'entry-7', 'revision': 3},
+      ),
       isTrue,
     );
     expect(
-      isStaleTranscriptRevision([current], {
-        'entryId': 'entry-7',
-        'revision': 5,
-      }),
+      isStaleTranscriptRevision(
+        [current],
+        {'entryId': 'entry-7', 'revision': 5},
+      ),
       isFalse,
     );
   });

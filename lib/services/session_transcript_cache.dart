@@ -176,6 +176,10 @@ Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
         'role': 'assistant',
         'content': event['content']?.toString() ?? '',
         'thinking': true,
+        if (event['thinkingTokens'] != null)
+          'thinkingTokens': event['thinkingTokens'],
+        if (event['thinkingDurationMs'] != null)
+          'thinkingDurationMs': event['thinkingDurationMs'],
       };
     case 'tool_call':
       return {

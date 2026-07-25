@@ -40,10 +40,7 @@ bool liveMessageMatchesParent(ChatMessage? message, String? parentToolUseId) {
   return message != null && message.parentToolUseId == parentToolUseId;
 }
 
-void applyTranscriptPosition(
-  ChatMessage message,
-  Map<String, dynamic> source,
-) {
+void applyTranscriptPosition(ChatMessage message, Map<String, dynamic> source) {
   final entryId = source['entryId'];
   if (entryId is String && entryId.isNotEmpty) message.entryId = entryId;
   final sessionSeq = source['sessionSeq'];
@@ -248,6 +245,7 @@ bool _textStreamsMatch(ChatMessage left, ChatMessage right) {
 }
 
 void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
+  final snapshotIsNewer = snapshot.revision >= live.revision;
   live.entryId ??= snapshot.entryId;
   live.sessionSeq ??= snapshot.sessionSeq;
   if (snapshot.revision > live.revision) live.revision = snapshot.revision;
@@ -273,6 +271,15 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
   if (snapshotText.length > liveText.length &&
       (liveText.isEmpty || snapshotText.startsWith(liveText))) {
     live.textContent = snapshotText;
+  }
+  if (live.type == MessageType.thinking) {
+    if (snapshot.thinkingTokens > live.thinkingTokens) {
+      live.thinkingTokens = snapshot.thinkingTokens;
+    }
+    if (snapshot.thinkingDurationMs > live.thinkingDurationMs) {
+      live.thinkingDurationMs = snapshot.thinkingDurationMs;
+    }
+    if (snapshotIsNewer) live.toolStreaming = snapshot.toolStreaming;
   }
   live.parentToolUseId ??= snapshot.parentToolUseId;
   live.uuid ??= snapshot.uuid;

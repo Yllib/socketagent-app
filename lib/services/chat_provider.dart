@@ -5522,6 +5522,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final content = msg['content'] as String? ?? '';
     final isReplay = msg['replay'] == true;
     final isSnapshot = isReplay || msg['snapshot'] == true;
+    final isFinalSnapshot = msg['finalSnapshot'] == true;
+    final thinkingTokens = (msg['thinkingTokens'] as num?)?.toInt() ?? 0;
+    final thinkingDurationMs =
+        (msg['thinkingDurationMs'] as num?)?.toInt() ?? 0;
     final parentToolUseId = msg['parentToolUseId'] as String?;
     final streamKey = _hierarchyStreamKey(msg);
     final entryId = msg['entryId'] as String?;
@@ -5545,7 +5549,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
       if (existing != null) {
         existing.textContent = content;
-        existing.toolStreaming = true;
+        if (thinkingTokens > 0) existing.thinkingTokens = thinkingTokens;
+        if (thinkingDurationMs > 0) {
+          existing.thinkingDurationMs = thinkingDurationMs;
+        }
+        existing.toolStreaming = !isFinalSnapshot;
         _thinkingMessagesByKey[streamKey] = existing;
         _thinkingMessagesByStreamKey[streamKey] = existing;
         existing.streamId = msg['streamId'] as String?;
@@ -5579,7 +5587,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     thinkingMessage.textContent = isSnapshot
         ? content
         : thinkingMessage.textContent + content;
-    thinkingMessage.toolStreaming = true;
+    if (thinkingTokens > 0) thinkingMessage.thinkingTokens = thinkingTokens;
+    if (thinkingDurationMs > 0) {
+      thinkingMessage.thinkingDurationMs = thinkingDurationMs;
+    }
+    thinkingMessage.toolStreaming = !isFinalSnapshot;
     _currentThinkingMessage = thinkingMessage;
     notifyListeners();
   }
@@ -7499,6 +7511,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
         case 'assistant':
+          // A backend may withhold reasoning text. Preserve the completed
+          // Thinking lifecycle from its duration/token metadata anyway.
+          if (entry['thinking'] == true) {
+            final m = ChatMessage.thinking();
+            m.textContent = content;
+            m.thinkingTokens = (entry['thinkingTokens'] as num?)?.toInt() ?? 0;
+            m.thinkingDurationMs =
+                (entry['thinkingDurationMs'] as num?)?.toInt() ?? 0;
+            m.uuid = entry['uuid'] as String?;
+            m.parentToolUseId = entry['parentToolUseId'] as String?;
+            loaded.add(m);
+            break;
+          }
           if (content.isNotEmpty) {
             // Detect tool summary from history
             if (entry['toolSummary'] == true) {
@@ -7515,15 +7540,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   uuid: entry['uuid'] as String?,
                 ),
               );
-              break;
-            }
-            // Detect thinking blocks from history
-            if (entry['thinking'] == true) {
-              final m = ChatMessage.thinking();
-              m.textContent = content;
-              m.uuid = entry['uuid'] as String?;
-              m.parentToolUseId = entry['parentToolUseId'] as String?;
-              loaded.add(m);
               break;
             }
             // Detect compact boundary markers from history

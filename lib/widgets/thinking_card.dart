@@ -21,12 +21,22 @@ class _ThinkingCardState extends State<ThinkingCard> {
     final text = widget.message.textContent;
     final isStreaming = widget.message.toolStreaming;
     final tokens = widget.message.thinkingTokens;
+    final durationMs = widget.message.thinkingDurationMs;
+    final duration = durationMs > 0
+        ? durationMs < 1000
+              ? '${durationMs}ms'
+              : '${(durationMs / 1000).toStringAsFixed(durationMs < 10000 ? 1 : 0)}s'
+        : '';
     // Redacted thinking arrives with no text at all — show the token estimate
     // rather than an empty card, and don't offer to expand into nothing.
     final hasText = text.isNotEmpty;
+    final details = [
+      if (duration.isNotEmpty) duration,
+      if (tokens > 0) '$tokens tokens',
+    ].join(' · ');
     final preview = hasText
         ? (text.length > 60 ? '${text.substring(0, 60)}...' : text)
-        : (tokens > 0 ? '$tokens tokens' : '');
+        : (details.isNotEmpty ? details : 'Reasoning recorded');
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -49,7 +59,10 @@ class _ThinkingCardState extends State<ThinkingCard> {
                     : null,
                 behavior: HitTestBehavior.opaque,
                 child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
                   child: Row(
                     children: [
                       const Icon(
@@ -76,6 +89,17 @@ class _ThinkingCardState extends State<ThinkingCard> {
                             child: CircularProgressIndicator(
                               strokeWidth: 1.5,
                               color: Color(0xFFCBA6F7),
+                            ),
+                          ),
+                        ),
+                      if (hasText && details.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: Text(
+                            details,
+                            style: GoogleFonts.jetBrainsMono(
+                              fontSize: 10,
+                              color: const Color(0xFF7F849C),
                             ),
                           ),
                         ),
@@ -199,6 +223,6 @@ class _CloudBorderPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CloudBorderPainter oldDelegate) =>
-      oldDelegate.fillColor != fillColor || oldDelegate.borderColor != borderColor;
+      oldDelegate.fillColor != fillColor ||
+      oldDelegate.borderColor != borderColor;
 }
-

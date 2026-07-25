@@ -190,6 +190,36 @@ void main() {
     expect(complete?['content'], 'complete');
   });
 
+  test('final redacted thinking retains duration and tokens in live cache', () {
+    final partial = transcriptCacheEntryFromServerEvent({
+      'type': 'thinking',
+      'entryId': 'thinking-1',
+      'sessionSeq': 2,
+      'revision': 1,
+      'content': '',
+      'snapshot': true,
+      'thinkingTokens': 420,
+    });
+    final complete = transcriptCacheEntryFromServerEvent({
+      'type': 'thinking',
+      'entryId': 'thinking-1',
+      'sessionSeq': 2,
+      'revision': 2,
+      'content': '',
+      'snapshot': true,
+      'finalSnapshot': true,
+      'thinkingTokens': 640,
+      'thinkingDurationMs': 12340,
+    });
+
+    expect(partial, isNull);
+    expect(complete?['role'], 'assistant');
+    expect(complete?['thinking'], isTrue);
+    expect(complete?['content'], isEmpty);
+    expect(complete?['thinkingTokens'], 640);
+    expect(complete?['thinkingDurationMs'], 12340);
+  });
+
   test('user live cache entry retains the exact transmitted prompt', () {
     const transmitted =
         '[Attached file: /tmp/report.pdf]\n'
