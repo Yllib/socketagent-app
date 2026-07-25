@@ -963,6 +963,11 @@ class HomeScreenState extends State<HomeScreen> {
               !provider.claudeAutoCompactEnabled,
             );
             break;
+          case 'claude_auto_compact_window':
+            Future.microtask(() {
+              if (mounted) _showClaudeAutoCompactWindowDialog(provider);
+            });
+            break;
         }
       },
       tooltip: 'Session options',
@@ -1309,6 +1314,39 @@ class HomeScreenState extends State<HomeScreen> {
                       ? Theme.of(context).colorScheme.primary
                       : Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
+              ],
+            ),
+          ),
+        if (provider.activeSessionBackend != 'codex')
+          PopupMenuItem(
+            value: 'claude_auto_compact_window',
+            child: Row(
+              children: [
+                const Icon(Icons.straighten_outlined, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Auto-compact window'),
+                      Text(
+                        provider.claudeAutoCompactWindowOverride == null
+                            ? provider.claudeAutoCompactWindowEffective == null
+                                  ? 'Inherit Claude SDK/model default'
+                                  : 'Inherit server: ${provider.claudeAutoCompactWindowEffective} tokens'
+                            : 'Session override: ${provider.claudeAutoCompactWindowOverride} tokens',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.onSurface.withAlpha(140),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 20),
               ],
             ),
           ),
@@ -1852,6 +1890,77 @@ class HomeScreenState extends State<HomeScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Future<void> _showClaudeAutoCompactWindowDialog(ChatProvider provider) async {
+    final inherited = provider.claudeAutoCompactWindowOverride == null;
+    final controller = TextEditingController(
+      text: provider.claudeAutoCompactWindowOverride?.toString() ?? '',
+    );
+    String? error;
+    final selected = await showDialog<int?>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Session auto-compact window'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                inherited
+                    ? provider.claudeAutoCompactWindowEffective == null
+                          ? 'Currently inheriting the Claude SDK/model default.'
+                          : 'Currently inheriting ${provider.claudeAutoCompactWindowEffective} tokens from the server.'
+                    : 'This session currently overrides the server default.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Override tokens',
+                  hintText: '100000–1000000',
+                  helperText: 'Leave blank to inherit the server setting.',
+                  errorText: error,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final raw = controller.text.trim();
+                if (raw.isEmpty) {
+                  Navigator.pop(dialogContext, -1);
+                  return;
+                }
+                final value = int.tryParse(raw);
+                if (value == null || value < 100000 || value > 1000000) {
+                  setDialogState(() {
+                    error = 'Enter an integer from 100,000 to 1,000,000';
+                  });
+                  return;
+                }
+                Navigator.pop(dialogContext, value);
+              },
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (!mounted || selected == null) return;
+    provider.setClaudeAutoCompactWindowOverride(
+      selected == -1 ? null : selected,
     );
   }
 

@@ -619,12 +619,98 @@ class _SettingsV2ServerDetailScreenState
                         ? 'No default for new sessions'
                         : config.systemPrompt,
                   ),
+                  _NavTile(
+                    icon: Icons.memory_outlined,
+                    title: 'Claude auto-compact window',
+                    subtitle:
+                        provider.serverClaudeAutoCompactWindow(config.id) ==
+                            null
+                        ? 'Claude SDK/model default'
+                        : '${provider.serverClaudeAutoCompactWindow(config.id)} tokens',
+                    trailing: connected ? Icons.edit_outlined : null,
+                    onTap: connected
+                        ? () => _showClaudeAutoCompactWindowDialog(
+                            provider,
+                            config,
+                          )
+                        : null,
+                  ),
                 ],
               ),
             ],
           ),
         );
       },
+    );
+  }
+
+  Future<void> _showClaudeAutoCompactWindowDialog(
+    ChatProvider provider,
+    ServerConfig config,
+  ) async {
+    final current = provider.serverClaudeAutoCompactWindow(config.id);
+    final controller = TextEditingController(text: current?.toString() ?? '');
+    String? error;
+    final selected = await showDialog<int?>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Claude auto-compact window'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This is the default for Claude sessions on this server. '
+                'Leave it blank to let the Claude SDK choose for each model.',
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Tokens',
+                  hintText: '100000–1000000',
+                  helperText: 'Sessions can override this value.',
+                  errorText: error,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final raw = controller.text.trim();
+                if (raw.isEmpty) {
+                  Navigator.pop(dialogContext, -1);
+                  return;
+                }
+                final value = int.tryParse(raw);
+                if (value == null || value < 100000 || value > 1000000) {
+                  setDialogState(() {
+                    error = 'Enter an integer from 100,000 to 1,000,000';
+                  });
+                  return;
+                }
+                Navigator.pop(dialogContext, value);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (!mounted || selected == null) return;
+    provider.setServerClaudeAutoCompactWindow(
+      config.id,
+      selected == -1 ? null : selected,
     );
   }
 

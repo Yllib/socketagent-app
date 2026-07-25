@@ -586,6 +586,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _effort = 'high';
   bool _codexFastMode = false;
   bool _claudeAutoCompactEnabled = true;
+  int? _claudeAutoCompactWindowOverride;
   String _codexCollaborationMode = 'default';
   Map<String, dynamic> _thinking = {'type': 'adaptive'};
   List<String> _availableTools = [];
@@ -594,6 +595,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _sessionSystemPrompts = {};
   final Map<String, bool> _sessionCodexFastModes = {};
   final Map<String, bool> _sessionClaudeAutoCompact = {};
+  final Map<String, int> _sessionClaudeAutoCompactWindows = {};
+  final Map<String, int> _serverClaudeAutoCompactWindows = {};
   final Set<String> _locallyClearedSessions = {};
   // Background tasks: taskId → {status, summary, outputFile}
   final Map<String, Map<String, dynamic>> _backgroundTasks = {};
@@ -1319,6 +1322,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String get effort => _effort;
   bool get codexFastMode => _codexFastMode;
   bool get claudeAutoCompactEnabled => _claudeAutoCompactEnabled;
+  int? get claudeAutoCompactWindowOverride => _claudeAutoCompactWindowOverride;
+  int? get claudeAutoCompactWindowEffective =>
+      _claudeAutoCompactWindowOverride ??
+      serverClaudeAutoCompactWindow(
+        _activeSessionServerId ?? _connMgr.activeServerId,
+      );
   Map<String, dynamic> get thinking => _thinking;
   Map<String, Map<String, dynamic>> get backgroundTasks => _backgroundTasks;
 
@@ -6769,7 +6778,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             return value == 'default' || model['isDefault'] == true;
           }).firstOrNull;
           final fallback = defaultModel ?? _supportedModels.firstOrNull;
-          final value = (fallback?['value'] ?? fallback?['id'] ?? '').toString();
+          final value = (fallback?['value'] ?? fallback?['id'] ?? '')
+              .toString();
           if (value.isNotEmpty) _sessionModel = value;
         }
       }
@@ -6801,6 +6811,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (autoCompact is bool) {
       _claudeAutoCompactEnabled = autoCompact;
       _sessionClaudeAutoCompact[sessionId] = autoCompact;
+    }
+    final autoCompactWindow = settings['claudeAutoCompactWindow'];
+    if (autoCompactWindow is num) {
+      _claudeAutoCompactWindowOverride = autoCompactWindow.toInt();
+      _sessionClaudeAutoCompactWindows[sessionId] =
+          _claudeAutoCompactWindowOverride!;
+    } else {
+      _claudeAutoCompactWindowOverride = null;
+      _sessionClaudeAutoCompactWindows.remove(sessionId);
     }
     final collaborationMode = settings['codexCollaborationMode']?.toString();
     if (collaborationMode != null && collaborationMode.isNotEmpty) {
@@ -8660,6 +8679,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (_activeSessionBackend == 'claude') ...{
             'thinking': _thinking,
             'claudeAutoCompact': _claudeAutoCompactEnabled,
+            if (_claudeAutoCompactWindowOverride != null)
+              'claudeAutoCompactWindow': _claudeAutoCompactWindowOverride,
           },
           if (_activeSessionBackend == 'codex') ...{
             'codexFastMode': _codexFastMode,
@@ -9545,6 +9566,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _activeSessionBackend = effectiveBackend;
     _codexFastMode = false;
     _claudeAutoCompactEnabled = true;
+    _claudeAutoCompactWindowOverride = null;
     _effort = 'high';
     _thinking = {'type': 'adaptive'};
     _codexCollaborationMode = 'default';
@@ -10210,6 +10232,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
+    final autoCompactWindow = msg['claudeAutoCompactWindow'];
+    if (autoCompactWindow is num) {
+      _serverClaudeAutoCompactWindows[serverId] = autoCompactWindow.toInt();
+    } else if (msg.containsKey('claudeAutoCompactWindow')) {
+      _serverClaudeAutoCompactWindows.remove(serverId);
+    }
+
     final rawModes = msg['codexCollaborationModes'];
     if (rawModes is List) {
       _serverCodexCollaborationModes[serverId] = rawModes
@@ -10274,11 +10303,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String serverId, {
     String? defaultCwd,
     String? systemPrompt,
+    int? claudeAutoCompactWindow,
+    bool includeClaudeAutoCompactWindow = false,
   }) {
     final msg = <String, dynamic>{
       'type': 'set_server_settings',
       if (defaultCwd != null) 'defaultCwd': defaultCwd,
       if (systemPrompt != null) 'systemPrompt': systemPrompt,
+      if (includeClaudeAutoCompactWindow)
+        'claudeAutoCompactWindow': claudeAutoCompactWindow,
     };
     if (_connMgr.statusOf(serverId) == ConnectionStatus.connected) {
       _connMgr.sendToServer(serverId, msg);
@@ -10346,6 +10379,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _thinking = {'type': 'adaptive'};
     _codexFastMode = false;
     _claudeAutoCompactEnabled = true;
+    _claudeAutoCompactWindowOverride = null;
     _codexCollaborationMode = 'default';
     _loadPrepends();
     _clearLiveMessageStreams();
@@ -11184,6 +11218,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _thinking = {'type': 'adaptive'};
     _codexFastMode = false;
     _claudeAutoCompactEnabled = true;
+    _claudeAutoCompactWindowOverride = null;
     _codexCollaborationMode = 'default';
     _isLoadingHistory = true;
     _isProcessing = false;
@@ -11619,6 +11654,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _sessionClaudeAutoCompact[sessionId] = enabled;
     }
     _connMgr.send({'type': 'set_claude_auto_compact', 'enabled': enabled});
+    notifyListeners();
+  }
+
+  int? serverClaudeAutoCompactWindow(String? serverId) {
+    if (serverId == null) return null;
+    return _serverClaudeAutoCompactWindows[serverId];
+  }
+
+  void setClaudeAutoCompactWindowOverride(int? window) {
+    _claudeAutoCompactWindowOverride = window;
+    final sessionId = _activeSessionId;
+    if (sessionId != null) {
+      if (window == null) {
+        _sessionClaudeAutoCompactWindows.remove(sessionId);
+      } else {
+        _sessionClaudeAutoCompactWindows[sessionId] = window;
+      }
+    }
+    _connMgr.send({
+      'type': 'set_claude_auto_compact_window',
+      if (window == null) 'clearOverride': true else 'window': window,
+    });
+    notifyListeners();
+  }
+
+  void setServerClaudeAutoCompactWindow(String serverId, int? window) {
+    if (window == null) {
+      _serverClaudeAutoCompactWindows.remove(serverId);
+    } else {
+      _serverClaudeAutoCompactWindows[serverId] = window;
+    }
+    _sendServerSettings(
+      serverId,
+      claudeAutoCompactWindow: window,
+      includeClaudeAutoCompactWindow: true,
+    );
     notifyListeners();
   }
 
