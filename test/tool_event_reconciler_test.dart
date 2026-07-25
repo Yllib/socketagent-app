@@ -15,6 +15,21 @@ void main() {
       expect(reconciler.takeResult('call-1'), isNull);
     });
 
+    test('retains async Agent launch state until the call card arrives', () {
+      final reconciler = ToolEventReconciler();
+
+      reconciler.bufferResult(
+        'agent-call-1',
+        'Agent launched',
+        parentToolUseId: 'parent-agent',
+        backgroundPending: true,
+      );
+
+      final result = reconciler.takeResult('agent-call-1');
+      expect(result?.backgroundPending, isTrue);
+      expect(result?.parentToolUseId, 'parent-agent');
+    });
+
     test('assembles streamed chunks and resets on chunk zero', () {
       final reconciler = ToolEventReconciler();
 
@@ -68,22 +83,24 @@ void main() {
     });
 
     test('keeps only explicitly active background commands spinning', () {
-      final active = ChatMessage.toolCall(
-        tool: 'Bash',
-        input: {'command': 'watch'},
-        toolUseId: 'active',
-      )
-        ..toolStreaming = true
-        ..isBackgrounded = true
-        ..backgroundTaskId = 'task-active';
-      final finished = ChatMessage.toolCall(
-        tool: 'Bash',
-        input: {'command': 'old watch'},
-        toolUseId: 'finished',
-      )
-        ..toolStreaming = true
-        ..isBackgrounded = true
-        ..backgroundTaskId = 'task-finished';
+      final active =
+          ChatMessage.toolCall(
+              tool: 'Bash',
+              input: {'command': 'watch'},
+              toolUseId: 'active',
+            )
+            ..toolStreaming = true
+            ..isBackgrounded = true
+            ..backgroundTaskId = 'task-active';
+      final finished =
+          ChatMessage.toolCall(
+              tool: 'Bash',
+              input: {'command': 'old watch'},
+              toolUseId: 'finished',
+            )
+            ..toolStreaming = true
+            ..isBackgrounded = true
+            ..backgroundTaskId = 'task-finished';
 
       settleIdleToolCards(
         [active, finished],

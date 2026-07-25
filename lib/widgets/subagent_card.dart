@@ -7,6 +7,7 @@ import 'speak_card.dart';
 import 'file_card.dart';
 import 'reminder_card.dart';
 import 'scroll_passthrough.dart';
+import 'thinking_card.dart';
 
 class SubAgentCard extends StatefulWidget {
   final ChatMessage message;
@@ -53,6 +54,46 @@ class _SubAgentCardState extends State<SubAgentCard> {
     return widget.message.toolOutput ?? '';
   }
 
+  String get _taskStatus {
+    return widget.message.toolInput?['_task_status']?.toString() ??
+        (widget.isRunning ? 'running' : 'completed');
+  }
+
+  String get _progressSummary {
+    return widget.message.toolInput?['_progress_summary']?.toString() ?? '';
+  }
+
+  String get _lastToolName {
+    return widget.message.toolInput?['_last_tool_name']?.toString() ?? '';
+  }
+
+  Map<String, dynamic> get _taskUsage {
+    final raw = widget.message.toolInput?['_task_usage'];
+    return raw is Map ? Map<String, dynamic>.from(raw) : const {};
+  }
+
+  String get _activityDetail {
+    final parts = <String>[];
+    if (_progressSummary.isNotEmpty) {
+      parts.add(_progressSummary);
+    } else if (_lastToolName.isNotEmpty) {
+      parts.add('Using $_lastToolName');
+    }
+    final durationMs =
+        (_taskUsage['durationMs'] as num?)?.toInt() ??
+        (_taskUsage['duration_ms'] as num?)?.toInt() ??
+        0;
+    final totalTokens =
+        (_taskUsage['totalTokens'] as num?)?.toInt() ??
+        (_taskUsage['total_tokens'] as num?)?.toInt() ??
+        0;
+    final metrics = <String>[];
+    if (durationMs > 0) metrics.add('${(durationMs / 1000).round()}s');
+    if (totalTokens > 0) metrics.add('$totalTokens tokens');
+    if (metrics.isNotEmpty) parts.add(metrics.join(' · '));
+    return parts.join('  •  ');
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDone = !widget.isRunning;
@@ -61,7 +102,22 @@ class _SubAgentCardState extends State<SubAgentCard> {
     final hasResult = _resultOutput.isNotEmpty;
     final hasExpandableContent = hasChildren || hasPrompt;
     final green = widget.greenTheme;
-    final accentColor = green ? const Color(0xFFA6E3A1) : const Color(0xFF89B4FA);
+    final failed = _taskStatus == 'failed' || _taskStatus == 'errored';
+    final stopped = _taskStatus == 'stopped' || _taskStatus == 'interrupted';
+    final accentColor = failed
+        ? const Color(0xFFF38BA8)
+        : stopped
+        ? const Color(0xFFF9E2AF)
+        : green || isDone
+        ? const Color(0xFFA6E3A1)
+        : const Color(0xFF89B4FA);
+    final statusLabel = widget.isRunning
+        ? 'Sub Agent'
+        : failed
+        ? 'Failed'
+        : stopped
+        ? 'Stopped'
+        : 'Completed';
 
     return Container(
       key: widget.scrollKey,
@@ -73,8 +129,8 @@ class _SubAgentCardState extends State<SubAgentCard> {
           color: widget.isRunning
               ? accentColor.withAlpha(100)
               : green
-                  ? const Color(0xFFA6E3A1).withAlpha(60)
-                  : const Color(0xFF313244),
+              ? const Color(0xFFA6E3A1).withAlpha(60)
+              : const Color(0xFF313244),
           width: 1,
         ),
       ),
@@ -92,13 +148,19 @@ class _SubAgentCardState extends State<SubAgentCard> {
               child: Row(
                 children: [
                   Icon(
-                    green ? Icons.check_circle : Icons.account_tree,
+                    failed
+                        ? Icons.error_outline
+                        : stopped
+                        ? Icons.stop_circle_outlined
+                        : isDone
+                        ? Icons.check_circle
+                        : Icons.account_tree,
                     size: 16,
                     color: accentColor,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    green ? 'Completed' : 'Sub Agent',
+                    statusLabel,
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
@@ -109,7 +171,9 @@ class _SubAgentCardState extends State<SubAgentCard> {
                     const SizedBox(width: 6),
                     Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 1),
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
                       decoration: BoxDecoration(
                         color: const Color(0xFFA6E3A1).withAlpha(25),
                         borderRadius: BorderRadius.circular(4),
@@ -163,15 +227,25 @@ class _SubAgentCardState extends State<SubAgentCard> {
                       color: const Color(0xFF6C7086),
                     )
                   else
-                    const Icon(
-                      Icons.check,
-                      size: 16,
-                      color: Color(0xFF6C7086),
-                    ),
+                    const Icon(Icons.check, size: 16, color: Color(0xFF6C7086)),
                 ],
               ),
             ),
           ),
+          if (_activityDetail.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(36, 0, 12, 8),
+              child: Text(
+                _activityDetail,
+                style: GoogleFonts.jetBrainsMono(
+                  fontSize: 10,
+                  color: const Color(0xFFA6ADC8),
+                  height: 1.35,
+                ),
+                maxLines: widget.isRunning ? 2 : 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           // Response section (always visible when completed with result)
           if (isDone && hasResult)
             Container(
@@ -209,8 +283,9 @@ class _SubAgentCardState extends State<SubAgentCard> {
                           content: _prompt,
                         ),
                       // Child messages
-                      ...widget.childMessages
-                          .map((child) => _buildChildMessage(child)),
+                      ...widget.childMessages.map(
+                        (child) => _buildChildMessage(child),
+                      ),
                     ],
                   ),
                 ),
@@ -230,9 +305,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Color(0xFF313244), width: 1),
-        ),
+        border: Border(bottom: BorderSide(color: Color(0xFF313244), width: 1)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -267,10 +340,14 @@ class _SubAgentCardState extends State<SubAgentCard> {
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') return SpeakCard(message: msg);
         if (msg.toolName == 'SendFile') return FileCard(message: msg);
-        if (msg.toolName == 'ScheduleReminder') return ReminderCard(message: msg);
+        if (msg.toolName == 'ScheduleReminder') {
+          return ReminderCard(message: msg);
+        }
         return ToolOutputBlock(message: msg);
       case MessageType.toolResult:
         return ToolOutputBlock(message: msg);
+      case MessageType.thinking:
+        return ThinkingCard(message: msg);
       default:
         if (msg.textContent.isNotEmpty) {
           return Padding(

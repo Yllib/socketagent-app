@@ -1,10 +1,15 @@
 import '../models/message.dart';
 
 class PendingToolResult {
-  const PendingToolResult({required this.output, this.parentToolUseId});
+  const PendingToolResult({
+    required this.output,
+    this.parentToolUseId,
+    this.backgroundPending = false,
+  });
 
   final String output;
   final String? parentToolUseId;
+  final bool backgroundPending;
 }
 
 /// Settles tool cards when the server says the visible session is idle.
@@ -55,12 +60,14 @@ class ToolEventReconciler {
     String toolUseId,
     String output, {
     String? parentToolUseId,
+    bool backgroundPending = false,
   }) {
     if (toolUseId.isEmpty) return;
     _streams.remove(toolUseId);
     _results[toolUseId] = PendingToolResult(
       output: output,
       parentToolUseId: parentToolUseId,
+      backgroundPending: backgroundPending,
     );
   }
 

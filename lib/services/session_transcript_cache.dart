@@ -200,6 +200,7 @@ Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
         'content': output,
         'toolOutput': output,
         'toolUseId': event['toolUseId']?.toString() ?? '',
+        if (event['backgroundPending'] == true) 'backgroundPending': true,
       };
   }
   return null;

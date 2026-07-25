@@ -1332,13 +1332,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Map<String, Map<String, dynamic>> get backgroundTasks => _backgroundTasks;
 
   Set<String> _activeBackgroundTaskIds() {
-    return _backgroundTasks.entries
+    final ids = _backgroundTasks.entries
         .where((entry) {
           final status = entry.value['status']?.toString() ?? 'running';
           return status == 'running' || status == 'started';
         })
         .map((entry) => entry.key)
         .toSet();
+    for (final entry in _subagentTasks.entries) {
+      final task = entry.value;
+      final status = task['status']?.toString() ?? 'running';
+      if (task['isBackgrounded'] == true &&
+          (status == 'running' || status == 'pending' || status == 'paused')) {
+        ids.add(entry.key);
+        final taskId = task['taskId']?.toString();
+        if (taskId != null && taskId.isNotEmpty) ids.add(taskId);
+      }
+    }
+    return ids;
   }
 
   Map<String, Map<String, dynamic>> get subagentTasks => _subagentTasks;
@@ -4019,37 +4030,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           });
           break;
         case 'task_started':
-          // Register monitor-spawned tasks in the background tasks pane
-          final tsTaskType = msg['taskType'] as String?;
-          if (tsTaskType == 'monitor') {
-            final tsTaskId = msg['taskId'] as String? ?? '';
-            final tsDesc = msg['description'] as String? ?? 'Monitored process';
-            final tsToolUseId = msg['toolUseId'] as String?;
-            _backgroundTasks[tsTaskId] = {
-              'status': 'running',
-              'summary': tsDesc,
-              'isMonitor': true,
-              if (tsToolUseId != null) 'originToolUseId': tsToolUseId,
-            };
-            notifyListeners();
-          }
+          _handleTaskStarted(msg);
           break;
         case 'bg_task_progress':
-          // Update subagent with progress summary if available
-          final progressToolId = msg['toolUseId'] as String?;
-          final progressSummary = msg['summary'] as String?;
-          if (progressToolId != null &&
-              _subagentTasks.containsKey(progressToolId)) {
-            if (progressSummary != null) {
-              _subagentTasks[progressToolId]!['progressSummary'] =
-                  progressSummary;
-            }
-            final lastTool = msg['lastToolName'] as String?;
-            if (lastTool != null) {
-              _subagentTasks[progressToolId]!['lastToolName'] = lastTool;
-            }
-            notifyListeners();
-          }
+          _handleTaskProgress(msg);
+          break;
+        case 'task_updated':
+          _handleTaskUpdated(msg);
+          break;
+        case 'background_tasks_changed':
+          _handleBackgroundTasksChanged(msg);
           break;
         case 'hook_started':
           _activeHookName = msg['hookName'] as String?;
@@ -5718,7 +5708,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final pendingStream = _toolEventReconciler.takeStream(toolUseId);
     if (pendingResult != null) {
       toolMsg.toolOutput = pendingResult.output;
-      toolMsg.toolStreaming = false;
+      toolMsg.toolStreaming = pendingResult.backgroundPending;
+      toolMsg.isBackgrounded = pendingResult.backgroundPending;
+      if (pendingResult.backgroundPending) {
+        // Until task_started supplies Claude's durable task id, use the tool
+        // id as the card's liveness key so the root result cannot settle it.
+        toolMsg.backgroundTaskId ??= toolUseId;
+      }
       toolMsg.parentToolUseId ??= pendingResult.parentToolUseId;
     } else if (pendingStream != null) {
       toolMsg.toolOutput = pendingStream.output;
@@ -5745,6 +5741,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'subagentType': subagentType,
         'status': toolMsg.toolStreaming ? 'running' : 'completed',
         'toolUseId': toolUseId,
+        if (toolMsg.isBackgrounded) 'taskId': toolMsg.backgroundTaskId,
+        if (toolMsg.isBackgrounded) 'isBackgrounded': true,
         if (input['agentId'] != null) 'agentId': input['agentId'],
         if (toolMsg.parentToolUseId != null)
           'parentToolUseId': toolMsg.parentToolUseId,
@@ -5756,6 +5754,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleToolResult(Map<String, dynamic> msg) {
     final toolUseId = msg['toolUseId'] as String? ?? '';
     final output = msg['output'] as String? ?? '';
+    final backgroundPending = msg['backgroundPending'] == true;
 
     if (_suppressedToolUseIds.remove(toolUseId)) return;
 
@@ -5767,23 +5766,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
 
     if (toolCallIdx >= 0) {
-      // Don't overwrite streamed output for backgrounded bash commands
-      if (_messages[toolCallIdx].isBackgrounded) {
-        // Keep existing streamed output, keep streaming
-        return;
-      }
       _messages[toolCallIdx].toolOutput = output;
-      _messages[toolCallIdx].toolStreaming = false;
+      _messages[toolCallIdx].toolStreaming = backgroundPending;
+      _messages[toolCallIdx].isBackgrounded = backgroundPending;
+      if (backgroundPending) {
+        _messages[toolCallIdx].backgroundTaskId ??= toolUseId;
+      }
 
-      // Mark subagent task as completed
+      // An async Agent tool result is a launch acknowledgement. The
+      // task_notification/background snapshot owns terminal completion.
       if (_subagentTasks.containsKey(toolUseId)) {
-        _subagentTasks[toolUseId]!['status'] = 'completed';
+        _subagentTasks[toolUseId]!['status'] = backgroundPending
+            ? 'running'
+            : 'completed';
+        _subagentTasks[toolUseId]!['isBackgrounded'] = backgroundPending;
+        if (backgroundPending) {
+          _subagentTasks[toolUseId]!['taskId'] ??= toolUseId;
+        }
       }
     } else if (toolUseId.isNotEmpty && output.trim().isNotEmpty) {
       _toolEventReconciler.bufferResult(
         toolUseId,
         output,
         parentToolUseId: msg['parentToolUseId'] as String?,
+        backgroundPending: backgroundPending,
       );
     }
     notifyListeners();
@@ -6428,16 +6434,54 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       final isActive = rawStatus == 'running' || rawStatus == 'pending';
       if (!isActive) {
+        final status = rawStatus == 'errored'
+            ? 'failed'
+            : rawStatus == 'interrupted'
+            ? 'stopped'
+            : 'completed';
         final existing = _subagentTasks[toolUseId];
-        if (existing != null) {
-          existing['status'] = 'completed';
-          existing['terminalStatus'] = rawStatus;
-        }
+        _subagentTasks[toolUseId] = {
+          ...?existing,
+          'description': description,
+          'prompt': t['prompt'] as String? ?? existing?['prompt'] ?? '',
+          'subagentType': subagentType,
+          'status': status,
+          'terminalStatus': rawStatus,
+          'toolUseId': toolUseId,
+          'source': source ?? existing?['source'],
+          'isBackgrounded': false,
+          if (t['agentId'] != null) 'agentId': t['agentId'],
+          if (t['agentId'] != null) 'taskId': t['agentId'],
+          if (t['progressSummary'] != null)
+            'progressSummary': t['progressSummary'],
+          if (t['lastToolName'] != null) 'lastToolName': t['lastToolName'],
+          if (t['usage'] is Map)
+            'usage': Map<String, dynamic>.from(t['usage'] as Map),
+        };
+        var foundCard = false;
         for (final message in _messages) {
           if (message.type == MessageType.toolCall &&
               message.toolUseId == toolUseId) {
+            foundCard = true;
             message.toolStreaming = false;
+            message.isBackgrounded = false;
+            message.toolInput?['_task_status'] = status;
           }
+        }
+        if (!foundCard) {
+          final synthetic = ChatMessage.toolCall(
+            tool: 'Agent',
+            input: {
+              'description': description,
+              'prompt': t['prompt'] as String? ?? '',
+              'subagent_type': subagentType,
+              '_task_status': status,
+            },
+            toolUseId: toolUseId,
+          );
+          synthetic.toolStreaming = false;
+          synthetic.parentToolUseId = t['parentToolUseId'] as String?;
+          _messages.add(synthetic);
         }
         continue;
       }
@@ -6453,6 +6497,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'terminalStatus': rawStatus,
         'toolUseId': toolUseId,
         'source': source ?? previous?['source'],
+        'taskId': t['agentId'] ?? previous?['taskId'],
+        'isBackgrounded':
+            t['isBackgrounded'] == true || previous?['isBackgrounded'] == true,
+        if (t['progressSummary'] != null)
+          'progressSummary': t['progressSummary'],
+        if (t['lastToolName'] != null) 'lastToolName': t['lastToolName'],
+        if (t['usage'] is Map)
+          'usage': Map<String, dynamic>.from(t['usage'] as Map),
         if (t['agentId'] != null) 'agentId': t['agentId'],
         if (t['model'] != null) 'model': t['model'],
         if (t['reasoningEffort'] != null)
@@ -6480,6 +6532,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           toolUseId: toolUseId,
         );
         syntheticMsg.toolStreaming = true;
+        syntheticMsg.isBackgrounded = t['isBackgrounded'] == true;
+        syntheticMsg.backgroundTaskId = t['agentId']?.toString();
         syntheticMsg.parentToolUseId = t['parentToolUseId'] as String?;
         _messages.add(syntheticMsg);
       } else {
@@ -6490,6 +6544,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             .lastOrNull;
         if (toolCall != null) {
           toolCall.toolStreaming = true;
+          toolCall.isBackgrounded = t['isBackgrounded'] == true;
+          toolCall.backgroundTaskId = t['agentId']?.toString();
+          toolCall.toolInput?['_task_status'] = 'running';
           toolCall.toolInput?.addAll({
             'description': description,
             'prompt': t['prompt'] as String? ?? previous?['prompt'] ?? '',
@@ -6498,6 +6555,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (t['model'] != null) 'model': t['model'],
             if (t['reasoningEffort'] != null)
               'reasoningEffort': t['reasoningEffort'],
+            if (t['progressSummary'] != null)
+              '_progress_summary': t['progressSummary'],
+            if (t['lastToolName'] != null) '_last_tool_name': t['lastToolName'],
+            if (t['usage'] is Map)
+              '_task_usage': Map<String, dynamic>.from(t['usage'] as Map),
           });
           if (t['parentToolUseId'] != null) {
             toolCall.parentToolUseId = t['parentToolUseId'] as String?;
@@ -6517,11 +6579,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       for (final id in settledIds) {
         _subagentTasks[id]!['status'] = 'completed';
         _subagentTasks[id]!['terminalStatus'] ??= 'completed';
+        _subagentTasks[id]!['isBackgrounded'] = false;
       }
       for (final message in _messages) {
         if (message.type == MessageType.toolCall &&
             settledIds.contains(message.toolUseId)) {
           message.toolStreaming = false;
+          message.isBackgrounded = false;
         }
       }
     }
@@ -6548,12 +6612,361 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  bool _isClaudeSubagentTask(String? taskType, String? subagentType) {
+    if (subagentType != null && subagentType.isNotEmpty) return true;
+    final normalized = (taskType ?? '').toLowerCase();
+    return normalized.contains('agent') || normalized == 'subagent';
+  }
+
+  String? _subagentToolUseIdForTask(String taskId, [String? suggested]) {
+    if (suggested != null && suggested.isNotEmpty) return suggested;
+    for (final entry in _subagentTasks.entries) {
+      if (entry.value['taskId']?.toString() == taskId ||
+          entry.value['agentId']?.toString() == taskId) {
+        return entry.key;
+      }
+    }
+    return null;
+  }
+
+  ChatMessage? _toolCardFor(String toolUseId) {
+    for (final message in _messages.reversed) {
+      if (message.type == MessageType.toolCall &&
+          message.toolUseId == toolUseId) {
+        return message;
+      }
+    }
+    return null;
+  }
+
+  void _handleTaskStarted(Map<String, dynamic> msg) {
+    final taskId = msg['taskId']?.toString() ?? '';
+    final taskType = msg['taskType']?.toString();
+    final subagentType = msg['subagentType']?.toString() ?? '';
+    final description =
+        msg['description']?.toString() ??
+        (_isClaudeSubagentTask(taskType, subagentType)
+            ? 'Sub agent task'
+            : 'Background task');
+    final toolUseId = _subagentToolUseIdForTask(
+      taskId,
+      msg['toolUseId']?.toString(),
+    );
+    final isMonitor = taskType == 'monitor';
+    final isSubagent = _isClaudeSubagentTask(taskType, subagentType);
+
+    if (isSubagent && toolUseId != null) {
+      final previous = _subagentTasks[toolUseId];
+      _subagentTasks[toolUseId] = {
+        ...?previous,
+        'description': description,
+        'prompt': msg['prompt']?.toString() ?? previous?['prompt'] ?? '',
+        'subagentType': subagentType.isNotEmpty
+            ? subagentType
+            : previous?['subagentType'] ?? '',
+        'status': 'running',
+        'terminalStatus': null,
+        'toolUseId': toolUseId,
+        'taskId': taskId,
+        'agentId': taskId,
+        'taskType': taskType,
+        'isBackgrounded': true,
+        'source': 'claude',
+      };
+      _backgroundTasks.remove(taskId);
+
+      var card = _toolCardFor(toolUseId);
+      final hideInline = msg['skipTranscript'] == true;
+      if (card == null && !hideInline) {
+        card = ChatMessage.toolCall(
+          tool: 'Agent',
+          input: {
+            'description': description,
+            'prompt': msg['prompt']?.toString() ?? '',
+            'subagent_type': subagentType,
+          },
+          toolUseId: toolUseId,
+        );
+        card.parentToolUseId = msg['parentToolUseId']?.toString();
+        _messages.add(card);
+      }
+      if (card != null) {
+        card.toolStreaming = true;
+        card.isBackgrounded = true;
+        card.backgroundTaskId = taskId;
+        card.toolInput?['_task_id'] = taskId;
+        card.toolInput?['_is_backgrounded'] = true;
+        card.toolInput?['description'] = description;
+        if (subagentType.isNotEmpty) {
+          card.toolInput?['subagent_type'] = subagentType;
+        }
+        final prompt = msg['prompt']?.toString();
+        if (prompt != null && prompt.isNotEmpty) {
+          card.toolInput?['prompt'] = prompt;
+        }
+      }
+    } else if (taskId.isNotEmpty) {
+      _backgroundTasks[taskId] = {
+        'status': 'running',
+        'summary': description,
+        'taskType': taskType,
+        'source': isMonitor ? 'monitor' : 'claude_sdk',
+        'isMonitor': isMonitor,
+        if (msg['toolUseId'] != null)
+          'originToolUseId': msg['toolUseId'].toString(),
+      };
+    }
+    notifyListeners();
+  }
+
+  void _handleTaskProgress(Map<String, dynamic> msg) {
+    final taskId = msg['taskId']?.toString() ?? '';
+    final toolUseId = _subagentToolUseIdForTask(
+      taskId,
+      msg['toolUseId']?.toString(),
+    );
+    final subagentType = msg['subagentType']?.toString() ?? '';
+    final isSubagent =
+        toolUseId != null &&
+        (_subagentTasks.containsKey(toolUseId) ||
+            _isClaudeSubagentTask(null, subagentType));
+    if (isSubagent) {
+      final state = _subagentTasks.putIfAbsent(toolUseId, () {
+        return {
+          'description': msg['description']?.toString() ?? 'Sub agent task',
+          'prompt': '',
+          'subagentType': subagentType,
+          'toolUseId': toolUseId,
+          'source': 'claude',
+        };
+      });
+      state['status'] = 'running';
+      state['taskId'] = taskId;
+      state['agentId'] = taskId;
+      state['isBackgrounded'] =
+          state['isBackgrounded'] == true ||
+          _backgroundTasks.containsKey(taskId);
+      if (msg['description'] != null) {
+        state['description'] = msg['description'].toString();
+      }
+      if (subagentType.isNotEmpty) state['subagentType'] = subagentType;
+      if (msg['summary'] != null) {
+        state['progressSummary'] = msg['summary'].toString();
+      }
+      if (msg['lastToolName'] != null) {
+        state['lastToolName'] = msg['lastToolName'].toString();
+      }
+      if (msg['usage'] is Map) {
+        state['usage'] = Map<String, dynamic>.from(msg['usage'] as Map);
+      }
+      final card = _toolCardFor(toolUseId);
+      if (card != null) {
+        card.toolStreaming = true;
+        card.toolInput?['_task_id'] = taskId;
+        if (msg['summary'] != null) {
+          card.toolInput?['_progress_summary'] = msg['summary'].toString();
+        }
+        if (msg['lastToolName'] != null) {
+          card.toolInput?['_last_tool_name'] = msg['lastToolName'].toString();
+        }
+        if (msg['usage'] is Map) {
+          card.toolInput?['_task_usage'] = Map<String, dynamic>.from(
+            msg['usage'] as Map,
+          );
+        }
+      }
+    } else if (taskId.isNotEmpty) {
+      final state = _backgroundTasks.putIfAbsent(taskId, () {
+        return {
+          'status': 'running',
+          'summary': msg['description']?.toString() ?? 'Background task',
+          'source': 'claude_sdk',
+        };
+      });
+      state['status'] = 'running';
+      if (msg['summary'] != null) state['summary'] = msg['summary'].toString();
+      if (msg['usage'] is Map) {
+        state['usage'] = Map<String, dynamic>.from(msg['usage'] as Map);
+      }
+    }
+    notifyListeners();
+  }
+
+  void _handleTaskUpdated(Map<String, dynamic> msg) {
+    final taskId = msg['taskId']?.toString() ?? '';
+    final toolUseId = _subagentToolUseIdForTask(
+      taskId,
+      msg['toolUseId']?.toString(),
+    );
+    final patch = msg['patch'] is Map
+        ? Map<String, dynamic>.from(msg['patch'] as Map)
+        : <String, dynamic>{};
+    var status = patch['status']?.toString();
+    if (status == 'killed') status = 'stopped';
+    final terminal =
+        status == 'completed' || status == 'failed' || status == 'stopped';
+
+    if (toolUseId != null && _subagentTasks.containsKey(toolUseId)) {
+      final state = _subagentTasks[toolUseId]!;
+      if (status != null && status.isNotEmpty) state['status'] = status;
+      state['terminalStatus'] = terminal ? status : null;
+      if (patch['description'] != null) {
+        state['description'] = patch['description'].toString();
+      }
+      if (patch['isBackgrounded'] is bool) {
+        state['isBackgrounded'] = patch['isBackgrounded'];
+      }
+      if (patch['error'] != null) state['error'] = patch['error'].toString();
+      if (patch['endTime'] != null) state['endTime'] = patch['endTime'];
+      final card = _toolCardFor(toolUseId);
+      if (card != null) {
+        card.toolStreaming = !terminal;
+        card.isBackgrounded = !terminal && state['isBackgrounded'] == true;
+        card.backgroundTaskId = taskId;
+        card.toolInput?['_task_status'] = status;
+        if (patch['error'] != null) {
+          card.toolInput?['_task_error'] = patch['error'].toString();
+        }
+      }
+    }
+    if (_backgroundTasks.containsKey(taskId)) {
+      if (terminal) {
+        _backgroundTasks.remove(taskId);
+      } else {
+        final state = _backgroundTasks[taskId]!;
+        if (status != null && status.isNotEmpty) state['status'] = status;
+        if (patch['description'] != null) {
+          state['summary'] = patch['description'].toString();
+        }
+      }
+    }
+    notifyListeners();
+  }
+
+  void _handleBackgroundTasksChanged(Map<String, dynamic> msg) {
+    final rawTasks = msg['tasks'] as List? ?? const [];
+    final liveTaskIds = <String>{};
+    for (final raw in rawTasks) {
+      if (raw is! Map) continue;
+      final task = Map<String, dynamic>.from(raw);
+      final taskId = task['taskId']?.toString() ?? '';
+      if (taskId.isEmpty) continue;
+      liveTaskIds.add(taskId);
+      final taskType = task['taskType']?.toString();
+      final description = task['description']?.toString() ?? 'Background task';
+      final toolUseId = _subagentToolUseIdForTask(
+        taskId,
+        task['toolUseId']?.toString(),
+      );
+      if (_isClaudeSubagentTask(taskType, null) && toolUseId != null) {
+        final state = _subagentTasks.putIfAbsent(toolUseId, () {
+          return {
+            'description': description,
+            'prompt': '',
+            'subagentType': '',
+            'toolUseId': toolUseId,
+            'source': 'claude',
+          };
+        });
+        state['status'] = 'running';
+        state['taskId'] = taskId;
+        state['agentId'] = taskId;
+        state['taskType'] = taskType;
+        state['isBackgrounded'] = true;
+        state['description'] = description;
+        _backgroundTasks.remove(taskId);
+        final card = _toolCardFor(toolUseId);
+        if (card != null) {
+          card.toolStreaming = true;
+          card.isBackgrounded = true;
+          card.backgroundTaskId = taskId;
+          card.toolInput?['_task_id'] = taskId;
+          card.toolInput?['_is_backgrounded'] = true;
+        }
+      } else {
+        _backgroundTasks[taskId] = {
+          'status': 'running',
+          'summary': description,
+          'taskType': taskType,
+          'source': 'claude_sdk',
+          if (toolUseId != null) 'originToolUseId': toolUseId,
+        };
+      }
+    }
+
+    _backgroundTasks.removeWhere(
+      (taskId, state) =>
+          state['source'] == 'claude_sdk' && !liveTaskIds.contains(taskId),
+    );
+    for (final entry in _subagentTasks.entries) {
+      final state = entry.value;
+      final taskId = state['taskId']?.toString();
+      if (state['source'] != 'claude' ||
+          state['isBackgrounded'] != true ||
+          taskId == null ||
+          taskId.isEmpty ||
+          liveTaskIds.contains(taskId)) {
+        continue;
+      }
+      state['isBackgrounded'] = false;
+      final currentStatus = state['status']?.toString() ?? 'running';
+      if (currentStatus == 'running' ||
+          currentStatus == 'pending' ||
+          currentStatus == 'paused') {
+        state['status'] = 'completed';
+        state['terminalStatus'] = 'completed';
+      }
+      final card = _toolCardFor(entry.key);
+      if (card != null) {
+        card.toolStreaming = false;
+        card.isBackgrounded = false;
+        card.toolInput?['_task_status'] = state['status'];
+      }
+    }
+    notifyListeners();
+  }
+
   void _handleTaskNotification(Map<String, dynamic> msg) {
     final taskId = msg['taskId'] as String? ?? '';
     final status = msg['status'] as String? ?? 'completed';
     final summary = msg['summary'] as String? ?? '';
     final outputFile = msg['outputFile'] as String?;
     final originToolUseId = msg['originToolUseId'] as String?;
+    final subagentToolUseId = _subagentToolUseIdForTask(
+      taskId,
+      originToolUseId,
+    );
+    final terminal =
+        status == 'completed' || status == 'failed' || status == 'stopped';
+    if (subagentToolUseId != null &&
+        _subagentTasks.containsKey(subagentToolUseId)) {
+      final state = _subagentTasks[subagentToolUseId]!;
+      state['status'] = terminal ? status : 'running';
+      state['terminalStatus'] = terminal ? status : null;
+      state['taskId'] = taskId;
+      state['agentId'] = taskId;
+      state['isBackgrounded'] = !terminal;
+      if (summary.isNotEmpty) state['summary'] = summary;
+      if (msg['subagentType'] != null) {
+        state['subagentType'] = msg['subagentType'].toString();
+      }
+      if (msg['usage'] is Map) {
+        state['usage'] = Map<String, dynamic>.from(msg['usage'] as Map);
+      }
+      final card = _toolCardFor(subagentToolUseId);
+      if (card != null) {
+        card.toolStreaming = !terminal;
+        card.isBackgrounded = !terminal;
+        card.backgroundTaskId = taskId;
+        card.toolInput?['_task_status'] = status;
+        if (summary.isNotEmpty) card.toolInput?['_task_summary'] = summary;
+        if (msg['usage'] is Map) {
+          card.toolInput?['_task_usage'] = Map<String, dynamic>.from(
+            msg['usage'] as Map,
+          );
+        }
+      }
+    }
 
     if (taskId.isNotEmpty) {
       for (final message in _messages.reversed) {
@@ -6572,7 +6985,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     // Update background tasks map
-    if (status == 'completed' || status == 'failed' || status == 'stopped') {
+    if (terminal) {
       _backgroundTasks.remove(taskId);
       // Also remove by originToolUseId (started uses toolUseId, completed uses agentId)
       if (originToolUseId != null) {
@@ -7923,7 +8336,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final orphanResult = _toolEventReconciler.takeResult(toolUseId);
           if (orphanResult != null) {
             toolCallMsg.toolOutput = orphanResult.output;
-            toolCallMsg.toolStreaming = false;
+            toolCallMsg.toolStreaming = orphanResult.backgroundPending;
+            toolCallMsg.isBackgrounded = orphanResult.backgroundPending;
+            if (orphanResult.backgroundPending) {
+              toolCallMsg.backgroundTaskId = toolUseId;
+            }
           }
           loaded.add(toolCallMsg);
           break;
@@ -7931,6 +8348,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final toolUseId = entry['toolUseId'] as String? ?? '';
           if (skippedToolUseIds.contains(toolUseId)) break;
           final output = entry['toolOutput'] as String? ?? '';
+          final backgroundPending = entry['backgroundPending'] == true;
           // Skip TodoWrite boilerplate results
           if (output.startsWith('Todos have been modified successfully')) break;
           final idx = loaded.lastIndexWhere(
@@ -7938,7 +8356,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
           if (idx >= 0) {
             loaded[idx].toolOutput = output;
-            loaded[idx].toolStreaming = false;
+            loaded[idx].toolStreaming = backgroundPending;
+            loaded[idx].isBackgrounded = backgroundPending;
+            if (backgroundPending) {
+              loaded[idx].backgroundTaskId ??= toolUseId;
+            }
           } else if (output.trim().isNotEmpty) {
             final existingIdx = isAppend
                 ? _messages.lastIndexWhere(
@@ -7949,12 +8371,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 : -1;
             if (existingIdx >= 0) {
               _messages[existingIdx].toolOutput = output;
-              _messages[existingIdx].toolStreaming = false;
+              _messages[existingIdx].toolStreaming = backgroundPending;
+              _messages[existingIdx].isBackgrounded = backgroundPending;
+              if (backgroundPending) {
+                _messages[existingIdx].backgroundTaskId ??= toolUseId;
+              }
             } else {
               _toolEventReconciler.bufferResult(
                 toolUseId,
                 output,
                 parentToolUseId: entry['parentToolUseId'] as String?,
+                backgroundPending: backgroundPending,
               );
             }
           }
@@ -8226,13 +8653,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             m.toolInput?['subagent_type'] as String? ?? '',
           )) {
         final desc = m.toolInput?['description'] as String? ?? 'Sub agent task';
-        final hasResult = m.toolOutput != null;
+        final hasTerminalResult = m.toolOutput != null && !m.toolStreaming;
         _subagentTasks[m.toolUseId!] = {
           'description': desc,
           'prompt': m.toolInput?['prompt'] as String? ?? '',
           'subagentType': m.toolInput?['subagent_type'] as String? ?? '',
-          'status': hasResult ? 'completed' : 'running',
+          'status': hasTerminalResult ? 'completed' : 'running',
           'toolUseId': m.toolUseId!,
+          'isBackgrounded': m.isBackgrounded,
+          if (m.backgroundTaskId != null) 'taskId': m.backgroundTaskId,
           if (m.toolInput?['agentId'] != null)
             'agentId': m.toolInput?['agentId'],
           if (m.parentToolUseId != null) 'parentToolUseId': m.parentToolUseId,
