@@ -29,7 +29,9 @@ class UpdateInfo {
 }
 
 class UpdateService extends ChangeNotifier {
-  static const _versionUrl =
+  static const _versionApiUrl =
+      'https://api.github.com/repos/Yllib/socketagent/contents/app-version.json?ref=master';
+  static const _versionRawUrl =
       'https://raw.githubusercontent.com/Yllib/socketagent/master/app-version.json';
 
   UpdateInfo? _updateInfo;
@@ -54,18 +56,13 @@ class UpdateService extends ChangeNotifier {
       final packageInfo = await PackageInfo.fromPlatform();
       final currentVersion = packageInfo.version;
 
-      final cacheBust = DateTime.now().millisecondsSinceEpoch;
-      final response = await http
-          .get(Uri.parse('$_versionUrl?t=$cacheBust'))
-          .timeout(const Duration(seconds: 10));
-
-      if (response.statusCode != 200) {
-        _error = 'Could not check for updates (${response.statusCode})';
+      final data = await _fetchReleaseMetadata();
+      if (data == null) {
+        _error = 'Could not load current release metadata';
         notifyListeners();
         return null;
       }
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
       final latestVersion = data['version'] as String? ?? currentVersion;
       final downloadUrl = data['url'] as String? ?? '';
       final sha256 = _normalizeSha256(data['sha256'] as String? ?? '');
@@ -99,6 +96,67 @@ class UpdateService extends ChangeNotifier {
       notifyListeners();
       return null;
     }
+  }
+
+  Future<Map<String, dynamic>?> _fetchReleaseMetadata() async {
+    final cacheBust = DateTime.now().microsecondsSinceEpoch;
+    final sources = [
+      (
+        Uri.parse('$_versionApiUrl&t=$cacheBust'),
+        true,
+        <String, String>{
+          'Accept': 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+          'Cache-Control': 'no-cache',
+        },
+      ),
+      (
+        Uri.parse('$_versionRawUrl?t=$cacheBust'),
+        false,
+        <String, String>{'Cache-Control': 'no-cache'},
+      ),
+    ];
+
+    for (final source in sources) {
+      try {
+        final response = await http
+            .get(source.$1, headers: source.$3)
+            .timeout(const Duration(seconds: 10));
+        if (response.statusCode != 200) continue;
+        final metadata = decodeReleaseMetadata(
+          response.body,
+          githubContentsResponse: source.$2,
+        );
+        if ((metadata['version'] as String? ?? '').isNotEmpty &&
+            (metadata['url'] as String? ?? '').isNotEmpty) {
+          return metadata;
+        }
+      } catch (e) {
+        debugPrint('[Update] Metadata source failed: ${source.$1.host}: $e');
+      }
+    }
+    return null;
+  }
+
+  @visibleForTesting
+  static Map<String, dynamic> decodeReleaseMetadata(
+    String body, {
+    required bool githubContentsResponse,
+  }) {
+    final decoded = jsonDecode(body);
+    if (!githubContentsResponse) {
+      return Map<String, dynamic>.from(decoded as Map);
+    }
+    final envelope = Map<String, dynamic>.from(decoded as Map);
+    final encoded = (envelope['content'] as String? ?? '').replaceAll(
+      RegExp(r'\s+'),
+      '',
+    );
+    if (encoded.isEmpty || envelope['encoding'] != 'base64') {
+      throw const FormatException('GitHub response did not contain base64 data');
+    }
+    final content = utf8.decode(base64Decode(encoded));
+    return Map<String, dynamic>.from(jsonDecode(content) as Map);
   }
 
   /// Download the APK and open the installer.
