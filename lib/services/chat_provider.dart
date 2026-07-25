@@ -3486,6 +3486,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'thinking':
           _handleThinkingMessage(msg);
           break;
+        case 'thinking_tokens':
+          _handleThinkingTokens(msg);
+          break;
         case 'tool_call':
           _handleToolCall(msg);
           break;
@@ -5482,6 +5485,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Live progress for redacted extended thinking. The server sends these
+  /// instead of `thinking` messages when the API withholds the reasoning text,
+  /// so this is the only way to show that the model is working rather than
+  /// stalled. Reuses the live thinking card if one exists so text and token
+  /// count never render as two separate bubbles.
+  void _handleThinkingTokens(Map<String, dynamic> msg) {
+    if (!_isProcessing) return;
+    _processingSetAt = null; // server confirmed processing
+    final tokens = (msg['estimatedTokens'] as num?)?.toInt() ?? 0;
+    if (tokens <= 0) return;
+
+    var thinkingMessage = _currentThinkingMessage;
+    if (thinkingMessage == null) {
+      thinkingMessage = ChatMessage.thinking();
+      thinkingMessage.uuid = msg['uuid'] as String?;
+      _messages.add(thinkingMessage);
+      _currentThinkingMessage = thinkingMessage;
+    }
+    thinkingMessage.thinkingTokens = tokens;
+    thinkingMessage.toolStreaming = true;
+    notifyListeners();
+  }
+
   void _handleThinkingMessage(Map<String, dynamic> msg) {
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
@@ -5524,6 +5550,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         positionedMessage ??
         _thinkingMessagesByKey[streamKey] ??
         _thinkingMessagesByStreamKey[streamKey];
+    // Adopt a token-only card from _handleThinkingTokens rather than stacking a
+    // second bubble next to it once real thinking text starts arriving.
+    if (thinkingMessage == null &&
+        _currentThinkingMessage != null &&
+        _currentThinkingMessage!.textContent.isEmpty) {
+      thinkingMessage = _currentThinkingMessage;
+    }
     if (thinkingMessage == null) {
       thinkingMessage = ChatMessage.thinking();
       thinkingMessage.parentToolUseId = parentToolUseId;

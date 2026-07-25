@@ -20,7 +20,13 @@ class _ThinkingCardState extends State<ThinkingCard> {
   Widget build(BuildContext context) {
     final text = widget.message.textContent;
     final isStreaming = widget.message.toolStreaming;
-    final preview = text.length > 60 ? '${text.substring(0, 60)}...' : text;
+    final tokens = widget.message.thinkingTokens;
+    // Redacted thinking arrives with no text at all — show the token estimate
+    // rather than an empty card, and don't offer to expand into nothing.
+    final hasText = text.isNotEmpty;
+    final preview = hasText
+        ? (text.length > 60 ? '${text.substring(0, 60)}...' : text)
+        : (tokens > 0 ? '$tokens tokens' : '');
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -38,7 +44,9 @@ class _ThinkingCardState extends State<ThinkingCard> {
             children: [
               // Header
               GestureDetector(
-                onTap: () => setState(() => _expanded = !_expanded),
+                onTap: hasText
+                    ? () => setState(() => _expanded = !_expanded)
+                    : null,
                 behavior: HitTestBehavior.opaque,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -82,17 +90,18 @@ class _ThinkingCardState extends State<ThinkingCard> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      Icon(
-                        _expanded ? Icons.expand_less : Icons.expand_more,
-                        size: 18,
-                        color: const Color(0xFF6C7086),
-                      ),
+                      if (hasText)
+                        Icon(
+                          _expanded ? Icons.expand_less : Icons.expand_more,
+                          size: 18,
+                          color: const Color(0xFF6C7086),
+                        ),
                     ],
                   ),
                 ),
               ),
               // Expanded content
-              if (_expanded)
+              if (_expanded && hasText)
                 Container(
                   constraints: const BoxConstraints(maxHeight: 400),
                   decoration: const BoxDecoration(
