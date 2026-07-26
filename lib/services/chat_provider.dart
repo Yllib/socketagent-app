@@ -6285,12 +6285,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeSessionId,
       serverId: _connMgr.activeServerId,
     );
-    if (!awaitingAbort) {
+    final continuationPending = msg['continuationPending'] == true;
+    if (!awaitingAbort && !continuationPending) {
       _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
     }
     _closeLiveStreamsForParent(null);
-    _isProcessing = awaitingAbort;
-    _stopPromptRuntime();
+    _isProcessing = awaitingAbort || continuationPending;
+    if (!continuationPending) {
+      _stopPromptRuntime();
+    }
     _isCompacting = false;
     _isRateLimited = false;
     _isRetrying = false;
