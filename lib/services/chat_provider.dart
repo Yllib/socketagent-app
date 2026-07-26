@@ -63,6 +63,24 @@ class SdkSessionPage {
   final bool hasMore;
 }
 
+enum SessionTransferStage {
+  exporting,
+  downloading,
+  uploading,
+  importing,
+  finalizing,
+}
+
+class SessionTransferResult {
+  const SessionTransferResult({
+    required this.session,
+    required this.exactNativeResume,
+  });
+
+  final Session session;
+  final bool exactNativeResume;
+}
+
 String _stripTerminalControl(String value) {
   return value
       .replaceAll(
@@ -494,6 +512,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       {}; // fileId → active socket transfer token
   final Map<String, BytesBuilder> _fileBytesBuffers = {};
   final Map<String, Completer<String?>> _fileBytesCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>>
+  _sessionTransferCompleters = {};
   final Map<String, String> _filePathToId = {}; // serverPath → latest fileId
   final Map<String, String> _authRequestServers = {};
   final Map<String, String> _authRequestSessions = {};
@@ -673,6 +693,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Per-server installed plugin names (from status_sync)
   final Map<String, List<String>> _serverPlugins = {};
   final Map<String, int> _serverSecretManagementVersions = {};
+  final Map<String, int> _serverSessionTransferVersions = {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -1472,6 +1493,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<String?> fetchServerFileBase64(
     String filePath, {
     String? serverId,
+    Duration timeout = const Duration(seconds: 20),
   }) async {
     if (filePath.isEmpty) return null;
     final fileId =
@@ -1499,7 +1521,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     return completer.future.timeout(
-      const Duration(seconds: 20),
+      timeout,
       onTimeout: () {
         _fileBytesCompleters.remove(fileId);
         _fileBytesBuffers.remove(fileId);
@@ -2307,6 +2329,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     )) {
       return true;
     }
+    // Exact Claude transfers briefly use the same native session ID on two
+    // servers. A source tombstone must not hide the destination copy.
+    if (serverId != null && serverId.isNotEmpty) return false;
     return _pendingArchivedSessions.values.any((s) => s.id == sessionId) ||
         _archivedSessionTombstones.keys.any(
           (key) => _archiveKeySessionId(key) == sessionId,
@@ -3413,6 +3438,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'abort_ack',
       'scheduled_task_notification',
       'reminder',
+      'session_transfer_export_result',
+      'session_transfer_import_result',
+      'session_transfer_discard_result',
     };
     final isGlobalType =
         globalTypes.contains(type) || isScheduledTaskStateMessage(type);
@@ -3596,6 +3624,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _serverSecretManagementVersions[serverId] =
                   secretManagement is Map
                   ? (secretManagement['version'] as num?)?.toInt() ?? 0
+                  : 0;
+              final sessionTransfer = msg['sessionTransfer'];
+              _serverSessionTransferVersions[serverId] = sessionTransfer is Map
+                  ? (sessionTransfer['version'] as num?)?.toInt() ?? 0
                   : 0;
               _captureCodexDriverSettings(msg, serverId);
               unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
@@ -3798,6 +3830,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'file_error':
           _handleFileError(msg);
+          break;
+        case 'session_transfer_export_result':
+        case 'session_transfer_import_result':
+        case 'session_transfer_discard_result':
+          final requestId = msg['requestId'] as String? ?? '';
+          final completer = _sessionTransferCompleters.remove(requestId);
+          if (completer != null && !completer.isCompleted) {
+            completer.complete(Map<String, dynamic>.from(msg));
+          }
           break;
         case 'todos':
           final rawTodos = msg['todos'] as List?;
@@ -11594,6 +11635,196 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }, serverId: serverId);
   }
 
+  Future<Map<String, dynamic>> _requestSessionTransfer(
+    String serverId,
+    Map<String, dynamic> message, {
+    Duration timeout = const Duration(minutes: 5),
+  }) {
+    final requestId =
+        'transfer_${DateTime.now().microsecondsSinceEpoch}_${_sessionTransferCompleters.length}';
+    final completer = Completer<Map<String, dynamic>>();
+    _sessionTransferCompleters[requestId] = completer;
+    _connMgr.sendToServer(serverId, {'requestId': requestId, ...message});
+    return completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        _sessionTransferCompleters.remove(requestId);
+        throw TimeoutException('Timed out waiting for session transfer');
+      },
+    );
+  }
+
+  String _joinServerPath(String parent, String child) {
+    final separator = parent.contains('\\') && !parent.contains('/')
+        ? '\\'
+        : '/';
+    return parent.endsWith('/') || parent.endsWith('\\')
+        ? '$parent$child'
+        : '$parent$separator$child';
+  }
+
+  Future<SessionTransferResult> transferSession({
+    required Session source,
+    required String destinationServerId,
+    required String destinationCwd,
+    required String destinationBackend,
+    required bool move,
+    void Function(SessionTransferStage stage)? onStage,
+  }) async {
+    if (source.running) {
+      throw StateError(
+        'Wait for the session to finish or stop it before transferring',
+      );
+    }
+    if (_connMgr.statusOf(source.serverId) != ConnectionStatus.connected) {
+      throw StateError('The source server is offline');
+    }
+    if (_connMgr.statusOf(destinationServerId) != ConnectionStatus.connected) {
+      throw StateError('The destination server is offline');
+    }
+    if ((_serverSessionTransferVersions[source.serverId] ?? 0) < 1) {
+      throw StateError(
+        'The source server must update before it can transfer sessions',
+      );
+    }
+    if ((_serverSessionTransferVersions[destinationServerId] ?? 0) < 1) {
+      throw StateError(
+        'The destination server must update before it can receive sessions',
+      );
+    }
+    final cwd = destinationCwd.trim();
+    if (cwd.isEmpty) throw StateError('Choose a destination folder');
+    final targetBackend = destinationBackend == 'codex' ? 'codex' : 'claude';
+    final exactNative =
+        move &&
+        source.serverId != destinationServerId &&
+        (source.backend ?? 'claude') == 'claude' &&
+        targetBackend == 'claude';
+
+    String? sourceBundlePath;
+    File? localBundle;
+    try {
+      onStage?.call(SessionTransferStage.exporting);
+      final exported = await _requestSessionTransfer(source.serverId, {
+        'type': 'session_transfer_export',
+        'sessionId': source.id,
+      });
+      if (exported['ok'] != true) {
+        throw StateError(
+          exported['error']?.toString() ??
+              'Source could not export the session',
+        );
+      }
+      sourceBundlePath = exported['bundlePath'] as String? ?? '';
+      final sha256 = exported['sha256'] as String? ?? '';
+      final fileName =
+          (exported['fileName'] as String? ?? 'socketagent-session.satransfer')
+              .split('/')
+              .last
+              .split('\\')
+              .last;
+      if (sourceBundlePath.isEmpty || sha256.isEmpty) {
+        throw StateError('Source returned an incomplete transfer bundle');
+      }
+
+      onStage?.call(SessionTransferStage.downloading);
+      final encoded = await fetchServerFileBase64(
+        sourceBundlePath,
+        serverId: source.serverId,
+        timeout: const Duration(minutes: 5),
+      );
+      if (encoded == null || encoded.isEmpty) {
+        throw StateError('Could not download the encrypted session bundle');
+      }
+      final localPath = _joinServerPath(
+        Directory.systemTemp.path,
+        'socketagent-${DateTime.now().microsecondsSinceEpoch}-$fileName',
+      );
+      localBundle = File(localPath);
+      await localBundle.writeAsBytes(base64Decode(encoded), flush: true);
+
+      onStage?.call(SessionTransferStage.uploading);
+      final destinationTransferDir = _joinServerPath(
+        cwd,
+        '.socketagent-transfers',
+      );
+      await createFileManagerFolder(
+        path: destinationTransferDir,
+        serverId: destinationServerId,
+      );
+      final uploadedPath = await uploadFileManagerFile(
+        localPath: localBundle.path,
+        name: fileName,
+        targetDir: destinationTransferDir,
+        serverId: destinationServerId,
+        conflictPolicy: 'overwrite',
+      );
+
+      onStage?.call(SessionTransferStage.importing);
+      final imported = await _requestSessionTransfer(destinationServerId, {
+        'type': 'session_transfer_import',
+        'bundlePath': uploadedPath,
+        'expectedSha256': sha256,
+        'targetCwd': cwd,
+        'targetBackend': targetBackend,
+        'mode': move ? 'move' : 'clone',
+        'nativeMode': exactNative ? 'exact' : 'handoff',
+      });
+      if (imported['ok'] != true) {
+        throw StateError(
+          imported['error']?.toString() ??
+              'Destination could not import the session',
+        );
+      }
+      final rawSession = Map<String, dynamic>.from(
+        imported['session'] as Map? ?? const <String, dynamic>{},
+      );
+      rawSession['serverId'] = destinationServerId;
+      final config = _serverConfigs
+          .where((entry) => entry.id == destinationServerId)
+          .firstOrNull;
+      rawSession['serverName'] = config?.name ?? '';
+      rawSession['serverColor'] = config?.colorValue;
+      final destination = Session.fromJson(rawSession);
+      final destinationSessions = _perServerSessions.putIfAbsent(
+        destinationServerId,
+        () => [],
+      );
+      destinationSessions.removeWhere((entry) => entry.id == destination.id);
+      destinationSessions.add(destination);
+      _sessions.removeWhere(
+        (entry) =>
+            entry.id == destination.id && entry.serverId == destinationServerId,
+      );
+      _sessions.add(destination);
+      _saveSessionCacheSoon();
+
+      onStage?.call(SessionTransferStage.finalizing);
+      if (move) {
+        archiveSession(source.id, serverId: source.serverId);
+      }
+      notifyListeners();
+      return SessionTransferResult(
+        session: destination,
+        exactNativeResume: imported['exactNativeResume'] == true,
+      );
+    } finally {
+      if (sourceBundlePath != null && sourceBundlePath.isNotEmpty) {
+        try {
+          await _requestSessionTransfer(source.serverId, {
+            'type': 'session_transfer_discard',
+            'bundlePath': sourceBundlePath,
+          }, timeout: const Duration(seconds: 30));
+        } catch (_) {}
+      }
+      if (localBundle != null) {
+        try {
+          await localBundle.delete();
+        } catch (_) {}
+      }
+    }
+  }
+
   Future<String> uploadFileManagerFile({
     required String localPath,
     required String name,
@@ -12063,19 +12294,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void archiveSession(String sessionId) {
-    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
-    final serverId = session?.serverId.isNotEmpty == true
+  void archiveSession(String sessionId, {String? serverId}) {
+    final session = _sessions
+        .where(
+          (s) =>
+              s.id == sessionId &&
+              (serverId == null || serverId.isEmpty || s.serverId == serverId),
+        )
+        .firstOrNull;
+    final resolvedServerId = session?.serverId.isNotEmpty == true
         ? session!.serverId
         : null;
-    _markArchivedSessionHidden(serverId, sessionId);
+    _markArchivedSessionHidden(resolvedServerId, sessionId);
     if (session != null) {
-      _pendingArchivedSessions[_archivePendingKey(serverId, sessionId)] =
+      _pendingArchivedSessions[_archivePendingKey(
+            resolvedServerId,
+            sessionId,
+          )] =
           session;
     }
-    _removeSessionFromLists(serverId, sessionId);
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, {
+    _removeSessionFromLists(resolvedServerId, sessionId);
+    if (resolvedServerId != null) {
+      _connMgr.sendToServer(resolvedServerId, {
         'type': 'archive_session',
         'sessionId': sessionId,
       });

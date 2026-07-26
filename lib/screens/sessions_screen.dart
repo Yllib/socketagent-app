@@ -1927,6 +1927,17 @@ class _SessionsTabState extends State<SessionsTab> {
                   _forkSession(context, session);
                 },
               ),
+              ListTile(
+                leading: const Icon(Icons.move_up_outlined),
+                title: const Text('Teleport Session'),
+                subtitle: const Text(
+                  'Move or clone to another server or harness',
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _showTeleportSessionSheet(context, session);
+                },
+              ),
               if (session.backend == 'codex') ...[
                 ListTile(
                   leading: const Icon(Icons.compress),
@@ -2038,6 +2049,384 @@ class _SessionsTabState extends State<SessionsTab> {
         );
       },
     );
+  }
+
+  String _sessionTransferStageLabel(SessionTransferStage stage) {
+    return switch (stage) {
+      SessionTransferStage.exporting => 'Packing session history…',
+      SessionTransferStage.downloading => 'Downloading encrypted bundle…',
+      SessionTransferStage.uploading => 'Uploading to destination…',
+      SessionTransferStage.importing => 'Restoring session…',
+      SessionTransferStage.finalizing => 'Finishing transfer…',
+    };
+  }
+
+  void _showTeleportSessionSheet(BuildContext context, Session session) {
+    final provider = context.read<ChatProvider>();
+    final connectedServers = provider.serverConfigs
+        .where(
+          (server) =>
+              provider.connMgr.statusOf(server.id) ==
+              ConnectionStatus.connected,
+        )
+        .toList();
+    if (connectedServers.isEmpty || session.serverId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'The source server must be connected to transfer this session',
+          ),
+        ),
+      );
+      return;
+    }
+
+    var destinationServerId =
+        connectedServers
+            .where((server) => server.id != session.serverId)
+            .firstOrNull
+            ?.id ??
+        connectedServers
+            .where((server) => server.id == session.serverId)
+            .firstOrNull
+            ?.id ??
+        connectedServers.first.id;
+
+    String initialBackendFor(String serverId) {
+      final backends = provider.backendsForServer(serverId);
+      final sourceBackend = session.backend ?? 'claude';
+      if (serverId == session.serverId && backends.length > 1) {
+        return backends.firstWhere(
+          (backend) => backend != sourceBackend,
+          orElse: () => sourceBackend,
+        );
+      }
+      return backends.contains(sourceBackend)
+          ? sourceBackend
+          : backends.firstOrNull ?? 'claude';
+    }
+
+    String initialCwdFor(String serverId) {
+      if (serverId == session.serverId) return session.cwd;
+      final configured = connectedServers
+          .where((server) => server.id == serverId)
+          .firstOrNull
+          ?.defaultCwd;
+      return configured?.isNotEmpty == true ? configured! : session.cwd;
+    }
+
+    var destinationBackend = initialBackendFor(destinationServerId);
+    var move = true;
+    var transferring = false;
+    SessionTransferStage? stage;
+    String? error;
+    final cwdController = TextEditingController(
+      text: initialCwdFor(destinationServerId),
+    );
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            final destinationBackends = provider.backendsForServer(
+              destinationServerId,
+            );
+            if (!destinationBackends.contains(destinationBackend)) {
+              destinationBackend = destinationBackends.firstOrNull ?? 'claude';
+            }
+            final sameNativeTarget =
+                destinationServerId == session.serverId &&
+                destinationBackend == (session.backend ?? 'claude');
+            final exactClaudeMove =
+                move &&
+                destinationServerId != session.serverId &&
+                (session.backend ?? 'claude') == 'claude' &&
+                destinationBackend == 'claude';
+
+            Future<void> startTransfer() async {
+              if (cwdController.text.trim().isEmpty) {
+                setSheetState(() => error = 'Choose a destination folder.');
+                return;
+              }
+              if (move && sameNativeTarget) {
+                setSheetState(
+                  () => error =
+                      'A move on the same server must switch harnesses. '
+                      'Choose Clone to duplicate it instead.',
+                );
+                return;
+              }
+              setSheetState(() {
+                transferring = true;
+                error = null;
+                stage = SessionTransferStage.exporting;
+              });
+              try {
+                final result = await provider.transferSession(
+                  source: session,
+                  destinationServerId: destinationServerId,
+                  destinationCwd: cwdController.text,
+                  destinationBackend: destinationBackend,
+                  move: move,
+                  onStage: (next) {
+                    if (!sheetContext.mounted) return;
+                    setSheetState(() => stage = next);
+                  },
+                );
+                if (!sheetContext.mounted) return;
+                Navigator.pop(sheetContext);
+                final verb = move ? 'moved' : 'cloned';
+                final resumeDescription = result.exactNativeResume
+                    ? 'with its native Claude thread'
+                    : 'with a new ${destinationBackend == 'codex' ? 'Codex' : 'Claude'} thread';
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Session $verb $resumeDescription.'),
+                    action: SnackBarAction(
+                      label: 'Open',
+                      onPressed: () => _openSession(
+                        context,
+                        sessionId: result.session.id,
+                        serverId: result.session.serverId,
+                      ),
+                    ),
+                  ),
+                );
+              } catch (transferError) {
+                if (!sheetContext.mounted) return;
+                setSheetState(() {
+                  transferring = false;
+                  stage = null;
+                  error = transferError.toString().replaceFirst(
+                    RegExp(r'^(Bad state|StateError):\s*'),
+                    '',
+                  );
+                });
+              }
+            }
+
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                20,
+                12,
+                20,
+                20 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.move_up_outlined),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Teleport Session',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                session.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(
+                                  sheetContext,
+                                ).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                    SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                          value: true,
+                          icon: Icon(Icons.drive_file_move_outline),
+                          label: Text('Move'),
+                        ),
+                        ButtonSegment(
+                          value: false,
+                          icon: Icon(Icons.copy_outlined),
+                          label: Text('Clone'),
+                        ),
+                      ],
+                      selected: {move},
+                      onSelectionChanged: transferring
+                          ? null
+                          : (selection) {
+                              setSheetState(() {
+                                move = selection.first;
+                                error = null;
+                              });
+                            },
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey('teleport-server-$destinationServerId'),
+                      initialValue: destinationServerId,
+                      decoration: const InputDecoration(
+                        labelText: 'Destination server',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: connectedServers
+                          .map(
+                            (server) => DropdownMenuItem(
+                              value: server.id,
+                              child: Text(server.name),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: transferring
+                          ? null
+                          : (serverId) {
+                              if (serverId == null) return;
+                              setSheetState(() {
+                                destinationServerId = serverId;
+                                destinationBackend = initialBackendFor(
+                                  serverId,
+                                );
+                                cwdController.text = initialCwdFor(serverId);
+                                error = null;
+                              });
+                            },
+                    ),
+                    const SizedBox(height: 12),
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(
+                        'teleport-backend-$destinationServerId-$destinationBackend',
+                      ),
+                      initialValue: destinationBackend,
+                      decoration: const InputDecoration(
+                        labelText: 'Harness',
+                        border: OutlineInputBorder(),
+                      ),
+                      items: destinationBackends
+                          .map(
+                            (backend) => DropdownMenuItem(
+                              value: backend,
+                              child: Text(
+                                backend == 'codex' ? 'Codex' : 'Claude',
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: transferring
+                          ? null
+                          : (backend) {
+                              if (backend == null) return;
+                              setSheetState(() {
+                                destinationBackend = backend;
+                                error = null;
+                              });
+                            },
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: cwdController,
+                      enabled: !transferring,
+                      decoration: InputDecoration(
+                        labelText: 'Destination project folder',
+                        border: const OutlineInputBorder(),
+                        suffixIcon: IconButton(
+                          tooltip: 'Browse',
+                          onPressed: transferring
+                              ? null
+                              : () async {
+                                  final selected = await _showFolderBrowser(
+                                    sheetContext,
+                                    provider,
+                                    serverId: destinationServerId,
+                                  );
+                                  if (selected == null ||
+                                      !sheetContext.mounted) {
+                                    return;
+                                  }
+                                  setSheetState(() {
+                                    cwdController.text = selected;
+                                    error = null;
+                                  });
+                                },
+                          icon: const Icon(Icons.folder_open),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          sheetContext,
+                        ).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        exactClaudeMove
+                            ? 'The native Claude thread, SocketAgent history, '
+                                  'tasks, and plans will resume intact.'
+                            : 'SocketAgent history, tasks, and plans will move '
+                                  'intact. The destination harness starts a new '
+                                  'native thread with handoff context.',
+                        style: Theme.of(sheetContext).textTheme.bodySmall,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Project files are not copied. The destination folder '
+                      'must already contain the project checkout and any files '
+                      'the session needs.',
+                      style: Theme.of(sheetContext).textTheme.bodySmall,
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        error!,
+                        style: TextStyle(
+                          color: Theme.of(sheetContext).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    if (transferring && stage != null) ...[
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(_sessionTransferStageLabel(stage!)),
+                          ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: transferring ? null : startTransfer,
+                      icon: Icon(move ? Icons.move_up : Icons.copy_outlined),
+                      label: Text(move ? 'Move session' : 'Clone session'),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).whenComplete(cwdController.dispose);
   }
 
   void _showBlockedToolsDialog(BuildContext context, Session session) {
