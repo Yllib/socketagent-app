@@ -4106,41 +4106,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _handleSessionSettings(msg);
           break;
         case 'task_completed_hook':
-          final hookTaskId = msg['taskId'] as String? ?? '';
-          final hookTeammate = msg['teammateName'] as String? ?? '';
-          final hookSubject = msg['subject'] as String? ?? '';
-          // Try to match to a tracked subagent by taskId or teammateName
-          bool matched = false;
-          if (hookTaskId.isNotEmpty && _subagentTasks.containsKey(hookTaskId)) {
-            _subagentTasks[hookTaskId]!['status'] = 'completed';
-            matched = true;
-          }
-          // If not matched by taskId, try matching by teammate name in description
-          if (!matched && hookTeammate.isNotEmpty) {
-            for (final entry in _subagentTasks.entries) {
-              if (entry.value['status'] == 'running' &&
-                  (entry.value['description'] as String? ?? '').contains(
-                    hookTeammate,
-                  )) {
-                entry.value['status'] = 'completed';
-                matched = true;
-                break;
-              }
-            }
-          }
-          // Show a notification if we have a subject
-          if (hookSubject.isNotEmpty) {
-            _messages.add(
-              ChatMessage(
-                id: 'task_hook_${DateTime.now().microsecondsSinceEpoch}',
-                sender: MessageSender.system,
-                type: MessageType.taskNotification,
-                timestamp: DateTime.now(),
-                textContent: hookSubject,
-                toolName: 'completed',
-              ),
-            );
-          }
+          // Compatibility with servers that predate durable native-task
+          // snapshots. Claude Task hooks describe checklist items, not agents.
+          _applyClaudeTaskHook(msg, status: 'completed');
           notifyListeners();
           break;
         case 'session_state_changed':
@@ -4230,18 +4198,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           break;
         case 'task_created_hook':
-          final createdTaskId = msg['taskId'] as String? ?? '';
-          final createdSubject = msg['subject'] as String? ?? '';
-          final createdTeammate = msg['teammateName'] as String? ?? '';
-          if (createdTaskId.isNotEmpty) {
-            _subagentTasks[createdTaskId] = {
-              'description': createdSubject,
-              'prompt': '',
-              'subagentType': createdTeammate,
-              'status': 'running',
-              'toolUseId': createdTaskId,
-            };
-          }
+          // Compatibility with older servers. Keep native Claude tasks in the
+          // task list rather than fabricating SubAgentCard state.
+          _applyClaudeTaskHook(msg, status: 'pending');
           notifyListeners();
           break;
         case 'injection_ack':
@@ -7772,6 +7731,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final rawMessages = normalizeSendFileHistoryEntries(
       msg['messages'] as List? ?? const [],
     );
+    final rawTaskStates = (msg['taskStates'] as List? ?? const [])
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList();
+    final messageEntryIds = rawMessages
+        .map((entry) => entry['entryId']?.toString() ?? '')
+        .where((entryId) => entryId.isNotEmpty)
+        .toSet();
+    final historyEntries =
+        <Map<String, dynamic>>[
+          ...rawMessages,
+          ...rawTaskStates.where(
+            (entry) =>
+                (entry['entryId']?.toString() ?? '').isEmpty ||
+                !messageEntryIds.contains(entry['entryId'].toString()),
+          ),
+        ]..sort((left, right) {
+          final leftSequence = (left['sessionSeq'] as num?)?.toInt();
+          final rightSequence = (right['sessionSeq'] as num?)?.toInt();
+          if (leftSequence == null || rightSequence == null) return 0;
+          return leftSequence.compareTo(rightSequence);
+        });
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
     final isDelta = decision.kind == SessionHistoryKind.delta;
     final isAppend = decision.kind == SessionHistoryKind.append || isDelta;
@@ -7801,8 +7782,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     var loaded = <ChatMessage>[];
     var historyPrevTodos = <Map<String, dynamic>>[];
+    final historyBackgroundTasks = <String, Map<String, dynamic>>{};
     final skippedToolUseIds = <String>{};
-    for (final entry in rawMessages) {
+    for (final entry in historyEntries) {
       final loadedStartIndex = loaded.length;
       final role = entry['role'] as String? ?? '';
       final content = entry['content'] as String? ?? '';
@@ -8217,6 +8199,180 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             notifMsg.parentToolUseId =
                 entry['parentToolUseId'] as String? ?? originToolUseId;
             loaded.add(notifMsg);
+          }
+          break;
+        case 'task_state':
+          final taskId = entry['taskId']?.toString() ?? '';
+          final taskKind = entry['taskKind']?.toString() ?? 'background';
+          final status = entry['status']?.toString() ?? 'running';
+          final description =
+              entry['taskDescription']?.toString() ??
+              entry['taskSubject']?.toString() ??
+              content;
+          if (taskKind == 'claude_task' && taskId.isNotEmpty) {
+            final existingIndex = historyPrevTodos.indexWhere(
+              (todo) =>
+                  todo['source'] == 'claude_tasks' &&
+                  (todo['id']?.toString() == taskId ||
+                      todo['taskId']?.toString() == taskId),
+            );
+            if (status == 'deleted') {
+              if (existingIndex >= 0) historyPrevTodos.removeAt(existingIndex);
+              break;
+            }
+            final subject =
+                entry['taskSubject']?.toString().trim().isNotEmpty == true
+                ? entry['taskSubject'].toString()
+                : description.isNotEmpty
+                ? description
+                : 'Task #$taskId';
+            final task = <String, dynamic>{
+              if (existingIndex >= 0) ...historyPrevTodos[existingIndex],
+              'id': taskId,
+              'taskId': taskId,
+              'content': subject,
+              'activeForm': subject,
+              'status': status,
+              'source': 'claude_tasks',
+              if (entry['taskDescription'] != null)
+                'description': entry['taskDescription'],
+              if (entry['teammateName'] != null)
+                'teammateName': entry['teammateName'],
+            };
+            if (existingIndex >= 0) {
+              historyPrevTodos[existingIndex] = task;
+            } else {
+              historyPrevTodos.add(task);
+            }
+            break;
+          }
+
+          final originToolUseId =
+              entry['originToolUseId']?.toString() ??
+              entry['toolUseId']?.toString() ??
+              '';
+          if (taskKind == 'subagent' &&
+              taskId.isNotEmpty &&
+              originToolUseId.isNotEmpty) {
+            final loadedIndex = loaded.lastIndexWhere(
+              (message) =>
+                  message.type == MessageType.toolCall &&
+                  message.toolUseId == originToolUseId,
+            );
+            ChatMessage? card = loadedIndex >= 0 ? loaded[loadedIndex] : null;
+            if (card == null && isAppend) {
+              final existingIndex = _messages.lastIndexWhere(
+                (message) =>
+                    message.type == MessageType.toolCall &&
+                    message.toolUseId == originToolUseId,
+              );
+              if (existingIndex >= 0) card = _messages[existingIndex];
+            }
+            if (card == null && entry['skipTranscript'] != true) {
+              final synthetic = ChatMessage.toolCall(
+                tool: 'Agent',
+                input: {
+                  'description': description.isNotEmpty
+                      ? description
+                      : 'Sub agent task',
+                  'prompt':
+                      (entry['toolInput'] as Map?)?['prompt']?.toString() ?? '',
+                  'subagent_type': entry['subagentType']?.toString() ?? '',
+                },
+                toolUseId: originToolUseId,
+              );
+              synthetic.parentToolUseId = entry['parentToolUseId']?.toString();
+              loaded.add(synthetic);
+              card = synthetic;
+            }
+            if (card != null) {
+              final active =
+                  status == 'pending' ||
+                  status == 'running' ||
+                  status == 'paused';
+              card.toolStreaming = active;
+              card.isBackgrounded = active && entry['isBackgrounded'] == true;
+              card.backgroundTaskId = taskId;
+              card.toolInput?['_task_id'] = taskId;
+              card.toolInput?['_task_status'] = status;
+              card.toolInput?['_is_backgrounded'] =
+                  entry['isBackgrounded'] == true;
+              if (description.isNotEmpty) {
+                card.toolInput?['description'] = description;
+              }
+              if (entry['progressSummary'] != null) {
+                card.toolInput?['_progress_summary'] = entry['progressSummary'];
+              }
+              if (entry['lastToolName'] != null) {
+                card.toolInput?['_last_tool_name'] = entry['lastToolName'];
+              }
+              if (entry['taskUsage'] is Map) {
+                card.toolInput?['_task_usage'] = Map<String, dynamic>.from(
+                  entry['taskUsage'] as Map,
+                );
+              }
+              if (!active && content.isNotEmpty) {
+                card.toolOutput ??= content;
+              }
+            }
+            break;
+          }
+
+          if (taskKind == 'background' && taskId.isNotEmpty) {
+            final active =
+                status == 'pending' ||
+                status == 'running' ||
+                status == 'paused';
+            if (active) {
+              historyBackgroundTasks[taskId] = {
+                'status': status,
+                'summary': description.isNotEmpty
+                    ? description
+                    : 'Background task',
+                'taskType': entry['taskType'],
+                'source': 'claude_sdk',
+                if (originToolUseId.isNotEmpty)
+                  'originToolUseId': originToolUseId,
+                if (entry['progressSummary'] != null)
+                  'progressSummary': entry['progressSummary'],
+                if (entry['taskUsage'] is Map)
+                  'usage': Map<String, dynamic>.from(entry['taskUsage'] as Map),
+              };
+            }
+            if (originToolUseId.isEmpty) break;
+            final loadedIndex = loaded.lastIndexWhere(
+              (message) =>
+                  message.type == MessageType.toolCall &&
+                  message.toolUseId == originToolUseId,
+            );
+            ChatMessage? card = loadedIndex >= 0 ? loaded[loadedIndex] : null;
+            if (card == null && isAppend) {
+              final existingIndex = _messages.lastIndexWhere(
+                (message) =>
+                    message.type == MessageType.toolCall &&
+                    message.toolUseId == originToolUseId,
+              );
+              if (existingIndex >= 0) card = _messages[existingIndex];
+            }
+            if (card != null) {
+              card.toolStreaming = active;
+              card.isBackgrounded = active && entry['isBackgrounded'] == true;
+              card.backgroundTaskId = taskId;
+              card.toolInput?['_task_id'] = taskId;
+              card.toolInput?['_task_status'] = status;
+              if (description.isNotEmpty) {
+                card.toolInput?['description'] = description;
+              }
+              if (entry['progressSummary'] != null) {
+                card.toolInput?['_progress_summary'] = entry['progressSummary'];
+              }
+              if (entry['lastToolName'] != null) {
+                card.toolInput?['_last_tool_name'] = entry['lastToolName'];
+              }
+              if (!active && content.isNotEmpty) {
+                card.toolOutput ??= content;
+              }
+            }
           }
           break;
         case 'permission_mode':
@@ -8634,8 +8790,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // offset that belonged to the previous window.
       _historyWindowRevision++;
       _backgroundTasks.clear();
+      _backgroundTasks.addAll(historyBackgroundTasks);
       _subagentTasks.clear();
       _isLoadingHistory = false;
+    }
+    if (isAppend && msg.containsKey('taskStates')) {
+      _backgroundTasks.removeWhere(
+        (_, state) => state['source'] == 'claude_sdk',
+      );
+      _backgroundTasks.addAll(historyBackgroundTasks);
     }
     _messages = orderByTranscriptPosition(_messages);
     _recountPendingInjectedMessages();
@@ -8654,11 +8817,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           )) {
         final desc = m.toolInput?['description'] as String? ?? 'Sub agent task';
         final hasTerminalResult = m.toolOutput != null && !m.toolStreaming;
+        final restoredStatus = m.toolInput?['_task_status']?.toString();
         _subagentTasks[m.toolUseId!] = {
           'description': desc,
           'prompt': m.toolInput?['prompt'] as String? ?? '',
           'subagentType': m.toolInput?['subagent_type'] as String? ?? '',
-          'status': hasTerminalResult ? 'completed' : 'running',
+          'status':
+              restoredStatus ?? (hasTerminalResult ? 'completed' : 'running'),
+          if (restoredStatus != null) 'terminalStatus': restoredStatus,
           'toolUseId': m.toolUseId!,
           'isBackgrounded': m.isBackgrounded,
           if (m.backgroundTaskId != null) 'taskId': m.backgroundTaskId,
@@ -12224,6 +12390,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void dismissTodos() {
+    final hadClaudeTasks = _todos.any(
+      (todo) => todo['source'] == 'claude_tasks',
+    );
     _todos.clear();
     _messages.add(
       ChatMessage(
@@ -12236,9 +12405,49 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       ),
     );
     _addPrepend(
-      '[The user dismissed the task list. Clear your todos with the TodoWrite tool (pass an empty array) before starting your next task.]',
+      hadClaudeTasks
+          ? '[The user dismissed the visible task list. This is a UI dismissal, not a request to delete Claude TaskCreate tasks.]'
+          : '[The user dismissed the task list. Clear your todos with the TodoWrite tool (pass an empty array) before starting your next task.]',
     );
     notifyListeners();
+  }
+
+  void _applyClaudeTaskHook(
+    Map<String, dynamic> msg, {
+    required String status,
+  }) {
+    final taskId = msg['taskId']?.toString() ?? '';
+    if (taskId.isEmpty) return;
+    final index = _todos.indexWhere(
+      (todo) =>
+          todo['source'] == 'claude_tasks' &&
+          (todo['id']?.toString() == taskId ||
+              todo['taskId']?.toString() == taskId),
+    );
+    final previous = index >= 0
+        ? Map<String, dynamic>.from(_todos[index])
+        : <String, dynamic>{};
+    final subject = msg['subject']?.toString().trim().isNotEmpty == true
+        ? msg['subject'].toString()
+        : previous['content']?.toString() ?? 'Task #$taskId';
+    final updated = <String, dynamic>{
+      ...previous,
+      'id': taskId,
+      'taskId': taskId,
+      'content': subject,
+      'activeForm': subject,
+      'status': status,
+      'source': 'claude_tasks',
+      if (msg['description'] != null)
+        'description': msg['description'].toString(),
+      if (msg['teammateName'] != null)
+        'teammateName': msg['teammateName'].toString(),
+    };
+    if (index >= 0) {
+      _todos[index] = updated;
+    } else {
+      _todos.add(updated);
+    }
   }
 
   bool _todosEqual(List<Map<String, dynamic>> a, List<Map<String, dynamic>> b) {
