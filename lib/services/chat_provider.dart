@@ -7031,6 +7031,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       };
     }
 
+    final completedBashCard = originatingBashCardForTerminalTaskNotification(
+      _messages,
+      status: status,
+      originToolUseId: originToolUseId,
+    );
+    if (completedBashCard != null) {
+      completedBashCard.toolStreaming = false;
+      completedBashCard.isBackgrounded = false;
+      completedBashCard.backgroundTaskId ??= taskId;
+      completedBashCard.toolInput?['_task_status'] = status;
+      notifyListeners();
+      return;
+    }
+
     // Add a notification card to chat log
     final notifId = 'task_notif_${DateTime.now().microsecondsSinceEpoch}';
     final notifMsg = ChatMessage(
@@ -8233,6 +8247,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   payload: commandPayload,
                 ),
               );
+              break;
+            }
+            final completedBashCard =
+                originatingBashCardForTerminalTaskNotification(
+                  [..._messages, ...loaded],
+                  status: status,
+                  originToolUseId: originToolUseId,
+                );
+            if (completedBashCard != null) {
+              completedBashCard.toolStreaming = false;
+              completedBashCard.isBackgrounded = false;
+              completedBashCard.toolInput?['_task_status'] = status;
               break;
             }
             final notifMsg = ChatMessage(

@@ -132,6 +132,27 @@ bool shouldReplaceToolCardMetadata({
           incomingInput.isNotEmpty);
 }
 
+ChatMessage? originatingBashCardForTerminalTaskNotification(
+  Iterable<ChatMessage> messages, {
+  required String status,
+  String? originToolUseId,
+}) {
+  const terminalStatuses = {'completed', 'failed', 'stopped', 'cancelled'};
+  if (!terminalStatuses.contains(status) ||
+      originToolUseId == null ||
+      originToolUseId.isEmpty) {
+    return null;
+  }
+  for (final message in messages.toList().reversed) {
+    if (message.type == MessageType.toolCall &&
+        message.toolName == 'Bash' &&
+        message.toolUseId == originToolUseId) {
+      return message;
+    }
+  }
+  return null;
+}
+
 String secureInputHistoryStatus(Object? entryStatus, Object? inputStatus) {
   final persisted = entryStatus is String ? entryStatus.trim() : '';
   if (persisted.isNotEmpty) return persisted;

@@ -158,6 +158,53 @@ void main() {
     );
   });
 
+  test('terminal Bash task notification folds into its original card', () {
+    final bash = ChatMessage.toolCall(
+      tool: 'Bash',
+      input: const {'command': 'npm test'},
+      toolUseId: 'tool-1',
+    );
+
+    expect(
+      originatingBashCardForTerminalTaskNotification(
+        [bash],
+        status: 'failed',
+        originToolUseId: 'tool-1',
+      ),
+      same(bash),
+    );
+  });
+
+  test('running and non-Bash task notifications remain separate events', () {
+    final bash = ChatMessage.toolCall(
+      tool: 'Bash',
+      input: const {'command': 'npm test'},
+      toolUseId: 'tool-1',
+    );
+    final agent = ChatMessage.toolCall(
+      tool: 'Agent',
+      input: const {'prompt': 'review'},
+      toolUseId: 'tool-2',
+    );
+
+    expect(
+      originatingBashCardForTerminalTaskNotification(
+        [bash],
+        status: 'running',
+        originToolUseId: 'tool-1',
+      ),
+      isNull,
+    );
+    expect(
+      originatingBashCardForTerminalTaskNotification(
+        [agent],
+        status: 'completed',
+        originToolUseId: 'tool-2',
+      ),
+      isNull,
+    );
+  });
+
   test('preserves a live secure-input card missing from a stale snapshot', () {
     final liveCard = ChatMessage.secureInput(
       requestId: 'secure-1',
