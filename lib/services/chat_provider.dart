@@ -7938,6 +7938,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
           // Strip monitor injection messages — these are displayed as MonitorCards via monitor_output
           if (userText.startsWith('[Monitor: ')) break;
+          // Delegated-agent completion reports are internal context delivered
+          // to the supervising agent; the child's own session retains the
+          // readable transcript and the supervisor's reply communicates it.
+          if (userText.startsWith('<socketagent_delegation_report ')) break;
 
           // Strip system XML tags from user messages (e.g. /exit command output)
           userText = userText.replaceAll(_systemReminderRegex, '').trim();
