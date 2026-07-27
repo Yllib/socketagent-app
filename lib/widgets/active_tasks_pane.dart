@@ -12,19 +12,23 @@ import 'reminder_card.dart';
 class ActiveTasksPane extends StatefulWidget {
   final Map<String, Map<String, dynamic>> backgroundTasks;
   final Map<String, Map<String, dynamic>> subagentTasks;
+  final Map<String, Map<String, dynamic>> workflowTasks;
   final List<ChatMessage> messages;
   final void Function(String taskId)? onStopTask;
   final void Function(String toolUseId)? onScrollToTask;
   final void Function(String toolUseId)? onDismissSubagent;
+  final void Function(String taskId)? onDismissWorkflow;
 
   const ActiveTasksPane({
     super.key,
     required this.backgroundTasks,
     required this.subagentTasks,
+    required this.workflowTasks,
     required this.messages,
     this.onStopTask,
     this.onScrollToTask,
     this.onDismissSubagent,
+    this.onDismissWorkflow,
   });
 
   @override
@@ -115,6 +119,28 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
       );
     }
 
+    // Claude Workflow runs are first-class orchestration tasks. Keep completed
+    // runs visible until dismissed, like subagents.
+    for (final e in widget.workflowTasks.entries) {
+      if (e.value['dismissed'] == true) continue;
+      final status = e.value['status']?.toString() ?? 'running';
+      entries.add(
+        _TaskEntry(
+          id: e.key,
+          kind: 'workflow',
+          description:
+              e.value['workflowName']?.toString() ??
+              e.value['summary']?.toString() ??
+              'Workflow',
+          status: status,
+          scrollToolUseId: e.value['toolUseId']?.toString() ?? e.key,
+          stoppable:
+              status == 'running' || status == 'pending' || status == 'paused',
+          workflow: e.value,
+        ),
+      );
+    }
+
     return entries;
   }
 
@@ -188,7 +214,12 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   ),
                   child: Row(
                     children: [
-                      if (entries.any((e) => e.status == 'running'))
+                      if (entries.any(
+                        (e) =>
+                            e.status == 'running' ||
+                            e.status == 'pending' ||
+                            e.status == 'paused',
+                      ))
                         SizedBox(
                           width: 10,
                           height: 10,
@@ -207,10 +238,20 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                       Text(
                         () {
                           final running = entries
-                              .where((e) => e.status == 'running')
+                              .where(
+                                (e) =>
+                                    e.status == 'running' ||
+                                    e.status == 'pending' ||
+                                    e.status == 'paused',
+                              )
                               .length;
                           final done = entries
-                              .where((e) => e.status != 'running')
+                              .where(
+                                (e) =>
+                                    e.status != 'running' &&
+                                    e.status != 'pending' &&
+                                    e.status != 'paused',
+                              )
                               .length;
                           final parts = <String>[];
                           if (running > 0) parts.add('$running running');
@@ -252,8 +293,16 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
 
   Widget _buildEntry(_TaskEntry entry) {
     final isExpanded = _expandedIds.contains(entry.id);
-    final isCompleted = entry.status == 'completed';
-    final hasContent = entry.kind == 'subagent'
+    final isCompleted =
+        entry.status == 'completed' ||
+        entry.status == 'failed' ||
+        entry.status == 'stopped';
+    final terminalColor = entry.status == 'failed'
+        ? const Color(0xFFF38BA8)
+        : entry.status == 'stopped'
+        ? const Color(0xFFFAB387)
+        : const Color(0xFFA6E3A1);
+    final hasContent = entry.kind == 'subagent' || entry.kind == 'workflow'
         ? true // subagents always expandable (prompt + children + result)
         : (entry.bashOutput?.isNotEmpty ?? false) || entry.kind == 'monitor';
 
@@ -305,9 +354,13 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                 // Status icon
                 if (isCompleted)
                   Icon(
-                    Icons.check_circle,
+                    entry.status == 'failed'
+                        ? Icons.error
+                        : entry.status == 'stopped'
+                        ? Icons.stop_circle
+                        : Icons.check_circle,
                     size: 13,
-                    color: Colors.green.shade400,
+                    color: terminalColor,
                   )
                 else
                   Icon(
@@ -315,6 +368,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                         ? Icons.monitor_heart_outlined
                         : entry.kind == 'subagent'
                         ? Icons.account_tree
+                        : entry.kind == 'workflow'
+                        ? Icons.hub_outlined
                         : Icons.terminal,
                     size: 13,
                     color: entry.kind == 'monitor'
@@ -357,7 +412,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                       style: TextStyle(
                         fontSize: 11,
                         color: isCompleted
-                            ? Colors.green.shade200
+                            ? terminalColor
                             : Colors.blue.shade100,
                       ),
                     ),
@@ -376,7 +431,23 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                       ),
                     ),
                   )
-                else if (isCompleted && widget.onDismissSubagent != null)
+                else if (isCompleted &&
+                    entry.kind == 'workflow' &&
+                    widget.onDismissWorkflow != null)
+                  GestureDetector(
+                    onTap: () => widget.onDismissWorkflow!(entry.id),
+                    child: Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Icon(
+                        Icons.close,
+                        size: 14,
+                        color: Colors.blue.shade400,
+                      ),
+                    ),
+                  )
+                else if (isCompleted &&
+                    entry.kind == 'subagent' &&
+                    widget.onDismissSubagent != null)
                   GestureDetector(
                     onTap: () => widget.onDismissSubagent!(entry.id),
                     child: Padding(
@@ -404,6 +475,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                 child: SingleChildScrollView(
                   child: entry.kind == 'subagent'
                       ? _buildSubagentContent(entry)
+                      : entry.kind == 'workflow'
+                      ? _buildWorkflowContent(entry)
                       : Padding(
                           padding: const EdgeInsets.all(8),
                           child: Text(
@@ -497,6 +570,107 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
     );
   }
 
+  Widget _buildWorkflowContent(_TaskEntry entry) {
+    final state = entry.workflow ?? const <String, dynamic>{};
+    final phases = (state['phases'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    final progress = (state['progress'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    final metrics = <String>[
+      if ((state['agentCount'] as num?) case final count? when count > 0)
+        '${count.toInt()} agents',
+      if ((state['totalTokens'] as num?) case final tokens? when tokens > 0)
+        '${tokens.toInt()} tokens',
+      if ((state['durationMs'] as num?) case final duration? when duration > 0)
+        '${(duration / 1000).round()}s',
+    ];
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (state['summary']?.toString().isNotEmpty == true)
+            Text(
+              state['summary'].toString(),
+              style: const TextStyle(fontSize: 10, color: Color(0xFFA6ADC8)),
+            ),
+          if (metrics.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Text(
+              metrics.join(' · '),
+              style: const TextStyle(fontSize: 9, color: Color(0xFF89B4FA)),
+            ),
+          ],
+          ...List.generate(phases.length, (index) {
+            final phase = phases[index];
+            final agents = progress.where(
+              (item) =>
+                  item['type'] == 'workflow_agent' &&
+                  (item['phaseIndex'] as num?)?.toInt() == index,
+            );
+            return Padding(
+              padding: const EdgeInsets.only(top: 7),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    phase['title']?.toString() ?? 'Phase ${index + 1}',
+                    style: const TextStyle(
+                      color: Color(0xFFCBA6F7),
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  ...agents.map((agent) {
+                    final status = agent['state']?.toString() ?? 'queued';
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 3, left: 5),
+                      child: Row(
+                        children: [
+                          Icon(
+                            status == 'completed'
+                                ? Icons.check_circle
+                                : status == 'failed'
+                                ? Icons.error
+                                : Icons.circle_outlined,
+                            size: 10,
+                            color: status == 'completed'
+                                ? const Color(0xFFA6E3A1)
+                                : status == 'failed'
+                                ? const Color(0xFFF38BA8)
+                                : const Color(0xFF89B4FA),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              agent['label']?.toString() ??
+                                  agent['agentId']?.toString() ??
+                                  'Agent',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: Color(0xFFCDD6F4),
+                                fontSize: 9,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   Widget _buildChildMessage(ChatMessage msg) {
     switch (msg.type) {
       case MessageType.text:
@@ -537,6 +711,7 @@ class _TaskEntry {
   final String? bashOutput;
   final List<ChatMessage>? childMessages;
   final String? resultOutput;
+  final Map<String, dynamic>? workflow;
 
   _TaskEntry({
     required this.id,
@@ -550,5 +725,6 @@ class _TaskEntry {
     this.bashOutput,
     this.childMessages,
     this.resultOutput,
+    this.workflow,
   });
 }

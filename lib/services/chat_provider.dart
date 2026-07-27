@@ -622,6 +622,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Map<String, dynamic>> _backgroundTasks = {};
   // Subagent tasks: toolUseId → {description, status}
   final Map<String, Map<String, dynamic>> _subagentTasks = {};
+  // Claude Workflow runs: taskId → durable workflow snapshot.
+  final Map<String, Map<String, dynamic>> _workflowTasks = {};
   ChatMessage? _currentStreamingMessage;
   String? _currentStreamingStreamId;
   ChatMessage? _currentThinkingMessage;
@@ -1370,10 +1372,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (taskId != null && taskId.isNotEmpty) ids.add(taskId);
       }
     }
+    for (final entry in _workflowTasks.entries) {
+      final status = entry.value['status']?.toString() ?? 'running';
+      if (status == 'running' || status == 'pending' || status == 'paused') {
+        ids.add(entry.key);
+      }
+    }
     return ids;
   }
 
   Map<String, Map<String, dynamic>> get subagentTasks => _subagentTasks;
+  Map<String, Map<String, dynamic>> get workflowTasks => _workflowTasks;
 
   /// Active tasks for the bottom pane: bg tasks + non-dismissed subagents
   Map<String, Map<String, dynamic>> get activePaneTasks {
@@ -1385,6 +1394,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (e.value['dismissed'] == true) continue;
       combined[e.key] = {...e.value, '_kind': 'subagent'};
     }
+    for (final e in _workflowTasks.entries) {
+      if (e.value['dismissed'] == true) continue;
+      combined[e.key] = {...e.value, '_kind': 'workflow'};
+    }
     return combined;
   }
 
@@ -1394,6 +1407,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _saveDismissedSubagents();
       notifyListeners();
     }
+  }
+
+  void dismissWorkflow(String taskId) {
+    if (_workflowTasks.containsKey(taskId)) {
+      _workflowTasks[taskId]!['dismissed'] = true;
+      _saveDismissedWorkflows();
+      notifyListeners();
+    }
+  }
+
+  void _saveDismissedWorkflows() {
+    if (_activeSessionId == null) return;
+    final ids = _workflowTasks.entries
+        .where((entry) => entry.value['dismissed'] == true)
+        .map((entry) => entry.key)
+        .toList();
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setStringList('dismissed_workflows_$_activeSessionId', ids);
+    });
+  }
+
+  void _loadDismissedWorkflows() {
+    if (_activeSessionId == null) return;
+    SharedPreferences.getInstance().then((prefs) {
+      final ids =
+          prefs.getStringList('dismissed_workflows_$_activeSessionId') ?? [];
+      for (final id in ids) {
+        if (_workflowTasks.containsKey(id)) {
+          _workflowTasks[id]!['dismissed'] = true;
+        }
+      }
+      if (ids.isNotEmpty) notifyListeners();
+    });
   }
 
   void _saveDismissedSubagents() {
@@ -4082,6 +4128,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'background_tasks_changed':
           _handleBackgroundTasksChanged(msg);
           break;
+        case 'workflow_state':
+          _handleWorkflowState(msg);
+          break;
         case 'hook_started':
           _activeHookName = msg['hookName'] as String?;
           notifyListeners();
@@ -6642,6 +6691,77 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return null;
   }
 
+  MapEntry<String, Map<String, dynamic>>? _workflowForTask(
+    String taskId, [
+    String? toolUseId,
+  ]) {
+    if (taskId.isNotEmpty && _workflowTasks.containsKey(taskId)) {
+      return MapEntry(taskId, _workflowTasks[taskId]!);
+    }
+    for (final entry in _workflowTasks.entries) {
+      if ((toolUseId != null &&
+              toolUseId.isNotEmpty &&
+              entry.value['toolUseId']?.toString() == toolUseId) ||
+          (taskId.isNotEmpty && entry.value['taskId']?.toString() == taskId)) {
+        return entry;
+      }
+    }
+    return null;
+  }
+
+  bool _isWorkflowTask(String? taskType) =>
+      (taskType ?? '').toLowerCase() == 'local_workflow';
+
+  void _applyWorkflowToCard(Map<String, dynamic> state) {
+    final toolUseId = state['toolUseId']?.toString();
+    if (toolUseId == null || toolUseId.isEmpty) return;
+    var card = _toolCardFor(toolUseId);
+    if (card == null && state['skipTranscript'] != true) {
+      card = ChatMessage.toolCall(
+        tool: 'Workflow',
+        input: {
+          'workflow_name': state['workflowName'] ?? 'Workflow',
+          'summary': state['summary'] ?? '',
+        },
+        toolUseId: toolUseId,
+      );
+      _messages.add(card);
+    }
+    if (card == null) return;
+    final status = state['status']?.toString() ?? 'running';
+    final active =
+        status == 'pending' || status == 'running' || status == 'paused';
+    card.toolStreaming = active;
+    card.isBackgrounded = active;
+    card.backgroundTaskId = state['taskId']?.toString();
+    card.toolInput?['_workflow_state'] = Map<String, dynamic>.from(state);
+    card.toolInput?['_task_status'] = status;
+    card.toolInput?['_task_id'] = state['taskId'];
+    if (!active && state['resultPreview']?.toString().isNotEmpty == true) {
+      card.toolOutput = state['resultPreview'].toString();
+    }
+  }
+
+  void _handleWorkflowState(Map<String, dynamic> msg) {
+    final taskId = msg['taskId']?.toString() ?? '';
+    if (taskId.isEmpty) return;
+    final previous = _workflowTasks[taskId];
+    final incoming = Map<String, dynamic>.from(msg)
+      ..remove('type')
+      ..remove('sessionId');
+    final state = <String, dynamic>{
+      ...?previous,
+      ...incoming,
+      'taskId': taskId,
+      'taskType': 'local_workflow',
+      'source': 'claude',
+    };
+    _workflowTasks[taskId] = state;
+    _backgroundTasks.remove(taskId);
+    _applyWorkflowToCard(state);
+    notifyListeners();
+  }
+
   void _handleTaskStarted(Map<String, dynamic> msg) {
     final taskId = msg['taskId']?.toString() ?? '';
     final taskType = msg['taskType']?.toString();
@@ -6657,8 +6777,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
     final isMonitor = taskType == 'monitor';
     final isSubagent = _isClaudeSubagentTask(taskType, subagentType);
+    final isWorkflow = _isWorkflowTask(taskType);
 
-    if (isSubagent && toolUseId != null) {
+    if (isWorkflow && taskId.isNotEmpty) {
+      final suggestedToolUseId = msg['toolUseId']?.toString();
+      final previous = _workflowForTask(taskId, suggestedToolUseId)?.value;
+      final state = <String, dynamic>{
+        ...?previous,
+        'taskId': taskId,
+        if (suggestedToolUseId != null && suggestedToolUseId.isNotEmpty)
+          'toolUseId': suggestedToolUseId,
+        'workflowName': msg['workflowName']?.toString() ?? description,
+        'summary': description,
+        'status': 'running',
+        'taskType': 'local_workflow',
+        'source': 'claude',
+      };
+      _workflowTasks[taskId] = state;
+      _backgroundTasks.remove(taskId);
+      _applyWorkflowToCard(state);
+    } else if (isSubagent && toolUseId != null) {
       final previous = _subagentTasks[toolUseId];
       _subagentTasks[toolUseId] = {
         ...?previous,
@@ -6724,6 +6862,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleTaskProgress(Map<String, dynamic> msg) {
     final taskId = msg['taskId']?.toString() ?? '';
+    final workflow = _workflowForTask(taskId, msg['toolUseId']?.toString());
+    if (workflow != null) {
+      final state = workflow.value;
+      state['status'] = 'running';
+      if (msg['summary'] != null) state['summary'] = msg['summary'].toString();
+      if (msg['usage'] is Map) {
+        state['usage'] = Map<String, dynamic>.from(msg['usage'] as Map);
+      }
+      _applyWorkflowToCard(state);
+      notifyListeners();
+      return;
+    }
     final toolUseId = _subagentToolUseIdForTask(
       taskId,
       msg['toolUseId']?.toString(),
@@ -6809,6 +6959,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final terminal =
         status == 'completed' || status == 'failed' || status == 'stopped';
 
+    final workflow = _workflowForTask(taskId, msg['toolUseId']?.toString());
+    if (workflow != null) {
+      final state = workflow.value;
+      if (status != null && status.isNotEmpty) state['status'] = status;
+      if (patch['description'] != null) {
+        state['summary'] = patch['description'].toString();
+      }
+      if (patch['error'] != null) state['error'] = patch['error'].toString();
+      if (patch['endTime'] != null) state['endTime'] = patch['endTime'];
+      _applyWorkflowToCard(state);
+      notifyListeners();
+      return;
+    }
+
     if (toolUseId != null && _subagentTasks.containsKey(toolUseId)) {
       final state = _subagentTasks[toolUseId]!;
       if (status != null && status.isNotEmpty) state['status'] = status;
@@ -6861,7 +7025,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         taskId,
         task['toolUseId']?.toString(),
       );
-      if (_isClaudeSubagentTask(taskType, null) && toolUseId != null) {
+      if (_isWorkflowTask(taskType)) {
+        final previous = _workflowForTask(taskId, toolUseId)?.value;
+        final state = <String, dynamic>{
+          ...?previous,
+          'taskId': taskId,
+          if (toolUseId != null) 'toolUseId': toolUseId,
+          'workflowName': previous?['workflowName'] ?? description,
+          'summary': description,
+          'status': 'running',
+          'taskType': taskType,
+          'source': 'claude',
+        };
+        _workflowTasks[taskId] = state;
+        _backgroundTasks.remove(taskId);
+        _applyWorkflowToCard(state);
+      } else if (_isClaudeSubagentTask(taskType, null) && toolUseId != null) {
         final state = _subagentTasks.putIfAbsent(toolUseId, () {
           return {
             'description': description,
@@ -6926,6 +7105,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         card.toolInput?['_task_status'] = state['status'];
       }
     }
+    for (final entry in _workflowTasks.entries) {
+      final taskId = entry.key;
+      final state = entry.value;
+      if (state['source'] != 'claude' ||
+          !_isWorkflowTask(state['taskType']?.toString()) ||
+          liveTaskIds.contains(taskId)) {
+        continue;
+      }
+      final currentStatus = state['status']?.toString() ?? 'running';
+      if (currentStatus == 'running' ||
+          currentStatus == 'pending' ||
+          currentStatus == 'paused') {
+        state['status'] = 'completed';
+      }
+      _applyWorkflowToCard(state);
+    }
     notifyListeners();
   }
 
@@ -6941,6 +7136,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
     final terminal =
         status == 'completed' || status == 'failed' || status == 'stopped';
+    final workflow = _workflowForTask(taskId, originToolUseId);
+    if (workflow != null) {
+      final state = workflow.value;
+      state['status'] = terminal ? status : 'running';
+      if (summary.isNotEmpty) state['summary'] = summary;
+      if (msg['usage'] is Map) {
+        state['usage'] = Map<String, dynamic>.from(msg['usage'] as Map);
+      }
+      _backgroundTasks.remove(taskId);
+      if (originToolUseId != null) _backgroundTasks.remove(originToolUseId);
+      _applyWorkflowToCard(state);
+      notifyListeners();
+      return;
+    }
     if (subagentToolUseId != null &&
         _subagentTasks.containsKey(subagentToolUseId)) {
       final state = _subagentTasks[subagentToolUseId]!;
@@ -7841,6 +8050,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     var loaded = <ChatMessage>[];
     var historyPrevTodos = <Map<String, dynamic>>[];
     final historyBackgroundTasks = <String, Map<String, dynamic>>{};
+    final historyWorkflowTasks = <String, Map<String, dynamic>>{};
     final skippedToolUseIds = <String>{};
     for (final entry in historyEntries) {
       final loadedStartIndex = loaded.length;
@@ -8325,6 +8535,70 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               entry['originToolUseId']?.toString() ??
               entry['toolUseId']?.toString() ??
               '';
+          if (taskKind == 'workflow' && taskId.isNotEmpty) {
+            final restored = entry['workflowState'] is Map
+                ? Map<String, dynamic>.from(entry['workflowState'] as Map)
+                : <String, dynamic>{};
+            restored.addAll({
+              'taskId': taskId,
+              if (originToolUseId.isNotEmpty) 'toolUseId': originToolUseId,
+              'workflowName':
+                  restored['workflowName'] ??
+                  entry['taskSubject'] ??
+                  description,
+              'summary': restored['summary'] ?? description,
+              'status': restored['status'] ?? status,
+              'taskType': 'local_workflow',
+              'source': 'claude',
+            });
+            historyWorkflowTasks[taskId] = restored;
+
+            if (originToolUseId.isNotEmpty) {
+              final loadedIndex = loaded.lastIndexWhere(
+                (message) =>
+                    message.type == MessageType.toolCall &&
+                    message.toolUseId == originToolUseId,
+              );
+              ChatMessage? card = loadedIndex >= 0 ? loaded[loadedIndex] : null;
+              if (card == null && isAppend) {
+                final existingIndex = _messages.lastIndexWhere(
+                  (message) =>
+                      message.type == MessageType.toolCall &&
+                      message.toolUseId == originToolUseId,
+                );
+                if (existingIndex >= 0) card = _messages[existingIndex];
+              }
+              if (card == null && entry['skipTranscript'] != true) {
+                card = ChatMessage.toolCall(
+                  tool: 'Workflow',
+                  input: {
+                    'workflow_name': restored['workflowName'],
+                    'summary': restored['summary'],
+                  },
+                  toolUseId: originToolUseId,
+                );
+                loaded.add(card);
+              }
+              if (card != null) {
+                final restoredStatus = restored['status']?.toString() ?? status;
+                final active =
+                    restoredStatus == 'pending' ||
+                    restoredStatus == 'running' ||
+                    restoredStatus == 'paused';
+                card.toolStreaming = active;
+                card.isBackgrounded = active;
+                card.backgroundTaskId = taskId;
+                card.toolInput?['_workflow_state'] = restored;
+                card.toolInput?['_task_status'] = restoredStatus;
+                card.toolInput?['_task_id'] = taskId;
+                if (!active &&
+                    restored['resultPreview']?.toString().isNotEmpty == true) {
+                  card.toolOutput = restored['resultPreview'].toString();
+                }
+              }
+            }
+            break;
+          }
           if (taskKind == 'subagent' &&
               taskId.isNotEmpty &&
               originToolUseId.isNotEmpty) {
@@ -8866,6 +9140,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _backgroundTasks.clear();
       _backgroundTasks.addAll(historyBackgroundTasks);
       _subagentTasks.clear();
+      _workflowTasks
+        ..clear()
+        ..addAll(historyWorkflowTasks);
       _isLoadingHistory = false;
     }
     if (isAppend && msg.containsKey('taskStates')) {
@@ -8873,6 +9150,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (_, state) => state['source'] == 'claude_sdk',
       );
       _backgroundTasks.addAll(historyBackgroundTasks);
+      _workflowTasks
+        ..clear()
+        ..addAll(historyWorkflowTasks);
     }
     _messages = orderByTranscriptPosition(_messages);
     _recountPendingInjectedMessages();
@@ -8909,6 +9189,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _loadDismissedSubagents();
+    _loadDismissedWorkflows();
     if (fromCache) {
       _isLoadingHistory = false;
       _isRefreshingHistory = true;
@@ -10268,6 +10549,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _mcpServers = [];
     _subagentTasks.clear();
     _backgroundTasks.clear();
+    _workflowTasks.clear();
     _pendingPrepends = [];
     _promptSuggestions = [];
     _contextUsage = null;
@@ -11085,6 +11367,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _mcpServers = [];
     _subagentTasks.clear();
     _backgroundTasks.clear();
+    _workflowTasks.clear();
     _promptSuggestions = [];
     _contextUsage = null;
     _requiresAction = false;

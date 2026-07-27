@@ -25,6 +25,7 @@ import 'codex_plan_card.dart';
 import 'codex_command_card.dart';
 import 'secure_input_card.dart';
 import 'html_plan_card.dart';
+import 'workflow_card.dart';
 import '../models/composer_attachment.dart';
 
 class ChatView extends StatefulWidget {
@@ -54,6 +55,7 @@ class ChatView extends StatefulWidget {
   final List<SdkItem> rawItems;
   // For SubAgentCard: tracked subagent tasks and full message list for child lookup
   final Map<String, Map<String, dynamic>> subagentTasks;
+  final Map<String, Map<String, dynamic>> workflowTasks;
   final List<ChatMessage> allMessages;
 
   const ChatView({
@@ -82,6 +84,7 @@ class ChatView extends StatefulWidget {
     this.rawMode = false,
     this.rawItems = const [],
     this.subagentTasks = const {},
+    this.workflowTasks = const {},
     this.allMessages = const [],
   });
 
@@ -969,6 +972,37 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           onRetractPending: widget.onRetractQueuedMessage,
         );
       case MessageType.toolCall:
+        if (msg.toolName == 'Workflow') {
+          final embedded = msg.toolInput?['_workflow_state'];
+          Map<String, dynamic>? state = embedded is Map
+              ? Map<String, dynamic>.from(embedded)
+              : null;
+          if (state == null && msg.backgroundTaskId != null) {
+            state = widget.workflowTasks[msg.backgroundTaskId];
+          }
+          if (state == null && msg.toolUseId != null) {
+            for (final candidate in widget.workflowTasks.values) {
+              if (candidate['toolUseId']?.toString() == msg.toolUseId) {
+                state = candidate;
+                break;
+              }
+            }
+          }
+          state ??= {
+            'workflowName':
+                msg.toolInput?['workflow_name']?.toString() ?? 'Workflow',
+            'summary': msg.toolInput?['summary']?.toString() ?? '',
+            'status': msg.toolStreaming ? 'running' : 'completed',
+          };
+          if (msg.toolUseId != null) {
+            _taskRowKeyByToolUseId.putIfAbsent(msg.toolUseId!, () => rowKey);
+            _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
+          }
+          return Container(
+            key: _taskKeys[rowKey],
+            child: WorkflowCard(message: msg, state: state),
+          );
+        }
         if (msg.toolName == 'Monitor') {
           return MonitorToolCard(message: msg);
         }

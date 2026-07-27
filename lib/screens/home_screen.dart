@@ -750,6 +750,7 @@ class HomeScreenState extends State<HomeScreen> {
                       rawMode: provider.rawMode,
                       rawItems: provider.rawItems,
                       subagentTasks: provider.subagentTasks,
+                      workflowTasks: provider.workflowTasks,
                       allMessages: provider.messages,
                     ),
                   ),
@@ -762,12 +763,14 @@ class HomeScreenState extends State<HomeScreen> {
                     ActiveTasksPane(
                       backgroundTasks: provider.backgroundTasks,
                       subagentTasks: provider.subagentTasks,
+                      workflowTasks: provider.workflowTasks,
                       messages: provider.messages,
                       onStopTask: provider.stopTask,
                       onScrollToTask: (toolUseId) {
                         _chatViewKey.currentState?.scrollToTask(toolUseId);
                       },
                       onDismissSubagent: provider.dismissSubagent,
+                      onDismissWorkflow: provider.dismissWorkflow,
                     ),
                   _buildInputBar(provider),
                 ],
