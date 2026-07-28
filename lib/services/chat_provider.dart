@@ -9952,6 +9952,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'fileSize': fileSize,
       'totalChunks': totalChunks,
       'chunkSize': chunkSize,
+      if (_activeSessionId != null) 'sessionId': _activeSessionId,
+      if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
     });
     if (!started) {
       _uploadAckGates.remove(uploadId)?.dispose();
