@@ -24,6 +24,7 @@ import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import '../models/scheduled_task_cache.dart';
 import '../models/scheduled_task_update.dart';
+import '../models/task_display.dart';
 import 'websocket_service.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
@@ -470,6 +471,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<ChatMessage> _messages = [];
   List<Session> _sessions = [];
   List<Map<String, dynamic>> _todos = [];
+  final Set<String> _dismissedTodoKeys = {};
   List<Map<String, dynamic>> _scheduledTasks = [];
   final Map<String, List<Map<String, dynamic>>> _perServerScheduledTasks = {};
   List<ArchiveEntry> _archives = [];
@@ -748,7 +750,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   List<ChatMessage> get messages => _messages;
   List<Session> get sessions => _sessions;
-  List<Map<String, dynamic>> get todos => _todos;
+  List<Map<String, dynamic>> get todos =>
+      visibleTasks(_todos, _dismissedTodoKeys);
   List<Map<String, dynamic>> get scheduledTasks => _scheduledTasks;
   List<ArchiveEntry> get archives => _archives;
   Stream<String> get archiveFeedback => _archiveFeedback.stream;
@@ -3892,6 +3895,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             final newTodos = rawTodos
                 .map((t) => Map<String, dynamic>.from(t as Map))
                 .toList();
+            _reconcileTodoDismissals(newTodos);
             // Skip if identical to current state (prevents spurious cards on reconnect/re-send)
             if (_todosEqual(_todos, newTodos)) break;
             final diff = _computeTodoDiff(_todos, newTodos);
@@ -4786,6 +4790,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _pendingLocalUserMessageIds.clear();
             _pendingCacheUserPromptContent.clear();
             _todos.clear();
+            _dismissedTodoKeys.clear();
+            _persistDismissedTasks();
             _clearLiveMessageStreams();
             _lastUsage = null;
           }
@@ -8039,6 +8045,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _todos = rawTodos
           .map((t) => Map<String, dynamic>.from(t as Map))
           .toList();
+      _reconcileTodoDismissals(_todos);
     }
 
     // Restore prompt suggestion tied to this session
@@ -9160,6 +9167,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // sync _todos from the last todos_update in history for dedup.
     if (rawTodos == null && historyPrevTodos.isNotEmpty) {
       _todos = historyPrevTodos;
+      _reconcileTodoDismissals(_todos);
     }
     // Rebuild subagent tasks from loaded messages (for expandable Task cards)
     for (final m in _messages) {
@@ -9190,6 +9198,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _loadDismissedSubagents();
     _loadDismissedWorkflows();
+    _loadDismissedTasks();
     if (fromCache) {
       _isLoadingHistory = false;
       _isRefreshingHistory = true;
@@ -10525,6 +10534,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingLocalUserMessageIds.clear();
     _pendingCacheUserPromptContent.clear();
     _todos = [];
+    _dismissedTodoKeys.clear();
     _lastUsage = null;
     _activeSessionId = null;
     _activeSessionServerId = null;
@@ -11339,6 +11349,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingLocalUserMessageIds.clear();
     _pendingCacheUserPromptContent.clear();
     _todos = [];
+    _dismissedTodoKeys.clear();
     _lastUsage = null;
     _activeSessionId = sessionId;
     _activeSessionServerId = serverId;
@@ -12369,6 +12380,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingLocalUserMessageIds.clear();
     _pendingCacheUserPromptContent.clear();
     _todos = [];
+    _dismissedTodoKeys.clear();
     _lastUsage = null;
     _activeSessionId = sessionId;
     _activeSessionServerId = serverId ?? _connMgr.activeServerId;
@@ -12945,11 +12957,66 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  String? get _dismissedTasksPreferenceKey {
+    final sessionId = _activeSessionId;
+    if (sessionId == null || sessionId.isEmpty) return null;
+    return 'dismissed_tasks_${_activeSessionServerId ?? ''}_$sessionId';
+  }
+
+  void _persistDismissedTasks() {
+    final key = _dismissedTasksPreferenceKey;
+    if (key == null) return;
+    final values = _dismissedTodoKeys.toList()..sort();
+    SharedPreferences.getInstance().then(
+      (prefs) => prefs.setStringList(key, values),
+    );
+  }
+
+  void _loadDismissedTasks() {
+    final key = _dismissedTasksPreferenceKey;
+    final sessionId = _activeSessionId;
+    final serverId = _activeSessionServerId;
+    if (key == null || sessionId == null) return;
+    SharedPreferences.getInstance().then((prefs) {
+      if (_activeSessionId != sessionId || _activeSessionServerId != serverId) {
+        return;
+      }
+      final stored = prefs.getStringList(key) ?? const [];
+      if (stored.isEmpty) return;
+      _dismissedTodoKeys.addAll(stored);
+      _reconcileTodoDismissals(_todos);
+      notifyListeners();
+    });
+  }
+
+  void _reconcileTodoDismissals(List<Map<String, dynamic>> tasks) {
+    final presentKeys = tasks.map(taskDisplayKey).toSet();
+    final reopenedKeys = tasks
+        .where((task) => !taskCanBeDismissed(task))
+        .map(taskDisplayKey)
+        .toSet();
+    final previousCount = _dismissedTodoKeys.length;
+    _dismissedTodoKeys.removeWhere(
+      (key) => !presentKeys.contains(key) || reopenedKeys.contains(key),
+    );
+    final changed = previousCount != _dismissedTodoKeys.length;
+    if (changed) _persistDismissedTasks();
+  }
+
+  void dismissTodo(Map<String, dynamic> todo) {
+    if (!taskCanBeDismissed(todo)) return;
+    if (_dismissedTodoKeys.add(taskDisplayKey(todo))) {
+      _persistDismissedTasks();
+      notifyListeners();
+    }
+  }
+
   void dismissTodos() {
     final hadClaudeTasks = _todos.any(
       (todo) => todo['source'] == 'claude_tasks',
     );
-    _todos.clear();
+    _dismissedTodoKeys.addAll(_todos.map(taskDisplayKey));
+    _persistDismissedTasks();
     _messages.add(
       ChatMessage(
         id: 'todo_dismiss_${DateTime.now().microsecondsSinceEpoch}',
@@ -13004,6 +13071,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _todos.add(updated);
     }
+    _reconcileTodoDismissals(_todos);
   }
 
   bool _todosEqual(List<Map<String, dynamic>> a, List<Map<String, dynamic>> b) {

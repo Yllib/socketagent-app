@@ -730,6 +730,7 @@ class HomeScreenState extends State<HomeScreen> {
                       onLoadMore: provider.loadMoreHistory,
                       onStopTask: provider.stopTask,
                       onDismissTodos: provider.dismissTodos,
+                      onDismissTodo: provider.dismissTodo,
                       onRewindConversation:
                           provider.activeSessionBackend == 'codex'
                           ? null

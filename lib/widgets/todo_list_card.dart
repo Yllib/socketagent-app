@@ -1,11 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../models/task_display.dart';
 
 class TodoListCard extends StatefulWidget {
   final List<Map<String, dynamic>> todos;
   final VoidCallback? onDismiss;
+  final void Function(Map<String, dynamic> todo)? onDismissTodo;
 
-  const TodoListCard({super.key, required this.todos, this.onDismiss});
+  const TodoListCard({
+    super.key,
+    required this.todos,
+    this.onDismiss,
+    this.onDismissTodo,
+  });
 
   @override
   State<TodoListCard> createState() => _TodoListCardState();
@@ -13,18 +20,31 @@ class TodoListCard extends StatefulWidget {
 
 class _TodoListCardState extends State<TodoListCard> {
   bool _collapsed = true;
+  final ScrollController _taskScrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _taskScrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     if (widget.todos.isEmpty) return const SizedBox.shrink();
 
-    final completed = widget.todos.where((t) => t['status'] == 'completed').length;
+    final completed = widget.todos
+        .where((t) => t['status'] == 'completed')
+        .length;
     final total = widget.todos.length;
 
     // Find the in-progress task label (if any)
-    final inProgressTask = widget.todos.where((t) => t['status'] == 'in_progress').firstOrNull;
+    final inProgressTask = widget.todos
+        .where((t) => t['status'] == 'in_progress')
+        .firstOrNull;
     final activeLabel = inProgressTask != null
-        ? (inProgressTask['activeForm'] as String? ?? inProgressTask['content'] as String? ?? '')
+        ? (inProgressTask['activeForm'] as String? ??
+              inProgressTask['content'] as String? ??
+              '')
         : null;
 
     return Container(
@@ -47,7 +67,12 @@ class _TodoListCardState extends State<TodoListCard> {
               bottomRight: Radius.circular(_collapsed ? 8 : 0),
             ),
             child: Padding(
-              padding: EdgeInsets.fromLTRB(10, _collapsed ? 6 : 10, 6, _collapsed ? 6 : 6),
+              padding: EdgeInsets.fromLTRB(
+                10,
+                _collapsed ? 6 : 10,
+                6,
+                _collapsed ? 6 : 6,
+              ),
               child: Row(
                 children: [
                   Icon(
@@ -66,7 +91,11 @@ class _TodoListCardState extends State<TodoListCard> {
                   // Show active task inline when collapsed
                   if (_collapsed && activeLabel != null) ...[
                     const SizedBox(width: 6),
-                    Container(width: 1, height: 10, color: const Color(0xFF313244)),
+                    Container(
+                      width: 1,
+                      height: 10,
+                      color: const Color(0xFF313244),
+                    ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
@@ -122,7 +151,11 @@ class _TodoListCardState extends State<TodoListCard> {
                     if (widget.onDismiss != null)
                       GestureDetector(
                         onTap: widget.onDismiss,
-                        child: const Icon(Icons.close, size: 14, color: Color(0xFF6C7086)),
+                        child: const Icon(
+                          Icons.close,
+                          size: 14,
+                          color: Color(0xFF6C7086),
+                        ),
                       ),
                   ],
                   Icon(
@@ -151,7 +184,27 @@ class _TodoListCardState extends State<TodoListCard> {
           // Todo items — hidden when collapsed
           if (!_collapsed) ...[
             const SizedBox(height: 6),
-            ...widget.todos.map((todo) => _buildTodoItem(todo)),
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: (MediaQuery.sizeOf(context).height * 0.34).clamp(
+                  180.0,
+                  320.0,
+                ),
+              ),
+              child: Scrollbar(
+                controller: _taskScrollController,
+                thumbVisibility: widget.todos.length > 6,
+                child: ListView.builder(
+                  controller: _taskScrollController,
+                  primary: false,
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  itemCount: widget.todos.length,
+                  itemBuilder: (context, index) =>
+                      _buildTodoItem(widget.todos[index]),
+                ),
+              ),
+            ),
             const SizedBox(height: 6),
           ],
         ],
@@ -213,9 +266,17 @@ class _TodoListCardState extends State<TodoListCard> {
             child: Icon(icon, size: 14, color: iconColor),
           ),
           const SizedBox(width: 8),
-          Expanded(
-            child: Text(displayText, style: textStyle),
-          ),
+          Expanded(child: Text(displayText, style: textStyle)),
+          if (taskCanBeDismissed(todo) && widget.onDismissTodo != null)
+            IconButton(
+              key: ValueKey('dismiss-task-${taskDisplayKey(todo)}'),
+              onPressed: () => widget.onDismissTodo!(todo),
+              tooltip: 'Dismiss completed task',
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+              padding: EdgeInsets.zero,
+              icon: const Icon(Icons.close, size: 14, color: Color(0xFF6C7086)),
+            ),
         ],
       ),
     );

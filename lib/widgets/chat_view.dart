@@ -48,6 +48,7 @@ class ChatView extends StatefulWidget {
   final VoidCallback? onLoadMore;
   final void Function(String taskId)? onStopTask;
   final VoidCallback? onDismissTodos;
+  final void Function(Map<String, dynamic> todo)? onDismissTodo;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractQueuedMessage;
@@ -78,6 +79,7 @@ class ChatView extends StatefulWidget {
     this.onLoadMore,
     this.onStopTask,
     this.onDismissTodos,
+    this.onDismissTodo,
     this.onRewindConversation,
     this.onBranch,
     this.onRetractQueuedMessage,
@@ -873,7 +875,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       child: Column(
         children: [
           if (widget.todos.isNotEmpty)
-            TodoListCard(todos: widget.todos, onDismiss: widget.onDismissTodos),
+            TodoListCard(
+              todos: widget.todos,
+              onDismiss: widget.onDismissTodos,
+              onDismissTodo: widget.onDismissTodo,
+            ),
           if (activeCodexPlan != null)
             CodexPlanCard(
               key: ValueKey(activeCodexPlan.id),
