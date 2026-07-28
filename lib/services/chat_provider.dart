@@ -11998,6 +11998,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _fileManagerOperationCompleters[requestId] = operationCompleter;
     _fileBytesCompleters[fileId] = byteCompleter;
     _fileBytesBuffers[fileId] = BytesBuilder(copy: false);
+    final ownerServerId = resolveDownloadServerId(
+      serverId,
+      _connMgr.activeServerId,
+    );
+    if (ownerServerId != null) {
+      _downloadServerIds[fileId] = ownerServerId;
+    }
 
     final msg = {
       'type': 'file_manager_download',
@@ -12005,8 +12012,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'path': path,
       'fileId': fileId,
     };
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
+    if (ownerServerId != null) {
+      _connMgr.sendToServer(ownerServerId, msg);
     } else {
       _ws.send(msg);
     }
@@ -12018,6 +12025,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _fileManagerOperationCompleters.remove(requestId);
       _fileBytesCompleters.remove(fileId);
       _fileBytesBuffers.remove(fileId);
+      _downloadReceivedBytes.remove(fileId);
+      _downloadServerIds.remove(fileId);
       rethrow;
     }
   }
@@ -14169,8 +14178,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final byteCompleter = _fileBytesCompleters.remove(fileId);
     if (byteCompleter != null) {
       _fileBytesBuffers.remove(fileId);
+      _downloadReceivedBytes.remove(fileId);
+      _downloadServerIds.remove(fileId);
       if (!byteCompleter.isCompleted) {
-        byteCompleter.complete(base64Data.isEmpty ? null : base64Data);
+        if (base64Data.isEmpty) {
+          byteCompleter.completeError(
+            Exception('File transfer completed without data'),
+          );
+        } else {
+          byteCompleter.complete(base64Data);
+        }
       }
       return;
     }
@@ -14374,11 +14391,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       final byteCompleter = _fileBytesCompleters.remove(fileId);
       if (byteCompleter != null) {
-        final bytes = _fileBytesBuffers.remove(fileId)?.takeBytes();
-        _downloadReceivedBytes.remove(fileId);
+        final bytes =
+            _fileBytesBuffers.remove(fileId)?.takeBytes() ?? Uint8List(0);
+        final receivedBytes = _downloadReceivedBytes.remove(fileId) ?? 0;
         _downloadServerIds.remove(fileId);
         if (!byteCompleter.isCompleted) {
-          byteCompleter.complete(bytes == null ? null : base64Encode(bytes));
+          if (fileSize != null && receivedBytes != fileSize) {
+            byteCompleter.completeError(
+              Exception(
+                'File transfer incomplete: received $receivedBytes of $fileSize bytes',
+              ),
+            );
+          } else if (bytes.isEmpty && (fileSize ?? 0) > 0) {
+            byteCompleter.completeError(
+              Exception('File transfer completed without data'),
+            );
+          } else {
+            byteCompleter.complete(base64Encode(bytes));
+          }
         }
         return;
       }
@@ -14514,7 +14544,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final byteCompleter = _fileBytesCompleters.remove(fileId);
     if (byteCompleter != null) {
       _fileBytesBuffers.remove(fileId);
-      if (!byteCompleter.isCompleted) byteCompleter.complete(null);
+      _downloadReceivedBytes.remove(fileId);
+      _downloadServerIds.remove(fileId);
+      if (!byteCompleter.isCompleted) {
+        byteCompleter.completeError(
+          Exception(msg['message'] as String? ?? 'File download failed'),
+        );
+      }
       return;
     }
 
