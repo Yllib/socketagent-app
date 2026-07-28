@@ -5,6 +5,22 @@ String? normalizeHarnessBackend(String? value) {
   return backend == 'claude' || backend == 'codex' ? backend : null;
 }
 
+/// Resolves the harness for active-session UI that must remain stable while a
+/// resume handshake is replacing provisional metadata with server metadata.
+///
+/// Sessions created before SocketAgent supported Codex have no backend field
+/// and are Claude sessions. Keep that compatibility fallback scoped to an
+/// actual active session so a limit can never bleed into an unscoped screen.
+String? resolveActiveHarnessBackend({
+  required String? activeBackend,
+  required String? storedSessionBackend,
+  required bool hasActiveSession,
+}) {
+  return normalizeHarnessBackend(activeBackend) ??
+      normalizeHarnessBackend(storedSessionBackend) ??
+      (hasActiveSession ? 'claude' : null);
+}
+
 class HarnessRateLimit {
   const HarnessRateLimit({
     required this.window,

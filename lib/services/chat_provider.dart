@@ -6432,9 +6432,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   HarnessRateLimit? _activeRateLimit(HarnessRateLimitWindow window) {
+    final sessionId = _activeSessionId;
+    final activeServerId = _activeSessionServerId ?? _connMgr.activeServerId;
+    final storedSession = sessionId == null
+        ? null
+        : _sessions
+              .where(
+                (session) =>
+                    session.id == sessionId &&
+                    (activeServerId == null ||
+                        activeServerId.isEmpty ||
+                        session.serverId == activeServerId),
+              )
+              .firstOrNull;
+    final backend = resolveActiveHarnessBackend(
+      activeBackend: _activeSessionBackend,
+      storedSessionBackend: storedSession?.backend,
+      hasActiveSession: sessionId?.isNotEmpty == true,
+    );
     return _rateLimitStore.limitFor(
-      serverId: _activeSessionServerId ?? _connMgr.activeServerId,
-      backend: _activeSessionBackend,
+      serverId: activeServerId,
+      backend: backend,
       window: window,
       now: DateTime.now().toUtc(),
     );
@@ -8050,7 +8068,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleSessionCreated(Map<String, dynamic> msg, String? serverId) {
     final sessionId = msg['sessionId'] as String?;
     final replacesSessionId = msg['replacesSessionId'] as String?;
-    final backend = msg['backend'] as String?;
+    final backend = normalizeHarnessBackend(msg['backend']?.toString());
     if (backend != null) _activeSessionBackend = backend;
     if (sessionId != null && sessionId.isNotEmpty) {
       if (replacesSessionId != null && replacesSessionId.isNotEmpty) {

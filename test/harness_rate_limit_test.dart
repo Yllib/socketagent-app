@@ -2,6 +2,41 @@ import 'package:app/models/harness_rate_limit.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('resolves active harness across resume metadata races', () {
+    expect(
+      resolveActiveHarnessBackend(
+        activeBackend: 'codex',
+        storedSessionBackend: 'claude',
+        hasActiveSession: true,
+      ),
+      'codex',
+    );
+    expect(
+      resolveActiveHarnessBackend(
+        activeBackend: null,
+        storedSessionBackend: 'codex',
+        hasActiveSession: true,
+      ),
+      'codex',
+    );
+    expect(
+      resolveActiveHarnessBackend(
+        activeBackend: null,
+        storedSessionBackend: null,
+        hasActiveSession: true,
+      ),
+      'claude',
+    );
+    expect(
+      resolveActiveHarnessBackend(
+        activeBackend: null,
+        storedSessionBackend: null,
+        hasActiveSession: false,
+      ),
+      isNull,
+    );
+  });
+
   test('keeps five-hour and weekly windows distinct', () {
     final fiveHour = HarnessRateLimit.fromMessage({
       'status': 'allowed_warning',
