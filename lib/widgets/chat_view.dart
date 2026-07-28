@@ -116,6 +116,13 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   final Map<String, GlobalKey> _messageRowKeys = {};
   final Map<String, GlobalKey> _taskKeys = {};
   final Map<String, String> _taskRowKeyByToolUseId = {};
+  Map<String, ChatMessage> _toolCallsById = {};
+  Map<String, List<ChatMessage>> _childMessagesByParent = {};
+  int _indexedAllMessageCount = -1;
+  ChatMessage? _indexedFirstMessage;
+  ChatMessage? _indexedLastMessage;
+  int _indexedHistoryWindowRevision = -1;
+  String? _indexedSessionStorageKey;
   double? _historyLoadAnchorPixels;
   bool _historyLoadUserInteracted = false;
   bool _historyPrefetchScheduled = false;
@@ -131,7 +138,42 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _scrollController = ScrollController();
     _knownPendingInteractionKeys = pendingInteractionKeys(widget.messages);
+    _reindexAllMessages(force: true);
     _scrollController.addListener(_onScroll);
+  }
+
+  void _reindexAllMessages({bool force = false}) {
+    final first = widget.allMessages.firstOrNull;
+    final last = widget.allMessages.lastOrNull;
+    if (!force &&
+        _indexedAllMessageCount == widget.allMessages.length &&
+        identical(_indexedFirstMessage, first) &&
+        identical(_indexedLastMessage, last) &&
+        _indexedHistoryWindowRevision == widget.historyWindowRevision &&
+        _indexedSessionStorageKey == widget.sessionStorageKey) {
+      return;
+    }
+    final toolCallsById = <String, ChatMessage>{};
+    final childMessagesByParent = <String, List<ChatMessage>>{};
+    for (final message in widget.allMessages) {
+      final toolUseId = message.toolUseId;
+      if (message.type == MessageType.toolCall &&
+          toolUseId != null &&
+          toolUseId.isNotEmpty) {
+        toolCallsById[toolUseId] = message;
+      }
+      final parentToolUseId = message.parentToolUseId;
+      if (parentToolUseId != null && parentToolUseId.isNotEmpty) {
+        (childMessagesByParent[parentToolUseId] ??= []).add(message);
+      }
+    }
+    _toolCallsById = toolCallsById;
+    _childMessagesByParent = childMessagesByParent;
+    _indexedAllMessageCount = widget.allMessages.length;
+    _indexedFirstMessage = first;
+    _indexedLastMessage = last;
+    _indexedHistoryWindowRevision = widget.historyWindowRevision;
+    _indexedSessionStorageKey = widget.sessionStorageKey;
   }
 
   @override
@@ -346,6 +388,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // ChatProvider mutates message bodies in place while streaming. The index
+    // holds those same objects, so only rebuild it when transcript membership
+    // or the authoritative history window changes—not for every text token.
+    _reindexAllMessages();
     final historyWindowWasReplaced =
         widget.historyWindowRevision != oldWidget.historyWindowRevision;
     final visibleReaderAnchor = _captureVisibleReaderAnchor();
@@ -1030,9 +1076,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
           final isRunning =
               widget.subagentTasks[toolUseId]?['status'] == 'running';
-          final children = widget.allMessages
-              .where((m) => m.parentToolUseId == toolUseId)
-              .toList();
+          final children =
+              _childMessagesByParent[toolUseId] ?? const <ChatMessage>[];
           return SubAgentCard(
             message: msg,
             childMessages: children,
@@ -1205,11 +1250,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
     // Background bash completion — render as a ToolOutputBlock mirroring the original card
     if ((isSuccess || isFailed) && originToolUseId != null) {
-      final original = widget.allMessages.cast<ChatMessage?>().firstWhere(
-        (m) =>
-            m!.type == MessageType.toolCall && m.toolUseId == originToolUseId,
-        orElse: () => null,
-      );
+      final original = _toolCallsById[originToolUseId];
       if (original != null && original.toolOutput != null) {
         return _buildToolOutputBlock(
           original,
@@ -1463,14 +1504,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     for (final toolUseId in precedingIds) {
       if (widget.subagentTasks.containsKey(toolUseId)) {
         // Find the original tool_call message
-        final original = widget.allMessages.firstWhere(
-          (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
-          orElse: () => msg,
-        );
-        if (original != msg) {
-          final children = widget.allMessages
-              .where((m) => m.parentToolUseId == toolUseId)
-              .toList();
+        final original = _toolCallsById[toolUseId];
+        if (original != null && original != msg) {
+          final children =
+              _childMessagesByParent[toolUseId] ?? const <ChatMessage>[];
           return SubAgentCard(
             message: original,
             childMessages: children,

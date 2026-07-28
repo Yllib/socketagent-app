@@ -44,6 +44,61 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
   double _paneHeight = 160;
   static const double _minHeight = 60;
   static const double _maxHeight = 500;
+  Map<String, ChatMessage> _toolCallsById = {};
+  Map<String, List<ChatMessage>> _childMessagesByParent = {};
+  Map<String, String?> _monitorOutputByTask = {};
+  int _indexedMessageCount = -1;
+  ChatMessage? _indexedFirstMessage;
+  ChatMessage? _indexedLastMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _reindexMessages(force: true);
+  }
+
+  @override
+  void didUpdateWidget(ActiveTasksPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _reindexMessages();
+  }
+
+  void _reindexMessages({bool force = false}) {
+    final first = widget.messages.firstOrNull;
+    final last = widget.messages.lastOrNull;
+    if (!force &&
+        _indexedMessageCount == widget.messages.length &&
+        identical(_indexedFirstMessage, first) &&
+        identical(_indexedLastMessage, last)) {
+      return;
+    }
+
+    final toolCallsById = <String, ChatMessage>{};
+    final childMessagesByParent = <String, List<ChatMessage>>{};
+    final monitorOutputByTask = <String, String?>{};
+    for (final message in widget.messages) {
+      final parentToolUseId = message.parentToolUseId;
+      if (parentToolUseId != null && parentToolUseId.isNotEmpty) {
+        (childMessagesByParent[parentToolUseId] ??= []).add(message);
+      }
+      final toolUseId = message.toolUseId;
+      if (message.type == MessageType.toolCall &&
+          toolUseId != null &&
+          toolUseId.isNotEmpty) {
+        toolCallsById[toolUseId] = message;
+      } else if (message.type == MessageType.monitorOutput &&
+          toolUseId != null &&
+          toolUseId.isNotEmpty) {
+        monitorOutputByTask[toolUseId] = message.toolOutput;
+      }
+    }
+    _toolCallsById = toolCallsById;
+    _childMessagesByParent = childMessagesByParent;
+    _monitorOutputByTask = monitorOutputByTask;
+    _indexedMessageCount = widget.messages.length;
+    _indexedFirstMessage = first;
+    _indexedLastMessage = last;
+  }
 
   List<_TaskEntry> get _entries {
     final entries = <_TaskEntry>[];
@@ -55,22 +110,11 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
       // Find the tool card's streamed output (bash tasks only)
       String? output;
       if (!isMonitor && originToolUseId != null) {
-        for (final m in widget.messages.reversed) {
-          if (m.type == MessageType.toolCall &&
-              m.toolUseId == originToolUseId) {
-            output = m.toolOutput;
-            break;
-          }
-        }
+        output = _toolCallsById[originToolUseId]?.toolOutput;
       }
       // For monitor tasks, find accumulated monitor output from chat
       if (isMonitor) {
-        for (final m in widget.messages.reversed) {
-          if (m.type == MessageType.monitorOutput && m.toolUseId == e.key) {
-            output = m.toolOutput;
-            break;
-          }
-        }
+        output = _monitorOutputByTask[e.key];
       }
       entries.add(
         _TaskEntry(
@@ -90,19 +134,12 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
       if (e.value['dismissed'] == true) continue;
       final toolUseId = e.key;
       final status = e.value['status'] as String? ?? 'running';
-      final children = widget.messages
-          .where((m) => m.parentToolUseId == toolUseId)
-          .toList();
+      final children =
+          _childMessagesByParent[toolUseId] ?? const <ChatMessage>[];
       // Find the tool call message to get the result output
-      String? resultOutput;
-      if (status == 'completed') {
-        for (final m in widget.messages) {
-          if (m.type == MessageType.toolCall && m.toolUseId == toolUseId) {
-            resultOutput = m.toolOutput;
-            break;
-          }
-        }
-      }
+      final resultOutput = status == 'completed'
+          ? _toolCallsById[toolUseId]?.toolOutput
+          : null;
       entries.add(
         _TaskEntry(
           id: toolUseId,

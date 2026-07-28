@@ -158,6 +158,71 @@ void main() {
     );
   });
 
+  test('active-subagent replay does not invent a card at the chat tail', () {
+    expect(
+      shouldMaterializeSubagentReplayInTranscript(
+        isReplay: true,
+        hasExistingCard: false,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldMaterializeSubagentReplayInTranscript(
+        isReplay: true,
+        hasExistingCard: true,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldMaterializeSubagentReplayInTranscript(
+        isReplay: false,
+        hasExistingCard: false,
+      ),
+      isTrue,
+    );
+  });
+
+  test('sparse subagent history cannot erase live assignment metadata', () {
+    final merged = mergeSubagentTaskState(
+      const {
+        'status': 'running',
+        'description': 'Inspect the renderer',
+        'prompt': 'Find the frame-time regression and report evidence.',
+        'agentPath': '/root/render_audit',
+        'model': 'gpt-5.6-sol',
+        'reasoningEffort': 'high',
+        'dismissed': true,
+      },
+      const {
+        'status': 'completed',
+        'description': '',
+        'prompt': '',
+        'agentPath': '',
+      },
+    );
+
+    expect(merged['status'], 'completed');
+    expect(merged['description'], 'Inspect the renderer');
+    expect(
+      merged['prompt'],
+      'Find the frame-time regression and report evidence.',
+    );
+    expect(merged['agentPath'], '/root/render_audit');
+    expect(merged['model'], 'gpt-5.6-sol');
+    expect(merged['reasoningEffort'], 'high');
+    expect(merged['dismissed'], isTrue);
+  });
+
+  test('new subagent assignment metadata supersedes an older snapshot', () {
+    final merged = mergeSubagentTaskState(
+      const {'prompt': 'Original assignment', 'status': 'pending'},
+      const {'prompt': 'Follow-up assignment', 'status': 'running'},
+    );
+
+    expect(merged['prompt'], 'Follow-up assignment');
+    expect(merged['status'], 'running');
+  });
+
   test('terminal Bash task notification folds into its original card', () {
     final bash = ChatMessage.toolCall(
       tool: 'Bash',

@@ -5729,6 +5729,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final toolUseId = msg['toolUseId']?.toString() ?? '';
+    final subagentType = input['subagent_type']?.toString() ?? '';
+    final isSubagentTool =
+        (tool == 'Task' || tool == 'Agent') &&
+        !_codexAgentControlTypes.contains(subagentType);
     if (tool == 'HtmlPlan') {
       if (toolUseId.isNotEmpty) {
         _toolEventReconciler.discard(toolUseId);
@@ -5787,9 +5791,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (replacesSyntheticSendFile) {
       existingIndex = syntheticSendFileIndex;
     }
+    final materializeInTranscript =
+        !isSubagentTool ||
+        shouldMaterializeSubagentReplayInTranscript(
+          isReplay: msg['replay'] == true,
+          hasExistingCard: existingIndex >= 0,
+        );
     // Retransmission is the same transcript event. Only a genuinely new tool
     // call closes the preceding assistant stream.
-    if (existingIndex < 0) {
+    if (existingIndex < 0 && materializeInTranscript) {
       _closeLiveStreamsForParent(msg['parentToolUseId']?.toString());
     }
     if (existingIndex >= 0) {
@@ -5830,33 +5840,44 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       toolMsg.toolOutput = pendingStream.output;
       toolMsg.toolStreaming = !pendingStream.done;
     }
-    if (existingIndex < 0) {
+    if (existingIndex < 0 && materializeInTranscript) {
       _messages.add(toolMsg);
     }
     // A reliable-delivery replay can arrive after the turn's result/idle
     // event. Do not resurrect a spinner for work the server says is over.
-    if (!_isProcessing && !toolMsg.isBackgrounded) {
+    if (!_isProcessing &&
+        !toolMsg.isBackgrounded &&
+        !(isSubagentTool && msg['replay'] == true)) {
       toolMsg.toolOutput ??= '';
       toolMsg.toolStreaming = false;
     }
 
     // Track Task/Agent tool calls as subagent tasks
-    final subagentType = input['subagent_type']?.toString() ?? '';
-    if ((tool == 'Task' || tool == 'Agent') &&
-        !_codexAgentControlTypes.contains(subagentType)) {
+    if (isSubagentTool) {
       final desc = input['description'] as String? ?? 'Sub agent task';
-      _subagentTasks[toolUseId] = {
+      final previous = _subagentTasks[toolUseId];
+      final inferredStatus =
+          msg['replay'] == true && isActiveSubagentStatus(previous?['status'])
+          ? previous!['status']
+          : toolMsg.toolStreaming
+          ? 'running'
+          : 'completed';
+      _subagentTasks[toolUseId] = mergeSubagentTaskState(previous, {
         'description': desc,
         'prompt': input['prompt'] as String? ?? '',
         'subagentType': subagentType,
-        'status': toolMsg.toolStreaming ? 'running' : 'completed',
+        'status': inferredStatus,
         'toolUseId': toolUseId,
         if (toolMsg.isBackgrounded) 'taskId': toolMsg.backgroundTaskId,
         if (toolMsg.isBackgrounded) 'isBackgrounded': true,
         if (input['agentId'] != null) 'agentId': input['agentId'],
+        if (input['agentPath'] != null) 'agentPath': input['agentPath'],
+        if (input['model'] != null) 'model': input['model'],
+        if (input['reasoningEffort'] != null)
+          'reasoningEffort': input['reasoningEffort'],
         if (toolMsg.parentToolUseId != null)
           'parentToolUseId': toolMsg.parentToolUseId,
-      };
+      });
     }
     notifyListeners();
   }
@@ -6634,8 +6655,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ? 'stopped'
             : 'completed';
         final existing = _subagentTasks[toolUseId];
-        _subagentTasks[toolUseId] = {
-          ...?existing,
+        _subagentTasks[toolUseId] = mergeSubagentTaskState(existing, {
           'description': description,
           'prompt': t['prompt'] as String? ?? existing?['prompt'] ?? '',
           'subagentType': subagentType,
@@ -6651,39 +6671,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (t['lastToolName'] != null) 'lastToolName': t['lastToolName'],
           if (t['usage'] is Map)
             'usage': Map<String, dynamic>.from(t['usage'] as Map),
-        };
-        var foundCard = false;
+        });
         for (final message in _messages) {
           if (message.type == MessageType.toolCall &&
               message.toolUseId == toolUseId) {
-            foundCard = true;
             message.toolStreaming = false;
             message.isBackgrounded = false;
             message.toolInput?['_task_status'] = status;
-          }
-        }
-        if (!foundCard) {
-          final synthetic = ChatMessage.toolCall(
-            tool: 'Agent',
-            input: {
+            message.toolInput?.addAll({
               'description': description,
-              'prompt': t['prompt'] as String? ?? '',
+              'prompt': t['prompt'] as String? ?? existing?['prompt'] ?? '',
               'subagent_type': subagentType,
-              '_task_status': status,
-            },
-            toolUseId: toolUseId,
-          );
-          synthetic.toolStreaming = false;
-          synthetic.parentToolUseId = t['parentToolUseId'] as String?;
-          _messages.add(synthetic);
+            });
+          }
         }
         continue;
       }
       incomingIds.add(toolUseId);
 
       final previous = _subagentTasks[toolUseId];
-      _subagentTasks[toolUseId] = {
-        ...?previous,
+      _subagentTasks[toolUseId] = mergeSubagentTaskState(previous, {
         'description': description,
         'prompt': t['prompt'] as String? ?? previous?['prompt'] ?? '',
         'subagentType': subagentType,
@@ -6706,58 +6713,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (t['agentPath'] != null) 'agentPath': t['agentPath'],
         if (t['parentToolUseId'] != null)
           'parentToolUseId': t['parentToolUseId'],
-      };
+      });
 
-      // If the Task tool_call message isn't in _messages, create a synthetic one
-      final hasToolCall = _messages.any(
-        (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
-      );
-      if (!hasToolCall) {
-        final syntheticMsg = ChatMessage.toolCall(
-          tool: 'Agent',
-          input: {
-            'description': description,
-            'subagent_type': subagentType,
-            if (t['agentId'] != null) 'agentId': t['agentId'],
-            if (t['model'] != null) 'model': t['model'],
-            if (t['reasoningEffort'] != null)
-              'reasoningEffort': t['reasoningEffort'],
-          },
-          toolUseId: toolUseId,
-        );
-        syntheticMsg.toolStreaming = true;
-        syntheticMsg.isBackgrounded = t['isBackgrounded'] == true;
-        syntheticMsg.backgroundTaskId = t['agentId']?.toString();
-        syntheticMsg.parentToolUseId = t['parentToolUseId'] as String?;
-        _messages.add(syntheticMsg);
-      } else {
-        final toolCall = _messages
-            .where(
-              (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
-            )
-            .lastOrNull;
-        if (toolCall != null) {
-          toolCall.toolStreaming = true;
-          toolCall.isBackgrounded = t['isBackgrounded'] == true;
-          toolCall.backgroundTaskId = t['agentId']?.toString();
-          toolCall.toolInput?['_task_status'] = 'running';
-          toolCall.toolInput?.addAll({
-            'description': description,
-            'prompt': t['prompt'] as String? ?? previous?['prompt'] ?? '',
-            'subagent_type': subagentType,
-            if (t['agentId'] != null) 'agentId': t['agentId'],
-            if (t['model'] != null) 'model': t['model'],
-            if (t['reasoningEffort'] != null)
-              'reasoningEffort': t['reasoningEffort'],
-            if (t['progressSummary'] != null)
-              '_progress_summary': t['progressSummary'],
-            if (t['lastToolName'] != null) '_last_tool_name': t['lastToolName'],
-            if (t['usage'] is Map)
-              '_task_usage': Map<String, dynamic>.from(t['usage'] as Map),
-          });
-          if (t['parentToolUseId'] != null) {
-            toolCall.parentToolUseId = t['parentToolUseId'] as String?;
-          }
+      final toolCall = _messages
+          .where(
+            (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
+          )
+          .lastOrNull;
+      if (toolCall != null) {
+        toolCall.toolStreaming = true;
+        toolCall.isBackgrounded = t['isBackgrounded'] == true;
+        toolCall.backgroundTaskId = t['agentId']?.toString();
+        toolCall.toolInput?['_task_status'] = 'running';
+        toolCall.toolInput?.addAll({
+          'description': description,
+          'prompt': t['prompt'] as String? ?? previous?['prompt'] ?? '',
+          'subagent_type': subagentType,
+          if (t['agentId'] != null) 'agentId': t['agentId'],
+          if (t['model'] != null) 'model': t['model'],
+          if (t['reasoningEffort'] != null)
+            'reasoningEffort': t['reasoningEffort'],
+          if (t['progressSummary'] != null)
+            '_progress_summary': t['progressSummary'],
+          if (t['lastToolName'] != null) '_last_tool_name': t['lastToolName'],
+          if (t['usage'] is Map)
+            '_task_usage': Map<String, dynamic>.from(t['usage'] as Map),
+        });
+        if (t['parentToolUseId'] != null) {
+          toolCall.parentToolUseId = t['parentToolUseId'] as String?;
         }
       }
     }
@@ -8141,6 +8124,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final liveBeforeSnapshot = [..._messages];
+    final liveSubagentTasksBeforeSnapshot = _subagentTasks.map(
+      (key, value) => MapEntry(key, Map<String, dynamic>.from(value)),
+    );
     final rawMessages = normalizeSendFileHistoryEntries(
       msg['messages'] as List? ?? const [],
     );
@@ -9286,7 +9272,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _historyWindowRevision++;
       _backgroundTasks.clear();
       _backgroundTasks.addAll(historyBackgroundTasks);
-      _subagentTasks.clear();
+      _subagentTasks
+        ..clear()
+        ..addAll(liveSubagentTasksBeforeSnapshot);
       _workflowTasks
         ..clear()
         ..addAll(historyWorkflowTasks);
@@ -9320,20 +9308,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final desc = m.toolInput?['description'] as String? ?? 'Sub agent task';
         final hasTerminalResult = m.toolOutput != null && !m.toolStreaming;
         final restoredStatus = m.toolInput?['_task_status']?.toString();
-        _subagentTasks[m.toolUseId!] = {
+        final previous = _subagentTasks[m.toolUseId!];
+        final historyStatus =
+            restoredStatus ?? (hasTerminalResult ? 'completed' : 'running');
+        final mergedStatus =
+            restoredStatus == null &&
+                isActiveSubagentStatus(previous?['status'])
+            ? previous!['status']
+            : historyStatus;
+        _subagentTasks[m.toolUseId!] = mergeSubagentTaskState(previous, {
           'description': desc,
           'prompt': m.toolInput?['prompt'] as String? ?? '',
           'subagentType': m.toolInput?['subagent_type'] as String? ?? '',
-          'status':
-              restoredStatus ?? (hasTerminalResult ? 'completed' : 'running'),
+          'status': mergedStatus,
           if (restoredStatus != null) 'terminalStatus': restoredStatus,
           'toolUseId': m.toolUseId!,
           'isBackgrounded': m.isBackgrounded,
           if (m.backgroundTaskId != null) 'taskId': m.backgroundTaskId,
           if (m.toolInput?['agentId'] != null)
             'agentId': m.toolInput?['agentId'],
+          if (m.toolInput?['agentPath'] != null)
+            'agentPath': m.toolInput?['agentPath'],
+          if (m.toolInput?['model'] != null) 'model': m.toolInput?['model'],
+          if (m.toolInput?['reasoningEffort'] != null)
+            'reasoningEffort': m.toolInput?['reasoningEffort'],
           if (m.parentToolUseId != null) 'parentToolUseId': m.parentToolUseId,
-        };
+        });
       }
     }
     _loadDismissedSubagents();

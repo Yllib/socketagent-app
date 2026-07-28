@@ -132,6 +132,49 @@ bool shouldReplaceToolCardMetadata({
           incomingInput.isNotEmpty);
 }
 
+bool isActiveSubagentStatus(Object? status) {
+  final value = status?.toString();
+  return value == 'running' || value == 'pending' || value == 'paused';
+}
+
+/// A reconnect replay is useful for reconstructing the active-task pane, but
+/// it is not a new transcript event. If the original launch card is outside
+/// the loaded history window, leave it there instead of fabricating a new card
+/// at the bottom of chat.
+bool shouldMaterializeSubagentReplayInTranscript({
+  required bool isReplay,
+  required bool hasExistingCard,
+}) {
+  return !isReplay || hasExistingCard;
+}
+
+/// Merge subagent state without allowing a sparse replay/history page to erase
+/// richer metadata already supplied by the live active-subagent snapshot.
+Map<String, dynamic> mergeSubagentTaskState(
+  Map<String, dynamic>? previous,
+  Map<String, dynamic> incoming,
+) {
+  final merged = <String, dynamic>{...?previous, ...incoming};
+  for (final key in const [
+    'description',
+    'prompt',
+    'subagentType',
+    'agentPath',
+    'model',
+    'reasoningEffort',
+  ]) {
+    final incomingValue = incoming[key]?.toString().trim() ?? '';
+    final previousValue = previous?[key]?.toString().trim() ?? '';
+    if (incomingValue.isEmpty && previousValue.isNotEmpty) {
+      merged[key] = previous![key];
+    }
+  }
+  if (previous?['dismissed'] == true && !incoming.containsKey('dismissed')) {
+    merged['dismissed'] = true;
+  }
+  return merged;
+}
+
 ChatMessage? originatingBashCardForTerminalTaskNotification(
   Iterable<ChatMessage> messages, {
   required String status,
