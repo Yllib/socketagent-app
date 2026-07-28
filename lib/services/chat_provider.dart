@@ -576,8 +576,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _requiresAction = false; // SDK says session needs user input
   String?
   _permissionMode; // 'plan', 'bypassPermissions', 'superYolo', 'default', etc.
-  HarnessRateLimit? _fiveHourRateLimit;
-  HarnessRateLimit? _weeklyRateLimit;
+  final HarnessRateLimitStore _rateLimitStore = HarnessRateLimitStore();
   Timer? _rateLimitExpiryTimer;
   bool _isRetrying = false;
   String? _activeHookName;
@@ -756,9 +755,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   List<ChatMessage> get messages => _messages;
   List<Session> get sessions => _sessions;
-  List<Map<String, dynamic>> get todos => _taskListDismissed
-      ? const []
-      : visibleTasks(_todos, _dismissedTodoKeys);
+  List<Map<String, dynamic>> get todos =>
+      _taskListDismissed ? const [] : visibleTasks(_todos, _dismissedTodoKeys);
   List<Map<String, dynamic>> get scheduledTasks => _scheduledTasks;
   List<ArchiveEntry> get archives => _archives;
   Stream<String> get archiveFeedback => _archiveFeedback.stream;
@@ -1141,13 +1139,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get requiresAction => _requiresAction;
   String? get permissionMode => _permissionMode;
   bool get isPlanMode => _permissionMode == 'plan';
-  HarnessRateLimit? get fiveHourRateLimit => _fiveHourRateLimit;
-  HarnessRateLimit? get weeklyRateLimit => _weeklyRateLimit;
+  HarnessRateLimit? get fiveHourRateLimit =>
+      _activeRateLimit(HarnessRateLimitWindow.fiveHour);
+  HarnessRateLimit? get weeklyRateLimit =>
+      _activeRateLimit(HarnessRateLimitWindow.weekly);
   bool get isRateLimited =>
-      _fiveHourRateLimit != null || _weeklyRateLimit != null;
+      fiveHourRateLimit != null || weeklyRateLimit != null;
   double? get rateLimitUtilization =>
-      _fiveHourRateLimit?.utilizationPercent ??
-      _weeklyRateLimit?.utilizationPercent;
+      fiveHourRateLimit?.utilizationPercent ??
+      weeklyRateLimit?.utilizationPercent;
   bool get isRetrying => _isRetrying;
   String? get activeHookName => _activeHookName;
   List<String> serverPlugins(String serverId) => _serverPlugins[serverId] ?? [];
@@ -3515,6 +3515,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'abort_ack',
       'scheduled_task_notification',
       'reminder',
+      'rate_limit_event',
       'session_transfer_export_result',
       'session_transfer_import_result',
       'session_transfer_discard_result',
@@ -4133,7 +4134,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           break;
         case 'rate_limit_event':
-          _applyRateLimitEvent(msg);
+          _applyRateLimitEvent(msg, serverId);
           notifyListeners();
           break;
         case 'api_retry':
@@ -6404,36 +6405,64 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  void _applyRateLimitEvent(Map<String, dynamic> message) {
-    final limit = HarnessRateLimit.fromMessage(message);
-    final active = limit.isActiveAt(DateTime.now().toUtc()) ? limit : null;
-    if (limit.window == HarnessRateLimitWindow.weekly) {
-      _weeklyRateLimit = active;
-    } else {
-      _fiveHourRateLimit = active;
-    }
+  HarnessRateLimit? _activeRateLimit(HarnessRateLimitWindow window) {
+    return _rateLimitStore.limitFor(
+      serverId: _activeSessionServerId ?? _connMgr.activeServerId,
+      backend: _activeSessionBackend,
+      window: window,
+      now: DateTime.now().toUtc(),
+    );
+  }
+
+  void _applyRateLimitEvent(
+    Map<String, dynamic> message,
+    String? sourceServerId,
+  ) {
+    final eventSessionId = message['sessionId']?.toString();
+    final session = eventSessionId == null
+        ? null
+        : _sessions
+              .where(
+                (item) =>
+                    item.id == eventSessionId &&
+                    (sourceServerId == null ||
+                        sourceServerId.isEmpty ||
+                        item.serverId == sourceServerId),
+              )
+              .firstOrNull;
+    final backend =
+        normalizeHarnessBackend(message['backend']?.toString()) ??
+        normalizeHarnessBackend(session?.backend) ??
+        (eventSessionId == _activeSessionId
+            ? normalizeHarnessBackend(_activeSessionBackend)
+            : null);
+    final serverId = sourceServerId?.isNotEmpty == true
+        ? sourceServerId
+        : session?.serverId.isNotEmpty == true
+        ? session!.serverId
+        : eventSessionId == _activeSessionId
+        ? _activeSessionServerId ?? _connMgr.activeServerId
+        : null;
+    if (backend == null || serverId == null || serverId.isEmpty) return;
+    _rateLimitStore.apply(
+      serverId: serverId,
+      backend: backend,
+      message: message,
+      now: DateTime.now().toUtc(),
+    );
     _scheduleRateLimitExpiry();
   }
 
   void _scheduleRateLimitExpiry() {
     _rateLimitExpiryTimer?.cancel();
     final now = DateTime.now().toUtc();
-    final resets = [
-      _fiveHourRateLimit?.resetsAt,
-      _weeklyRateLimit?.resetsAt,
-    ].whereType<DateTime>().where((reset) => reset.isAfter(now)).toList()
-      ..sort();
-    if (resets.isEmpty) return;
+    final nextReset = _rateLimitStore.discardExpiredAndGetNextReset(now);
+    if (nextReset == null) return;
     _rateLimitExpiryTimer = Timer(
-      resets.first.difference(now) + const Duration(seconds: 1),
+      nextReset.difference(now) + const Duration(seconds: 1),
       () {
         final current = DateTime.now().toUtc();
-        if (_fiveHourRateLimit?.isActiveAt(current) == false) {
-          _fiveHourRateLimit = null;
-        }
-        if (_weeklyRateLimit?.isActiveAt(current) == false) {
-          _weeklyRateLimit = null;
-        }
+        _rateLimitStore.discardExpiredAndGetNextReset(current);
         _scheduleRateLimitExpiry();
         notifyListeners();
       },
@@ -13032,10 +13061,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? get _dismissedTasksPreferenceKey {
     final sessionId = _activeSessionId;
     if (sessionId == null || sessionId.isEmpty) return null;
-    return dismissedTaskPreferenceKey(
-      _activeSessionServerId ?? '',
-      sessionId,
-    );
+    return dismissedTaskPreferenceKey(_activeSessionServerId ?? '', sessionId);
   }
 
   void _persistDismissedTasks() {

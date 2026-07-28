@@ -52,4 +52,126 @@ void main() {
       isFalse,
     );
   });
+
+  test('isolates limits by server and harness', () {
+    final store = HarnessRateLimitStore();
+    final now = DateTime.parse('2026-07-28T12:00:00.000Z');
+
+    store.apply(
+      serverId: 'server-a',
+      backend: 'claude',
+      message: {
+        'status': 'rejected',
+        'rateLimitType': 'seven_day_opus',
+        'resetsAt': '2026-08-02T12:00:00.000Z',
+      },
+      now: now,
+    );
+    store.apply(
+      serverId: 'server-a',
+      backend: 'codex',
+      message: {
+        'status': 'allowed_warning',
+        'rateLimitType': 'five_hour',
+        'resetsAt': '2026-07-28T13:00:00.000Z',
+      },
+      now: now,
+    );
+    store.apply(
+      serverId: 'server-b',
+      backend: 'claude',
+      message: {
+        'status': 'allowed_warning',
+        'rateLimitType': 'five_hour',
+        'resetsAt': '2026-07-28T14:00:00.000Z',
+      },
+      now: now,
+    );
+
+    expect(
+      store
+          .limitFor(
+            serverId: 'server-a',
+            backend: 'claude',
+            window: HarnessRateLimitWindow.weekly,
+            now: now,
+          )
+          ?.label,
+      'Weekly Opus limit',
+    );
+    expect(
+      store.limitFor(
+        serverId: 'server-a',
+        backend: 'codex',
+        window: HarnessRateLimitWindow.weekly,
+        now: now,
+      ),
+      isNull,
+    );
+    expect(
+      store.limitFor(
+        serverId: 'server-a',
+        backend: 'codex',
+        window: HarnessRateLimitWindow.fiveHour,
+        now: now,
+      ),
+      isNotNull,
+    );
+    expect(
+      store.limitFor(
+        serverId: 'server-b',
+        backend: 'claude',
+        window: HarnessRateLimitWindow.weekly,
+        now: now,
+      ),
+      isNull,
+    );
+  });
+
+  test('allowed updates clear only the matching server harness window', () {
+    final store = HarnessRateLimitStore();
+    final now = DateTime.parse('2026-07-28T12:00:00.000Z');
+    const rejected = {
+      'status': 'rejected',
+      'rateLimitType': 'five_hour',
+      'resetsAt': '2026-07-28T13:00:00.000Z',
+    };
+    store.apply(
+      serverId: 'server-a',
+      backend: 'claude',
+      message: rejected,
+      now: now,
+    );
+    store.apply(
+      serverId: 'server-a',
+      backend: 'codex',
+      message: rejected,
+      now: now,
+    );
+    store.apply(
+      serverId: 'server-a',
+      backend: 'claude',
+      message: const {'status': 'allowed', 'rateLimitType': 'five_hour'},
+      now: now,
+    );
+
+    expect(
+      store.limitFor(
+        serverId: 'server-a',
+        backend: 'claude',
+        window: HarnessRateLimitWindow.fiveHour,
+        now: now,
+      ),
+      isNull,
+    );
+    expect(
+      store.limitFor(
+        serverId: 'server-a',
+        backend: 'codex',
+        window: HarnessRateLimitWindow.fiveHour,
+        now: now,
+      ),
+      isNotNull,
+    );
+  });
 }
