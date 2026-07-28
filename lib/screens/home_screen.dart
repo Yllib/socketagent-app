@@ -758,7 +758,6 @@ class HomeScreenState extends State<HomeScreen> {
                       allMessages: provider.messages,
                     ),
                   ),
-                  if (provider.isCompacting) _buildCompactingBanner(),
                   if (provider.fiveHourRateLimit != null)
                     _buildRateLimitBanner(provider.fiveHourRateLimit!),
                   if (provider.isRetrying) _buildRetryingBanner(),
@@ -2750,36 +2749,6 @@ class HomeScreenState extends State<HomeScreen> {
     return modelId;
   }
 
-  Widget _buildCompactingBanner() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Theme.of(context).colorScheme.tertiaryContainer,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Theme.of(context).colorScheme.onTertiaryContainer,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            'Compacting context...',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: Theme.of(context).colorScheme.onTertiaryContainer,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildRateLimitBanner(HarnessRateLimit limit) {
     final theme = Theme.of(context);
     final background = limit.isRejected
@@ -2852,7 +2821,8 @@ class HomeScreenState extends State<HomeScreen> {
         'Nov',
         'Dec',
       ];
-      day = '${weekdays[local.weekday - 1]}, '
+      day =
+          '${weekdays[local.weekday - 1]}, '
           '${months[local.month - 1]} ${local.day}';
     }
     return 'resets $day at ${TimeOfDay.fromDateTime(local).format(context)}';
