@@ -111,7 +111,7 @@ class HomeScreenState extends State<HomeScreen> {
     // Save draft before disposing
     final provider = context.read<ChatProvider>();
     provider.saveDraft(_textController.text.trim());
-    provider.setViewingSession(null);
+    provider.setViewingSession(null, chatScreenVisible: false);
     assistVoiceTrigger.removeListener(_onAssistVoiceTrigger);
     _speechSub?.cancel();
     _textController.dispose();

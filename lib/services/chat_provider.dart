@@ -25,6 +25,7 @@ import '../models/raw_event.dart';
 import '../models/scheduled_task_cache.dart';
 import '../models/scheduled_task_update.dart';
 import '../models/task_display.dart';
+import '../models/session_notification_policy.dart';
 import 'websocket_service.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
@@ -556,6 +557,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeSessionBackend;
   String? _viewingSessionId; // set by HomeScreen when user is on that screen
   String? _viewingServerId;
+  bool _chatScreenVisible = false;
   bool _appInForeground = true;
   // Per-session input drafts (sessionId → unsent text)
   final Map<String, String> _sessionDrafts = {};
@@ -813,13 +815,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void setViewingSession(String? sessionId, {String? serverId}) {
-    final resolvedServerId = sessionId == null
+  void setViewingSession(
+    String? sessionId, {
+    String? serverId,
+    bool chatScreenVisible = true,
+  }) {
+    _chatScreenVisible = chatScreenVisible;
+    final resolvedServerId = sessionId == null || !chatScreenVisible
         ? null
         : serverId ?? _connMgr.activeServerId;
-    _viewingSessionId = sessionId;
+    _viewingSessionId = chatScreenVisible ? sessionId : null;
     _viewingServerId = resolvedServerId;
-    if (sessionId != null) {
+    if (chatScreenVisible && sessionId != null) {
       unawaited(
         _notifications.markSessionCompletionRead(
           _sessionCompletionNotificationId(
@@ -1042,16 +1049,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool _shouldDisplayForegroundPushNotification(Map<String, dynamic> data) {
-    final sessionId = data['sessionId'] as String?;
-    if (sessionId == null || sessionId.isEmpty) return true;
-    final serverId = data['serverId'] as String?;
     final kind = data['kind'] as String? ?? '';
-    if (_notifMutedSessions.contains(sessionId)) return false;
-    if (kind == 'tool_notification') return true;
-    if (kind == 'session_started' || kind == 'session_running') return true;
-    if (kind == 'session_finished') return true;
-    if (_isViewingSession(sessionId, serverId: serverId)) return false;
-    return true;
+    final pushServerId = data['serverId'] as String?;
+    final pendingServerId = _activeSessionServerId ?? _connMgr.activeServerId;
+    if (_appInForeground &&
+        _chatScreenVisible &&
+        isPendingNewSession &&
+        kind == 'session_started' &&
+        (pushServerId == null ||
+            pushServerId.isEmpty ||
+            pendingServerId == null ||
+            pendingServerId.isEmpty ||
+            pushServerId == pendingServerId)) {
+      return false;
+    }
+    return shouldDisplayForegroundSessionNotification(
+      data: data,
+      appInForeground: _appInForeground,
+      viewingSessionId: _viewingSessionId,
+      viewingServerId: _viewingServerId,
+      mutedSessionIds: _notifMutedSessions,
+    );
   }
 
   String _sessionTitle() {
@@ -7949,6 +7967,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _activeSessionServerId = serverId;
       } else {
         _activeSessionServerId ??= _connMgr.activeServerId;
+      }
+      if (_chatScreenVisible && _viewingSessionId == null) {
+        _viewingSessionId = sessionId;
+        _viewingServerId = _activeSessionServerId;
       }
       if (_activeSessionBackend == 'codex') {
         _sessionCodexFastModes[sessionId] = _codexFastMode;

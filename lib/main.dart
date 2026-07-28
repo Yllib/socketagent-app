@@ -20,17 +20,20 @@ final routeObserver = RouteObserver<ModalRoute<void>>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService().initialize();
+  final chatProvider = ChatProvider();
   await PushNotificationService().initialize();
-  runApp(const ClaudeAssistantApp());
+  runApp(ClaudeAssistantApp(chatProvider: chatProvider));
 }
 
 class ClaudeAssistantApp extends StatelessWidget {
-  const ClaudeAssistantApp({super.key});
+  final ChatProvider chatProvider;
+
+  const ClaudeAssistantApp({super.key, required this.chatProvider});
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => ChatProvider(),
+    return ChangeNotifierProvider.value(
+      value: chatProvider,
       child: MaterialApp(
         title: 'SocketAgent',
         debugShowCheckedModeBanner: false,

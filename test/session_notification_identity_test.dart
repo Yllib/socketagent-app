@@ -113,4 +113,78 @@ void main() {
       isTrue,
     );
   });
+
+  test('every push for the visible foreground session is suppressed', () {
+    for (final kind in const [
+      'session_started',
+      'session_running',
+      'session_finished',
+      'tool_notification',
+      'secure_input_required',
+    ]) {
+      expect(
+        shouldDisplayForegroundSessionNotification(
+          data: {
+            'kind': kind,
+            'sessionId': sessionId,
+            'serverId': serverId,
+          },
+          appInForeground: true,
+          viewingSessionId: sessionId,
+          viewingServerId: serverId,
+          mutedSessionIds: const {},
+        ),
+        isFalse,
+        reason: '$kind must not pop over the session already being viewed',
+      );
+    }
+  });
+
+  test('another session or same id on another server still displays', () {
+    expect(
+      shouldDisplayForegroundSessionNotification(
+        data: {
+          'kind': 'session_finished',
+          'sessionId': 'session-2',
+          'serverId': serverId,
+        },
+        appInForeground: true,
+        viewingSessionId: sessionId,
+        viewingServerId: serverId,
+        mutedSessionIds: const {},
+      ),
+      isTrue,
+    );
+    expect(
+      shouldDisplayForegroundSessionNotification(
+        data: {
+          'kind': 'session_finished',
+          'sessionId': sessionId,
+          'serverId': 'server-2',
+        },
+        appInForeground: true,
+        viewingSessionId: sessionId,
+        viewingServerId: serverId,
+        mutedSessionIds: const {},
+      ),
+      isTrue,
+    );
+  });
+
+  test('muted session stays suppressed outside the visible chat', () {
+    expect(
+      shouldDisplayForegroundSessionNotification(
+        data: {
+          'kind': 'session_finished',
+          'sessionId': sessionId,
+          'serverId': serverId,
+        },
+        appInForeground: true,
+        viewingSessionId: 'session-2',
+        viewingServerId: serverId,
+        mutedSessionIds: const {sessionId},
+      ),
+      isFalse,
+    );
+  });
 }

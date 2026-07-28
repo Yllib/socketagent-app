@@ -36,6 +36,8 @@ class PushNotificationService {
   shouldDisplayForegroundNotification;
   static bool Function(Map<String, dynamic> data)?
   shouldBadgeForegroundSessionCompletion;
+  static final Set<String> _claimedEventKeysInProcess = <String>{};
+  static final List<String> _claimedEventKeyOrder = <String>[];
 
   String? takeLaunchPayload() {
     final payload = _launchPayload;
@@ -257,13 +259,22 @@ class PushNotificationService {
     if (eventId == null || eventId.isEmpty) return true;
     final serverId = message.data['serverId'] as String? ?? '';
     final key = '$serverId\u0001$eventId';
+    if (!_claimedEventKeysInProcess.add(key)) return false;
+    _claimedEventKeyOrder.add(key);
+    if (_claimedEventKeyOrder.length > 4096) {
+      _claimedEventKeysInProcess.remove(_claimedEventKeyOrder.removeAt(0));
+    }
     final prefs = await SharedPreferences.getInstance();
-    const prefKey = 'processed_fcm_event_ids_v1';
+    final isCompletion = message.data['kind'] == 'session_finished';
+    final prefKey = isCompletion
+        ? 'processed_fcm_completion_event_ids_v1'
+        : 'processed_fcm_event_ids_v1';
     final processed = prefs.getStringList(prefKey) ?? <String>[];
     if (processed.contains(key)) return false;
     processed.add(key);
-    if (processed.length > 256) {
-      processed.removeRange(0, processed.length - 256);
+    final limit = isCompletion ? 4096 : 256;
+    if (processed.length > limit) {
+      processed.removeRange(0, processed.length - limit);
     }
     await prefs.setStringList(prefKey, processed);
     return true;

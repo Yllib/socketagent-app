@@ -14,7 +14,7 @@ class NotificationService {
   static const activeWorkChannelId = 'active_work_v2';
   static const alertChannelId = 'session_alerts_v2';
   static const completionUnreadChannelId = 'session_completions_v1';
-  static const completionReadChannelId = 'session_completions_read_v1';
+  static const completionReadChannelId = 'session_completions_read_v2';
   static const reminderChannelId = 'reminders_v2';
   static const activeSessionsGroup = 'socketagent.active_sessions';
   static const completedSessionsGroup = 'socketagent.completed_sessions';
@@ -182,7 +182,7 @@ class NotificationService {
         completionReadChannelId,
         'Completed Sessions',
         description: 'Completed session notifications already opened',
-        importance: Importance.high,
+        importance: Importance.low,
         playSound: false,
         enableVibration: false,
         showBadge: false,
@@ -371,8 +371,8 @@ class NotificationService {
         channelDescription: unread
             ? 'Sessions that finished and have not been opened yet'
             : 'Completed session notifications already opened',
-        importance: Importance.high,
-        priority: Priority.high,
+        importance: unread ? Importance.high : Importance.low,
+        priority: unread ? Priority.high : Priority.low,
         playSound: alert && unread,
         enableVibration: alert && unread,
         channelShowBadge: unread,
@@ -523,8 +523,8 @@ class NotificationService {
         channelId,
         channelName,
         channelDescription: channelDescription,
-        importance: isCompletedGroup ? Importance.high : Importance.low,
-        priority: isCompletedGroup ? Priority.high : Priority.low,
+        importance: Importance.low,
+        priority: Priority.low,
         playSound: false,
         enableVibration: false,
         channelShowBadge: false,
