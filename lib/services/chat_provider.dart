@@ -4520,6 +4520,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'status_sync':
           // Capture per-server plugin list from ALL servers (needed for server settings)
           if (serverId != null) {
+            final rateLimits = msg['rateLimits'];
+            if (rateLimits is List) {
+              _rateLimitStore.replaceServerSnapshot(
+                serverId: serverId,
+                events: rateLimits
+                    .whereType<Map>()
+                    .map((entry) => Map<String, dynamic>.from(entry))
+                    .toList(),
+                now: DateTime.now().toUtc(),
+              );
+              _scheduleRateLimitExpiry();
+            }
             final pluginsList = msg['plugins'] as List?;
             if (pluginsList != null) {
               _serverPlugins[serverId] = pluginsList

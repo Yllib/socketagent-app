@@ -120,6 +120,20 @@ class HarnessRateLimitStore {
     return true;
   }
 
+  void replaceServerSnapshot({
+    required String serverId,
+    required List<Map<String, dynamic>> events,
+    required DateTime now,
+  }) {
+    final serverPrefix = '${serverId.trim()}\u0001';
+    _limits.removeWhere((scope, _) => scope.startsWith(serverPrefix));
+    for (final event in events) {
+      final backend = normalizeHarnessBackend(event['backend']?.toString());
+      if (backend == null) continue;
+      apply(serverId: serverId, backend: backend, message: event, now: now);
+    }
+  }
+
   HarnessRateLimit? limitFor({
     required String? serverId,
     required String? backend,
