@@ -28,6 +28,7 @@ import '../models/task_display.dart';
 import '../models/session_notification_policy.dart';
 import '../models/harness_rate_limit.dart';
 import 'websocket_service.dart';
+import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
 import 'sherpa_speech_service.dart';
@@ -687,6 +688,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Per-upload state used to drive UI progress, gate the chunk send-loop on
   // server acks (backpressure), and detect stalled uploads.
   final Map<String, _UploadState> _uploadStates = {};
+  final Map<String, UploadAckGate> _uploadAckGates = {};
 
   // Settings
   String _serverHost = '';
@@ -4901,6 +4903,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _markSessionIdle(sid, serverId: serverId);
           }
           break;
+        case 'upload_chunk_ack':
+          {
+            final uploadId = msg['uploadId'] as String?;
+            final receivedChunks =
+                (msg['receivedChunks'] as num?)?.toInt() ?? 0;
+            if (uploadId != null) {
+              _uploadAckGates[uploadId]?.noteAck(receivedChunks);
+            }
+            break;
+          }
         case 'upload_complete':
           final uploadId = msg['uploadId'] as String?;
           final serverPath = msg['serverPath'] as String?;
@@ -4910,6 +4922,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           if (uploadId != null) {
             _uploadStates.remove(uploadId)?.dispose();
+            _uploadAckGates.remove(uploadId)?.dispose();
           }
           break;
         case 'upload_progress':
@@ -4929,6 +4942,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   state.progressBase +
                   (received / total).clamp(0.0, 1.0) * state.progressSpan;
               state.noteAck(receivedChunks);
+              _uploadAckGates[uploadId]?.noteAck(receivedChunks);
               notifyListeners();
             }
             break;
@@ -9893,7 +9907,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     double progressSpan = 1,
   }) async {
     final file = File(path);
-    final bytes = await file.readAsBytes();
+    final fileSize = await file.length();
     final ws = _sessionWs;
     final binary = ws.serverSupportsBinary;
     // 1MB binary chunks: small enough to not blow up the OS TCP buffer on
@@ -9901,7 +9915,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // fraction. 512KB on the legacy base64 path keeps the relay's 16MB
     // payload limit comfortably out of reach.
     final chunkSize = binary ? 1 * 1024 * 1024 : 512 * 1024;
-    final totalChunks = (bytes.length / chunkSize)
+    final totalChunks = (fileSize / chunkSize)
         .ceil()
         .clamp(1, double.infinity)
         .toInt();
@@ -9910,9 +9924,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final completer = Completer<String>();
     _uploadCompleter = completer;
 
-    // No client-side backpressure: fire-and-forget chunks like the original
-    // working test that did 130 MB in ~1s on LAN. The stall timer below still
-    // catches the case where the server stops emitting progress events.
+    // Progress state is independent from the transport acknowledgement gate:
+    // UI updates stay throttled while the gate below bounds queued file data.
     final state = _UploadState(
       target: progressTarget,
       progressBase: progressBase,
@@ -9929,46 +9942,62 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _uploadStates[uploadId] = state;
       state.start();
     }
+    final ackGate = UploadAckGate(enabled: ws.serverSupportsUploadAcks);
+    _uploadAckGates[uploadId] = ackGate;
 
-    ws.send({
+    final started = ws.send({
       'type': 'upload_start',
       'uploadId': uploadId,
       'fileName': name,
-      'fileSize': bytes.length,
+      'fileSize': fileSize,
       'totalChunks': totalChunks,
       'chunkSize': chunkSize,
     });
+    if (!started) {
+      _uploadAckGates.remove(uploadId)?.dispose();
+      throw StateError('File upload transport is not connected');
+    }
 
     debugPrint(
-      '[Upload] start id=$uploadId chunks=$totalChunks size=${bytes.length} binary=$binary',
+      '[Upload] start id=$uploadId chunks=$totalChunks size=$fileSize binary=$binary bulk=${ws.bulkLaneReady}',
     );
-    for (var i = 0; i < totalChunks; i++) {
-      if (i % 10 == 0 || i == totalChunks - 1) {
-        debugPrint('[Upload] sending chunk $i/$totalChunks');
-      }
+    final input = await file.open();
+    try {
+      for (var i = 0; i < totalChunks; i++) {
+        if (i % 10 == 0 || i == totalChunks - 1) {
+          debugPrint('[Upload] sending chunk $i/$totalChunks');
+        }
 
-      final start = i * chunkSize;
-      final end = (start + chunkSize).clamp(0, bytes.length);
-      final chunk = Uint8List.fromList(bytes.sublist(start, end));
-      if (binary) {
-        ws.sendUploadChunkBinary(
-          uploadId: uploadId,
-          chunkIndex: i,
-          bytes: chunk,
-        );
-      } else {
-        ws.send({
-          'type': 'upload_chunk',
-          'uploadId': uploadId,
-          'chunkIndex': i,
-          'data': base64Encode(chunk),
-        });
-        // Legacy fallback: drive spinner from chunk-loop iteration so it's
-        // not stuck at 0 when the server isn't emitting progress events.
-        progressTarget.uploadProgress =
-            progressBase + ((i + 1) / totalChunks) * progressSpan;
-        notifyListeners();
+        final chunk = await input.read(chunkSize);
+        final sent = binary
+            ? ws.sendUploadChunkBinary(
+                uploadId: uploadId,
+                chunkIndex: i,
+                bytes: chunk,
+              )
+            : ws.send({
+                'type': 'upload_chunk',
+                'uploadId': uploadId,
+                'chunkIndex': i,
+                'data': base64Encode(chunk),
+              });
+        if (!sent) {
+          throw StateError('File upload lane disconnected at chunk $i');
+        }
+        if (!binary) {
+          // Legacy fallback: drive spinner from chunk-loop iteration so it's
+          // not stuck at 0 when the server isn't emitting progress events.
+          progressTarget.uploadProgress =
+              progressBase + ((i + 1) / totalChunks) * progressSpan;
+          notifyListeners();
+        }
+        await ackGate.waitForWindow(i + 1);
       }
+    } catch (_) {
+      _uploadAckGates.remove(uploadId)?.dispose();
+      rethrow;
+    } finally {
+      await input.close();
     }
 
     // No wall-clock timeout — completion is gated by server `upload_complete`
@@ -12268,11 +12297,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String conflictPolicy = 'rename',
   }) async {
     final file = File(localPath);
-    final bytes = await file.readAsBytes();
+    final fileSize = await file.length();
     final ws = serverId == null ? _ws : _connMgr.getConnection(serverId) ?? _ws;
     final binary = ws.serverSupportsBinary;
     final chunkSize = binary ? 1 * 1024 * 1024 : 512 * 1024;
-    final totalChunks = (bytes.length / chunkSize)
+    final totalChunks = (fileSize / chunkSize)
         .ceil()
         .clamp(1, double.infinity)
         .toInt();
@@ -12286,37 +12315,47 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'uploadId': uploadId,
       'targetDir': targetDir,
       'fileName': name,
-      'fileSize': bytes.length,
+      'fileSize': fileSize,
       'totalChunks': totalChunks,
       'chunkSize': chunkSize,
       'conflictPolicy': conflictPolicy,
     }, serverId: serverId);
 
-    for (var i = 0; i < totalChunks; i++) {
-      final chunkStart = i * chunkSize;
-      final chunkEnd = (chunkStart + chunkSize).clamp(0, bytes.length);
-      final chunk = Uint8List.fromList(bytes.sublist(chunkStart, chunkEnd));
-      if (binary) {
-        ws.sendUploadChunkBinary(
-          uploadId: uploadId,
-          chunkIndex: i,
-          bytes: chunk,
-        );
-      } else if (serverId != null) {
-        _connMgr.sendToServer(serverId, {
-          'type': 'upload_chunk',
-          'uploadId': uploadId,
-          'chunkIndex': i,
-          'data': base64Encode(chunk),
-        });
-      } else {
-        _ws.send({
-          'type': 'upload_chunk',
-          'uploadId': uploadId,
-          'chunkIndex': i,
-          'data': base64Encode(chunk),
-        });
+    final ackGate = UploadAckGate(enabled: ws.serverSupportsUploadAcks);
+    _uploadAckGates[uploadId] = ackGate;
+    final input = await file.open();
+    try {
+      for (var i = 0; i < totalChunks; i++) {
+        final chunk = await input.read(chunkSize);
+        final sent = binary
+            ? ws.sendUploadChunkBinary(
+                uploadId: uploadId,
+                chunkIndex: i,
+                bytes: chunk,
+              )
+            : serverId != null
+            ? _connMgr.sendToServer(serverId, {
+                'type': 'upload_chunk',
+                'uploadId': uploadId,
+                'chunkIndex': i,
+                'data': base64Encode(chunk),
+              })
+            : _ws.send({
+                'type': 'upload_chunk',
+                'uploadId': uploadId,
+                'chunkIndex': i,
+                'data': base64Encode(chunk),
+              });
+        if (!sent) {
+          throw StateError('File upload lane disconnected at chunk $i');
+        }
+        await ackGate.waitForWindow(i + 1);
       }
+    } catch (_) {
+      _uploadAckGates.remove(uploadId)?.dispose();
+      rethrow;
+    } finally {
+      await input.close();
     }
 
     final serverPath = await uploadCompleter.future.timeout(
@@ -14775,6 +14814,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _statusSub?.cancel();
     _speechResultSub?.cancel();
     _speechStatusSub?.cancel();
+    for (final state in _uploadStates.values) {
+      state.dispose();
+    }
+    _uploadStates.clear();
+    for (final gate in _uploadAckGates.values) {
+      gate.dispose();
+    }
+    _uploadAckGates.clear();
     for (final timer in _downloadWatchdogs.values) {
       timer.cancel();
     }
@@ -14818,10 +14865,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 }
 
-/// Per-upload runtime state. Tracks how many chunks the server has confirmed
-/// receiving (used as a backpressure ack signal in the upload loop) and runs a
-/// stall timer that fires the supplied callback if no progress event arrives
-/// for 60s.
+/// Per-upload UI state and progress-stall detector. Transport backpressure is
+/// handled separately by [UploadAckGate] so progress throttling cannot stall
+/// the send window.
 class _UploadState {
   _UploadState({
     required this.target,

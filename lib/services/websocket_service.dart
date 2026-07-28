@@ -10,6 +10,17 @@ enum ConnectionStatus { disconnected, connecting, connected, error }
 
 enum ConnectionMode { direct, relay }
 
+enum TransportLane { control, bulk }
+
+const int transportLaneVersion = 1;
+const int uploadAckVersion = 1;
+const String bulkRelayPairingSuffix = ':bulk:v1';
+
+String pairingTokenForLane(String pairingToken, TransportLane lane) =>
+    lane == TransportLane.bulk
+    ? '$pairingToken$bulkRelayPairingSuffix'
+    : pairingToken;
+
 bool shouldStartWebSocketConnection(
   ConnectionStatus status, {
   bool force = false,
@@ -34,6 +45,31 @@ bool relayTransportIsConfigured({
 
 class WebSocketService {
   static const int _sessionEventAckVersion = 1;
+  WebSocketService({
+    TransportLane lane = TransportLane.control,
+    bool manageBulkLane = true,
+  }) : _lane = lane,
+       _manageBulkLane = manageBulkLane {
+    if (_manageBulkLane) {
+      final bulk = WebSocketService(
+        lane: TransportLane.bulk,
+        manageBulkLane: false,
+      );
+      _bulkLane = bulk;
+      _bulkMessageSubscription = bulk.messages.listen((message) {
+        if (message['type'] == 'server_capabilities') return;
+        final routed = Map<String, dynamic>.from(message);
+        routed['__transportLane'] = 'bulk';
+        _handleBulkLifecycleMessage(routed);
+        _messageController.add(routed);
+      });
+    }
+  }
+
+  final TransportLane _lane;
+  final bool _manageBulkLane;
+  WebSocketService? _bulkLane;
+  StreamSubscription<Map<String, dynamic>>? _bulkMessageSubscription;
   WebSocketChannel? _channel;
   StreamSubscription? _channelSubscription;
   int _connectionGeneration =
@@ -59,6 +95,10 @@ class WebSocketService {
   // client_capabilities announcement. Until then we keep the legacy
   // text-JSON envelope so older servers don't choke.
   bool _serverSupportsBinary = false;
+  bool _serverSupportsTransportLanes = false;
+  bool _serverSupportsUploadAcks = false;
+  final Map<String, bool> _uploadUsesBulkLane = {};
+  final Map<String, bool> _downloadUsesBulkLane = {};
 
   // Binary plaintext markers (also defined server-side).
   static const int _binMarkerJson = 0x4A; // 'J'
@@ -81,6 +121,13 @@ class WebSocketService {
     _token = token;
     _cryptoService = cryptoService;
     _requireTrustedDirectKey = requireTrustedDirectKey;
+    _bulkLane?.configure(
+      host: host,
+      port: port,
+      token: token,
+      cryptoService: cryptoService,
+      requireTrustedDirectKey: requireTrustedDirectKey,
+    );
   }
 
   void configureRelay({
@@ -98,6 +145,12 @@ class WebSocketService {
     _pairingToken = pairingToken;
     _cryptoService = cryptoService;
     _subscriberToken = subscriberToken;
+    _bulkLane?.configureRelay(
+      relayUrl: relayUrl,
+      pairingToken: pairingTokenForLane(pairingToken, TransportLane.bulk),
+      cryptoService: cryptoService,
+      subscriberToken: subscriberToken,
+    );
   }
 
   void clearRelayConfiguration() {
@@ -107,12 +160,14 @@ class WebSocketService {
     _subscriberToken = '';
     _cryptoService = null;
     _encryptionReady = false;
+    _bulkLane?.clearRelayConfiguration();
   }
 
   void setMode(ConnectionMode mode) {
     if (_mode == mode) return;
     disconnect();
     _mode = mode;
+    _bulkLane?.setMode(mode);
   }
 
   void connect({bool force = false}) {
@@ -187,7 +242,10 @@ class WebSocketService {
           scheme: 'ws',
           host: _host,
           port: _port,
-          queryParameters: encryptedDirect ? {'e2e': '1'} : null,
+          queryParameters: {
+            if (encryptedDirect) 'e2e': '1',
+            if (_lane == TransportLane.bulk) 'lane': 'bulk',
+          },
         );
         _encryptionReady = false;
       }
@@ -232,6 +290,7 @@ class WebSocketService {
           if (gen != _connectionGeneration) return;
           _encryptionReady = false;
           _serverSupportsBinary = false;
+          _serverSupportsUploadAcks = false;
           _setStatus(ConnectionStatus.disconnected);
           _scheduleReconnect();
         },
@@ -268,8 +327,11 @@ class WebSocketService {
           // old server ignores the unknown type and we stay on legacy.
           send({
             'type': 'client_capabilities',
+            'lane': _lane.name,
             'binaryEnvelope': true,
             'binaryFileDownloadVersion': binaryFileDownloadVersion,
+            'transportLaneVersion': transportLaneVersion,
+            'uploadAckVersion': uploadAckVersion,
             'sessionEventAckVersion': _sessionEventAckVersion,
           });
         });
@@ -365,7 +427,7 @@ class WebSocketService {
     // capture the binary-envelope flag (purely internal), then forward the
     // message so listeners can read fields like `backends`.
     if (raw['type'] == 'server_capabilities') {
-      _serverSupportsBinary = (raw['binaryEnvelope'] == true);
+      _applyServerCapabilities(raw);
     }
     _messageController.add(raw);
   }
@@ -428,13 +490,46 @@ class WebSocketService {
       return;
     }
     if (t == 'server_capabilities') {
-      _serverSupportsBinary = (msg['binaryEnvelope'] == true);
+      _applyServerCapabilities(msg);
       debugPrint(
-        '[Relay] Server supports binary envelope: $_serverSupportsBinary',
+        '[${_lane.name}] Server capabilities: binary=$_serverSupportsBinary '
+        'bulk=$_serverSupportsTransportLanes uploadAcks=$_serverSupportsUploadAcks',
       );
       // Fall through so listeners can read other fields (e.g., `backends`).
     }
     _messageController.add(msg);
+  }
+
+  void _applyServerCapabilities(Map<String, dynamic> msg) {
+    _serverSupportsBinary = msg['binaryEnvelope'] == true;
+    _serverSupportsUploadAcks =
+        ((msg['uploadAckVersion'] as num?)?.toInt() ?? 0) >= uploadAckVersion;
+    final lanes = msg['transportLanes'];
+    _serverSupportsTransportLanes =
+        lanes is Map &&
+        ((lanes['version'] as num?)?.toInt() ?? 0) >= transportLaneVersion &&
+        lanes['bulk'] == true;
+    if (_manageBulkLane && _serverSupportsTransportLanes) {
+      final bulk = _bulkLane;
+      if (bulk != null &&
+          bulk.status != ConnectionStatus.connected &&
+          bulk.status != ConnectionStatus.connecting) {
+        debugPrint('[Transport] Opening isolated bulk lane');
+        bulk.connect();
+      }
+    }
+  }
+
+  void _handleBulkLifecycleMessage(Map<String, dynamic> msg) {
+    final type = msg['type'];
+    final uploadId = msg['uploadId'] as String?;
+    final fileId = msg['fileId'] as String?;
+    if (type == 'upload_complete' && uploadId != null) {
+      _uploadUsesBulkLane.remove(uploadId);
+    }
+    if ((type == 'file_complete' || type == 'file_error') && fileId != null) {
+      _downloadUsesBulkLane.remove(fileId);
+    }
   }
 
   void _onEncryptionEstablished() {
@@ -449,8 +544,11 @@ class WebSocketService {
       send({
         'type': 'direct_auth',
         'token': _token,
+        'lane': _lane.name,
         'binaryEnvelope': true,
         'binaryFileDownloadVersion': binaryFileDownloadVersion,
+        'transportLaneVersion': transportLaneVersion,
+        'uploadAckVersion': uploadAckVersion,
         'sessionEventAckVersion': _sessionEventAckVersion,
       });
       return;
@@ -459,8 +557,11 @@ class WebSocketService {
     // ignore this message and we'll stay on the legacy JSON envelope.
     send({
       'type': 'client_capabilities',
+      'lane': _lane.name,
       'binaryEnvelope': true,
       'binaryFileDownloadVersion': binaryFileDownloadVersion,
+      'transportLaneVersion': transportLaneVersion,
+      'uploadAckVersion': uploadAckVersion,
       'sessionEventAckVersion': _sessionEventAckVersion,
     });
   }
@@ -491,7 +592,70 @@ class WebSocketService {
     _statusController.add(status);
   }
 
+  bool get _canSendApplicationMessages {
+    if (_channel == null || _status != ConnectionStatus.connected) return false;
+    if (_mode == ConnectionMode.relay) return _encryptionReady;
+    if (_cryptoService != null) return _encryptionReady;
+    return true;
+  }
+
+  bool get bulkLaneReady => _bulkLane?._canSendApplicationMessages == true;
+
+  bool _shouldUseBulkLane(Map<String, dynamic> message) {
+    if (!_manageBulkLane) return false;
+    final type = message['type'] as String? ?? '';
+    final uploadId = message['uploadId'] as String?;
+    final fileId = message['fileId'] as String?;
+
+    if (type == 'upload_start' || type == 'file_manager_upload_start') {
+      final useBulk = bulkLaneReady;
+      if (uploadId != null) _uploadUsesBulkLane[uploadId] = useBulk;
+      return useBulk;
+    }
+    if (type == 'upload_chunk' || type == 'upload_chunk_bin') {
+      return uploadId != null && _uploadUsesBulkLane[uploadId] == true;
+    }
+    if (type == 'request_file' || type == 'file_manager_download') {
+      final useBulk = bulkLaneReady && fileId != null;
+      if (fileId != null) _downloadUsesBulkLane[fileId] = useBulk;
+      return useBulk;
+    }
+    if (type == 'file_download_ack') {
+      return fileId != null && _downloadUsesBulkLane[fileId] == true;
+    }
+    return bulkLaneReady &&
+        const {
+          'file_manager_read_text',
+          'file_manager_write_text',
+          'load_more_history',
+          'get_archive_history',
+          'get_sdk_event_history',
+        }.contains(type);
+  }
+
   bool send(Map<String, dynamic> message) {
+    final useBulk = _shouldUseBulkLane(message);
+    if (useBulk) {
+      final sent = _bulkLane?._sendOnCurrentLane(message) ?? false;
+      if (sent) return true;
+
+      // Initial requests may safely fall back before any transfer bytes have
+      // moved. Never split an in-flight transfer across lanes.
+      final type = message['type'] as String? ?? '';
+      if (type == 'upload_chunk' ||
+          type == 'upload_chunk_bin' ||
+          type == 'file_download_ack') {
+        return false;
+      }
+      final uploadId = message['uploadId'] as String?;
+      final fileId = message['fileId'] as String?;
+      if (uploadId != null) _uploadUsesBulkLane[uploadId] = false;
+      if (fileId != null) _downloadUsesBulkLane[fileId] = false;
+    }
+    return _sendOnCurrentLane(message);
+  }
+
+  bool _sendOnCurrentLane(Map<String, dynamic> message) {
     if (_channel == null) return false;
 
     try {
@@ -527,18 +691,44 @@ class WebSocketService {
   /// Whether the server has confirmed it understands the binary wire format.
   /// Callers (e.g. the upload path) check this to decide between binary and
   /// legacy base64 chunks.
-  bool get serverSupportsBinary => _serverSupportsBinary;
+  bool get serverSupportsBinary => bulkLaneReady
+      ? (_bulkLane?._serverSupportsBinary ?? _serverSupportsBinary)
+      : _serverSupportsBinary;
+
+  bool get serverSupportsUploadAcks => bulkLaneReady
+      ? (_bulkLane?._serverSupportsUploadAcks ?? _serverSupportsUploadAcks)
+      : _serverSupportsUploadAcks;
 
   /// Send a binary upload chunk. Builds the standard
   /// `[0x42][1 idLen][idBytes][4 chunkIdx BE][bytes]` plaintext payload and
   /// ships it as a raw binary frame for legacy direct connections or wraps it
   /// in the NaCl binary envelope for relay and encrypted direct connections.
-  void sendUploadChunkBinary({
+  bool sendUploadChunkBinary({
     required String uploadId,
     required int chunkIndex,
     required Uint8List bytes,
   }) {
-    if (_channel == null) return;
+    if (_manageBulkLane && _uploadUsesBulkLane[uploadId] == true) {
+      return _bulkLane?._sendUploadChunkBinaryOnCurrentLane(
+            uploadId: uploadId,
+            chunkIndex: chunkIndex,
+            bytes: bytes,
+          ) ??
+          false;
+    }
+    return _sendUploadChunkBinaryOnCurrentLane(
+      uploadId: uploadId,
+      chunkIndex: chunkIndex,
+      bytes: bytes,
+    );
+  }
+
+  bool _sendUploadChunkBinaryOnCurrentLane({
+    required String uploadId,
+    required int chunkIndex,
+    required Uint8List bytes,
+  }) {
+    if (_channel == null) return false;
     final idBytes = utf8.encode(uploadId);
     if (idBytes.length > 255) {
       throw StateError('uploadId too long for binary frame');
@@ -555,16 +745,17 @@ class WebSocketService {
     payload.setRange(off + 4, payload.length, bytes);
 
     if (_mode == ConnectionMode.relay) {
-      if (!_encryptionReady || _cryptoService == null) return;
+      if (!_encryptionReady || _cryptoService == null) return false;
       final envelope = _cryptoService!.encryptBinary(payload);
       _channel!.sink.add(envelope);
     } else if (_mode == ConnectionMode.direct && _cryptoService != null) {
-      if (!_encryptionReady) return;
+      if (!_encryptionReady) return false;
       final envelope = _cryptoService!.encryptBinary(payload);
       _channel!.sink.add(envelope);
     } else {
       _channel!.sink.add(payload);
     }
+    return true;
   }
 
   void sendPrompt(
@@ -704,6 +895,7 @@ class WebSocketService {
   }
 
   void disconnect() {
+    _bulkLane?.disconnect();
     _reconnectTimer?.cancel();
     _channelSubscription?.cancel();
     _channelSubscription = null;
@@ -711,11 +903,19 @@ class WebSocketService {
     _channel?.sink.close();
     _channel = null;
     _encryptionReady = false;
+    _serverSupportsTransportLanes = false;
+    _serverSupportsUploadAcks = false;
+    _uploadUsesBulkLane.clear();
+    _downloadUsesBulkLane.clear();
     _setStatus(ConnectionStatus.disconnected);
   }
 
   void dispose() {
     disconnect();
+    _bulkMessageSubscription?.cancel();
+    _bulkMessageSubscription = null;
+    _bulkLane?.dispose();
+    _bulkLane = null;
     _messageController.close();
     _statusController.close();
   }

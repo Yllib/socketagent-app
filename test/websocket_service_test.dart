@@ -76,4 +76,15 @@ void main() {
       isFalse,
     );
   });
+
+  test('bulk relay lane derives an isolated opaque pairing identity', () {
+    expect(
+      pairingTokenForLane('pairing-token', TransportLane.control),
+      'pairing-token',
+    );
+    expect(
+      pairingTokenForLane('pairing-token', TransportLane.bulk),
+      'pairing-token:bulk:v1',
+    );
+  });
 }
