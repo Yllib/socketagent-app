@@ -23,6 +23,18 @@ void main() {
     );
     expect(taskCanBeDismissed(tasks.first), true);
     expect(taskCanBeDismissed(tasks.last), false);
+    expect(
+      dismissedTaskPreferenceKey('mac', 'session-1'),
+      'dismissed_completed_tasks_v2_mac_session-1',
+    );
+    expect(taskSnapshotsEqual(tasks, tasks), true);
+    expect(
+      taskSnapshotsEqual(tasks, [
+        {...tasks.first, 'description': 'New details'},
+        tasks.last,
+      ]),
+      false,
+    );
   });
 
   testWidgets('expanded task list is bounded, scrollable, and dismissible', (
