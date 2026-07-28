@@ -6,6 +6,7 @@ import '../services/chat_provider.dart';
 import '../services/tts_engine.dart';
 import '../services/kokoro_server_engine.dart';
 import '../services/websocket_service.dart';
+import '../models/harness_rate_limit.dart';
 import 'file_manager_screen.dart';
 import 'project_instructions_screen.dart';
 import 'terminal_screen.dart';
@@ -706,6 +707,8 @@ class HomeScreenState extends State<HomeScreen> {
                   if (provider.activeSessionId != null ||
                       provider.isPendingNewSession)
                     _buildControlChips(provider),
+                  if (provider.weeklyRateLimit != null)
+                    _buildRateLimitBanner(provider.weeklyRateLimit!),
                   if (provider.isRefreshingHistory)
                     const LinearProgressIndicator(minHeight: 2),
                   Expanded(
@@ -756,7 +759,8 @@ class HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                   if (provider.isCompacting) _buildCompactingBanner(),
-                  if (provider.isRateLimited) _buildRateLimitBanner(provider),
+                  if (provider.fiveHourRateLimit != null)
+                    _buildRateLimitBanner(provider.fiveHourRateLimit!),
                   if (provider.isRetrying) _buildRetryingBanner(),
                   if (provider.activeHookName != null)
                     _buildHookBanner(provider.activeHookName!),
@@ -2431,9 +2435,9 @@ class HomeScreenState extends State<HomeScreen> {
             ),
           ),
           const SizedBox(height: 4),
-          _contextLimitBar('5h', limit['primary'], theme),
-          const SizedBox(height: 4),
           _contextLimitBar('Weekly', limit['secondary'], theme),
+          const SizedBox(height: 4),
+          _contextLimitBar('5h', limit['primary'], theme),
         ],
       ),
     );
@@ -2776,33 +2780,82 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildRateLimitBanner(ChatProvider provider) {
-    final util = provider.rateLimitUtilization;
-    final pct = util != null ? ' (${(util * 100).toStringAsFixed(0)}%)' : '';
+  Widget _buildRateLimitBanner(HarnessRateLimit limit) {
+    final theme = Theme.of(context);
+    final background = limit.isRejected
+        ? theme.colorScheme.errorContainer
+        : theme.colorScheme.secondaryContainer;
+    final foreground = limit.isRejected
+        ? theme.colorScheme.onErrorContainer
+        : theme.colorScheme.onSecondaryContainer;
+    final utilization = limit.utilizationPercent;
+    final usage = utilization == null
+        ? ''
+        : ' · ${utilization.toStringAsFixed(0)}% used';
+    final reset = _formatRateLimitReset(limit.resetsAt);
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Theme.of(context).colorScheme.errorContainer,
+      color: background,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(
-            Icons.speed,
+            limit.window == HarnessRateLimitWindow.weekly
+                ? Icons.calendar_view_week
+                : Icons.schedule,
             size: 14,
-            color: Theme.of(context).colorScheme.onErrorContainer,
+            color: foreground,
           ),
           const SizedBox(width: 8),
-          Text(
-            'Rate limited$pct',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w500,
-              color: Theme.of(context).colorScheme.onErrorContainer,
+          Flexible(
+            child: Text(
+              '${limit.label} ${limit.isRejected ? 'reached' : 'warning'}'
+              '$usage · $reset',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: foreground,
+              ),
             ),
           ),
         ],
       ),
     );
+  }
+
+  String _formatRateLimitReset(DateTime? reset) {
+    if (reset == null) return 'reset time unavailable';
+    final local = reset.toLocal();
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+    final date = DateTime(local.year, local.month, local.day);
+    final String day;
+    if (DateUtils.isSameDay(local, now)) {
+      day = 'today';
+    } else if (DateUtils.isSameDay(date, tomorrow)) {
+      day = 'tomorrow';
+    } else {
+      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+      const months = [
+        'Jan',
+        'Feb',
+        'Mar',
+        'Apr',
+        'May',
+        'Jun',
+        'Jul',
+        'Aug',
+        'Sep',
+        'Oct',
+        'Nov',
+        'Dec',
+      ];
+      day = '${weekdays[local.weekday - 1]}, '
+          '${months[local.month - 1]} ${local.day}';
+    }
+    return 'resets $day at ${TimeOfDay.fromDateTime(local).format(context)}';
   }
 
   Widget _buildRetryingBanner() {

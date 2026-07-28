@@ -26,6 +26,7 @@ import '../models/scheduled_task_cache.dart';
 import '../models/scheduled_task_update.dart';
 import '../models/task_display.dart';
 import '../models/session_notification_policy.dart';
+import '../models/harness_rate_limit.dart';
 import 'websocket_service.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
@@ -575,8 +576,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _requiresAction = false; // SDK says session needs user input
   String?
   _permissionMode; // 'plan', 'bypassPermissions', 'superYolo', 'default', etc.
-  bool _isRateLimited = false;
-  double? _rateLimitUtilization;
+  HarnessRateLimit? _fiveHourRateLimit;
+  HarnessRateLimit? _weeklyRateLimit;
+  Timer? _rateLimitExpiryTimer;
   bool _isRetrying = false;
   String? _activeHookName;
   List<String> _promptSuggestions = [];
@@ -1139,8 +1141,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get requiresAction => _requiresAction;
   String? get permissionMode => _permissionMode;
   bool get isPlanMode => _permissionMode == 'plan';
-  bool get isRateLimited => _isRateLimited;
-  double? get rateLimitUtilization => _rateLimitUtilization;
+  HarnessRateLimit? get fiveHourRateLimit => _fiveHourRateLimit;
+  HarnessRateLimit? get weeklyRateLimit => _weeklyRateLimit;
+  bool get isRateLimited =>
+      _fiveHourRateLimit != null || _weeklyRateLimit != null;
+  double? get rateLimitUtilization =>
+      _fiveHourRateLimit?.utilizationPercent ??
+      _weeklyRateLimit?.utilizationPercent;
   bool get isRetrying => _isRetrying;
   String? get activeHookName => _activeHookName;
   List<String> serverPlugins(String serverId) => _serverPlugins[serverId] ?? [];
@@ -4126,10 +4133,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           break;
         case 'rate_limit_event':
-          final rlStatus = msg['status'] as String? ?? 'allowed';
-          _isRateLimited =
-              rlStatus == 'rejected' || rlStatus == 'allowed_warning';
-          _rateLimitUtilization = (msg['utilization'] as num?)?.toDouble();
+          _applyRateLimitEvent(msg);
           notifyListeners();
           break;
         case 'api_retry':
@@ -6400,6 +6404,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  void _applyRateLimitEvent(Map<String, dynamic> message) {
+    final limit = HarnessRateLimit.fromMessage(message);
+    final active = limit.isActiveAt(DateTime.now().toUtc()) ? limit : null;
+    if (limit.window == HarnessRateLimitWindow.weekly) {
+      _weeklyRateLimit = active;
+    } else {
+      _fiveHourRateLimit = active;
+    }
+    _scheduleRateLimitExpiry();
+  }
+
+  void _scheduleRateLimitExpiry() {
+    _rateLimitExpiryTimer?.cancel();
+    final now = DateTime.now().toUtc();
+    final resets = [
+      _fiveHourRateLimit?.resetsAt,
+      _weeklyRateLimit?.resetsAt,
+    ].whereType<DateTime>().where((reset) => reset.isAfter(now)).toList()
+      ..sort();
+    if (resets.isEmpty) return;
+    _rateLimitExpiryTimer = Timer(
+      resets.first.difference(now) + const Duration(seconds: 1),
+      () {
+        final current = DateTime.now().toUtc();
+        if (_fiveHourRateLimit?.isActiveAt(current) == false) {
+          _fiveHourRateLimit = null;
+        }
+        if (_weeklyRateLimit?.isActiveAt(current) == false) {
+          _weeklyRateLimit = null;
+        }
+        _scheduleRateLimitExpiry();
+        notifyListeners();
+      },
+    );
+  }
+
   void _handleResult(Map<String, dynamic> msg) {
     final awaitingAbort = _hasPendingHardStop(
       _activeSessionId,
@@ -6415,7 +6455,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _stopPromptRuntime();
     }
     _isCompacting = false;
-    _isRateLimited = false;
     _isRetrying = false;
     // Upload-only pending bubbles can settle on result. Queued injection
     // bubbles wait for injection_ack so they can still be pulled back before
@@ -14691,6 +14730,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingHardStops.clear();
     _initialHistoryTimeout?.cancel();
     _foregroundResumeTimer?.cancel();
+    _rateLimitExpiryTimer?.cancel();
     _secretInventoryRequestTracker.cancel();
     _htmlPlanListTimeout?.cancel();
     _messageSub?.cancel();
