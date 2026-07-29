@@ -467,13 +467,34 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                 ),
               ),
               padding: const EdgeInsets.all(12),
-              child: SelectableText(
-                _bashFormatted,
-                style: GoogleFonts.jetBrainsMono(
-                  fontSize: 11,
-                  color: const Color(0xFFF9E2AF),
-                  height: 1.4,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (widget.message.toolInput?['cwd']
+                          ?.toString()
+                          .trim()
+                          .isNotEmpty ==
+                      true) ...[
+                    Text(
+                      widget.message.toolInput!['cwd'].toString(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.jetBrainsMono(
+                        fontSize: 9.5,
+                        color: const Color(0xFF6C7086),
+                      ),
+                    ),
+                    const SizedBox(height: 7),
+                  ],
+                  SelectableText(
+                    _bashFormatted,
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 11,
+                      color: const Color(0xFFF9E2AF),
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
             ),
             if (hasOutput)
@@ -882,6 +903,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         return const Color(0xFFB4BEFE); // lavender
       case 'WebFetch':
         return const Color(0xFF74C7EC); // sapphire
+      case 'ViewImage':
+      case 'ImageGeneration':
+        return const Color(0xFFA6E3A1); // green
       case 'TodoWrite':
         return const Color(0xFFF2CDCD); // flamingo
       case 'TaskOutput':
@@ -913,6 +937,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         return Icons.travel_explore;
       case 'WebFetch':
         return Icons.download;
+      case 'ViewImage':
+        return Icons.image_search;
+      case 'ImageGeneration':
+        return Icons.auto_awesome;
       case 'TodoWrite':
         return Icons.checklist;
       case 'TaskOutput':

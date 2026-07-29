@@ -26,6 +26,7 @@ import 'codex_command_card.dart';
 import 'secure_input_card.dart';
 import 'html_plan_card.dart';
 import 'workflow_card.dart';
+import 'codex_activity_card.dart';
 import '../models/composer_attachment.dart';
 
 class ChatView extends StatefulWidget {
@@ -1024,6 +1025,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           onRetractPending: widget.onRetractQueuedMessage,
         );
       case MessageType.toolCall:
+        if (CodexActivityCard.supports(msg)) {
+          return CodexActivityCard(message: msg);
+        }
         if (msg.toolName == 'Workflow') {
           final embedded = msg.toolInput?['_workflow_state'];
           Map<String, dynamic>? state = embedded is Map
