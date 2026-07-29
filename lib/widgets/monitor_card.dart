@@ -21,7 +21,9 @@ class _MonitorCardState extends State<MonitorCard> {
     final lines = output.split('\n').where((l) => l.isNotEmpty).toList();
     final lineCount = lines.length;
     final preview = lines.isNotEmpty
-        ? (lines.last.length > 80 ? '${lines.last.substring(0, 80)}...' : lines.last)
+        ? (lines.last.length > 80
+              ? '${lines.last.substring(0, 80)}...'
+              : lines.last)
         : '';
 
     return Container(
@@ -51,7 +53,7 @@ class _MonitorCardState extends State<MonitorCard> {
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    'Monitor',
+                    'Monitor output',
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
@@ -59,14 +61,18 @@ class _MonitorCardState extends State<MonitorCard> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  Text(
-                    description,
-                    style: GoogleFonts.jetBrainsMono(
-                      fontSize: 11,
-                      color: const Color(0xFFA6ADC8),
+                  Expanded(
+                    child: Text(
+                      description,
+                      style: GoogleFonts.jetBrainsMono(
+                        fontSize: 11,
+                        color: const Color(0xFFA6ADC8),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  const Spacer(),
+                  const SizedBox(width: 8),
                   if (lineCount > 0)
                     Text(
                       '$lineCount line${lineCount == 1 ? '' : 's'}',

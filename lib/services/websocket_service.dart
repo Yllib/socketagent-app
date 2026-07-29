@@ -44,7 +44,7 @@ bool relayTransportIsConfigured({
 }
 
 class WebSocketService {
-  static const int _sessionEventAckVersion = 1;
+  static const int _sessionEventAckVersion = 2;
   WebSocketService({
     TransportLane lane = TransportLane.control,
     bool manageBulkLane = true,

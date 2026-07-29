@@ -57,6 +57,36 @@ void main() {
     },
   );
 
+  test('Monitor output acknowledgement identity follows its card revision', () {
+    final first = acknowledgedSessionEventKey({
+      'type': 'monitor_output',
+      'sessionId': 'session-1',
+      'taskId': 'monitor-1',
+      'content': 'first line',
+      'revision': 1,
+      'deliveryId': 'delivery-1',
+    });
+    final retry = acknowledgedSessionEventKey({
+      'type': 'monitor_output',
+      'sessionId': 'session-1',
+      'taskId': 'monitor-1',
+      'content': 'first line',
+      'revision': 1,
+      'deliveryId': 'delivery-2',
+    });
+    final nextRevision = acknowledgedSessionEventKey({
+      'type': 'monitor_output',
+      'sessionId': 'session-1',
+      'taskId': 'monitor-1',
+      'content': 'first line\nsecond line',
+      'revision': 2,
+      'deliveryId': 'delivery-3',
+    });
+
+    expect(retry, first);
+    expect(nextRevision, isNot(first));
+  });
+
   test('missing secure-input history status remains actionable', () {
     expect(secureInputHistoryStatus(null, null), 'pending');
   });

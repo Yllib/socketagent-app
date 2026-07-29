@@ -3583,6 +3583,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (type == 'tool_call' ||
             type == 'tool_result' ||
             type == 'html_plan' ||
+            type == 'monitor_output' ||
             type == 'text' ||
             type == 'thinking');
     final deliveryEventKey = acknowledgesDelivery
@@ -7491,37 +7492,57 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleMonitorOutput(Map<String, dynamic> msg) {
     final taskId = msg['taskId'] as String? ?? '';
-    final content = msg['content'] as String? ?? '';
+    final legacyContent = msg['content'] as String? ?? '';
+    final content = msg['snapshotContent'] as String? ?? legacyContent;
     if (content.isEmpty) return;
 
-    // Find existing monitor output card for this taskId and append, or create new one
-    final desc = _backgroundTasks[taskId]?['summary'] as String? ?? 'Monitor';
+    // Revisioned servers send cumulative snapshots. Legacy servers sent
+    // append-only chunks, which remain supported without duplicating retries.
+    final desc =
+        msg['description'] as String? ??
+        _backgroundTasks[taskId]?['summary'] as String? ??
+        'Monitored process';
+    final incomingEntryId = msg['entryId'] as String?;
+    final isSnapshot = msg['snapshot'] == true;
     ChatMessage? existing;
     for (int i = _messages.length - 1; i >= 0; i--) {
       final m = _messages[i];
-      if (m.type == MessageType.monitorOutput && m.toolUseId == taskId) {
+      if (m.type == MessageType.monitorOutput &&
+          ((incomingEntryId != null &&
+                  incomingEntryId.isNotEmpty &&
+                  m.entryId == incomingEntryId) ||
+              m.toolUseId == taskId)) {
         existing = m;
         break;
       }
     }
 
     if (existing != null) {
-      // Append new output to existing card
-      existing.toolOutput = '${existing.toolOutput ?? ''}\n$content';
+      if (isSnapshot ||
+          (incomingEntryId != null && incomingEntryId.isNotEmpty)) {
+        existing.toolOutput = content;
+      } else {
+        final previous = existing.toolOutput ?? '';
+        if (previous != content && !previous.endsWith('\n$content')) {
+          existing.toolOutput = previous.isEmpty
+              ? content
+              : '$previous\n$content';
+        }
+      }
       existing.textContent = desc;
+      applyTranscriptPosition(existing, msg);
     } else {
-      // Create a new monitor output card
-      _messages.add(
-        ChatMessage(
-          id: 'monitor_${taskId}_${DateTime.now().microsecondsSinceEpoch}',
-          sender: MessageSender.system,
-          type: MessageType.monitorOutput,
-          timestamp: DateTime.now(),
-          textContent: desc,
-          toolUseId: taskId,
-          toolOutput: content,
-        ),
+      final monitorMessage = ChatMessage(
+        id: 'monitor_$taskId',
+        sender: MessageSender.system,
+        type: MessageType.monitorOutput,
+        timestamp: DateTime.now(),
+        textContent: desc,
+        toolUseId: taskId,
+        toolOutput: content,
       );
+      applyTranscriptPosition(monitorMessage, msg);
+      _messages.add(monitorMessage);
     }
     notifyListeners();
   }
@@ -8920,6 +8941,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (content.isNotEmpty) {
             final monitorTaskId = entry['taskId'] as String? ?? '';
             final monitorDesc = entry['description'] as String? ?? 'Monitor';
+            final monitorEntryId = entry['entryId'] as String?;
+            final monitorInput = Map<String, dynamic>.from(
+              (entry['toolInput'] as Map?) ?? const {},
+            );
+            final isMonitorSnapshot = monitorInput['snapshot'] == true;
             // Accumulate into an existing monitor card for this taskId, or create new
             ChatMessage? existingMonitor;
             for (int i = loaded.length - 1; i >= 0; i--) {
@@ -8930,8 +8956,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               }
             }
             if (existingMonitor != null) {
-              existingMonitor.toolOutput =
-                  '${existingMonitor.toolOutput ?? ''}\n$content';
+              final sameRevisionedCard =
+                  isMonitorSnapshot ||
+                  (monitorEntryId != null &&
+                      monitorEntryId.isNotEmpty &&
+                      existingMonitor.entryId == monitorEntryId);
+              if (sameRevisionedCard) {
+                existingMonitor.toolOutput = content;
+                existingMonitor.textContent = monitorDesc;
+                applyTranscriptPosition(existingMonitor, entry);
+              } else {
+                final previous = existingMonitor.toolOutput ?? '';
+                if (previous != content && !previous.endsWith('\n$content')) {
+                  existingMonitor.toolOutput = previous.isEmpty
+                      ? content
+                      : '$previous\n$content';
+                }
+              }
             } else {
               loaded.add(
                 ChatMessage(

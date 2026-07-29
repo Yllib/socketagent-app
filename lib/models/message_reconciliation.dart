@@ -26,6 +26,14 @@ String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
     return '$type:$sessionId:$planId:$updatedAt';
   }
 
+  if (type == 'monitor_output') {
+    final taskId = message['taskId'] as String? ?? '';
+    final revision = (message['revision'] as num?)?.toInt() ?? 0;
+    final content = message['content'] as String? ?? '';
+    if (taskId.isEmpty) return null;
+    return '$type:$sessionId:$taskId:$revision:${content.length}:${content.hashCode}';
+  }
+
   if ((type == 'text' || type == 'thinking') &&
       message['finalSnapshot'] == true) {
     final streamId = message['streamId'] as String? ?? '';
