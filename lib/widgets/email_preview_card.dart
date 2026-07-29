@@ -24,14 +24,24 @@ class EmailPreviewCard extends StatelessWidget {
     final attachment = email['attachment'];
     // Parse multiple attachments (comma-separated paths)
     final attachments = attachment != null && attachment.isNotEmpty
-        ? attachment.split(',').map((p) => p.trim()).where((p) => p.isNotEmpty).toList()
+        ? attachment
+              .split(',')
+              .map((p) => p.trim())
+              .where((p) => p.isNotEmpty)
+              .toList()
         : <String>[];
     // Detect HTML body
-    final isHtmlBody = body.contains('<') && body.contains('>') &&
-        (body.contains('<br') || body.contains('<p') || body.contains('<div') ||
-         body.contains('<table') || body.contains('<html'));
+    final isHtmlBody =
+        body.contains('<') &&
+        body.contains('>') &&
+        (body.contains('<br') ||
+            body.contains('<p') ||
+            body.contains('<div') ||
+            body.contains('<table') ||
+            body.contains('<html'));
     final displayBody = isHtmlBody
-        ? body.replaceAll(RegExp(r'<br\s*/?>'), '\n')
+        ? body
+              .replaceAll(RegExp(r'<br\s*/?>'), '\n')
               .replaceAll(RegExp(r'<[^>]+>'), '')
               .replaceAll('&nbsp;', ' ')
               .replaceAll('&amp;', '&')
@@ -66,7 +76,9 @@ class EmailPreviewCard extends StatelessWidget {
               Row(
                 children: [
                   Icon(
-                    scheduledTime != null ? Icons.schedule_send : Icons.outgoing_mail,
+                    scheduledTime != null
+                        ? Icons.schedule_send
+                        : Icons.outgoing_mail,
                     size: 20,
                     color: isAnswered
                         ? theme.colorScheme.outline
@@ -85,8 +97,11 @@ class EmailPreviewCard extends StatelessWidget {
                   ),
                   const Spacer(),
                   if (isAnswered)
-                    Icon(Icons.check_circle,
-                        size: 18, color: Colors.green.shade400),
+                    Icon(
+                      Icons.check_circle,
+                      size: 18,
+                      color: Colors.green.shade400,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -95,6 +110,20 @@ class EmailPreviewCard extends StatelessWidget {
               _buildField(context, 'To', to),
               if (cc != null && cc.isNotEmpty) _buildField(context, 'Cc', cc),
               _buildField(context, 'Subject', subject),
+              if (isAnswered &&
+                  (message.answers?.values.any(
+                        (answer) => answer.trim().isNotEmpty,
+                      ) ??
+                      false)) ...[
+                const SizedBox(height: 8),
+                _buildField(
+                  context,
+                  'Your answer',
+                  message.answers!.values
+                      .where((answer) => answer.trim().isNotEmpty)
+                      .join(', '),
+                ),
+              ],
               if (scheduledTime != null && scheduledTime.isNotEmpty)
                 _buildScheduledTimeField(context, scheduledTime),
               if (attachments.isNotEmpty)
@@ -121,16 +150,24 @@ class EmailPreviewCard extends StatelessWidget {
                           children: attachments.map((p) {
                             final name = p.split('/').last;
                             return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
                               decoration: BoxDecoration(
-                                color: theme.colorScheme.primaryContainer.withAlpha(100),
+                                color: theme.colorScheme.primaryContainer
+                                    .withAlpha(100),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  Icon(Icons.attach_file, size: 12,
-                                      color: theme.colorScheme.onSurface.withAlpha(178)),
+                                  Icon(
+                                    Icons.attach_file,
+                                    size: 12,
+                                    color: theme.colorScheme.onSurface
+                                        .withAlpha(178),
+                                  ),
                                   const SizedBox(width: 3),
                                   Text(
                                     name,
@@ -168,7 +205,10 @@ class EmailPreviewCard extends StatelessWidget {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 6),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
                           decoration: BoxDecoration(
                             color: theme.colorScheme.primary.withAlpha(30),
                             borderRadius: BorderRadius.circular(4),
@@ -213,7 +253,12 @@ class EmailPreviewCard extends StatelessWidget {
                     const SizedBox(width: 12),
                     FilledButton.icon(
                       onPressed: () => _respond('Send'),
-                      icon: Icon(scheduledTime != null ? Icons.schedule_send : Icons.send, size: 18),
+                      icon: Icon(
+                        scheduledTime != null
+                            ? Icons.schedule_send
+                            : Icons.send,
+                        size: 18,
+                      ),
                       label: Text(scheduledTime != null ? 'Schedule' : 'Send'),
                     ),
                   ],
@@ -258,7 +303,11 @@ class EmailPreviewCard extends StatelessWidget {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.schedule, size: 14, color: theme.colorScheme.primary),
+                Icon(
+                  Icons.schedule,
+                  size: 14,
+                  color: theme.colorScheme.primary,
+                ),
                 const SizedBox(width: 4),
                 Text(
                   displayTime,
@@ -312,8 +361,9 @@ class EmailPreviewCard extends StatelessWidget {
     final questionId = message.questionId;
     if (questionId == null) return;
     final questions = message.questions ?? [];
-    final key =
-        questions.isNotEmpty ? questions.first.question : 'email_approval';
+    final key = questions.isNotEmpty
+        ? questions.first.question
+        : 'email_approval';
     onAnswer(questionId, {key: answer});
   }
 }

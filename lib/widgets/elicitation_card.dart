@@ -53,18 +53,21 @@ class ElicitationCard extends StatelessWidget {
                   ),
                   if (isCompleted) ...[
                     const SizedBox(width: 8),
-                    Icon(Icons.check_circle,
-                        size: 18, color: Colors.green.shade400),
+                    Icon(
+                      Icons.check_circle,
+                      size: 18,
+                      color: Colors.green.shade400,
+                    ),
                   ],
                 ],
               ),
               const SizedBox(height: 8),
               Text(
                 isCompleted
-                    ? 'Authentication complete.'
+                    ? _completedLabel
                     : message.textContent.isNotEmpty
-                        ? message.textContent
-                        : '$_serverName requires authentication.',
+                    ? message.textContent
+                    : '$_serverName requires authentication.',
                 style: TextStyle(
                   fontSize: 14,
                   color: theme.colorScheme.onTertiaryContainer.withAlpha(200),
@@ -93,6 +96,14 @@ class ElicitationCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String get _completedLabel {
+    final action = message.answers?['action']?.trim().toLowerCase() ?? '';
+    if (action == 'cancel' || action == 'decline') {
+      return 'Cancelled.';
+    }
+    return 'Authentication complete.';
   }
 
   Future<void> _openUrl(BuildContext context) async {

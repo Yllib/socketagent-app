@@ -234,9 +234,45 @@ class _QuestionCardState extends State<QuestionCard> {
                 maxLines: 2,
               ),
             ),
+        ] else ...[
+          _buildSubmittedAnswer(context, question),
         ],
         const SizedBox(height: 8),
       ],
+    );
+  }
+
+  Widget _buildSubmittedAnswer(BuildContext context, QuestionItem question) {
+    final answer =
+        widget.message.answers?[question.question]?.trim() ??
+        (question.header == null
+            ? ''
+            : widget.message.answers?[question.header!]?.trim() ?? '');
+    if (answer.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Your answer',
+            style: TextStyle(
+              color: theme.colorScheme.onSurfaceVariant,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 3),
+          SelectableText(answer, style: const TextStyle(fontSize: 14)),
+        ],
+      ),
     );
   }
 

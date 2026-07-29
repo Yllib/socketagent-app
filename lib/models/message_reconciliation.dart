@@ -313,6 +313,27 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
   live.entryId ??= snapshot.entryId;
   live.sessionSeq ??= snapshot.sessionSeq;
   if (snapshot.revision > live.revision) live.revision = snapshot.revision;
+  if (live.type == MessageType.question ||
+      live.type == MessageType.secureInput ||
+      live.type == MessageType.elicitationUrl) {
+    // Interaction completion is monotonic. A delayed pending frame must never
+    // revive a card, and a newer history snapshot must carry its safe answer
+    // metadata into the live object retained by reconciliation.
+    if (snapshot.answered || snapshotIsNewer) {
+      live.answered = live.answered || snapshot.answered;
+      if (snapshot.answers != null &&
+          (snapshotIsNewer || live.answers == null)) {
+        live.answers = Map<String, String>.from(snapshot.answers!);
+      }
+      final snapshotStatus = snapshot.toolInput?['status'];
+      const terminalStatuses = {'saved', 'cancelled', 'expired', 'interrupted'};
+      if (snapshotStatus is String &&
+          snapshotStatus.isNotEmpty &&
+          (!live.answered || terminalStatuses.contains(snapshotStatus))) {
+        live.toolInput?['status'] = snapshotStatus;
+      }
+    }
+  }
   if (live.type == MessageType.toolCall) {
     final liveOutput = live.toolOutput ?? '';
     final snapshotOutput = snapshot.toolOutput ?? '';

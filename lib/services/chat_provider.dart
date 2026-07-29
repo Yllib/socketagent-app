@@ -5045,12 +5045,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'question_answered':
           final answeredQId = msg['questionId'] as String? ?? '';
           if (answeredQId.isNotEmpty) {
+            final answers = (msg['answers'] as Map?)?.map(
+              (key, value) => MapEntry(key.toString(), value.toString()),
+            );
             final idx = _messages.indexWhere(
               (m) =>
-                  m.questionId == answeredQId && m.type == MessageType.question,
+                  m.questionId == answeredQId &&
+                  (m.type == MessageType.question ||
+                      m.type == MessageType.elicitationUrl),
             );
             if (idx >= 0) {
               _messages[idx].answered = true;
+              if (answers != null) {
+                _messages[idx].answers = answers;
+              }
               notifyListeners();
             }
           }
@@ -6143,14 +6151,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final questionId = msg['questionId'] as String? ?? '';
 
-    // Deduplicate: if this question already exists (e.g. restored from history,
-    // then re-sent by server on reconnect), just ensure it's marked unanswered
+    // Deduplicate reconnect/replay frames. Completion is monotonic: a delayed
+    // pending question must never revive a card the user already answered.
     final existingIdx = _messages.indexWhere(
       (m) => m.questionId == questionId && m.type == MessageType.question,
     );
     if (existingIdx >= 0) {
-      _messages[existingIdx].answered = false;
-      _messages[existingIdx].toolInput?['status'] = 'pending';
+      if (!_messages[existingIdx].answered) {
+        _messages[existingIdx].toolInput?['status'] = 'pending';
+      }
       applyTranscriptPosition(_messages[existingIdx], msg);
       notifyListeners();
       return;
@@ -6194,8 +6203,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       (m) => m.type == MessageType.secureInput && m.questionId == requestId,
     );
     if (existingIdx >= 0) {
-      _messages[existingIdx].answered = false;
-      _messages[existingIdx].toolInput?['status'] = 'pending';
+      if (!_messages[existingIdx].answered) {
+        _messages[existingIdx].toolInput?['status'] = 'pending';
+      }
       applyTranscriptPosition(_messages[existingIdx], msg);
       refreshSecretInventory();
       notifyListeners();
@@ -9134,6 +9144,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               .map((q) => QuestionItem.fromJson(q as Map<String, dynamic>))
               .toList();
           final answered = entry['answered'] as bool? ?? false;
+          final answers = (entry['answers'] as Map?)?.map(
+            (key, value) => MapEntry(key.toString(), value.toString()),
+          );
           Map<String, String>? emailPreview;
           if (entry['emailPreview'] != null) {
             final ep = entry['emailPreview'] as Map<String, dynamic>;
@@ -9143,9 +9156,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             questionId: questionId,
             questions: questions,
             emailPreview: emailPreview,
+            answers: answers,
           );
           qMsg.answered = answered;
-          loaded.add(qMsg);
+          final existingIdx = loaded.lastIndexWhere(
+            (message) =>
+                message.type == MessageType.question &&
+                message.questionId == questionId,
+          );
+          if (existingIdx >= 0) {
+            final existing = loaded[existingIdx];
+            if (answered || !existing.answered) {
+              loaded[existingIdx] = qMsg;
+            }
+          } else {
+            loaded.add(qMsg);
+          }
           break;
         case 'secure_input':
           final requestId = entry['questionId'] as String? ?? '';
@@ -9204,6 +9230,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final elicitMessage = entry['content'] as String? ?? '';
           final elicitUrl = entry['url'] as String? ?? '';
           final elicitAnswered = entry['answered'] as bool? ?? false;
+          final elicitAnswers = (entry['answers'] as Map?)?.map(
+            (key, value) => MapEntry(key.toString(), value.toString()),
+          );
           if (elicitQId.isNotEmpty && elicitUrl.isNotEmpty) {
             final eMsg = ChatMessage.elicitationUrl(
               questionId: elicitQId,
@@ -9212,7 +9241,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               url: elicitUrl,
             );
             eMsg.answered = elicitAnswered;
-            loaded.add(eMsg);
+            eMsg.answers = elicitAnswers;
+            final existingIdx = loaded.lastIndexWhere(
+              (message) =>
+                  message.type == MessageType.elicitationUrl &&
+                  message.questionId == elicitQId,
+            );
+            if (existingIdx >= 0) {
+              if (elicitAnswered || !loaded[existingIdx].answered) {
+                loaded[existingIdx] = eMsg;
+              }
+            } else {
+              loaded.add(eMsg);
+            }
           }
           break;
       }
@@ -10304,10 +10345,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     final idx = _messages.indexWhere(
-      (m) => m.questionId == questionId && m.type == MessageType.question,
+      (m) =>
+          m.questionId == questionId &&
+          (m.type == MessageType.question ||
+              m.type == MessageType.elicitationUrl),
     );
     if (idx >= 0) {
       _messages[idx].answered = true;
+      _messages[idx].answers = Map<String, String>.from(answers);
     }
     _sendToActiveSessionServer({
       'type': 'answer',

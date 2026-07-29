@@ -66,6 +66,7 @@ class ChatMessage {
   final String? questionId;
   final List<QuestionItem>? questions;
   bool answered;
+  Map<String, String>? answers;
 
   // Email preview fields (for send confirmation)
   final Map<String, String>? emailPreview;
@@ -121,6 +122,7 @@ class ChatMessage {
     this.questionId,
     this.questions,
     this.answered = false,
+    this.answers,
     this.emailPreview,
     this.expired = false,
     this.authRequestId,
@@ -270,6 +272,7 @@ class ChatMessage {
     required String questionId,
     required List<QuestionItem> questions,
     Map<String, String>? emailPreview,
+    Map<String, String>? answers,
   }) {
     return ChatMessage(
       id: 'question_$questionId',
@@ -278,6 +281,7 @@ class ChatMessage {
       timestamp: DateTime.now(),
       questionId: questionId,
       questions: questions,
+      answers: answers,
       emailPreview: emailPreview,
     );
   }

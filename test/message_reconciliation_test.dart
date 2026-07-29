@@ -314,6 +314,52 @@ void main() {
     });
   });
 
+  test('newer history completion updates a live question and its answer', () {
+    final live = ChatMessage.question(
+      questionId: 'question-1',
+      questions: const [],
+    )..revision = 1;
+    final snapshot =
+        ChatMessage.question(
+            questionId: 'question-1',
+            questions: const [],
+            answers: const {'Deploy now?': 'Yes'},
+          )
+          ..answered = true
+          ..revision = 2;
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot([snapshot], [live]);
+
+    expect(reconciled, [same(live)]);
+    expect(live.answered, isTrue);
+    expect(live.answers, {'Deploy now?': 'Yes'});
+    expect(live.revision, 2);
+  });
+
+  test('stale pending replay cannot revive a completed secure-input card', () {
+    final completed =
+        ChatMessage.secureInput(
+            requestId: 'secure-1',
+            label: 'TOKEN',
+            status: 'saved',
+          )
+          ..answered = true
+          ..revision = 2;
+    final stalePending = ChatMessage.secureInput(
+      requestId: 'secure-1',
+      label: 'TOKEN',
+    )..revision = 1;
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot(
+      [stalePending],
+      [completed],
+    );
+
+    expect(reconciled, [same(completed)]);
+    expect(completed.answered, isTrue);
+    expect(completed.toolInput?['status'], 'saved');
+  });
+
   test('keeps a live tool call missing from a stale snapshot', () {
     final live = ChatMessage.toolCall(
       tool: 'Bash',
