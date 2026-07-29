@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
+import 'structured_data_view.dart';
 import 'tool_output_block.dart';
 
 class CodexActivityCard extends StatefulWidget {
@@ -25,6 +26,12 @@ class CodexActivityCard extends StatefulWidget {
           'ScheduleReminder',
           'Monitor',
           'Workflow',
+          'ScheduleTask',
+          'TaskBatch',
+          'AgentSession',
+          'SearchSkills',
+          'ReadSkill',
+          'NotifyUser',
         }.contains(message.toolName)) {
       return '';
     }
@@ -422,6 +429,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
 
   Widget _section(String label, String content) {
     if (content.trim().isEmpty) return const SizedBox.shrink();
+    final structured = decodeJsonDocument(content);
     return Container(
       constraints: const BoxConstraints(maxHeight: 280),
       decoration: const BoxDecoration(
@@ -434,14 +442,17 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _sectionLabel(label, padding: EdgeInsets.zero),
-              SelectableText(
-                content,
-                style: GoogleFonts.jetBrainsMono(
-                  fontSize: 10.5,
-                  color: const Color(0xFFCDD6F4),
-                  height: 1.4,
+              if (structured != null)
+                StructuredDataView(value: structured, accent: _accent)
+              else
+                SelectableText(
+                  content,
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 10.5,
+                    color: const Color(0xFFCDD6F4),
+                    height: 1.4,
+                  ),
                 ),
-              ),
             ],
           ),
         ),

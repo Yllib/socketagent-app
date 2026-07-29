@@ -91,4 +91,32 @@ void main() {
     );
     expect(normalized.any((entry) => entry['toolUseId'] == 'future-1'), isTrue);
   });
+
+  test('removes duplicate raw NotifyUser calls but keeps its receipt', () {
+    final normalized = normalizeSendFileHistoryEntries([
+      {
+        'role': 'tool_call',
+        'toolName': 'NotifyUser',
+        'toolUseId': 'notify-1',
+        'toolInput': {'title': 'Alert', 'body': 'Details'},
+      },
+      {
+        'role': 'tool_result',
+        'toolUseId': 'notify-1',
+        'toolOutput': 'Notification sent',
+      },
+      {
+        'role': 'notification',
+        'status': 'manual',
+        'content': 'Alert\nDetails',
+        'toolInput': {'title': 'Alert', 'body': 'Details'},
+      },
+    ]);
+
+    expect(
+      normalized.any((entry) => entry['toolUseId'] == 'notify-1'),
+      isFalse,
+    );
+    expect(normalized.single['role'], 'notification');
+  });
 }

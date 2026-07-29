@@ -27,6 +27,8 @@ import 'secure_input_card.dart';
 import 'html_plan_card.dart';
 import 'workflow_card.dart';
 import 'codex_activity_card.dart';
+import 'notification_receipt_card.dart';
+import 'socketagent_tool_card.dart';
 import '../models/composer_attachment.dart';
 
 class ChatView extends StatefulWidget {
@@ -1068,6 +1070,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         if (msg.toolName == 'ScheduleReminder') {
           return ReminderCard(message: msg);
         }
+        if (SocketAgentToolCard.supports(msg)) {
+          return SocketAgentToolCard(message: msg);
+        }
         if (CodexActivityCard.supports(msg)) {
           return CodexActivityCard(message: msg);
         }
@@ -1250,6 +1255,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     // Todo updates get a dedicated card
     if (isTodoUpdate) {
       return _buildTodoUpdateCard(msg);
+    }
+    if (status == 'manual') {
+      return NotificationReceiptCard(message: msg);
     }
 
     // Background bash completion — render as a ToolOutputBlock mirroring the original card

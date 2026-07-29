@@ -9,7 +9,9 @@ import '../widgets/codex_command_card.dart';
 import '../widgets/codex_plan_card.dart';
 import '../widgets/file_card.dart';
 import '../widgets/message_bubble.dart';
+import '../widgets/notification_receipt_card.dart';
 import '../widgets/reminder_card.dart';
+import '../widgets/socketagent_tool_card.dart';
 import '../widgets/speak_card.dart';
 import '../widgets/tool_output_block.dart';
 
@@ -795,13 +797,20 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
               ),
             );
           } else if (content.trim().isNotEmpty) {
+            final status = entry['status'] as String? ?? 'info';
             loaded.add(
               ChatMessage(
                 id: 'archive_system_${loaded.length}',
                 sender: MessageSender.system,
-                type: MessageType.text,
+                type: status == 'manual'
+                    ? MessageType.taskNotification
+                    : MessageType.text,
                 timestamp: _entryTimestamp(entry),
                 textContent: content,
+                toolName: status,
+                toolInput: entry['toolInput'] is Map
+                    ? Map<String, dynamic>.from(entry['toolInput'] as Map)
+                    : null,
               ),
             );
           }
@@ -1021,6 +1030,9 @@ class _ArchiveChatMessageTile extends StatelessWidget {
         if (message.toolName == 'ScheduleReminder') {
           return ReminderCard(message: message);
         }
+        if (SocketAgentToolCard.supports(message)) {
+          return SocketAgentToolCard(message: message);
+        }
         return ToolOutputBlock(message: message);
       case MessageType.toolResult:
         return ToolOutputBlock(message: message);
@@ -1028,6 +1040,11 @@ class _ArchiveChatMessageTile extends StatelessWidget {
         return CodexPlanCard(msg: message);
       case MessageType.codexCommand:
         return CodexCommandCard(message: message);
+      case MessageType.taskNotification:
+        if (message.toolName == 'manual') {
+          return NotificationReceiptCard(message: message);
+        }
+        return MessageBubble(message: message);
       default:
         if (message.textContent.trim().isEmpty) return const SizedBox.shrink();
         return MessageBubble(message: message);

@@ -4902,6 +4902,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (msg['sessionCompletion'] == true && sid.isNotEmpty) {
             _markSessionIdle(sid, serverId: serverId);
           }
+          if (msg['kind'] == 'tool_notification' && isForVisibleSession) {
+            final eventId =
+                msg['eventId']?.toString() ??
+                'notify_${DateTime.now().microsecondsSinceEpoch}';
+            if (!_messages.any((message) => message.id == eventId)) {
+              final title = msg['title']?.toString().trim() ?? '';
+              final body = msg['body']?.toString().trim() ?? '';
+              final receipt = ChatMessage(
+                id: eventId,
+                sender: MessageSender.system,
+                type: MessageType.taskNotification,
+                timestamp: DateTime.now(),
+                textContent: body.isEmpty ? title : '$title\n$body',
+                toolName: 'manual',
+                toolInput: {'title': title, 'body': body},
+              );
+              receipt.entryId = eventId;
+              _messages.add(receipt);
+              notifyListeners();
+            }
+          }
           break;
         case 'upload_chunk_ack':
           {
@@ -5752,6 +5773,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     if (tool.endsWith('RequestSecureInput')) {
+      if (toolUseId.isNotEmpty) {
+        _toolEventReconciler.discard(toolUseId);
+        _suppressedToolUseIds.add(toolUseId);
+      }
+      return;
+    }
+    if (tool == 'NotifyUser') {
       if (toolUseId.isNotEmpty) {
         _toolEventReconciler.discard(toolUseId);
         _suppressedToolUseIds.add(toolUseId);
@@ -8622,6 +8650,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               timestamp: DateTime.now(),
               textContent: content,
               toolName: status,
+              toolInput: entry['toolInput'] is Map
+                  ? Map<String, dynamic>.from(entry['toolInput'] as Map)
+                  : null,
             );
             notifMsg.originToolUseId = originToolUseId;
             notifMsg.parentToolUseId =
@@ -8967,6 +8998,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           }
           if (toolName.endsWith('RequestSecureInput')) {
+            if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
+            break;
+          }
+          if (toolName == 'NotifyUser') {
             if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
             break;
           }

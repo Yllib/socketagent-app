@@ -82,6 +82,7 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
   // cards from both device cache and server history; the real message/plan is
   // retained separately.
   final misclassifiedIds = <String>{};
+  final duplicateNotifyIds = <String>{};
   for (final entry in sendFileNormalized) {
     final input = entry['toolInput'];
     final itemType = input is Map ? input['itemType']?.toString() ?? '' : '';
@@ -93,11 +94,22 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
       final id = entry['toolUseId']?.toString() ?? '';
       if (id.isNotEmpty) misclassifiedIds.add(id);
     }
+    final rawName = entry['toolName']?.toString() ?? '';
+    final appTool = input is Map ? input['_codexTool']?.toString() ?? '' : '';
+    if (entry['role'] == 'tool_call' &&
+        (appTool == 'NotifyUser' ||
+            rawName == 'NotifyUser' ||
+            rawName.endsWith('__NotifyUser') ||
+            rawName.endsWith('/NotifyUser'))) {
+      final id = entry['toolUseId']?.toString() ?? '';
+      if (id.isNotEmpty) duplicateNotifyIds.add(id);
+    }
   }
   return sendFileNormalized
       .where(
         (entry) =>
-            !misclassifiedIds.contains(entry['toolUseId']?.toString() ?? ''),
+            !misclassifiedIds.contains(entry['toolUseId']?.toString() ?? '') &&
+            !duplicateNotifyIds.contains(entry['toolUseId']?.toString() ?? ''),
       )
       .toList();
 }

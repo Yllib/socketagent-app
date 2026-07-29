@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
+import 'structured_data_view.dart';
 
 bool _isStructuredToolContent(dynamic value) {
   if (value is List) {
@@ -157,6 +158,13 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       widget.message.toolImageFilePath != null &&
       widget.message.toolImageFilePath!.isNotEmpty;
   bool get _isImageCard => _hasImage || _hasPendingImage;
+  Map<String, dynamic> get _visibleToolInput {
+    final input = widget.message.toolInput;
+    if (input == null) return const {};
+    return Map<String, dynamic>.fromEntries(
+      input.entries.where((entry) => !entry.key.startsWith('_')),
+    );
+  }
 
   Uint8List? get _inlineImageBytes {
     final imageData = widget.message.toolImageData;
@@ -323,6 +331,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final hasExpandableContent =
         _isBash ||
         _isWriteTool ||
+        _visibleToolInput.isNotEmpty ||
         hasOutput ||
         editDiff != null ||
         patchDiff != null ||
@@ -546,9 +555,11 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               !_isApplyPatchTool &&
               !_isWriteTool &&
               !_isTaskOutput &&
-              hasOutput &&
-              _expanded)
-            _buildOutputContainer(output),
+              _expanded) ...[
+            if (_visibleToolInput.isNotEmpty)
+              _buildStructuredInputContainer(_visibleToolInput),
+            if (hasOutput) _buildOutputContainer(output),
+          ],
           // Inline image (visible when expanded)
           if (_hasImage && _expanded) _buildInlineImage(),
           // Placeholder for images loading from history
@@ -784,6 +795,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   }
 
   Widget _buildOutputContainer(String? text, {bool muted = false}) {
+    final structured = text == null ? null : decodeJsonDocument(text);
     return Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
@@ -792,14 +804,54 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       child: ScrollPassthrough(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(12),
-          child: SelectableText(
-            text ?? '',
-            style: GoogleFonts.jetBrainsMono(
-              fontSize: 11,
-              color: muted ? const Color(0xFF6C7086) : const Color(0xFFCDD6F4),
-              height: 1.4,
-              fontStyle: muted ? FontStyle.italic : FontStyle.normal,
-            ),
+          child: structured != null
+              ? StructuredDataView(
+                  value: structured,
+                  accent: _toolAccentColor(widget.message.toolName ?? 'Tool'),
+                )
+              : SelectableText(
+                  text ?? '',
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 11,
+                    color: muted
+                        ? const Color(0xFF6C7086)
+                        : const Color(0xFFCDD6F4),
+                    height: 1.4,
+                    fontStyle: muted ? FontStyle.italic : FontStyle.normal,
+                  ),
+                ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStructuredInputContainer(Map<String, dynamic> input) {
+    return Container(
+      constraints: const BoxConstraints(maxHeight: 300),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
+      ),
+      child: ScrollPassthrough(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'INPUT',
+                style: TextStyle(
+                  color: _toolAccentColor(widget.message.toolName ?? 'Tool'),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+              const SizedBox(height: 7),
+              StructuredDataView(
+                value: input,
+                accent: _toolAccentColor(widget.message.toolName ?? 'Tool'),
+              ),
+            ],
           ),
         ),
       ),
