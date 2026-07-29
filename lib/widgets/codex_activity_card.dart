@@ -18,6 +18,16 @@ class CodexActivityCard extends StatefulWidget {
 
   static String _kindFor(ChatMessage message) {
     final explicit = message.toolInput?['_codexItemType']?.toString() ?? '';
+    if (explicit == 'mcpToolCall' &&
+        const {
+          'SendFile',
+          'Speak',
+          'ScheduleReminder',
+          'Monitor',
+          'Workflow',
+        }.contains(message.toolName)) {
+      return '';
+    }
     if (explicit.isNotEmpty) return explicit;
 
     // History created before the app-server coverage audit does not contain

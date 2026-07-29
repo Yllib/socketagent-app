@@ -108,6 +108,30 @@ void main() {
     expect(find.text('Tool'), findsNothing);
   });
 
+  test('SocketAgent native tools are not captured by the MCP renderer', () {
+    for (final tool in const [
+      'SendFile',
+      'Speak',
+      'ScheduleReminder',
+      'Monitor',
+      'Workflow',
+    ]) {
+      final native = completedTool(
+        tool: tool,
+        input: {
+          '_codexItemType': 'mcpToolCall',
+          '_codexServer': 'socketagent_app',
+          '_codexTool': tool,
+        },
+      );
+      expect(
+        CodexActivityCard.supports(native),
+        isFalse,
+        reason: '$tool must retain its native card',
+      );
+    }
+  });
+
   testWidgets('sleep and unknown schema items have explicit tailored labels', (
     tester,
   ) async {

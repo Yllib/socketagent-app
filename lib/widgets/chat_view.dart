@@ -1025,9 +1025,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           onRetractPending: widget.onRetractQueuedMessage,
         );
       case MessageType.toolCall:
-        if (CodexActivityCard.supports(msg)) {
-          return CodexActivityCard(message: msg);
-        }
         if (msg.toolName == 'Workflow') {
           final embedded = msg.toolInput?['_workflow_state'];
           Map<String, dynamic>? state = embedded is Map
@@ -1070,6 +1067,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         }
         if (msg.toolName == 'ScheduleReminder') {
           return ReminderCard(message: msg);
+        }
+        if (CodexActivityCard.supports(msg)) {
+          return CodexActivityCard(message: msg);
         }
         // Task tool calls get a dedicated SubAgentCard
         if ((msg.toolName == 'Task' || msg.toolName == 'Agent') &&
