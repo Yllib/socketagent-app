@@ -67,7 +67,7 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
     }
   }
 
-  return [
+  final sendFileNormalized = [
     for (var index = 0; index < entries.length; index++)
       if (!removedIndexes.contains(index) &&
           !(entries[index]['role'] == 'tool_result' &&
@@ -76,4 +76,28 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
               )))
         entries[index],
   ];
+
+  // SocketAgent 1.0.198 briefly emitted a future-item diagnostic for the
+  // start frame of known agentMessage and plan items. Suppress those corrupted
+  // cards from both device cache and server history; the real message/plan is
+  // retained separately.
+  final misclassifiedIds = <String>{};
+  for (final entry in sendFileNormalized) {
+    final input = entry['toolInput'];
+    final itemType = input is Map ? input['itemType']?.toString() ?? '' : '';
+    if (entry['role'] == 'tool_call' &&
+        entry['toolName'] == 'CodexItem' &&
+        input is Map &&
+        input['_codexItemType'] == 'unrecognized' &&
+        (itemType == 'agentMessage' || itemType == 'plan')) {
+      final id = entry['toolUseId']?.toString() ?? '';
+      if (id.isNotEmpty) misclassifiedIds.add(id);
+    }
+  }
+  return sendFileNormalized
+      .where(
+        (entry) =>
+            !misclassifiedIds.contains(entry['toolUseId']?.toString() ?? ''),
+      )
+      .toList();
 }

@@ -13,6 +13,23 @@ class CodexActivityCard extends StatefulWidget {
   const CodexActivityCard({super.key, required this.message});
 
   static bool supports(ChatMessage message) {
+    return _supportsKind(_kindFor(message));
+  }
+
+  static String _kindFor(ChatMessage message) {
+    final explicit = message.toolInput?['_codexItemType']?.toString() ?? '';
+    if (explicit.isNotEmpty) return explicit;
+
+    // History created before the app-server coverage audit does not contain
+    // _codexItemType. Infer only unambiguous legacy tool names so old cards
+    // receive the same renderer without rewriting session history.
+    final toolName = message.toolName ?? '';
+    if (toolName == 'WebSearch') return 'webSearch';
+    if (toolName.startsWith('mcp:')) return 'mcpToolCall';
+    return '';
+  }
+
+  static bool _supportsKind(String kind) {
     return const {
       'webSearch',
       'mcpToolCall',
@@ -25,7 +42,7 @@ class CodexActivityCard extends StatefulWidget {
       'modelVerification',
       'autoApprovalReview',
       'unrecognized',
-    }.contains(message.toolInput?['_codexItemType']?.toString());
+    }.contains(kind);
   }
 
   @override
@@ -37,7 +54,16 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
 
   Map<String, dynamic> get _input =>
       widget.message.toolInput ?? const <String, dynamic>{};
-  String get _kind => _input['_codexItemType']?.toString() ?? '';
+  String get _kind {
+    final inferred = CodexActivityCard._kindFor(widget.message);
+    return CodexActivityCard._supportsKind(inferred) ? inferred : '';
+  }
+
+  List<String> get _legacyMcpParts {
+    final name = widget.message.toolName ?? '';
+    if (!name.startsWith('mcp:')) return const [];
+    return name.substring(4).split('/');
+  }
 
   Color get _accent {
     switch (_kind) {
@@ -111,9 +137,12 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
         }
       case 'mcpToolCall':
         final context = _asMap(_input['_codexAppContext']);
-        return context['appName']?.toString().trim().isNotEmpty == true
-            ? context['appName'].toString()
-            : _input['_codexServer']?.toString() ?? 'MCP';
+        if (context['appName']?.toString().trim().isNotEmpty == true) {
+          return context['appName'].toString();
+        }
+        final server = _input['_codexServer']?.toString().trim() ?? '';
+        if (server.isNotEmpty) return server;
+        return _legacyMcpParts.isNotEmpty ? _legacyMcpParts.first : 'MCP';
       case 'dynamicToolCall':
         return _input['_codexNamespace']?.toString().trim().isNotEmpty == true
             ? _input['_codexNamespace'].toString()
@@ -143,14 +172,18 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
     switch (_kind) {
       case 'webSearch':
         final action = _asMap(_input['action']);
+        final queries = action['queries'] as List?;
         return action['pattern']?.toString() ??
             action['url']?.toString() ??
+            (queries?.isNotEmpty == true ? queries!.first.toString() : null) ??
             _input['query']?.toString() ??
             '';
       case 'mcpToolCall':
-        return _input['_codexTool']?.toString() ??
-            widget.message.toolName ??
-            '';
+        final tool = _input['_codexTool']?.toString().trim() ?? '';
+        if (tool.isNotEmpty) return tool;
+        return _legacyMcpParts.length > 1
+            ? _legacyMcpParts.skip(1).join('/')
+            : widget.message.toolName ?? '';
       case 'dynamicToolCall':
         return _input['_codexTool']?.toString() ??
             widget.message.toolName ??

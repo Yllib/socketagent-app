@@ -59,4 +59,36 @@ void main() {
       hasLength(2),
     );
   });
+
+  test('removes misclassified known Codex items and their results', () {
+    final normalized = normalizeSendFileHistoryEntries([
+      {
+        'role': 'tool_call',
+        'toolName': 'CodexItem',
+        'toolUseId': 'msg-1',
+        'toolInput': {
+          '_codexItemType': 'unrecognized',
+          'itemType': 'agentMessage',
+        },
+      },
+      {'role': 'tool_result', 'toolUseId': 'msg-1', 'toolOutput': 'unexpected'},
+      {'role': 'assistant', 'content': 'The real message'},
+      {
+        'role': 'tool_call',
+        'toolName': 'CodexItem',
+        'toolUseId': 'future-1',
+        'toolInput': {
+          '_codexItemType': 'unrecognized',
+          'itemType': 'futureProtocolItem',
+        },
+      },
+    ]);
+
+    expect(normalized.where((entry) => entry['toolUseId'] == 'msg-1'), isEmpty);
+    expect(
+      normalized.any((entry) => entry['content'] == 'The real message'),
+      isTrue,
+    );
+    expect(normalized.any((entry) => entry['toolUseId'] == 'future-1'), isTrue);
+  });
 }

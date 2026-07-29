@@ -5729,6 +5729,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     final toolUseId = msg['toolUseId']?.toString() ?? '';
+    final diagnosticItemType = input['itemType']?.toString() ?? '';
+    if (tool == 'CodexItem' &&
+        input['_codexItemType'] == 'unrecognized' &&
+        (diagnosticItemType == 'agentMessage' ||
+            diagnosticItemType == 'plan')) {
+      if (toolUseId.isNotEmpty) {
+        _toolEventReconciler.discard(toolUseId);
+        _suppressedToolUseIds.add(toolUseId);
+      }
+      return;
+    }
     final subagentType = input['subagent_type']?.toString() ?? '';
     final isSubagentTool =
         (tool == 'Task' || tool == 'Agent') &&

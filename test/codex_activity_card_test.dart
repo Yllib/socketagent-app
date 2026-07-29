@@ -63,6 +63,30 @@ void main() {
     );
   });
 
+  testWidgets('legacy web search history infers the tailored card', (
+    tester,
+  ) async {
+    final legacy = completedTool(
+      tool: 'WebSearch',
+      input: {
+        'query': null,
+        'action': {
+          'type': 'search',
+          'queries': ['site:github.com socketagent'],
+        },
+      },
+      output: jsonEncode({
+        'type': 'search',
+        'queries': ['site:github.com socketagent'],
+      }),
+    );
+
+    expect(CodexActivityCard.supports(legacy), isTrue);
+    await pumpCard(tester, legacy);
+    expect(find.text('Web Search'), findsOneWidget);
+    expect(find.text('WebSearch'), findsNothing);
+  });
+
   testWidgets('MCP card names the app and action instead of showing Tool', (
     tester,
   ) async {
