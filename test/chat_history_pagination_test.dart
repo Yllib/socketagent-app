@@ -241,7 +241,7 @@ void main() {
     position.jumpTo(position.maxScrollExtent * 0.45);
     final heldPixels = position.pixels;
 
-    key.currentState!.appendStreamingText(40);
+    key.currentState!.appendNewResponse('new row while held');
     await tester.pump();
     await tester.pump();
     expect(position.pixels, closeTo(heldPixels, 0.5));
@@ -251,19 +251,52 @@ void main() {
     await tester.pump();
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
 
-    position.jumpTo(position.maxScrollExtent * 0.45);
+    await tester.drag(find.byType(ListView).first, const Offset(0, 160));
+    await tester.pumpAndSettle();
+    expect(position.pixels, lessThan(position.maxScrollExtent));
+    final manuallySelectedPixels = position.pixels;
+
     key.currentState!.appendStreamingText(40);
     await tester.pump();
     await tester.pump();
-    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(position.pixels, closeTo(manuallySelectedPixels, 0.5));
 
-    final followedPixels = position.pixels;
-    await tester.drag(find.byType(ListView).first, const Offset(0, 160));
-    await tester.pumpAndSettle();
-    expect(position.pixels, closeTo(followedPixels, 0.5));
+    key.currentState!.appendNewResponse('new row while following');
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
   });
 
-  testWidgets('a locally sent prompt remains visible while FOLLOW is enabled', (
+  testWidgets('FOLLOW ignores unrelated rebuilds while the reader is up', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(position.maxScrollExtent * 0.45);
+    await tester.pump();
+    final selectedPixels = position.pixels;
+
+    key.currentState!.showOuterBanner();
+    await tester.pump();
+    await tester.pump();
+
+    expect(position.pixels, closeTo(selectedPixels, 0.5));
+  });
+
+  testWidgets('FOLLOW reacts to a new prompt but not later history backfill', (
     WidgetTester tester,
   ) async {
     final key = GlobalKey<_HistoryHarnessState>();
@@ -292,13 +325,13 @@ void main() {
 
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
     expect(find.text('new local prompt'), findsOneWidget);
+    final pixelsAfterPrompt = position.pixels;
 
     key.currentState!.completeLoad(prependCount: 20);
     await tester.pump();
     await tester.pump();
 
-    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
-    expect(find.text('new local prompt'), findsOneWidget);
+    expect(position.pixels, closeTo(pixelsAfterPrompt, 0.5));
     expect(tester.takeException(), isNull);
   });
 
@@ -747,7 +780,21 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
         ),
       ];
     });
-    chatViewKey.currentState?.revealLatestUserPrompt();
+  }
+
+  void appendNewResponse(String text) {
+    setState(() {
+      messages = [
+        ...messages,
+        ChatMessage(
+          id: 'new-response-${messages.length}',
+          sender: MessageSender.assistant,
+          type: MessageType.text,
+          timestamp: DateTime.now(),
+          textContent: text,
+        ),
+      ];
+    });
   }
 
   void completeLoad({required int prependCount}) {

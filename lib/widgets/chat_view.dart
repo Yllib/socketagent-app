@@ -31,35 +31,6 @@ import 'notification_receipt_card.dart';
 import 'socketagent_tool_card.dart';
 import '../models/composer_attachment.dart';
 
-class _ChatViewportPhysics extends ScrollPhysics {
-  final bool Function() isFollowing;
-
-  const _ChatViewportPhysics({required this.isFollowing, super.parent});
-
-  @override
-  _ChatViewportPhysics applyTo(ScrollPhysics? ancestor) => _ChatViewportPhysics(
-    isFollowing: isFollowing,
-    parent: buildParent(ancestor),
-  );
-
-  @override
-  double applyPhysicsToUserOffset(ScrollMetrics position, double offset) =>
-      isFollowing() ? 0 : super.applyPhysicsToUserOffset(position, offset);
-
-  @override
-  double adjustPositionForNewDimensions({
-    required ScrollMetrics oldPosition,
-    required ScrollMetrics newPosition,
-    required bool isScrolling,
-    required double velocity,
-  }) {
-    if (isFollowing()) return newPosition.maxScrollExtent;
-    return newPosition.pixels
-        .clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)
-        .toDouble();
-  }
-}
-
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final String? sessionStorageKey;
@@ -152,7 +123,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   int _transcriptTargetSeekAttempts = 0;
   bool _transcriptTargetLoadRequested = false;
   String? _lastTranscriptTargetIdentity;
-  late bool _followLatestMode;
 
   bool get _hasTranscriptTarget =>
       (widget.targetEntryId?.isNotEmpty ?? false) ||
@@ -162,7 +132,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _followLatestMode = widget.followLatest;
     _scrollController = ScrollController();
     _reindexAllMessages(force: true);
     _scrollController.addListener(_onScroll);
@@ -427,14 +396,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
   }
 
-  /// FOLLOW exposes a single explicit way to reveal newly submitted content.
-  /// HOLD intentionally does nothing: no message, tool, image, or history
-  /// update is allowed to issue a compensating scroll command.
-  void revealLatestUserPrompt() {
-    if (!widget.followLatest) return;
-    _jumpToBottom();
-  }
-
   bool _historyWasPrepended(ChatView oldWidget) {
     final added = widget.messages.length - oldWidget.messages.length;
     if (added <= 0 || oldWidget.messages.isEmpty) return false;
@@ -470,7 +431,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _followLatestMode = widget.followLatest;
     _reindexAllMessages();
 
     final targetIdentity = _transcriptTargetIdentity();
@@ -537,8 +497,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     if (historyWindowWasReplaced) {
       if (_hasTranscriptTarget) {
         _scheduleTranscriptTargetSeek();
-      } else if (widget.followLatest) {
-        _jumpToBottom();
       }
       _maybeBackfillViewport();
       return;
@@ -552,6 +510,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       _maybeBackfillViewport();
       _scheduleHistoryPrefetchIfNeeded();
       return;
+    }
+
+    if (widget.followLatest &&
+        widget.messages.length > oldWidget.messages.length) {
+      _jumpToBottom();
     }
 
     if (_hasTranscriptTarget) {
@@ -637,17 +600,27 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   void _jumpToBottom() {
+    final sessionStorageKey = widget.sessionStorageKey;
+    bool stillApplies() =>
+        mounted &&
+        widget.followLatest &&
+        widget.sessionStorageKey == sessionStorageKey &&
+        !_hasTranscriptTarget &&
+        _scrollController.hasClients;
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          !widget.followLatest ||
-          _hasTranscriptTarget ||
-          !_scrollController.hasClients) {
-        return;
-      }
+      if (!stillApplies()) return;
       final position = _scrollController.position;
-      if ((position.pixels - position.maxScrollExtent).abs() >= 0.5) {
-        position.jumpTo(position.maxScrollExtent);
-      }
+      position.jumpTo(position.maxScrollExtent);
+
+      // A lazy list learns the exact final-row extent only after that row is
+      // mounted by the first jump. Correct once on the immediately following
+      // frame; never retry or react to later unrelated layouts.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!stillApplies()) return;
+        final settledPosition = _scrollController.position;
+        settledPosition.jumpTo(settledPosition.maxScrollExtent);
+      });
     });
   }
 
@@ -768,10 +741,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                     'chat-list:${widget.sessionStorageKey ?? ''}',
                   ),
                   controller: _scrollController,
-                  physics: _ChatViewportPhysics(
-                    isFollowing: () => _followLatestMode,
-                    parent: const ClampingScrollPhysics(),
-                  ),
                   findChildIndexCallback: (key) => listIndexByMessageKey[key],
                   padding: const EdgeInsets.only(top: 8, bottom: 8),
                   itemCount: itemCount,
@@ -1376,10 +1345,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
     return ListView.builder(
       controller: _scrollController,
-      physics: _ChatViewportPhysics(
-        isFollowing: () => _followLatestMode,
-        parent: const ClampingScrollPhysics(),
-      ),
       padding: const EdgeInsets.only(top: 4, bottom: 8),
       itemCount: items.length,
       itemBuilder: (context, index) => RawEventCard(item: items[index]),

@@ -229,10 +229,6 @@ class HomeScreenState extends State<HomeScreen> {
     }
     if (text.isEmpty && !provider.hasAttachment) return;
     provider.sendPrompt(text, priority: priority);
-    // A locally submitted prompt is different from passive streaming output:
-    // it must always become visible even if reader/history anchoring currently
-    // thinks the viewport should stay put.
-    _chatViewKey.currentState?.revealLatestUserPrompt();
     _textController.clear();
     provider.saveDraft(''); // Clear draft on send
     _focusNode.requestFocus();
