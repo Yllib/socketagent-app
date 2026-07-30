@@ -5,13 +5,11 @@ import '../../services/tts_engine.dart';
 import '../../services/websocket_service.dart';
 import '../protected_files_screen.dart';
 import '../file_manager_screen.dart';
-import '../main_shell_screen.dart';
 import 'account_card.dart';
 import 'servers_screen.dart';
 import 'voice_speech_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
-import 'about_screen.dart';
 
 class SettingsHub extends StatelessWidget {
   const SettingsHub({super.key});
@@ -96,24 +94,6 @@ class SettingsHub extends StatelessWidget {
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const FileManagerScreen()),
                 ),
-              ),
-
-              // About
-              _buildCategoryTile(
-                context,
-                icon: Icons.info_outline,
-                title: 'About',
-                subtitle: 'Samsung AI button, config transfer',
-                onTap: () {
-                  final shell = context
-                      .findAncestorStateOfType<MainShellScreenState>();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) =>
-                          AboutScreen(updateService: shell?.updateService),
-                    ),
-                  );
-                },
               ),
             ],
           );

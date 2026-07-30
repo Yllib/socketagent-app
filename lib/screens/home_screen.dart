@@ -901,8 +901,8 @@ class HomeScreenState extends State<HomeScreen> {
         borderRadius: BorderRadius.circular(16),
         onTap: () => setState(() => _followLatest = !following),
         child: _buildChipBody(
-          following ? Icons.toggle_on : Icons.toggle_off,
-          following ? 'AUTO SCROLL: ON' : 'AUTO SCROLL: OFF',
+          Icons.vertical_align_bottom,
+          'AUTO',
           active: following,
           iconColor: following
               ? theme.colorScheme.onPrimaryContainer

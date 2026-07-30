@@ -11,7 +11,6 @@ import 'archive_screen.dart';
 import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
-import 'settings/about_screen.dart';
 
 class SessionsTab extends StatefulWidget {
   const SessionsTab({super.key});
@@ -1768,6 +1767,10 @@ class _SessionsTabState extends State<SessionsTab> {
       return const SizedBox.shrink();
     }
     final info = shell.updateService.updateInfo!;
+    final updateService = shell.updateService;
+    final downloading = updateService.isDownloading;
+    final downloaded = updateService.hasDownloadedApk;
+    final progress = updateService.downloadProgress;
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
       decoration: BoxDecoration(
@@ -1809,23 +1812,40 @@ class _SessionsTabState extends State<SessionsTab> {
             ),
             const SizedBox(width: 4),
             FilledButton(
-              onPressed: () {
-                shell.dismissUpdateBanner();
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => AboutScreen(
-                      updateService: shell.updateService,
-                      autoStartDownload: true,
-                    ),
-                  ),
-                );
-              },
+              onPressed: downloading
+                  ? null
+                  : downloaded
+                  ? updateService.installDownloaded
+                  : () => unawaited(updateService.downloadUpdate()),
               style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: const Text('Update', style: TextStyle(fontSize: 12)),
+              child: downloading
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(
+                            value: progress,
+                            strokeWidth: 2,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          progress == null
+                              ? 'Downloading'
+                              : '${(progress * 100).round()}%',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ],
+                    )
+                  : Text(
+                      downloaded ? 'Install' : 'Download',
+                      style: const TextStyle(fontSize: 12),
+                    ),
             ),
           ],
         ),

@@ -153,14 +153,17 @@ class UpdateService extends ChangeNotifier {
       '',
     );
     if (encoded.isEmpty || envelope['encoding'] != 'base64') {
-      throw const FormatException('GitHub response did not contain base64 data');
+      throw const FormatException(
+        'GitHub response did not contain base64 data',
+      );
     }
     final content = utf8.decode(base64Decode(encoded));
     return Map<String, dynamic>.from(jsonDecode(content) as Map);
   }
 
-  /// Download the APK and open the installer.
-  Future<void> downloadAndInstall() async {
+  /// Download and verify the APK without opening the installer. Download state
+  /// lives on this service, so it continues while callers navigate elsewhere.
+  Future<void> downloadUpdate() async {
     if (_updateInfo == null || _updateInfo!.downloadUrl.isEmpty) return;
     if (_isDownloading) return;
     if (_updateInfo!.sha256.isEmpty) {
@@ -169,10 +172,7 @@ class UpdateService extends ChangeNotifier {
       return;
     }
     await _refreshDownloadedApkState();
-    if (_hasDownloadedApk) {
-      await installDownloaded();
-      return;
-    }
+    if (_hasDownloadedApk) return;
 
     _isDownloading = true;
     _error = null;
@@ -211,13 +211,24 @@ class UpdateService extends ChangeNotifier {
       _hasDownloadedApk = true;
       _downloadedApkPath = apkPath;
       notifyListeners();
-
-      await installDownloaded();
     } catch (e) {
       _isDownloading = false;
       await _updatePartialProgress();
       _error = 'Download failed: $e';
       notifyListeners();
+    }
+  }
+
+  /// Compatibility action for update entry points that intentionally combine
+  /// both steps. New compact controls should use downloadUpdate followed by
+  /// installDownloaded so the ready-to-install state remains explicit.
+  Future<void> downloadAndInstall() async {
+    await _refreshDownloadedApkState();
+    if (!_hasDownloadedApk) {
+      await downloadUpdate();
+    }
+    if (_hasDownloadedApk) {
+      await installDownloaded();
     }
   }
 
@@ -414,7 +425,12 @@ class UpdateService extends ChangeNotifier {
       return;
     }
     final bytes = await partFile.length();
-    _downloadProgress = bytes > 0 ? 0.0 : null;
+    final total = info.size;
+    _downloadProgress = bytes > 0
+        ? total != null && total > 0
+              ? (bytes / total).clamp(0.0, 1.0)
+              : 0.0
+        : null;
   }
 
   Future<Directory> _updatesDirectory() async {

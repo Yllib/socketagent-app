@@ -13,13 +13,14 @@ import '../../services/chat_provider.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../file_manager_screen.dart';
+import '../config_export_screen.dart';
+import '../config_import_screen.dart';
 import '../ibs_auth_screen.dart';
 import '../outlook_auth_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
 import '../paywall_screen.dart';
 import 'adb_bridge_screen.dart';
-import 'about_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
 import 'voice_speech_screen.dart';
@@ -73,14 +74,6 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     if (mounted) setState(() => _currentVersion = info.version);
   }
 
-  void _openAbout() {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => AboutScreen(updateService: updateService),
-      ),
-    );
-  }
-
   Future<void> _checkForAppUpdate() async {
     if (_checkingForUpdate) return;
     setState(() => _checkingForUpdate = true);
@@ -98,8 +91,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     if (result?.updateAvailable == true) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('SocketAgent v${result!.latestVersion} is available'),
-          action: SnackBarAction(label: 'View', onPressed: _openAbout),
+          content: Text(
+            'SocketAgent v${result!.latestVersion} is available. Tap the download icon.',
+          ),
         ),
       );
       return;
@@ -107,6 +101,99 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('SocketAgent is up to date')));
+  }
+
+  Future<void> _handleUpdateAction() async {
+    if (_checkingForUpdate || updateService.isDownloading) return;
+    if (updateService.hasDownloadedApk) {
+      await updateService.installDownloaded();
+    } else if (updateService.updateAvailable) {
+      await updateService.downloadUpdate();
+    } else {
+      await _checkForAppUpdate();
+      return;
+    }
+    if (!mounted) return;
+    final error = updateService.error;
+    if (error != null && error.isNotEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  Widget _buildUpdateAction(BuildContext context) {
+    final downloading = updateService.isDownloading;
+    final downloaded = updateService.hasDownloadedApk;
+    final available = updateService.updateAvailable;
+    final progress = updateService.downloadProgress;
+
+    final tooltip = _checkingForUpdate
+        ? 'Checking for app updates'
+        : downloading
+        ? progress == null
+              ? 'Downloading app update'
+              : 'Downloading app update ${(progress * 100).round()}%'
+        : downloaded
+        ? 'Install downloaded app update'
+        : available
+        ? 'Download app update'
+        : 'Check for app updates';
+
+    Widget icon;
+    if (_checkingForUpdate) {
+      icon = const SizedBox.square(
+        dimension: 22,
+        child: CircularProgressIndicator(strokeWidth: 2),
+      );
+    } else if (downloading) {
+      icon = SizedBox.square(
+        dimension: 24,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            SizedBox.square(
+              dimension: 24,
+              child: CircularProgressIndicator(
+                value: progress,
+                strokeWidth: 2.2,
+              ),
+            ),
+            const Icon(Icons.download, size: 14),
+          ],
+        ),
+      );
+    } else {
+      icon = Icon(
+        downloaded
+            ? Icons.install_mobile
+            : available
+            ? Icons.download
+            : Icons.refresh,
+        color: downloaded || available
+            ? Theme.of(context).colorScheme.primary
+            : null,
+      );
+    }
+
+    return IconButton(
+      tooltip: tooltip,
+      icon: icon,
+      onPressed: _checkingForUpdate || downloading ? null : _handleUpdateAction,
+    );
+  }
+
+  Future<void> _openConfigImport() async {
+    final imported = await Navigator.of(
+      context,
+    ).push<int>(MaterialPageRoute(builder: (_) => const ConfigImportScreen()));
+    if (imported != null && imported > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Imported $imported server${imported == 1 ? '' : 's'}'),
+        ),
+      );
+    }
   }
 
   @override
@@ -121,32 +208,17 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           appBar: AppBar(
             title: const Text('Settings'),
             actions: [
-              IconButton(
-                tooltip: 'Check for app updates',
-                icon: _checkingForUpdate
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(
-                        Icons.refresh,
-                        color: updateService.updateAvailable
-                            ? Theme.of(context).colorScheme.primary
-                            : null,
-                      ),
-                onPressed: _checkingForUpdate ? null : _checkForAppUpdate,
-              ),
-              TextButton(
-                onPressed: _openAbout,
-                style: TextButton.styleFrom(
-                  foregroundColor: updateService.updateAvailable
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                ),
-                child: Text(
-                  _currentVersion.isEmpty ? 'Version' : 'v$_currentVersion',
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+              _buildUpdateAction(context),
+              Padding(
+                padding: const EdgeInsets.only(left: 2, right: 12),
+                child: Center(
+                  child: Text(
+                    _currentVersion.isEmpty ? 'Version' : 'v$_currentVersion',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -271,6 +343,24 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                       ),
                     ),
                   ),
+                  _NavTile(
+                    icon: Icons.qr_code,
+                    title: 'Export Server Configs',
+                    subtitle: 'Create an encrypted transfer QR code',
+                    trailing: Icons.chevron_right,
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const ConfigExportScreen(),
+                      ),
+                    ),
+                  ),
+                  _NavTile(
+                    icon: Icons.qr_code_scanner,
+                    title: 'Import Server Configs',
+                    subtitle: 'Scan or paste an encrypted config export',
+                    trailing: Icons.chevron_right,
+                    onTap: _openConfigImport,
+                  ),
                 ],
               ),
             ],
@@ -393,17 +483,25 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
       );
     }
     if (updateService.updateAvailable) {
+      final downloading = updateService.isDownloading;
+      final downloaded = updateService.hasDownloadedApk;
       items.add(
         _AttentionItem(
-          icon: Icons.system_update,
-          title: 'App update available',
-          subtitle: 'Version ${updateService.updateInfo?.latestVersion ?? ''}',
+          icon: downloaded
+              ? Icons.install_mobile
+              : downloading
+              ? Icons.downloading
+              : Icons.system_update,
+          title: downloaded
+              ? 'App update ready to install'
+              : downloading
+              ? 'Downloading app update'
+              : 'App update available',
+          subtitle: downloading && updateService.downloadProgress != null
+              ? '${(updateService.downloadProgress! * 100).round()}% downloaded'
+              : 'Version ${updateService.updateInfo?.latestVersion ?? ''}',
           severity: _AttentionSeverity.info,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => AboutScreen(updateService: updateService),
-            ),
-          ),
+          onTap: _handleUpdateAction,
         ),
       );
     }

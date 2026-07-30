@@ -196,7 +196,7 @@ class _ConfigExportScreenState extends State<ConfigExportScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Open SocketAgent → Settings → Import',
+                    'Open SocketAgent → Settings → Files & Security → Import Server Configs',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withAlpha(128),
