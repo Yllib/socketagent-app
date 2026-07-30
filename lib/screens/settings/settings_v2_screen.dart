@@ -3,9 +3,11 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/update_service.dart';
@@ -26,10 +28,86 @@ const MethodChannel _settingsNativeChannel = MethodChannel(
   'com.socketagent.app/intent',
 );
 
-class SettingsV2Screen extends StatelessWidget {
+class SettingsV2Screen extends StatefulWidget {
   const SettingsV2Screen({super.key, required this.updateService});
 
   final UpdateService updateService;
+
+  @override
+  State<SettingsV2Screen> createState() => _SettingsV2ScreenState();
+}
+
+class _SettingsV2ScreenState extends State<SettingsV2Screen> {
+  String _currentVersion = '';
+  bool _checkingForUpdate = false;
+
+  UpdateService get updateService => widget.updateService;
+
+  @override
+  void initState() {
+    super.initState();
+    updateService.addListener(_onUpdateChanged);
+    unawaited(_loadCurrentVersion());
+  }
+
+  @override
+  void didUpdateWidget(covariant SettingsV2Screen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.updateService == updateService) return;
+    oldWidget.updateService.removeListener(_onUpdateChanged);
+    updateService.addListener(_onUpdateChanged);
+  }
+
+  @override
+  void dispose() {
+    updateService.removeListener(_onUpdateChanged);
+    super.dispose();
+  }
+
+  void _onUpdateChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadCurrentVersion() async {
+    final info = await PackageInfo.fromPlatform();
+    if (mounted) setState(() => _currentVersion = info.version);
+  }
+
+  void _openAbout() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => AboutScreen(updateService: updateService),
+      ),
+    );
+  }
+
+  Future<void> _checkForAppUpdate() async {
+    if (_checkingForUpdate) return;
+    setState(() => _checkingForUpdate = true);
+    final result = await updateService.checkForUpdate();
+    if (!mounted) return;
+    setState(() => _checkingForUpdate = false);
+
+    final error = updateService.error;
+    if (error != null && error.isNotEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    if (result?.updateAvailable == true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('SocketAgent v${result!.latestVersion} is available'),
+          action: SnackBarAction(label: 'View', onPressed: _openAbout),
+        ),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('SocketAgent is up to date')));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,17 +119,35 @@ class SettingsV2Screen extends StatelessWidget {
 
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Settings V2'),
+            title: const Text('Settings'),
             actions: [
               IconButton(
-                tooltip: 'Refresh',
-                icon: const Icon(Icons.refresh),
-                onPressed: () {
-                  provider.requestSessionList();
-                  provider.requestServerSettings();
-                  provider.requestMcpStatus();
-                  updateService.checkForUpdate();
-                },
+                tooltip: 'Check for app updates',
+                icon: _checkingForUpdate
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        Icons.refresh,
+                        color: updateService.updateAvailable
+                            ? Theme.of(context).colorScheme.primary
+                            : null,
+                      ),
+                onPressed: _checkingForUpdate ? null : _checkForAppUpdate,
+              ),
+              TextButton(
+                onPressed: _openAbout,
+                style: TextButton.styleFrom(
+                  foregroundColor: updateService.updateAvailable
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+                child: Text(
+                  _currentVersion.isEmpty ? 'Version' : 'v$_currentVersion',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
               ),
             ],
           ),
@@ -172,29 +268,6 @@ class SettingsV2Screen extends StatelessWidget {
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const AdbBridgeScreen(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              _SettingsGroup(
-                title: 'App',
-                children: [
-                  _NavTile(
-                    icon: updateService.updateAvailable
-                        ? Icons.system_update
-                        : Icons.info_outline,
-                    title: updateService.updateAvailable
-                        ? 'Update available'
-                        : 'About SocketAgent',
-                    subtitle: updateService.updateInfo == null
-                        ? 'Version and app update'
-                        : 'Latest ${updateService.updateInfo!.latestVersion}',
-                    trailing: Icons.chevron_right,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            AboutScreen(updateService: updateService),
                       ),
                     ),
                   ),
@@ -415,7 +488,7 @@ class _SettingsV2ServerDetailScreenState
           body: ListView(
             padding: const EdgeInsets.only(bottom: 28),
             children: [
-              _ServerHeader(config: config, status: status),
+              _ServerHeader(config: config, status: status, runtime: runtime),
               _SettingsGroup(
                 title: 'Connection',
                 children: [
@@ -931,14 +1004,15 @@ class _SettingsGroup extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerLow,
+          Material(
+            color: Theme.of(context).colorScheme.surfaceContainerLow,
+            shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
-              border: Border.all(
+              side: BorderSide(
                 color: Theme.of(context).colorScheme.outlineVariant,
               ),
             ),
+            clipBehavior: Clip.antiAlias,
             child: Column(
               children: [
                 for (var i = 0; i < children.length; i++) ...[
@@ -972,6 +1046,9 @@ class _ServerTile extends StatelessWidget {
         final connected = status == ConnectionStatus.connected;
         final warning = provider.backendWarningForServer(config.id);
         final push = provider.isPushRegisteredForServer(config.id);
+        final build = ServerBuildInfo.fromRuntime(
+          provider.serverRuntimeInfo(config.id),
+        );
 
         return ListTile(
           leading: Icon(
@@ -985,6 +1062,7 @@ class _ServerTile extends StatelessWidget {
             [
               config.useRelay ? 'Relay' : 'Direct',
               _statusLabel(status),
+              if (!build.isEmpty) build.compactLabel,
               config.expectedOnline ? 'always on' : 'on demand',
               if (warning != null) 'backend ${warning['severity']}',
               if (connected && push) 'notifications',
@@ -1005,14 +1083,20 @@ class _ServerTile extends StatelessWidget {
 }
 
 class _ServerHeader extends StatelessWidget {
-  const _ServerHeader({required this.config, required this.status});
+  const _ServerHeader({
+    required this.config,
+    required this.status,
+    required this.runtime,
+  });
 
   final ServerConfig config;
   final ConnectionStatus status;
+  final Map<String, dynamic> runtime;
 
   @override
   Widget build(BuildContext context) {
     final connected = status == ConnectionStatus.connected;
+    final build = ServerBuildInfo.fromRuntime(runtime);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Row(
@@ -1038,7 +1122,11 @@ class _ServerHeader extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '${config.useRelay ? 'Relay' : 'Direct'} · ${_statusLabel(status)}',
+                  [
+                    config.useRelay ? 'Relay' : 'Direct',
+                    _statusLabel(status),
+                    if (!build.isEmpty) build.compactLabel,
+                  ].join(' · '),
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -2699,15 +2787,23 @@ Future<void> _showVersionCheck(
             if (running != null)
               _VersionBlock(
                 title: 'Running process',
-                primary:
-                    '${_shortHash(running['hash'])}  PID ${running['pid'] ?? '?'}',
+                primary: [
+                  ServerBuildInfo.fromRuntime(
+                    Map<String, dynamic>.from(running),
+                  ).compactLabel,
+                  'PID ${running['pid'] ?? '?'}',
+                ].where((part) => part.isNotEmpty).join('  '),
                 secondary: running['startedAt']?.toString(),
               ),
             if (local != null)
               _VersionBlock(
                 title: 'Checkout',
-                primary:
-                    '${_shortHash(local['hash'])}  ${local['message'] ?? ''}',
+                primary: [
+                  ServerBuildInfo.fromRuntime(
+                    Map<String, dynamic>.from(local),
+                  ).compactLabel,
+                  local['message']?.toString() ?? '',
+                ].where((part) => part.isNotEmpty).join('  '),
                 secondary: local['date']?.toString(),
                 topPadding: running != null,
               )
@@ -2734,8 +2830,12 @@ Future<void> _showVersionCheck(
             if (remote != null && updateAvailable)
               _VersionBlock(
                 title: 'Available',
-                primary:
-                    '${_shortHash(remote['hash'])}  ${remote['message'] ?? ''}',
+                primary: [
+                  ServerBuildInfo.fromRuntime(
+                    Map<String, dynamic>.from(remote),
+                  ).compactLabel,
+                  remote['message']?.toString() ?? '',
+                ].where((part) => part.isNotEmpty).join('  '),
                 secondary: remote['date']?.toString(),
                 topPadding: true,
               ),
@@ -2905,11 +3005,11 @@ bool _sameCommitish(Object? left, Object? right) {
 
 String _serverVersionSubtitle(Map<String, dynamic> runtime, bool connected) {
   if (!connected) return 'Connect to check server version and updates';
-  final hash = runtime['hash'];
-  if (hash == null || hash.toString().isEmpty) {
+  final build = ServerBuildInfo.fromRuntime(runtime);
+  if (build.isEmpty) {
     return 'Check current version and available updates';
   }
-  final parts = <String>['Running ${_shortHash(hash)}'];
+  final parts = <String>['Running ${build.compactLabel}'];
   final pid = runtime['pid'];
   if (pid != null) parts.add('PID $pid');
   return '${parts.join(' · ')} · Check for updates';

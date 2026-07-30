@@ -202,6 +202,15 @@ Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
         'toolUseId': event['toolUseId']?.toString() ?? '',
         if (event['backgroundPending'] == true) 'backgroundPending': true,
       };
+    case 'work_review_card':
+      return {
+        ...base,
+        'role': 'work_review',
+        'content': '',
+        'workReview': event['review'] is Map
+            ? Map<String, dynamic>.from(event['review'] as Map)
+            : Map<String, dynamic>.from(event),
+      };
   }
   return null;
 }

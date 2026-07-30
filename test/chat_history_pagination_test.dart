@@ -7,6 +7,56 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  testWidgets('notification focus seeks an exact loaded transcript row', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 100,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('History response 35'), findsNothing);
+    key.currentState!.focusMessage(35);
+    await tester.pumpAndSettle();
+
+    expect(find.text('History response 35'), findsOneWidget);
+    expect(key.currentState!.targetReached, isTrue);
+  });
+
+  testWidgets('notification focus pages backward until its row is available', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 20,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    key.currentState!.focusMissingMessage();
+    await tester.pump();
+    await tester.pump();
+    expect(key.currentState!.loadMoreCalls, 1);
+
+    key.currentState!.completeLoadWithTarget(prependCount: 10);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Notification completion target'), findsOneWidget);
+    expect(key.currentState!.targetReached, isTrue);
+  });
+
   testWidgets('fills a short initial history page automatically', (
     WidgetTester tester,
   ) async {
@@ -48,17 +98,21 @@ void main() {
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
-    position.jumpTo(position.maxScrollExtent - 10);
+    key.currentState!.holdViewport();
+    await tester.pump();
+    position.jumpTo(position.minScrollExtent + 10);
     await tester.pump();
 
     expect(key.currentState!.loadMoreCalls, 1);
-    final anchoredPixels = position.pixels;
+    final anchorBefore = _topVisibleMessage(tester);
 
     key.currentState!.completeLoad(prependCount: 20);
-    await tester.pump();
-    await tester.pump();
+    await tester.pumpAndSettle();
 
-    expect(position.pixels, closeTo(anchoredPixels, 0.5));
+    expect(
+      _messageTop(tester, anchorBefore.id),
+      closeTo(anchorBefore.top, 0.5),
+    );
   });
 
   testWidgets('authoritative history replacement discards the old extent', (
@@ -90,7 +144,7 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(position.pixels, closeTo(position.minScrollExtent, 0.5));
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
     expect(find.text('History response 5'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
@@ -116,7 +170,9 @@ void main() {
     key.currentState!.appendStreamingText(30);
     await tester.pump();
     await tester.pump();
-    position.jumpTo(8);
+    key.currentState!.holdViewport();
+    await tester.pump();
+    position.jumpTo(position.maxScrollExtent * 0.45);
     await tester.pump();
     final anchorBefore = _topVisibleMessage(tester);
     final pixelsBefore = position.pixels;
@@ -125,11 +181,85 @@ void main() {
     await tester.pump();
     await tester.pump();
 
-    expect(position.pixels, greaterThan(pixelsBefore));
+    expect(position.pixels, closeTo(pixelsBefore, 0.5));
     expect(
       _messageTop(tester, anchorBefore.id),
       closeTo(anchorBefore.top, 0.5),
     );
+  });
+
+  testWidgets('HOLD preserves screen position across outer layout changes', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    key.currentState!.holdViewport();
+    await tester.pump();
+    position.jumpTo(position.maxScrollExtent * 0.45);
+    await tester.pump();
+    final anchorBefore = _topVisibleMessage(tester);
+
+    key.currentState!.showOuterBanner();
+    await tester.pump();
+    await tester.pump();
+
+    expect(
+      _messageTop(tester, anchorBefore.id),
+      closeTo(anchorBefore.top, 0.5),
+    );
+  });
+
+  testWidgets('FOLLOW and HOLD are explicit, deterministic viewport modes', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    key.currentState!.holdViewport();
+    await tester.pump();
+    position.jumpTo(position.maxScrollExtent * 0.45);
+    final heldPixels = position.pixels;
+
+    key.currentState!.appendStreamingText(40);
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, closeTo(heldPixels, 0.5));
+
+    key.currentState!.followViewport();
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+
+    position.jumpTo(position.maxScrollExtent * 0.45);
+    key.currentState!.appendStreamingText(40);
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
   });
 
   testWidgets(
@@ -159,14 +289,14 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      expect(position.pixels, closeTo(position.minScrollExtent, 0.5));
+      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
       expect(find.text('new local prompt'), findsOneWidget);
 
       key.currentState!.completeLoad(prependCount: 20);
       await tester.pump();
       await tester.pump();
 
-      expect(position.pixels, closeTo(position.minScrollExtent, 0.5));
+      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
       expect(find.text('new local prompt'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
@@ -191,7 +321,9 @@ void main() {
     final position = tester.state<ScrollableState>(scrollable).position;
     key.currentState!.appendStreamingText(30);
     await tester.pump();
-    position.jumpTo(40);
+    key.currentState!.holdViewport();
+    await tester.pump();
+    position.jumpTo(position.maxScrollExtent * 0.45);
     await tester.pump();
 
     final gesture = await tester.startGesture(tester.getCenter(scrollable));
@@ -235,12 +367,9 @@ void main() {
 
     key.currentState!.appendPendingImageCard();
     await tester.pump();
-    final position = tester
-        .state<ScrollableState>(find.byType(Scrollable).first)
-        .position;
-    position.jumpTo(25);
+    key.currentState!.holdViewport();
     await tester.pump();
-    final pixelsBefore = position.pixels;
+    final cardTopBefore = tester.getTopLeft(find.byType(ToolOutputBlock)).dy;
 
     await tester.tap(find.byType(ToolOutputBlock));
     await tester.pump();
@@ -253,7 +382,10 @@ void main() {
       ),
       findsOneWidget,
     );
-    expect(position.pixels, closeTo(pixelsBefore, 0.5));
+    expect(
+      tester.getTopLeft(find.byType(ToolOutputBlock)).dy,
+      closeTo(cardTopBefore, 0.5),
+    );
   });
 
   testWidgets('returning to a session does not restore an expanded image', (
@@ -284,6 +416,8 @@ void main() {
     );
 
     key.currentState!.switchSession();
+    await tester.pump();
+    await tester.pump();
     await tester.pump();
 
     expect(
@@ -356,13 +490,13 @@ void main() {
 
     final retainedMessage = key.currentState!.messages[5];
     final retainedKey = ValueKey<String>(
-      'message-row:text:${retainedMessage.id}::',
+      'message-row:server:session-1:text:${retainedMessage.id}::',
     );
     final delegate =
         tester.widget<ListView>(find.byType(ListView).first).childrenDelegate
             as SliverChildBuilderDelegate;
     expect(delegate.findChildIndexCallback, isNotNull);
-    expect(delegate.findChildIndexCallback!(retainedKey), 2);
+    expect(delegate.findChildIndexCallback!(retainedKey), 6);
 
     key.currentState!.insertRecoveredToolRows(beforeIndex: 6);
     await tester.pump();
@@ -370,7 +504,7 @@ void main() {
     final updatedDelegate =
         tester.widget<ListView>(find.byType(ListView).first).childrenDelegate
             as SliverChildBuilderDelegate;
-    expect(updatedDelegate.findChildIndexCallback!(retainedKey), 4);
+    expect(updatedDelegate.findChildIndexCallback!(retainedKey), 6);
     expect(
       find.byWidgetPredicate(
         (widget) =>
@@ -398,18 +532,21 @@ void main() {
 
     key.currentState!.insertDuplicateIdentityRows();
     await tester.pump();
+    await tester.pump();
 
     expect(find.text('Duplicate row first'), findsOneWidget);
     expect(find.text('Duplicate row second'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
+    key.currentState!.holdViewport();
+    await tester.pump();
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
     final beforeDrag = position.pixels;
     await tester.drag(find.byType(ListView).first, const Offset(0, 160));
     await tester.pumpAndSettle();
-    expect(position.pixels, greaterThan(beforeDrag));
+    expect(position.pixels, isNot(closeTo(beforeDrag, 0.5)));
     expect(tester.takeException(), isNull);
   });
 
@@ -427,6 +564,8 @@ void main() {
       ),
     );
     key.currentState!.appendPendingImageCard();
+    await tester.pump();
+    key.currentState!.holdViewport();
     await tester.pump();
 
     final list = find.byType(ListView).first;
@@ -452,11 +591,14 @@ void main() {
     await drivenScroll;
 
     final beforeDrag = position.pixels;
-    await tester.drag(list, const Offset(0, 120));
-    await tester.pumpAndSettle();
-    expect(position.pixels, greaterThan(beforeDrag));
+    final dragDelta = position.pixels <= position.minScrollExtent + 1
+        ? -120.0
+        : 120.0;
+    await tester.drag(list, Offset(0, dragDelta));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(position.pixels, isNot(closeTo(beforeDrag, 0.5)));
 
-    position.jumpTo(position.minScrollExtent);
+    position.jumpTo(position.maxScrollExtent);
     await tester.pump();
     await tester.tap(find.byType(ToolOutputBlock));
     await tester.pump();
@@ -482,7 +624,7 @@ void main() {
     );
     final top = tester.getTopLeft(finder).dy;
     final bottom = tester.getBottomLeft(finder).dy;
-    if (bottom <= 0 || top >= 600) continue;
+    if (bottom <= 0 || top < 0 || top >= 600) continue;
     if (best == null || top < best.top) {
       best = (id: bubble.message.id, top: top);
     }
@@ -519,6 +661,11 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   int loadMoreCalls = 0;
   int historyWindowRevision = 0;
   String sessionStorageKey = 'server:session-1';
+  String? targetEntryId;
+  int? targetSessionSeq;
+  bool targetReached = false;
+  bool followLatest = true;
+  bool outerBannerVisible = false;
   late List<ChatMessage> messages;
 
   @override
@@ -536,6 +683,24 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
     textContent: 'History response $index',
   );
 
+  void focusMessage(int index) {
+    setState(() {
+      messages[index].entryId = 'entry-$index';
+      messages[index].sessionSeq = index + 1;
+      targetEntryId = 'entry-$index';
+      targetSessionSeq = index + 1;
+      targetReached = false;
+    });
+  }
+
+  void focusMissingMessage() {
+    setState(() {
+      targetEntryId = 'older-completion-entry';
+      targetSessionSeq = 1;
+      targetReached = false;
+    });
+  }
+
   void finishInitialLoad() {
     setState(() => isLoadingHistory = false);
   }
@@ -550,6 +715,18 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
 
   void beginHistoryLoad() {
     _loadMore();
+  }
+
+  void holdViewport() {
+    setState(() => followLatest = false);
+  }
+
+  void followViewport() {
+    setState(() => followLatest = true);
+  }
+
+  void showOuterBanner() {
+    setState(() => outerBannerVisible = true);
   }
 
   void sendUserPrompt(String text) {
@@ -577,6 +754,22 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
         ),
         ...messages,
       ];
+      isLoadingMore = false;
+      hasMoreHistory = false;
+    });
+  }
+
+  void completeLoadWithTarget({required int prependCount}) {
+    final prepended = List.generate(
+      prependCount,
+      (index) => _message(-prependCount + index),
+    );
+    prepended[prependCount ~/ 2]
+      ..entryId = 'older-completion-entry'
+      ..sessionSeq = 1
+      ..textContent = 'Notification completion target';
+    setState(() {
+      messages = [...prepended, ...messages];
       isLoadingMore = false;
       hasMoreHistory = false;
     });
@@ -681,21 +874,45 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: ChatView(
-        key: chatViewKey,
-        messages: messages,
-        sessionStorageKey: sessionStorageKey,
-        isProcessing: false,
-        isLoadingHistory: isLoadingHistory,
-        isLoadingMore: isLoadingMore,
-        hasMoreHistory: hasMoreHistory,
-        historyWindowRevision: historyWindowRevision,
-        todos: const [],
-        onAnswer: (_, __) {},
-        onSecureInputSubmit: (_, __) {},
-        onSecureInputUseStored: (_, SecretMetadata __) {},
-        onSecureInputCancel: (_) {},
-        onLoadMore: _loadMore,
+      body: Column(
+        children: [
+          if (outerBannerVisible)
+            const SizedBox(
+              key: ValueKey('outer-banner'),
+              height: 48,
+              width: double.infinity,
+            ),
+          Expanded(
+            child: ChatView(
+              key: chatViewKey,
+              messages: messages,
+              sessionStorageKey: sessionStorageKey,
+              isProcessing: false,
+              followLatest: followLatest,
+              isLoadingHistory: isLoadingHistory,
+              isLoadingMore: isLoadingMore,
+              hasMoreHistory: hasMoreHistory,
+              historyWindowRevision: historyWindowRevision,
+              targetEntryId: targetEntryId,
+              targetSessionSeq: targetSessionSeq,
+              onTranscriptTargetReached: () {
+                targetReached = true;
+                if (mounted) {
+                  setState(() {
+                    targetEntryId = null;
+                    targetSessionSeq = null;
+                  });
+                }
+              },
+              todos: const [],
+              onAnswer: (_, __) {},
+              onSecureInputSubmit: (_, __) {},
+              onSecureInputUseStored: (_, SecretMetadata __) {},
+              onSecureInputCancel: (_) {},
+              onLoadMore: _loadMore,
+            ),
+          ),
+        ],
       ),
     );
   }

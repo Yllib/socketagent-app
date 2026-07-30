@@ -26,6 +26,19 @@ String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
     return '$type:$sessionId:$planId:$updatedAt';
   }
 
+  if (type == 'work_review_card') {
+    final reviewId =
+        (message['reviewId'] ??
+                (message['review'] is Map
+                    ? (message['review'] as Map)['reviewId']
+                    : null) ??
+                '')
+            .toString();
+    final revision = (message['revision'] as num?)?.toInt() ?? 0;
+    if (reviewId.isEmpty) return null;
+    return '$type:$sessionId:$reviewId:$revision';
+  }
+
   if (type == 'monitor_output') {
     final taskId = message['taskId'] as String? ?? '';
     final revision = (message['revision'] as num?)?.toInt() ?? 0;

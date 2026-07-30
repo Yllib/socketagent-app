@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'services/chat_provider.dart';
+import 'services/work_review_repository.dart';
 import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/session_deep_link.dart';
@@ -21,19 +22,33 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NotificationService().initialize();
   final chatProvider = ChatProvider();
+  final workReviews = WorkReviewRepository(
+    transport: ConnectionManagerWorkReviewTransport(chatProvider.connMgr),
+  );
+  await workReviews.initialize();
   await PushNotificationService().initialize();
-  runApp(ClaudeAssistantApp(chatProvider: chatProvider));
+  runApp(
+    ClaudeAssistantApp(chatProvider: chatProvider, workReviews: workReviews),
+  );
 }
 
 class ClaudeAssistantApp extends StatelessWidget {
   final ChatProvider chatProvider;
+  final WorkReviewRepository workReviews;
 
-  const ClaudeAssistantApp({super.key, required this.chatProvider});
+  const ClaudeAssistantApp({
+    super.key,
+    required this.chatProvider,
+    required this.workReviews,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider.value(
-      value: chatProvider,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: chatProvider),
+        ChangeNotifierProvider.value(value: workReviews),
+      ],
       child: MaterialApp(
         title: 'SocketAgent',
         debugShowCheckedModeBanner: false,
@@ -256,13 +271,23 @@ class _AppLauncherState extends State<AppLauncher>
       Navigator.of(context).popUntil((route) => route.isFirst);
       return;
     }
-    if (provider.activeSessionId != sessionId) {
-      provider.resumeSessionFromNotification(
-        sessionId,
-        serverId: parsed.serverId,
+    provider.resumeSessionFromNotification(
+      sessionId,
+      serverId: parsed.serverId,
+      targetEntryId: parsed.targetEntryId,
+      targetSessionSeq: parsed.targetSessionSeq,
+    );
+    _navigateToNotificationSession();
+    if (parsed.notificationKind == 'session_finished') {
+      unawaited(
+        NotificationService().dismissSessionCompletion(
+          NotificationService.sessionCompletionId(
+            sessionId,
+            serverId: parsed.serverId,
+          ),
+        ),
       );
     }
-    _navigateToNotificationSession();
   }
 
   void _handleNotificationAction(String payload) {

@@ -13,6 +13,23 @@ void main() {
     expect(target?.parent, NotificationParentDestination.sessions);
   });
 
+  test('completion payload targets its exact transcript message', () {
+    final payload = PushNotificationService.payloadForData({
+      'kind': 'session_finished',
+      'sessionId': 'session:with:punctuation',
+      'serverId': 'server-1',
+      'targetEntryId': 'entry/assistant 42',
+      'targetSessionSeq': '4629',
+    });
+    final target = parseNotificationNavigationPayload(payload!);
+
+    expect(target?.sessionId, 'session:with:punctuation');
+    expect(target?.serverId, 'server-1');
+    expect(target?.targetEntryId, 'entry/assistant 42');
+    expect(target?.targetSessionSeq, 4629);
+    expect(target?.notificationKind, 'session_finished');
+  });
+
   test('scheduled session notifications retain the tasks parent', () {
     final payload = PushNotificationService.payloadForData({
       'sessionId': 'session-1',

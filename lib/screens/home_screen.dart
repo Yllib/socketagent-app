@@ -16,6 +16,8 @@ import '../widgets/active_tasks_pane.dart';
 import '../widgets/voice_button.dart';
 import '../widgets/secret_manager_sheet.dart';
 import '../widgets/html_plan_manager_sheet.dart';
+import '../services/work_review_repository.dart';
+import 'work_reviews_screen.dart';
 
 class _BarSegment {
   final String label;
@@ -43,6 +45,7 @@ class HomeScreenState extends State<HomeScreen> {
   String _commandFilter = '';
   bool _pttPressed = false;
   bool _pttStartChecking = false;
+  bool _followLatest = true;
 
   @override
   void initState() {
@@ -545,6 +548,7 @@ class HomeScreenState extends State<HomeScreen> {
             provider.saveDraft(_textController.text.trim(), _trackedSessionId);
           }
           _trackedSessionId = currentSessionId;
+          _followLatest = true;
           provider.setViewingSession(currentSessionId);
           // Restore draft for the new session
           final draft = provider.getDraft();
@@ -566,6 +570,7 @@ class HomeScreenState extends State<HomeScreen> {
             ? _fastModeTheme()
             : _permissionModeTheme(displayPermMode);
         final chatSurfaceColor = Theme.of(context).colorScheme.surface;
+        final notificationFocus = provider.notificationTranscriptFocus;
         return Theme(
           data: sessionTheme != null
               ? Theme.of(context).copyWith(
@@ -718,12 +723,20 @@ class HomeScreenState extends State<HomeScreen> {
                       sessionStorageKey:
                           '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
                       isProcessing: provider.isProcessing,
+                      followLatest: _followLatest,
                       processingElapsed: provider.currentPromptElapsed,
                       isCompacting: provider.isCompacting,
                       isLoadingHistory: provider.isLoadingHistory,
                       isLoadingMore: provider.isLoadingMore,
                       hasMoreHistory: provider.hasMoreHistory,
                       historyWindowRevision: provider.historyWindowRevision,
+                      targetEntryId: notificationFocus?.entryId,
+                      targetSessionSeq: notificationFocus?.sessionSeq,
+                      onTranscriptTargetReached: notificationFocus == null
+                          ? null
+                          : () => provider.clearNotificationTranscriptFocus(
+                              notificationFocus,
+                            ),
                       todos: provider.todos,
                       onAnswer: provider.answerQuestion,
                       onSecureInputSubmit: provider.submitSecureInput,
@@ -828,6 +841,8 @@ class HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
                 const SizedBox(width: 6),
+                _buildFollowLatestChip(),
+                const SizedBox(width: 6),
                 _buildSessionMoreChip(provider),
               ],
             ),
@@ -874,6 +889,31 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildFollowLatestChip() {
+    final theme = Theme.of(context);
+    final following = _followLatest;
+    return Tooltip(
+      message: following
+          ? 'Following latest messages. Tap to hold the current viewport.'
+          : 'Viewport held. Tap to jump to and follow the latest messages.',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: () => setState(() => _followLatest = !following),
+        child: _buildChipBody(
+          following ? Icons.vertical_align_bottom : Icons.pause,
+          following ? 'FOLLOW' : 'HOLD',
+          active: following,
+          iconColor: following
+              ? theme.colorScheme.onPrimaryContainer
+              : theme.colorScheme.onSurfaceVariant,
+          labelColor: following
+              ? theme.colorScheme.onPrimaryContainer
+              : theme.colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+
   Widget _buildLoadingModelChip() {
     final theme = Theme.of(context);
     return Container(
@@ -909,6 +949,13 @@ class HomeScreenState extends State<HomeScreen> {
   Widget _buildSessionMoreChip(ChatProvider provider) {
     final projectPath = _projectFilesPath(provider);
     final showCodexMode = provider.activeSessionBackend == 'codex';
+    final serverId = provider.activeSessionServerId;
+    final reviewRepository = context.watch<WorkReviewRepository>();
+    final pendingReviews = serverId == null
+        ? 0
+        : reviewRepository.pendingCount(serverId);
+    final supportsReviews =
+        serverId != null && reviewRepository.supportsServer(serverId);
     return PopupMenuButton<String>(
       onOpened: () {
         if (showCodexMode) {
@@ -938,6 +985,21 @@ class HomeScreenState extends State<HomeScreen> {
             Future.microtask(() {
               if (mounted) _showHtmlPlanManager(provider);
             });
+            break;
+          case 'work_reviews':
+            if (serverId != null) {
+              final config = provider.serverConfigs
+                  .where((item) => item.id == serverId)
+                  .firstOrNull;
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => WorkReviewsScreen(
+                    serverId: serverId,
+                    serverLabel: config?.name,
+                  ),
+                ),
+              );
+            }
             break;
           case 'terminal':
             _openTerminal(provider, projectPath);
@@ -1088,6 +1150,34 @@ class HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
               ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
+          value: 'work_reviews',
+          enabled: supportsReviews,
+          child: Row(
+            children: [
+              const Icon(Icons.fact_check_outlined, size: 18),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Work reviews'),
+                    Text(
+                      pendingReviews == 0
+                          ? supportsReviews
+                                ? 'Review agent work on this server'
+                                : 'Requires a server with Work Reviews'
+                          : '$pendingReviews awaiting review',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+              if (pendingReviews > 0) Badge(label: Text('$pendingReviews')),
             ],
           ),
         ),

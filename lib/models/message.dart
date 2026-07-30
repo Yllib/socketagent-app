@@ -34,6 +34,7 @@ enum MessageType {
   codexPlan,
   codexCommand,
   htmlPlan,
+  workReview,
 }
 
 class ChatMessage {
@@ -223,6 +224,33 @@ class ChatMessage {
       toolName: 'HtmlPlan',
       toolUseId: planId,
       toolInput: Map<String, dynamic>.from(plan),
+    );
+  }
+
+  factory ChatMessage.workReview(
+    Map<String, dynamic> payload, {
+    String? serverId,
+  }) {
+    final nested = payload['review'];
+    final review = nested is Map
+        ? Map<String, dynamic>.from(nested)
+        : Map<String, dynamic>.from(payload);
+    final reviewId =
+        (payload['reviewId'] ?? review['reviewId'] ?? review['id'] ?? '')
+            .toString();
+    final input = Map<String, dynamic>.from(payload);
+    if (serverId != null && serverId.isNotEmpty) input['_serverId'] = serverId;
+    return ChatMessage(
+      id: 'work_review_$reviewId',
+      sender: MessageSender.system,
+      type: MessageType.workReview,
+      timestamp:
+          DateTime.tryParse(review['updatedAt']?.toString() ?? '') ??
+          DateTime.now(),
+      textContent: (review['title'] ?? 'Work review').toString(),
+      toolName: 'WorkReview',
+      toolUseId: reviewId,
+      toolInput: input,
     );
   }
 

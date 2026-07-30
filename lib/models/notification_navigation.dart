@@ -5,38 +5,74 @@ class NotificationNavigationTarget {
     required this.parent,
     this.sessionId,
     this.serverId,
+    this.targetEntryId,
+    this.targetSessionSeq,
+    this.notificationKind,
   });
 
   final NotificationParentDestination parent;
   final String? sessionId;
   final String? serverId;
+  final String? targetEntryId;
+  final int? targetSessionSeq;
+  final String? notificationKind;
 }
 
 NotificationNavigationTarget? parseNotificationNavigationPayload(
   String payload,
 ) {
-  if (payload.startsWith('session_')) {
-    final sessionId = payload.substring('session_'.length);
+  final queryIndex = payload.indexOf('?');
+  final routePayload = queryIndex < 0
+      ? payload
+      : payload.substring(0, queryIndex);
+  Map<String, String> query = const {};
+  if (queryIndex >= 0 && queryIndex + 1 < payload.length) {
+    try {
+      query = Uri.splitQueryString(payload.substring(queryIndex + 1));
+    } catch (_) {
+      query = const {};
+    }
+  }
+  final targetEntryId = query['targetEntryId']?.trim();
+  final parsedTargetSessionSeq = int.tryParse(
+    query['targetSessionSeq']?.trim() ?? '',
+  );
+  final targetSessionSeq =
+      parsedTargetSessionSeq != null && parsedTargetSessionSeq > 0
+      ? parsedTargetSessionSeq
+      : null;
+  final notificationKind = query['kind']?.trim();
+
+  if (routePayload.startsWith('session_')) {
+    final sessionId = routePayload.substring('session_'.length);
     if (sessionId.isEmpty) return null;
     return NotificationNavigationTarget(
       parent: NotificationParentDestination.sessions,
       sessionId: sessionId,
+      targetEntryId: targetEntryId?.isEmpty == true ? null : targetEntryId,
+      targetSessionSeq: targetSessionSeq,
+      notificationKind: notificationKind?.isEmpty == true
+          ? null
+          : notificationKind,
     );
   }
 
-  if (payload.startsWith('scheduled_tasks')) {
-    final parts = payload.split(':');
+  if (routePayload.startsWith('scheduled_tasks')) {
+    final parts = routePayload.split(':');
     final serverId = parts.length >= 2
         ? Uri.decodeComponent(parts[1]).trim()
         : '';
     return NotificationNavigationTarget(
       parent: NotificationParentDestination.scheduledTasks,
       serverId: serverId.isEmpty ? null : serverId,
+      notificationKind: notificationKind?.isEmpty == true
+          ? null
+          : notificationKind,
     );
   }
 
-  if (!payload.startsWith('session:')) return null;
-  final parts = payload.split(':');
+  if (!routePayload.startsWith('session:')) return null;
+  final parts = routePayload.split(':');
   if (parts.length < 2) return null;
   final sessionId = Uri.decodeComponent(parts[1]).trim();
   if (sessionId.isEmpty) return null;
@@ -50,6 +86,11 @@ NotificationNavigationTarget? parseNotificationNavigationPayload(
     parent: parent,
     sessionId: sessionId,
     serverId: serverId.isEmpty ? null : serverId,
+    targetEntryId: targetEntryId?.isEmpty == true ? null : targetEntryId,
+    targetSessionSeq: targetSessionSeq,
+    notificationKind: notificationKind?.isEmpty == true
+        ? null
+        : notificationKind,
   );
 }
 

@@ -85,6 +85,20 @@ class SessionTransferResult {
   final bool exactNativeResume;
 }
 
+class NotificationTranscriptFocus {
+  const NotificationTranscriptFocus({
+    required this.sessionId,
+    required this.serverId,
+    this.entryId,
+    this.sessionSeq,
+  });
+
+  final String sessionId;
+  final String? serverId;
+  final String? entryId;
+  final int? sessionSeq;
+}
+
 String _stripTerminalControl(String value) {
   return value
       .replaceAll(
@@ -420,6 +434,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _pushRegisteredServersPrefsKey =
       'push_registered_server_ids';
   static const String _pendingHardStopsPrefsKey = 'pending_hard_stops_v1';
+  static const String _serverBuildCachePrefsKey = 'server_build_cache_v1';
   static const Duration _downloadNotificationMinInterval = Duration(
     milliseconds: 750,
   );
@@ -526,6 +541,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _authRequestSessions = {};
   String? _activeSessionId;
   String? _activeSessionServerId;
+  NotificationTranscriptFocus? _notificationTranscriptFocus;
   String? _activeSessionCwd;
   String? _activeSessionTitle;
   final Map<String, List<Map<String, dynamic>>> _skillsByServer = {};
@@ -770,6 +786,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Map<String, dynamic>? get lastUsage => _lastUsage;
   Map<String, dynamic>? get codexStatus => _codexStatus;
   String? get activeSessionId => _activeSessionId;
+  String? get activeSessionServerId =>
+      _activeSessionServerId ?? _connMgr.activeServerId;
   String? get activeSessionCwd => _activeSessionCwd;
   String? get activeSessionTitle => _activeSessionTitle;
 
@@ -1372,6 +1390,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get isLoadingMore => _isLoadingMore;
   int get historyWindowRevision => _historyWindowRevision;
   bool get hasMoreHistory => _historyOffset > 0;
+  NotificationTranscriptFocus? get notificationTranscriptFocus {
+    final focus = _notificationTranscriptFocus;
+    if (focus == null || focus.sessionId != _activeSessionId) return null;
+    final focusServerId = focus.serverId;
+    if (focusServerId != null &&
+        focusServerId.isNotEmpty &&
+        _activeSessionServerId != null &&
+        _activeSessionServerId!.isNotEmpty &&
+        focusServerId != _activeSessionServerId) {
+      return null;
+    }
+    return focus;
+  }
+
   bool get rawMode => _rawMode;
   List<SdkItem> get rawItems => _rawItems;
   bool get ttsEnabled => _ttsEnabled;
@@ -1838,6 +1870,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _saveServerConfigs();
     }
 
+    _loadServerBuildCache(prefs);
     await _loadSessionCache(prefs);
     unawaited(
       _transcriptCache.prewarm(
@@ -2254,6 +2287,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> removeServer(String serverId) async {
     _serverConfigs.removeWhere((c) => c.id == serverId);
+    if (_serverRuntimeInfo.remove(serverId) != null) {
+      unawaited(_persistServerBuildCache());
+    }
     _perServerSessions.remove(serverId);
     _perServerScheduledTasks.remove(serverId);
     _scheduledTaskLoadedRevisions.remove(serverId);
@@ -3493,6 +3529,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'html_plan_operation_result',
       'html_plan_revision_list',
       'html_plan_revision',
+      'work_review_snapshot',
+      'work_review_list_result',
+      'work_review_operation_result',
       'server_settings',
       'backend_install_progress',
       'backend_auth_required',
@@ -3583,6 +3622,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (type == 'tool_call' ||
             type == 'tool_result' ||
             type == 'html_plan' ||
+            type == 'work_review_card' ||
             type == 'monitor_output' ||
             type == 'text' ||
             type == 'thinking');
@@ -3660,6 +3700,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'html_plan':
           _handleHtmlPlan(msg);
           break;
+        case 'work_review_card':
+          _handleWorkReviewCard(msg, serverId);
+          break;
         case 'html_plan_list':
           _handleHtmlPlanList(msg);
           break;
@@ -3700,6 +3743,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 ? raw.whereType<String>().toList()
                 : <String>['claude'];
             if (serverId != null) {
+              _captureServerRuntimeInfo(msg, serverId);
               _serverBackends[serverId] = backends;
               final secretManagement = msg['secretManagement'];
               _serverSecretManagementVersions[serverId] =
@@ -5215,6 +5259,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (type == 'tool_call' ||
             type == 'tool_result' ||
             type == 'html_plan' ||
+            type == 'work_review_card' ||
             type == 'text' ||
             type == 'thinking');
     if (!tracked) return;
@@ -5774,7 +5819,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final isSubagentTool =
         (tool == 'Task' || tool == 'Agent') &&
         !_codexAgentControlTypes.contains(subagentType);
-    if (tool == 'HtmlPlan') {
+    if (tool == 'HtmlPlan' || tool == 'WorkReview') {
       if (toolUseId.isNotEmpty) {
         _toolEventReconciler.discard(toolUseId);
         _suppressedToolUseIds.add(toolUseId);
@@ -6334,6 +6379,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       (message) =>
           message.type == MessageType.htmlPlan &&
           message.toolUseId == plan.planId,
+    );
+    if (existingCard >= 0) {
+      _messages[existingCard] = card;
+    } else {
+      _closeLiveStreamsForParent(null);
+      _messages.add(card);
+    }
+    notifyListeners();
+  }
+
+  void _handleWorkReviewCard(Map<String, dynamic> msg, String? serverId) {
+    final reviewId =
+        (msg['reviewId'] ??
+                (msg['review'] is Map
+                    ? (msg['review'] as Map)['reviewId']
+                    : null) ??
+                '')
+            .toString();
+    if (reviewId.isEmpty) return;
+    final card = ChatMessage.workReview(msg, serverId: serverId);
+    applyTranscriptPosition(card, msg);
+    final existingCard = _messages.indexWhere(
+      (message) =>
+          message.type == MessageType.workReview &&
+          message.toolUseId == reviewId,
     );
     if (existingCard >= 0) {
       _messages[existingCard] = card;
@@ -9060,6 +9130,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
             break;
           }
+          if (toolName == 'WorkReview') {
+            if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
+            break;
+          }
           final toolCallMsg = ChatMessage.toolCall(
             tool: toolName,
             input: toolInput,
@@ -9260,6 +9334,40 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 loaded[existingIndex] = planMessage;
               } else {
                 loaded.add(planMessage);
+              }
+            }
+          }
+          break;
+        case 'work_review':
+        case 'work_review_card':
+          final rawReview =
+              entry['workReview'] ??
+              entry['toolInput'] ??
+              entry['review'] ??
+              entry;
+          if (rawReview is Map) {
+            final payload = Map<String, dynamic>.from(rawReview);
+            final reviewId =
+                (payload['reviewId'] ??
+                        (payload['review'] is Map
+                            ? (payload['review'] as Map)['reviewId']
+                            : null) ??
+                        '')
+                    .toString();
+            if (reviewId.isNotEmpty) {
+              final reviewMessage = ChatMessage.workReview(
+                payload,
+                serverId: serverId,
+              );
+              final existingIndex = loaded.indexWhere(
+                (message) =>
+                    message.type == MessageType.workReview &&
+                    message.toolUseId == reviewId,
+              );
+              if (existingIndex >= 0) {
+                loaded[existingIndex] = reviewMessage;
+              } else {
+                loaded.add(reviewMessage);
               }
             }
           }
@@ -11412,14 +11520,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final existing = Map<String, dynamic>.from(
       _serverRuntimeInfo[serverId] ?? const <String, dynamic>{},
     );
+    final previousVersion = existing['version']?.toString();
+    final previousHash = existing['hash']?.toString();
 
     final running = msg['running'];
     if (running is Map) {
       existing.addAll(Map<String, dynamic>.from(running));
     }
 
-    final version = msg['serverVersion'];
-    if (version != null) existing['hash'] = version.toString();
+    final releaseVersion = msg['serverReleaseVersion'];
+    if (releaseVersion != null && releaseVersion.toString().isNotEmpty) {
+      existing['version'] = releaseVersion.toString();
+    }
+
+    final commit = msg['serverCommit'] ?? msg['serverVersion'];
+    if (commit != null && commit.toString().isNotEmpty) {
+      existing['hash'] = commit.toString();
+    }
 
     final startedAt = msg['serverStartedAt'];
     if (startedAt != null) existing['startedAt'] = startedAt.toString();
@@ -11429,6 +11546,60 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (existing.isNotEmpty) {
       _serverRuntimeInfo[serverId] = existing;
+      if (existing['version']?.toString() != previousVersion ||
+          existing['hash']?.toString() != previousHash) {
+        unawaited(_persistServerBuildCache());
+      }
+    }
+  }
+
+  void _loadServerBuildCache(SharedPreferences prefs) {
+    final raw = prefs.getString(_serverBuildCachePrefsKey);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      final configuredIds = _serverConfigs.map((config) => config.id).toSet();
+      for (final entry in decoded.entries) {
+        final serverId = entry.key.toString();
+        if (!configuredIds.contains(serverId) || entry.value is! Map) continue;
+        final cached = Map<String, dynamic>.from(entry.value as Map);
+        final version = cached['version']?.toString();
+        final hash = cached['hash']?.toString();
+        if ((version == null || version.isEmpty) &&
+            (hash == null || hash.isEmpty)) {
+          continue;
+        }
+        _serverRuntimeInfo[serverId] = {
+          if (version != null && version.isNotEmpty) 'version': version,
+          if (hash != null && hash.isNotEmpty) 'hash': hash,
+        };
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _persistServerBuildCache() async {
+    final prefs = _cachedPrefs ?? await SharedPreferences.getInstance();
+    _cachedPrefs = prefs;
+    final configuredIds = _serverConfigs.map((config) => config.id).toSet();
+    final payload = <String, Map<String, String>>{};
+    for (final entry in _serverRuntimeInfo.entries) {
+      if (!configuredIds.contains(entry.key)) continue;
+      final version = entry.value['version']?.toString();
+      final hash = entry.value['hash']?.toString();
+      if ((version == null || version.isEmpty) &&
+          (hash == null || hash.isEmpty)) {
+        continue;
+      }
+      payload[entry.key] = {
+        if (version != null && version.isNotEmpty) 'version': version,
+        if (hash != null && hash.isNotEmpty) 'hash': hash,
+      };
+    }
+    if (payload.isEmpty) {
+      await prefs.remove(_serverBuildCachePrefsKey);
+    } else {
+      await prefs.setString(_serverBuildCachePrefsKey, jsonEncode(payload));
     }
   }
 
@@ -11792,11 +11963,46 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _handleSessionHistory(snapshot, serverId: serverId, fromCache: true);
   }
 
-  void resumeSessionFromNotification(String sessionId, {String? serverId}) {
+  void resumeSessionFromNotification(
+    String sessionId, {
+    String? serverId,
+    String? targetEntryId,
+    int? targetSessionSeq,
+  }) {
     if (serverId != null && serverId.isNotEmpty) {
       _connMgr.activeServerId = serverId;
     }
+    final entryId = targetEntryId?.trim() ?? '';
+    if (entryId.isNotEmpty ||
+        (targetSessionSeq != null && targetSessionSeq > 0)) {
+      _notificationTranscriptFocus = NotificationTranscriptFocus(
+        sessionId: sessionId,
+        serverId: serverId,
+        entryId: entryId.isEmpty ? null : entryId,
+        sessionSeq: targetSessionSeq != null && targetSessionSeq > 0
+            ? targetSessionSeq
+            : null,
+      );
+    } else {
+      _notificationTranscriptFocus = null;
+    }
+    final sameSession =
+        _activeSessionId == sessionId &&
+        (serverId == null ||
+            serverId.isEmpty ||
+            _activeSessionServerId == null ||
+            _activeSessionServerId == serverId);
+    if (sameSession) {
+      notifyListeners();
+      return;
+    }
     resumeSession(sessionId, serverId: serverId);
+  }
+
+  void clearNotificationTranscriptFocus(NotificationTranscriptFocus focus) {
+    if (!identical(_notificationTranscriptFocus, focus)) return;
+    _notificationTranscriptFocus = null;
+    notifyListeners();
   }
 
   void loadMoreHistory() {

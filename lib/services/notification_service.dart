@@ -5,6 +5,7 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:flutter_timezone/flutter_timezone.dart';
+import '../models/notification_navigation.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
@@ -327,8 +328,7 @@ class NotificationService {
             break;
           }
         }
-        if (existing == null ||
-            existing.channelId == completionReadChannelId) {
+        if (existing == null || existing.channelId == completionReadChannelId) {
           return existing != null;
         }
 
@@ -378,7 +378,7 @@ class NotificationService {
         channelShowBadge: unread,
         groupKey: completedSessionsGroup,
         groupAlertBehavior: GroupAlertBehavior.children,
-        autoCancel: false,
+        autoCancel: true,
         onlyAlertOnce: !alert,
         silent: !alert,
         styleInformation: BigTextStyleInformation(body, contentTitle: title),
@@ -483,19 +483,11 @@ class NotificationService {
   static ({String sessionId, String? serverId})? _sessionTargetFromPayload(
     String? payload,
   ) {
-    if (payload == null || !payload.startsWith('session:')) return null;
-    final parts = payload.split(':');
-    if (parts.length < 2 || parts[1].isEmpty) return null;
-    try {
-      return (
-        sessionId: Uri.decodeComponent(parts[1]),
-        serverId: parts.length > 2 && parts[2].isNotEmpty
-            ? Uri.decodeComponent(parts.sublist(2).join(':'))
-            : null,
-      );
-    } catch (_) {
-      return null;
-    }
+    if (payload == null) return null;
+    final target = parseNotificationNavigationPayload(payload);
+    final sessionId = target?.sessionId;
+    if (sessionId == null || sessionId.isEmpty) return null;
+    return (sessionId: sessionId, serverId: target?.serverId);
   }
 
   Future<void> _updateGroupSummary({
@@ -611,6 +603,20 @@ class NotificationService {
         return true;
       } catch (e) {
         debugPrint('[Notification] cancel error: $e');
+        return false;
+      }
+    });
+  }
+
+  Future<bool> dismissSessionCompletion(int id) {
+    return _enqueueForId(id, () async {
+      if (!_isInitialized) await initialize();
+      try {
+        await _plugin.cancel(id: id);
+        await _refreshCompletedSessionSummary();
+        return true;
+      } catch (e) {
+        debugPrint('[Notification] completion dismiss error: $e');
         return false;
       }
     });

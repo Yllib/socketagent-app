@@ -136,7 +136,8 @@ class PushNotificationService {
         title: title,
         body: body,
         payload: payload ?? '',
-        unread: !foreground ||
+        unread:
+            !foreground ||
             (shouldBadgeForegroundSessionCompletion?.call(data) ?? true),
       );
       return;
@@ -155,14 +156,35 @@ class PushNotificationService {
     final sessionId = data['sessionId'] as String?;
     final serverId = data['serverId'] as String?;
     final scheduledTarget = data['navigationTarget'] == 'scheduled_tasks';
+    final query = <String, String>{
+      if ((data['kind']?.toString() ?? '').isNotEmpty)
+        'kind': data['kind'].toString(),
+      if ((data['targetEntryId']?.toString() ?? '').isNotEmpty)
+        'targetEntryId': data['targetEntryId'].toString(),
+      if ((data['targetSessionSeq']?.toString() ?? '').isNotEmpty)
+        'targetSessionSeq': data['targetSessionSeq'].toString(),
+    };
+    String withQuery(String base) {
+      if (query.isEmpty) return base;
+      return '$base?${Uri(queryParameters: query).query}';
+    }
+
     if (sessionId == null || sessionId.isEmpty) {
       if (!scheduledTarget) return null;
-      return 'scheduled_tasks'
-          '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}';
+      return withQuery(
+        'scheduled_tasks'
+        '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : ''}',
+      );
     }
-    return 'session:${Uri.encodeComponent(sessionId)}'
-        '${serverId != null && serverId.isNotEmpty ? ':${Uri.encodeComponent(serverId)}' : scheduledTarget ? ':' : ''}'
-        '${scheduledTarget ? ':scheduled_tasks' : ''}';
+    return withQuery(
+      'session:${Uri.encodeComponent(sessionId)}'
+      '${serverId != null && serverId.isNotEmpty
+          ? ':${Uri.encodeComponent(serverId)}'
+          : scheduledTarget
+          ? ':'
+          : ''}'
+      '${scheduledTarget ? ':scheduled_tasks' : ''}',
+    );
   }
 
   static int notificationIdForData(Map<String, dynamic> data, String title) {
