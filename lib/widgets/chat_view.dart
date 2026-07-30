@@ -31,6 +31,35 @@ import 'notification_receipt_card.dart';
 import 'socketagent_tool_card.dart';
 import '../models/composer_attachment.dart';
 
+class _ChatViewportPhysics extends ScrollPhysics {
+  final bool Function() isFollowing;
+
+  const _ChatViewportPhysics({required this.isFollowing, super.parent});
+
+  @override
+  _ChatViewportPhysics applyTo(ScrollPhysics? ancestor) => _ChatViewportPhysics(
+    isFollowing: isFollowing,
+    parent: buildParent(ancestor),
+  );
+
+  @override
+  double applyPhysicsToUserOffset(ScrollMetrics position, double offset) =>
+      isFollowing() ? 0 : super.applyPhysicsToUserOffset(position, offset);
+
+  @override
+  double adjustPositionForNewDimensions({
+    required ScrollMetrics oldPosition,
+    required ScrollMetrics newPosition,
+    required bool isScrolling,
+    required double velocity,
+  }) {
+    if (isFollowing()) return newPosition.maxScrollExtent;
+    return newPosition.pixels
+        .clamp(newPosition.minScrollExtent, newPosition.maxScrollExtent)
+        .toDouble();
+  }
+}
+
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final String? sessionStorageKey;
@@ -108,10 +137,6 @@ class ChatView extends StatefulWidget {
 class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   late final ScrollController _scrollController;
   final Set<String> _expandedImageCardIds = {};
-  int _lastKnownMessageCount = 0;
-  String _lastKnownText = '';
-  bool _lastKnownProcessing = false;
-  final GlobalKey _scrollViewportKey = GlobalKey();
   final Map<String, GlobalKey> _messageRowKeys = {};
   final Map<String, GlobalKey> _taskKeys = {};
   final Map<String, String> _taskRowKeyByToolUseId = {};
@@ -122,13 +147,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   ChatMessage? _indexedLastMessage;
   int _indexedHistoryWindowRevision = -1;
   String? _indexedSessionStorageKey;
-  ({double pixels, double maxExtent})? _historyLoadAnchor;
   bool _historyPrefetchScheduled = false;
-  int _readerAnchorGeneration = 0;
   int _transcriptTargetGeneration = 0;
   int _transcriptTargetSeekAttempts = 0;
   bool _transcriptTargetLoadRequested = false;
   String? _lastTranscriptTargetIdentity;
+  late bool _followLatestMode;
 
   bool get _hasTranscriptTarget =>
       (widget.targetEntryId?.isNotEmpty ?? false) ||
@@ -138,12 +162,13 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _followLatestMode = widget.followLatest;
     _scrollController = ScrollController();
     _reindexAllMessages(force: true);
     _scrollController.addListener(_onScroll);
     _scheduleTranscriptTargetSeek();
     if (widget.followLatest && !_hasTranscriptTarget) {
-      _jumpToBottom(settleLazyLayout: true);
+      _jumpToBottom();
     }
   }
 
@@ -199,8 +224,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   void _releaseScrollInteractionAfterLifecycle() {
-    _readerAnchorGeneration++;
-    _scrollPending = false;
     if (_scrollController.hasClients) {
       final position = _scrollController.position;
       _scrollController.jumpTo(
@@ -211,108 +234,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
   }
 
-  ({
-    String rowKey,
-    double screenY,
-    double viewportScreenY,
-    double scrollPixels,
-  })?
-  _captureVisibleReaderAnchor() {
-    if (widget.followLatest ||
-        widget.isLoadingHistory ||
-        widget.isLoadingMore ||
-        !_scrollController.hasClients) {
-      return null;
-    }
-    final viewportBox =
-        _scrollViewportKey.currentContext?.findRenderObject() as RenderBox?;
-    if (viewportBox == null || !viewportBox.hasSize) return null;
-    final viewportTop = viewportBox.localToGlobal(Offset.zero).dy;
-    final viewportBottom = viewportTop + viewportBox.size.height;
-
-    String? bestKey;
-    double? bestTop;
-    double bestScore = double.infinity;
-    for (final entry in _messageRowKeys.entries) {
-      final rowBox =
-          entry.value.currentContext?.findRenderObject() as RenderBox?;
-      if (rowBox == null || !rowBox.hasSize) continue;
-      final rowTop = rowBox.localToGlobal(Offset.zero).dy;
-      final rowBottom = rowTop + rowBox.size.height;
-      if (rowBottom <= viewportTop || rowTop >= viewportBottom) continue;
-      // Prefer the first row whose top is actually visible. A row with only a
-      // sub-pixel sliver showing can be legitimately virtualized after an
-      // otherwise exact correction, which makes it a poor durable anchor.
-      final score = rowTop >= viewportTop
-          ? rowTop - viewportTop
-          : viewportBox.size.height + (viewportTop - rowTop);
-      if (score < bestScore) {
-        bestScore = score;
-        bestKey = entry.key;
-        bestTop = rowTop - viewportTop;
-      }
-    }
-    if (bestKey == null || bestTop == null) return null;
-    return (
-      rowKey: bestKey,
-      screenY: bestTop + viewportTop,
-      viewportScreenY: viewportTop,
-      scrollPixels: _scrollController.position.pixels,
-    );
-  }
-
-  void _restoreVisibleReaderAnchor(
-    ({
-      String rowKey,
-      double screenY,
-      double viewportScreenY,
-      double scrollPixels,
-    })
-    anchor,
-  ) {
-    final generation = ++_readerAnchorGeneration;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          generation != _readerAnchorGeneration ||
-          widget.followLatest ||
-          widget.isLoadingHistory ||
-          widget.isLoadingMore ||
-          !_scrollController.hasClients) {
-        return;
-      }
-      final viewportBox =
-          _scrollViewportKey.currentContext?.findRenderObject() as RenderBox?;
-      final rowBox =
-          _messageRowKeys[anchor.rowKey]?.currentContext?.findRenderObject()
-              as RenderBox?;
-      if (viewportBox == null || !viewportBox.hasSize) {
-        return;
-      }
-      final position = _scrollController.position;
-      final target = rowBox != null && rowBox.hasSize
-          ? position.pixels +
-                (rowBox.localToGlobal(Offset.zero).dy - anchor.screenY)
-          : anchor.scrollPixels +
-                (viewportBox.localToGlobal(Offset.zero).dy -
-                    anchor.viewportScreenY);
-      final clampedTarget = target
-          .clamp(position.minScrollExtent, position.maxScrollExtent)
-          .toDouble();
-      if ((clampedTarget - position.pixels).abs() >= 0.5) {
-        _scrollController.jumpTo(clampedTarget);
-      }
-    });
-  }
-
   void _onScroll() {
     if (!_scrollController.hasClients) return;
-    if (widget.isLoadingMore) {
-      final position = _scrollController.position;
-      _historyLoadAnchor = (
-        pixels: position.pixels,
-        maxExtent: position.maxScrollExtent,
-      );
-    }
     _scheduleHistoryPrefetchIfNeeded();
   }
 
@@ -413,8 +336,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
     final context = _messageRowKeys[rowKey]?.currentContext;
     if (context != null) {
-      _readerAnchorGeneration++;
-      _historyLoadAnchor = null;
       Scrollable.ensureVisible(
         context,
         alignment: 0.3,
@@ -506,17 +427,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
   }
 
-  /// A prompt submitted from this phone must be visible immediately. Passive
-  /// stream updates preserve a reader's viewport, but carrying that same rule
-  /// across a local send can strand the new prompt below the viewport. It can
-  /// also let a pending older-history anchor move the chat away again after
-  /// the prompt was appended.
+  /// FOLLOW exposes a single explicit way to reveal newly submitted content.
+  /// HOLD intentionally does nothing: no message, tool, image, or history
+  /// update is allowed to issue a compensating scroll command.
   void revealLatestUserPrompt() {
     if (!widget.followLatest) return;
-    _readerAnchorGeneration++;
-    _historyLoadAnchor = null;
-    _scrollPending = false;
-    _jumpToBottom(settleLazyLayout: true);
+    _jumpToBottom();
   }
 
   bool _historyWasPrepended(ChatView oldWidget) {
@@ -554,6 +470,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _followLatestMode = widget.followLatest;
     _reindexAllMessages();
 
     final targetIdentity = _transcriptTargetIdentity();
@@ -571,12 +488,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         widget.historyWindowRevision != oldWidget.historyWindowRevision;
     final newRows = _renderRows(widget.messages);
     final newRowKeys = newRows.map((row) => row.rowKey).toList();
-    // HOLD has one invariant: a visible transcript row keeps the same screen
-    // coordinate across every rebuild. This covers structural inserts as well
-    // as height changes in images, task panels, plans, and outer banners.
-    final visibleReaderAnchor = !widget.followLatest
-        ? _captureVisibleReaderAnchor()
-        : null;
 
     final activeRowKeys = newRowKeys.toSet();
     _messageRowKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
@@ -587,26 +498,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
     final historyLoadFinished =
         oldWidget.isLoadingMore && !widget.isLoadingMore;
-    final historyLoadStarted = !oldWidget.isLoadingMore && widget.isLoadingMore;
     final historyWasPrepended = _historyWasPrepended(oldWidget);
     if (historyLoadFinished || historyWasPrepended) {
       _transcriptTargetLoadRequested = false;
-    }
-
-    if (historyLoadStarted && _scrollController.hasClients) {
-      final position = _scrollController.position;
-      _historyLoadAnchor = (
-        pixels: position.pixels,
-        maxExtent: position.maxScrollExtent,
-      );
-    } else if (historyWasPrepended && _historyLoadAnchor == null) {
-      if (_scrollController.hasClients) {
-        final position = _scrollController.position;
-        _historyLoadAnchor = (
-          pixels: position.pixels,
-          maxExtent: position.maxScrollExtent,
-        );
-      }
     }
 
     final sessionChanged =
@@ -616,134 +510,53 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       _messageRowKeys.clear();
       _taskKeys.clear();
       _taskRowKeyByToolUseId.clear();
-      _historyLoadAnchor = null;
-      _readerAnchorGeneration++;
     }
 
     if (!oldWidget.followLatest && widget.followLatest) {
-      _readerAnchorGeneration++;
-      _historyLoadAnchor = null;
-      _jumpToBottom(settleLazyLayout: true);
-      _rememberCurrentTail();
+      _jumpToBottom();
       return;
     }
 
     if (sessionChanged && !_hasTranscriptTarget) {
-      _rememberCurrentTail();
       if (widget.followLatest) {
-        _jumpToBottom(settleLazyLayout: true);
+        _jumpToBottom();
       }
       return;
     }
 
     if (oldWidget.isLoadingHistory && !widget.isLoadingHistory) {
-      _rememberCurrentTail();
       if (_hasTranscriptTarget) {
         _scheduleTranscriptTargetSeek();
       } else if (widget.followLatest) {
-        _jumpToBottom(settleLazyLayout: true);
+        _jumpToBottom();
       }
       _maybeBackfillViewport();
       return;
     }
 
     if (historyWindowWasReplaced) {
-      _readerAnchorGeneration++;
-      _historyLoadAnchor = null;
-      _rememberCurrentTail();
       if (_hasTranscriptTarget) {
         _scheduleTranscriptTargetSeek();
       } else if (widget.followLatest) {
-        _jumpToBottom(settleLazyLayout: true);
-      } else if (visibleReaderAnchor != null) {
-        _restoreVisibleReaderAnchor(visibleReaderAnchor);
+        _jumpToBottom();
       }
       _maybeBackfillViewport();
       return;
     }
 
     if (historyLoadFinished || historyWasPrepended) {
-      _rememberCurrentTail();
-      final anchor = _historyLoadAnchor;
-      _historyLoadAnchor = null;
       if (_hasTranscriptTarget) {
         _scheduleTranscriptTargetSeek();
         return;
-      }
-      if (anchor != null) {
-        _restorePrependAnchor(anchor, readerAnchor: visibleReaderAnchor);
-      } else if (!widget.followLatest && visibleReaderAnchor != null) {
-        _restoreVisibleReaderAnchor(visibleReaderAnchor);
       }
       _maybeBackfillViewport();
       _scheduleHistoryPrefetchIfNeeded();
       return;
     }
 
-    final currentCount = widget.messages.length;
-    final currentText = widget.messages.isNotEmpty
-        ? widget.messages.last.textContent
-        : '';
-    final currentProcessing = widget.isProcessing;
-
-    final hasNewContent =
-        currentCount != _lastKnownMessageCount ||
-        currentProcessing != _lastKnownProcessing ||
-        currentText != _lastKnownText;
-
-    _lastKnownMessageCount = currentCount;
-    _lastKnownText = currentText;
-    _lastKnownProcessing = currentProcessing;
-
     if (_hasTranscriptTarget) {
       _scheduleTranscriptTargetSeek();
-      return;
     }
-
-    if (!widget.followLatest && visibleReaderAnchor != null) {
-      _restoreVisibleReaderAnchor(visibleReaderAnchor);
-    }
-
-    if (hasNewContent && widget.followLatest) {
-      _scrollToBottom();
-    }
-  }
-
-  void _rememberCurrentTail() {
-    _lastKnownMessageCount = widget.messages.length;
-    _lastKnownText = widget.messages.isNotEmpty
-        ? widget.messages.last.textContent
-        : '';
-    _lastKnownProcessing = widget.isProcessing;
-  }
-
-  void _restorePrependAnchor(
-    ({double pixels, double maxExtent}) anchor, {
-    ({
-      String rowKey,
-      double screenY,
-      double viewportScreenY,
-      double scrollPixels,
-    })?
-    readerAnchor,
-  }) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_scrollController.hasClients || _hasTranscriptTarget) {
-        return;
-      }
-      final position = _scrollController.position;
-      final addedExtent = position.maxScrollExtent - anchor.maxExtent;
-      final target = (anchor.pixels + addedExtent)
-          .clamp(position.minScrollExtent, position.maxScrollExtent)
-          .toDouble();
-      position.jumpTo(target);
-      // The extent delta keeps the same lazy-list neighborhood mounted. A
-      // row-key correction then removes any small error from unequal row
-      // heights. This path runs once per explicit older-page prepend only.
-      if (readerAnchor != null && !widget.followLatest) {
-        _restoreVisibleReaderAnchor(readerAnchor);
-      }
-    });
   }
 
   void _maybeBackfillViewport() {
@@ -800,15 +613,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     required bool hasImage,
   }) {
     if (!hasImage) return;
-    final readerAnchor = _captureVisibleReaderAnchor();
     final changed = expanded
         ? _expandedImageCardIds.add(messageId)
         : _expandedImageCardIds.remove(messageId);
     if (changed && mounted) {
       setState(() {});
-      if (readerAnchor != null) {
-        _restoreVisibleReaderAnchor(readerAnchor);
-      }
     }
   }
 
@@ -827,58 +636,17 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
-  void _jumpToBottom({
-    bool settleLazyLayout = false,
-    int attempt = 0,
-    double? previousMaxExtent,
-  }) {
-    _readerAnchorGeneration++;
+  void _jumpToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (_scrollController.hasClients) {
-        final position = _scrollController.position;
-        final maxExtent = position.maxScrollExtent;
-        if ((position.pixels - maxExtent).abs() >= 0.5) {
-          position.jumpTo(maxExtent);
-        }
-        final extentIsStable =
-            previousMaxExtent != null &&
-            (previousMaxExtent - maxExtent).abs() < 0.5;
-        if (settleLazyLayout &&
-            !extentIsStable &&
-            attempt < 8 &&
-            widget.followLatest) {
-          _jumpToBottom(
-            settleLazyLayout: true,
-            attempt: attempt + 1,
-            previousMaxExtent: maxExtent,
-          );
-        }
+      if (!mounted ||
+          !widget.followLatest ||
+          _hasTranscriptTarget ||
+          !_scrollController.hasClients) {
+        return;
       }
-    });
-  }
-
-  bool _scrollPending = false;
-
-  void _scrollToBottom({int settleAttempt = 0, double? previousMaxExtent}) {
-    if (_scrollPending) return;
-    _scrollPending = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollPending = false;
-      if (!_scrollController.hasClients || !widget.followLatest) return;
       final position = _scrollController.position;
-      final target = position.maxScrollExtent;
-      final distance = target - position.pixels;
-      if (distance > 0) {
-        position.jumpTo(target);
-      }
-      final extentIsStable =
-          previousMaxExtent != null && (previousMaxExtent - target).abs() < 0.5;
-      if (!extentIsStable && settleAttempt < 8) {
-        _scrollToBottom(
-          settleAttempt: settleAttempt + 1,
-          previousMaxExtent: target,
-        );
+      if ((position.pixels - position.maxScrollExtent).abs() >= 0.5) {
+        position.jumpTo(position.maxScrollExtent);
       }
     });
   }
@@ -995,12 +763,15 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               key: const ValueKey('chat-scroll-surface'),
               color: chatSurfaceColor,
               child: SizedBox.expand(
-                key: _scrollViewportKey,
                 child: ListView.builder(
                   key: ValueKey<String>(
                     'chat-list:${widget.sessionStorageKey ?? ''}',
                   ),
                   controller: _scrollController,
+                  physics: _ChatViewportPhysics(
+                    isFollowing: () => _followLatestMode,
+                    parent: const ClampingScrollPhysics(),
+                  ),
                   findChildIndexCallback: (key) => listIndexByMessageKey[key],
                   padding: const EdgeInsets.only(top: 8, bottom: 8),
                   itemCount: itemCount,
@@ -1605,6 +1376,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
     return ListView.builder(
       controller: _scrollController,
+      physics: _ChatViewportPhysics(
+        isFollowing: () => _followLatestMode,
+        parent: const ClampingScrollPhysics(),
+      ),
       padding: const EdgeInsets.only(top: 4, bottom: 8),
       itemCount: items.length,
       itemBuilder: (context, index) => RawEventCard(item: items[index]),

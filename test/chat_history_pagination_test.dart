@@ -80,7 +80,7 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
-  testWidgets('prefetches near the oldest row and preserves the viewport', (
+  testWidgets('prefetches near the oldest row without moving HOLD', (
     WidgetTester tester,
   ) async {
     final key = GlobalKey<_HistoryHarnessState>();
@@ -95,24 +95,23 @@ void main() {
     );
     await tester.pump();
 
+    key.currentState!.holdViewport();
+    await tester.pump();
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
-    key.currentState!.holdViewport();
-    await tester.pump();
     position.jumpTo(position.minScrollExtent + 10);
     await tester.pump();
+    await tester.pump();
 
+    expect(position.pixels, closeTo(position.minScrollExtent + 10, 0.5));
     expect(key.currentState!.loadMoreCalls, 1);
-    final anchorBefore = _topVisibleMessage(tester);
+    final pixelsBefore = position.pixels;
 
     key.currentState!.completeLoad(prependCount: 20);
     await tester.pumpAndSettle();
 
-    expect(
-      _messageTop(tester, anchorBefore.id),
-      closeTo(anchorBefore.top, 0.5),
-    );
+    expect(position.pixels, closeTo(pixelsBefore, 0.5));
   });
 
   testWidgets('authoritative history replacement discards the old extent', (
@@ -164,14 +163,14 @@ void main() {
     );
     await tester.pump();
 
-    final position = tester
-        .state<ScrollableState>(find.byType(Scrollable).first)
-        .position;
     key.currentState!.appendStreamingText(30);
     await tester.pump();
     await tester.pump();
     key.currentState!.holdViewport();
     await tester.pump();
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
     position.jumpTo(position.maxScrollExtent * 0.45);
     await tester.pump();
     final anchorBefore = _topVisibleMessage(tester);
@@ -203,23 +202,20 @@ void main() {
     );
     await tester.pump();
 
+    key.currentState!.holdViewport();
+    await tester.pump();
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
-    key.currentState!.holdViewport();
-    await tester.pump();
     position.jumpTo(position.maxScrollExtent * 0.45);
     await tester.pump();
-    final anchorBefore = _topVisibleMessage(tester);
+    final pixelsBefore = position.pixels;
 
     key.currentState!.showOuterBanner();
     await tester.pump();
     await tester.pump();
 
-    expect(
-      _messageTop(tester, anchorBefore.id),
-      closeTo(anchorBefore.top, 0.5),
-    );
+    expect(position.pixels, closeTo(pixelsBefore, 0.5));
   });
 
   testWidgets('FOLLOW and HOLD are explicit, deterministic viewport modes', (
@@ -237,11 +233,11 @@ void main() {
     );
     await tester.pump();
 
+    key.currentState!.holdViewport();
+    await tester.pump();
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
-    key.currentState!.holdViewport();
-    await tester.pump();
     position.jumpTo(position.maxScrollExtent * 0.45);
     final heldPixels = position.pixels;
 
@@ -260,47 +256,51 @@ void main() {
     await tester.pump();
     await tester.pump();
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+
+    final followedPixels = position.pixels;
+    await tester.drag(find.byType(ListView).first, const Offset(0, 160));
+    await tester.pumpAndSettle();
+    expect(position.pixels, closeTo(followedPixels, 0.5));
   });
 
-  testWidgets(
-    'a locally sent prompt cancels reader and pending history anchors',
-    (WidgetTester tester) async {
-      final key = GlobalKey<_HistoryHarnessState>();
-      await tester.pumpWidget(
-        MaterialApp(
-          home: _HistoryHarness(
-            key: key,
-            initiallyLoadingHistory: false,
-            messageCount: 80,
-          ),
+  testWidgets('a locally sent prompt remains visible while FOLLOW is enabled', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      final position = tester
-          .state<ScrollableState>(find.byType(Scrollable).first)
-          .position;
-      position.jumpTo(position.maxScrollExtent * 0.6);
-      await tester.pump();
-      key.currentState!.beginHistoryLoad();
-      await tester.pump();
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(position.maxScrollExtent * 0.6);
+    await tester.pump();
+    key.currentState!.beginHistoryLoad();
+    await tester.pump();
 
-      key.currentState!.sendUserPrompt('new local prompt');
-      await tester.pump();
-      await tester.pump();
+    key.currentState!.sendUserPrompt('new local prompt');
+    await tester.pump();
+    await tester.pump();
 
-      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
-      expect(find.text('new local prompt'), findsOneWidget);
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(find.text('new local prompt'), findsOneWidget);
 
-      key.currentState!.completeLoad(prependCount: 20);
-      await tester.pump();
-      await tester.pump();
+    key.currentState!.completeLoad(prependCount: 20);
+    await tester.pump();
+    await tester.pump();
 
-      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
-      expect(find.text('new local prompt'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    },
-  );
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(find.text('new local prompt'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('streaming text does not fight an active reader drag', (
     WidgetTester tester,
@@ -317,12 +317,12 @@ void main() {
     );
     await tester.pump();
 
-    final scrollable = find.byType(Scrollable).first;
-    final position = tester.state<ScrollableState>(scrollable).position;
     key.currentState!.appendStreamingText(30);
     await tester.pump();
     key.currentState!.holdViewport();
     await tester.pump();
+    final scrollable = find.byType(Scrollable).first;
+    final position = tester.state<ScrollableState>(scrollable).position;
     position.jumpTo(position.maxScrollExtent * 0.45);
     await tester.pump();
 
@@ -369,7 +369,11 @@ void main() {
     await tester.pump();
     key.currentState!.holdViewport();
     await tester.pump();
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
     final cardTopBefore = tester.getTopLeft(find.byType(ToolOutputBlock)).dy;
+    final pixelsBefore = position.pixels;
 
     await tester.tap(find.byType(ToolOutputBlock));
     await tester.pump();
@@ -386,6 +390,7 @@ void main() {
       tester.getTopLeft(find.byType(ToolOutputBlock)).dy,
       closeTo(cardTopBefore, 0.5),
     );
+    expect(position.pixels, closeTo(pixelsBefore, 0.5));
   });
 
   testWidgets('returning to a session does not restore an expanded image', (
