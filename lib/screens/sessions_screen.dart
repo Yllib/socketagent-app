@@ -5,7 +5,7 @@ import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
 import '../models/server_config.dart';
-import '../models/session_sorting.dart';
+import '../models/session_grouping.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'archive_screen.dart';
 import 'home_screen.dart';
@@ -27,6 +27,7 @@ class _SessionsTabState extends State<SessionsTab> {
   bool _searchOpen = false;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
+  final Set<String> _collapsedDelegatedParents = {};
 
   @override
   void dispose() {
@@ -1346,12 +1347,6 @@ class _SessionsTabState extends State<SessionsTab> {
         backend.toLowerCase().contains(query);
   }
 
-  List<Session> _filteredSessions(ChatProvider provider) {
-    return provider.sessions
-        .where((session) => _matchesSessionFilters(provider, session))
-        .toList();
-  }
-
   void _showServerFilterSheet(BuildContext context, ChatProvider provider) {
     final sortedServers = _sortedServerConfigs(provider);
     final sessions = provider.sessions;
@@ -1573,9 +1568,12 @@ class _SessionsTabState extends State<SessionsTab> {
   Widget _buildSectionedSessionList(
     BuildContext context,
     ChatProvider provider,
-    List<Session> sessions,
   ) {
-    if (sessions.isEmpty) {
+    final forest = filterSessionForest(
+      buildSessionForest(provider.sessions),
+      (session) => _matchesSessionFilters(provider, session),
+    );
+    if (forest.isEmpty) {
       return Center(
         child: Text(
           provider.sessions.isEmpty
@@ -1590,31 +1588,40 @@ class _SessionsTabState extends State<SessionsTab> {
     }
 
     final seen = <String>{};
-    List<Session> take(bool Function(Session session) predicate) {
-      final result = <Session>[];
-      for (final session in sessions) {
-        final key = _sessionKey(session);
-        if (seen.contains(key) || !predicate(session)) continue;
+    List<SessionTreeNode> take(bool Function(SessionTreeNode node) predicate) {
+      final result = <SessionTreeNode>[];
+      for (final node in forest) {
+        final key = _sessionKey(node.session);
+        if (seen.contains(key) || !predicate(node)) continue;
         seen.add(key);
-        result.add(session);
+        result.add(node);
       }
       return result;
     }
 
-    final working = take((session) => session.running);
-    working.sort(compareWorkingSessionsByStart);
-    final pinned = take((session) => provider.isSessionPinned(session.id));
-    final recent = take((session) => true);
+    final working = take((node) => node.isRunning);
+    working.sort(compareWorkingSessionTreesByStart);
+    final pinned = take(
+      (node) =>
+          node.sessions.any((session) => provider.isSessionPinned(session.id)),
+    );
+    final recent = take((node) => true)
+      ..sort(
+        (left, right) =>
+            sessionTreeLastActive(right).compareTo(sessionTreeLastActive(left)),
+      );
 
     final children = <Widget>[];
-    void addSection(String title, List<Session> sectionSessions) {
-      if (sectionSessions.isEmpty) return;
-      children.add(
-        _buildSessionSectionHeader(context, title, sectionSessions.length),
+    void addSection(String title, List<SessionTreeNode> sectionRoots) {
+      if (sectionRoots.isEmpty) return;
+      final sessionCount = sectionRoots.fold<int>(
+        0,
+        (total, node) => total + node.sessionCount,
       );
-      for (var i = 0; i < sectionSessions.length; i++) {
-        children.add(_buildSessionTile(context, sectionSessions[i]));
-        if (i != sectionSessions.length - 1) {
+      children.add(_buildSessionSectionHeader(context, title, sessionCount));
+      for (var i = 0; i < sectionRoots.length; i++) {
+        children.add(_buildSessionTreeNode(context, sectionRoots[i]));
+        if (i != sectionRoots.length - 1) {
           children.add(
             Divider(
               height: 1,
@@ -1684,8 +1691,6 @@ class _SessionsTabState extends State<SessionsTab> {
           _selectedServerFilterId = null;
           _connectedOnlyFilter = false;
         }
-        final filteredSessions = _filteredSessions(provider);
-
         return Scaffold(
           appBar: AppBar(
             title: const Text('Sessions'),
@@ -1707,13 +1712,7 @@ class _SessionsTabState extends State<SessionsTab> {
               if (provider.sessions.isEmpty)
                 Expanded(child: _buildEmptyState(context))
               else
-                Expanded(
-                  child: _buildSectionedSessionList(
-                    context,
-                    provider,
-                    filteredSessions,
-                  ),
-                ),
+                Expanded(child: _buildSectionedSessionList(context, provider)),
             ],
           ),
           // Single entry point for new sessions: the CWD picker. The picker
@@ -2809,7 +2808,116 @@ class _SessionsTabState extends State<SessionsTab> {
     ).showSnackBar(const SnackBar(content: Text('Codex rollback requested')));
   }
 
-  Widget _buildSessionTile(BuildContext context, Session session) {
+  Widget _buildSessionTreeNode(
+    BuildContext context,
+    SessionTreeNode node, {
+    int depth = 0,
+  }) {
+    final tile = _buildSessionTile(
+      context,
+      node.session,
+      compact: depth > 0,
+      delegated: depth > 0,
+    );
+    if (node.children.isEmpty) return tile;
+
+    final groupKey = _sessionKey(node.session);
+    final collapsed = _collapsedDelegatedParents.contains(groupKey);
+    final descendantCount = node.sessionCount - 1;
+    final runningCount = node.sessions
+        .skip(1)
+        .where((session) => session.running)
+        .length;
+    final theme = Theme.of(context);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        tile,
+        InkWell(
+          key: Key('delegated-group-$groupKey'),
+          onTap: () {
+            setState(() {
+              if (collapsed) {
+                _collapsedDelegatedParents.remove(groupKey);
+              } else {
+                _collapsedDelegatedParents.add(groupKey);
+              }
+            });
+          },
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(20.0 + (depth * 16), 2, 12, 6),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.account_tree_outlined,
+                  size: 16,
+                  color: theme.colorScheme.primary.withAlpha(180),
+                ),
+                const SizedBox(width: 7),
+                Expanded(
+                  child: Text(
+                    '$descendantCount agent session'
+                    '${descendantCount == 1 ? '' : 's'}'
+                    '${runningCount > 0 ? ' · $runningCount working' : ''}',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: runningCount > 0
+                          ? theme.colorScheme.primary
+                          : theme.colorScheme.onSurface.withAlpha(145),
+                    ),
+                  ),
+                ),
+                Icon(
+                  collapsed ? Icons.expand_more : Icons.expand_less,
+                  size: 19,
+                  color: theme.colorScheme.onSurface.withAlpha(130),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (!collapsed)
+          Container(
+            margin: EdgeInsets.only(left: 20.0 + (depth * 16)),
+            decoration: BoxDecoration(
+              border: Border(
+                left: BorderSide(
+                  color: theme.colorScheme.primary.withAlpha(75),
+                  width: 2,
+                ),
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < node.children.length; i++) ...[
+                  _buildSessionTreeNode(
+                    context,
+                    node.children[i],
+                    depth: depth + 1,
+                  ),
+                  if (i != node.children.length - 1)
+                    Divider(
+                      height: 1,
+                      indent: 40,
+                      color: theme.colorScheme.outlineVariant.withAlpha(65),
+                    ),
+                ],
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSessionTile(
+    BuildContext context,
+    Session session, {
+    bool compact = false,
+    bool delegated = false,
+  }) {
     final theme = Theme.of(context);
     final provider = context.read<ChatProvider>();
     final status = provider.sessionServerStatus(session);
@@ -2911,12 +3019,17 @@ class _SessionsTabState extends State<SessionsTab> {
         child: Opacity(
           opacity: isAvailable ? 1 : 0.48,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            padding: EdgeInsets.fromLTRB(
+              compact ? 10 : 16,
+              compact ? 8 : 12,
+              compact ? 8 : 16,
+              compact ? 8 : 12,
+            ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Padding(
-                  padding: const EdgeInsets.only(top: 2, right: 12),
+                  padding: EdgeInsets.only(top: 2, right: compact ? 8 : 12),
                   child: showBusy
                       ? SizedBox(
                           width: 20,
@@ -2927,12 +3040,14 @@ class _SessionsTabState extends State<SessionsTab> {
                           ),
                         )
                       : Icon(
-                          provider.isSessionPinned(session.id)
+                          delegated
+                              ? Icons.subdirectory_arrow_right
+                              : provider.isSessionPinned(session.id)
                               ? Icons.push_pin
                               : isAvailable
                               ? Icons.terminal
                               : Icons.cloud_off_outlined,
-                          size: 20,
+                          size: compact ? 18 : 20,
                           color: provider.isSessionPinned(session.id)
                               ? theme.colorScheme.primary.withAlpha(180)
                               : theme.colorScheme.onSurface.withAlpha(128),
@@ -2949,7 +3064,7 @@ class _SessionsTabState extends State<SessionsTab> {
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           fontWeight: FontWeight.w700,
-                          fontSize: 15.5,
+                          fontSize: compact ? 13.5 : 15.5,
                           color: Color.lerp(
                             theme.colorScheme.onSurface,
                             theme.colorScheme.primary,
@@ -3063,6 +3178,29 @@ class _SessionsTabState extends State<SessionsTab> {
                                   fontWeight: FontWeight.w600,
                                   letterSpacing: 0.5,
                                   color: theme.colorScheme.onTertiaryContainer,
+                                ),
+                              ),
+                            ),
+                          ],
+                          if (delegated) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 5,
+                                vertical: 1,
+                              ),
+                              decoration: BoxDecoration(
+                                color: theme.colorScheme.secondaryContainer
+                                    .withAlpha(170),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                'AGENT',
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 0.5,
+                                  color: theme.colorScheme.onSecondaryContainer,
                                 ),
                               ),
                             ),

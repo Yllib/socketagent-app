@@ -514,6 +514,10 @@ class Session {
   final String? backend;
   final String? codexDriver;
 
+  /// Immediate SocketAgent session that spawned this full delegated session.
+  final String? delegatedBySessionId;
+  final String? delegationId;
+
   Session({
     required this.id,
     required this.title,
@@ -529,6 +533,8 @@ class Session {
     this.serverColor,
     this.backend,
     this.codexDriver,
+    this.delegatedBySessionId,
+    this.delegationId,
   });
 
   factory Session.fromJson(Map<String, dynamic> json) {
@@ -547,6 +553,8 @@ class Session {
       serverColor: json['serverColor'] as int?,
       backend: json['backend'] as String?,
       codexDriver: json['codexDriver'] as String?,
+      delegatedBySessionId: json['delegatedBySessionId'] as String?,
+      delegationId: json['delegationId'] as String?,
     );
   }
 
@@ -565,6 +573,8 @@ class Session {
     'serverColor': serverColor,
     'backend': backend,
     'codexDriver': codexDriver,
+    'delegatedBySessionId': delegatedBySessionId,
+    'delegationId': delegationId,
   };
 
   Session copyWith({
@@ -582,6 +592,8 @@ class Session {
     int? serverColor,
     String? backend,
     String? codexDriver,
+    String? delegatedBySessionId,
+    String? delegationId,
   }) {
     return Session(
       id: id ?? this.id,
@@ -599,6 +611,8 @@ class Session {
       serverColor: serverColor ?? this.serverColor,
       backend: backend ?? this.backend,
       codexDriver: codexDriver ?? this.codexDriver,
+      delegatedBySessionId: delegatedBySessionId ?? this.delegatedBySessionId,
+      delegationId: delegationId ?? this.delegationId,
     );
   }
 
@@ -622,6 +636,8 @@ class Session {
       serverColor: serverColor,
       backend: backend,
       codexDriver: codexDriver,
+      delegatedBySessionId: delegatedBySessionId,
+      delegationId: delegationId,
     );
   }
 }
