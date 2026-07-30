@@ -720,6 +720,11 @@ class HomeScreenState extends State<HomeScreen> {
                           '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
                       isProcessing: provider.isProcessing,
                       followLatest: _followLatest,
+                      onFollowLatestChanged: (follow) {
+                        if (_followLatest != follow) {
+                          setState(() => _followLatest = follow);
+                        }
+                      },
                       processingElapsed: provider.currentPromptElapsed,
                       isCompacting: provider.isCompacting,
                       isLoadingHistory: provider.isLoadingHistory,
@@ -890,14 +895,14 @@ class HomeScreenState extends State<HomeScreen> {
     final following = _followLatest;
     return Tooltip(
       message: following
-          ? 'Following latest messages. Tap to hold the current viewport.'
-          : 'Viewport held. Tap to jump to and follow the latest messages.',
+          ? 'Auto-scroll is on. Tap to turn it off.'
+          : 'Auto-scroll is off. Tap to jump to the bottom and turn it on.',
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
         onTap: () => setState(() => _followLatest = !following),
         child: _buildChipBody(
-          following ? Icons.vertical_align_bottom : Icons.pause,
-          following ? 'FOLLOW' : 'HOLD',
+          following ? Icons.toggle_on : Icons.toggle_off,
+          following ? 'AUTO SCROLL: ON' : 'AUTO SCROLL: OFF',
           active: following,
           iconColor: following
               ? theme.colorScheme.onPrimaryContainer

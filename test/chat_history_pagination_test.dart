@@ -28,6 +28,7 @@ void main() {
 
     expect(find.text('History response 35'), findsOneWidget);
     expect(key.currentState!.targetReached, isTrue);
+    expect(key.currentState!.followLatest, isFalse);
   });
 
   testWidgets('notification focus pages backward until its row is available', (
@@ -251,20 +252,91 @@ void main() {
     await tester.pump();
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
 
-    await tester.drag(find.byType(ListView).first, const Offset(0, 160));
+    final list = find.byType(ListView).first;
+    await tester.drag(list, const Offset(0, 160));
     await tester.pumpAndSettle();
     expect(position.pixels, lessThan(position.maxScrollExtent));
-    final manuallySelectedPixels = position.pixels;
+    expect(key.currentState!.followLatest, isFalse);
+    final heldAfterManualScroll = position.pixels;
 
     key.currentState!.appendStreamingText(40);
     await tester.pump();
     await tester.pump();
-    expect(position.pixels, closeTo(manuallySelectedPixels, 0.5));
+    expect(position.pixels, closeTo(heldAfterManualScroll, 0.5));
 
-    key.currentState!.appendNewResponse('new row while following');
-    await tester.pump();
-    await tester.pump();
+    key.currentState!.isProcessing = false;
+    await tester.fling(list, const Offset(0, -1800), 4000);
+    await tester.pumpAndSettle();
+    expect(key.currentState!.followLatest, isTrue);
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+  });
+
+  testWidgets('FOLLOW tracks same-row streaming growth through completion', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(position.maxScrollExtent * 0.4);
+
+    key.currentState!.appendStreamingText(40);
+    for (var frame = 0; frame < 14; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+
+    position.jumpTo(position.maxScrollExtent * 0.5);
+    key.currentState!.finishStreamingText(20);
+    for (var frame = 0; frame < 14; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+  });
+
+  testWidgets('FOLLOW settles at the real bottom after a large card batch', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    position.jumpTo(position.maxScrollExtent * 0.35);
+    key.currentState!.appendVariableHeightCards(24);
+    for (var frame = 0; frame < 16; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is MessageBubble && widget.message.id == 'live-card-23',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('FOLLOW ignores unrelated rebuilds while the reader is up', (
@@ -703,6 +775,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   int? targetSessionSeq;
   bool targetReached = false;
   bool followLatest = true;
+  bool isProcessing = false;
   bool outerBannerVisible = false;
   late List<ChatMessage> messages;
 
@@ -839,6 +912,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   void appendStreamingText(int lineCount) {
     final previous = messages.last;
     setState(() {
+      isProcessing = true;
       messages = [
         ...messages.take(messages.length - 1),
         ChatMessage(
@@ -851,6 +925,46 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
           streamId: 'streaming-tail',
           revision: previous.revision + 1,
         ),
+      ];
+    });
+  }
+
+  void finishStreamingText(int lineCount) {
+    final previous = messages.last;
+    setState(() {
+      isProcessing = false;
+      messages = [
+        ...messages.take(messages.length - 1),
+        ChatMessage(
+          id: previous.id,
+          sender: previous.sender,
+          type: previous.type,
+          timestamp: previous.timestamp,
+          textContent:
+              '${previous.textContent}\n${List.generate(lineCount, (index) => 'Final line $index').join('\n')}',
+          streamId: previous.streamId,
+          revision: previous.revision + 1,
+        ),
+      ];
+    });
+  }
+
+  void appendVariableHeightCards(int count) {
+    setState(() {
+      isProcessing = true;
+      messages = [
+        ...messages,
+        for (var index = 0; index < count; index++)
+          ChatMessage(
+            id: 'live-card-$index',
+            sender: MessageSender.assistant,
+            type: MessageType.text,
+            timestamp: DateTime.now().add(Duration(milliseconds: index)),
+            textContent: [
+              'Live card $index',
+              ...List.generate(index % 7, (line) => 'Card detail $line'),
+            ].join('\n'),
+          ),
       ];
     });
   }
@@ -939,8 +1053,13 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
               key: chatViewKey,
               messages: messages,
               sessionStorageKey: sessionStorageKey,
-              isProcessing: false,
+              isProcessing: isProcessing,
               followLatest: followLatest,
+              onFollowLatestChanged: (follow) {
+                if (followLatest != follow) {
+                  setState(() => followLatest = follow);
+                }
+              },
               isLoadingHistory: isLoadingHistory,
               isLoadingMore: isLoadingMore,
               hasMoreHistory: hasMoreHistory,

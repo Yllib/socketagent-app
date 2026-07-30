@@ -1,5 +1,6 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
 import '../models/raw_event.dart';
@@ -36,6 +37,7 @@ class ChatView extends StatefulWidget {
   final String? sessionStorageKey;
   final bool isProcessing;
   final bool followLatest;
+  final ValueChanged<bool>? onFollowLatestChanged;
   final Duration? processingElapsed;
   final bool isCompacting;
   final bool isLoadingHistory;
@@ -72,6 +74,7 @@ class ChatView extends StatefulWidget {
     this.sessionStorageKey,
     required this.isProcessing,
     this.followLatest = true,
+    this.onFollowLatestChanged,
     this.processingElapsed,
     this.isCompacting = false,
     this.isLoadingHistory = false,
@@ -123,6 +126,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   int _transcriptTargetSeekAttempts = 0;
   bool _transcriptTargetLoadRequested = false;
   String? _lastTranscriptTargetIdentity;
+  int _followBottomGeneration = 0;
+  bool _userScrollInProgress = false;
+  bool? _requestedFollowLatest;
 
   bool get _hasTranscriptTarget =>
       (widget.targetEntryId?.isNotEmpty ?? false) ||
@@ -136,7 +142,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     _reindexAllMessages(force: true);
     _scrollController.addListener(_onScroll);
     _scheduleTranscriptTargetSeek();
-    if (widget.followLatest && !_hasTranscriptTarget) {
+    if (_hasTranscriptTarget) {
+      _disableFollowForTranscriptTarget();
+    } else if (widget.followLatest) {
       _jumpToBottom();
     }
   }
@@ -433,12 +441,23 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     super.didUpdateWidget(oldWidget);
     _reindexAllMessages();
 
+    if (_requestedFollowLatest == widget.followLatest) {
+      _requestedFollowLatest = null;
+    }
+    if (!widget.followLatest) {
+      _cancelFollowBottom();
+    }
+
     final targetIdentity = _transcriptTargetIdentity();
     if (_lastTranscriptTargetIdentity != targetIdentity) {
       _lastTranscriptTargetIdentity = targetIdentity;
       _transcriptTargetSeekAttempts = 0;
       _transcriptTargetLoadRequested = false;
       _transcriptTargetGeneration++;
+      _cancelFollowBottom();
+      if (_hasTranscriptTarget) {
+        _disableFollowForTranscriptTarget();
+      }
     }
     if (oldWidget.isLoadingMore && !widget.isLoadingMore) {
       _transcriptTargetLoadRequested = false;
@@ -466,6 +485,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final sessionChanged =
         widget.sessionStorageKey != oldWidget.sessionStorageKey;
     if (sessionChanged) {
+      _userScrollInProgress = false;
+      _requestedFollowLatest = null;
       _expandedImageCardIds.clear();
       _messageRowKeys.clear();
       _taskKeys.clear();
@@ -473,13 +494,13 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
 
     if (!oldWidget.followLatest && widget.followLatest) {
-      _jumpToBottom();
+      _followToBottom();
       return;
     }
 
     if (sessionChanged && !_hasTranscriptTarget) {
       if (widget.followLatest) {
-        _jumpToBottom();
+        _followToBottom();
       }
       return;
     }
@@ -488,21 +509,25 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       if (_hasTranscriptTarget) {
         _scheduleTranscriptTargetSeek();
       } else if (widget.followLatest) {
-        _jumpToBottom();
+        _followToBottom();
       }
       _maybeBackfillViewport();
       return;
     }
 
     if (historyWindowWasReplaced) {
+      _cancelFollowBottom();
       if (_hasTranscriptTarget) {
         _scheduleTranscriptTargetSeek();
+      } else if (widget.followLatest) {
+        _followToBottom();
       }
       _maybeBackfillViewport();
       return;
     }
 
     if (historyLoadFinished || historyWasPrepended) {
+      _cancelFollowBottom();
       if (_hasTranscriptTarget) {
         _scheduleTranscriptTargetSeek();
         return;
@@ -512,9 +537,16 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       return;
     }
 
+    // While a run is active, FOLLOW means exactly that: every streamed text
+    // growth, tool-card state change, thinking update, and final completion
+    // keeps the viewport at the actual bottom. ChatMessage instances are
+    // intentionally mutated in place by ChatProvider, so message-count or
+    // object-identity comparisons cannot detect these updates reliably.
     if (widget.followLatest &&
-        widget.messages.length > oldWidget.messages.length) {
-      _jumpToBottom();
+        (widget.isProcessing ||
+            oldWidget.isProcessing ||
+            widget.messages.length != oldWidget.messages.length)) {
+      _followToBottom();
     }
 
     if (_hasTranscriptTarget) {
@@ -581,6 +613,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         : _expandedImageCardIds.remove(messageId);
     if (changed && mounted) {
       setState(() {});
+      if (widget.followLatest) {
+        _followToBottom();
+      }
     }
   }
 
@@ -599,29 +634,111 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
+  void _cancelFollowBottom() {
+    _followBottomGeneration++;
+  }
+
+  bool get _effectiveFollowLatest =>
+      _requestedFollowLatest ?? widget.followLatest;
+
+  void _disableFollowForTranscriptTarget() {
+    final identity = _transcriptTargetIdentity();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          !_hasTranscriptTarget ||
+          _transcriptTargetIdentity() != identity) {
+        return;
+      }
+      _requestFollowLatest(false);
+    });
+  }
+
+  void _requestFollowLatest(bool follow) {
+    if (_effectiveFollowLatest == follow) return;
+    _requestedFollowLatest = follow;
+    if (!follow) {
+      _cancelFollowBottom();
+    }
+    widget.onFollowLatestChanged?.call(follow);
+  }
+
+  bool _handleUserScrollNotification(ScrollNotification notification) {
+    if (notification is ScrollStartNotification &&
+        notification.dragDetails != null) {
+      _userScrollInProgress = true;
+    } else if (notification is UserScrollNotification &&
+        notification.direction != ScrollDirection.idle) {
+      _userScrollInProgress = true;
+    }
+
+    if (_userScrollInProgress &&
+        notification is ScrollUpdateNotification &&
+        _effectiveFollowLatest &&
+        notification.metrics.extentAfter > 2) {
+      _requestFollowLatest(false);
+    }
+
+    if (notification is ScrollEndNotification ||
+        (notification is UserScrollNotification &&
+            notification.direction == ScrollDirection.idle)) {
+      if (_userScrollInProgress &&
+          !_effectiveFollowLatest &&
+          notification.metrics.extentAfter <= 12) {
+        _requestFollowLatest(true);
+      }
+      _userScrollInProgress = false;
+    }
+    return false;
+  }
+
   void _jumpToBottom() {
+    _followToBottom();
+  }
+
+  void _followToBottom() {
+    final generation = ++_followBottomGeneration;
     final sessionStorageKey = widget.sessionStorageKey;
     bool stillApplies() =>
         mounted &&
+        generation == _followBottomGeneration &&
         widget.followLatest &&
         widget.sessionStorageKey == sessionStorageKey &&
         !_hasTranscriptTarget &&
         _scrollController.hasClients;
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!stillApplies()) return;
-      final position = _scrollController.position;
-      position.jumpTo(position.maxScrollExtent);
-
-      // A lazy list learns the exact final-row extent only after that row is
-      // mounted by the first jump. Correct once on the immediately following
-      // frame; never retry or react to later unrelated layouts.
+    void settle({
+      required int attempt,
+      required double? previousMaxExtent,
+      required int stableFrames,
+    }) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!stillApplies()) return;
-        final settledPosition = _scrollController.position;
-        settledPosition.jumpTo(settledPosition.maxScrollExtent);
+        final position = _scrollController.position;
+        final maxExtent = position.maxScrollExtent;
+        if ((position.pixels - maxExtent).abs() >= 0.5) {
+          position.jumpTo(maxExtent);
+        }
+
+        final extentStable =
+            previousMaxExtent != null &&
+            (previousMaxExtent - maxExtent).abs() < 0.5;
+        final nextStableFrames = extentStable ? stableFrames + 1 : 0;
+
+        // ListView estimates the extent of unmounted, variable-height cards.
+        // Keep settling for a few layout frames until the estimate stops
+        // changing. The generation guard cancels this immediately when HOLD,
+        // another session, history targeting, or a newer live update wins.
+        if (attempt < 12 && nextStableFrames < 2) {
+          settle(
+            attempt: attempt + 1,
+            previousMaxExtent: maxExtent,
+            stableFrames: nextStableFrames,
+          );
+        }
       });
-    });
+    }
+
+    settle(attempt: 0, previousMaxExtent: null, stableFrames: 0);
   }
 
   @override
@@ -736,28 +853,31 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               key: const ValueKey('chat-scroll-surface'),
               color: chatSurfaceColor,
               child: SizedBox.expand(
-                child: ListView.builder(
-                  key: ValueKey<String>(
-                    'chat-list:${widget.sessionStorageKey ?? ''}',
-                  ),
-                  controller: _scrollController,
-                  findChildIndexCallback: (key) => listIndexByMessageKey[key],
-                  padding: const EdgeInsets.only(top: 8, bottom: 8),
-                  itemCount: itemCount,
-                  itemBuilder: (context, index) {
-                    var messageIndex = index;
-                    if (hasLoadMore) {
-                      if (messageIndex == 0) {
-                        return _buildLoadMoreButton(context);
+                child: NotificationListener<ScrollNotification>(
+                  onNotification: _handleUserScrollNotification,
+                  child: ListView.builder(
+                    key: ValueKey<String>(
+                      'chat-list:${widget.sessionStorageKey ?? ''}',
+                    ),
+                    controller: _scrollController,
+                    findChildIndexCallback: (key) => listIndexByMessageKey[key],
+                    padding: const EdgeInsets.only(top: 8, bottom: 8),
+                    itemCount: itemCount,
+                    itemBuilder: (context, index) {
+                      var messageIndex = index;
+                      if (hasLoadMore) {
+                        if (messageIndex == 0) {
+                          return _buildLoadMoreButton(context);
+                        }
+                        messageIndex--;
                       }
-                      messageIndex--;
-                    }
-                    if (messageIndex < visibleRows.length) {
-                      final row = visibleRows[messageIndex];
-                      return _buildMessageWidget(row.message, row.rowKey);
-                    }
-                    return _buildThinkingIndicator(context);
-                  },
+                      if (messageIndex < visibleRows.length) {
+                        final row = visibleRows[messageIndex];
+                        return _buildMessageWidget(row.message, row.rowKey);
+                      }
+                      return _buildThinkingIndicator(context);
+                    },
+                  ),
                 ),
               ),
             ),
