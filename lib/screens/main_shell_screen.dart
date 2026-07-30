@@ -148,7 +148,10 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      unawaited(_checkForAppUpdate());
+      // Returning from Android's package installer must re-read the running
+      // app version immediately. The normal foreground throttle would leave a
+      // successfully installed APK showing as install-ready for up to a minute.
+      unawaited(_checkForAppUpdate(force: _updateService.hasDownloadedApk));
       if (_currentIndex == 1) _startScheduledTaskRefresh();
     } else {
       _scheduledTaskRefreshTimer?.cancel();

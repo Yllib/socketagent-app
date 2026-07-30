@@ -44,7 +44,10 @@ class UpdateService extends ChangeNotifier {
   UpdateInfo? get updateInfo => _updateInfo;
   double? get downloadProgress => _downloadProgress;
   bool get isDownloading => _isDownloading;
-  bool get hasDownloadedApk => _hasDownloadedApk;
+  // A verified APK is only actionable while it targets a newer version.
+  // Android leaves our downloaded installer in app storage after installation,
+  // so file existence alone must never keep the UI in "ready to install".
+  bool get hasDownloadedApk => updateAvailable && _hasDownloadedApk;
   String? get downloadedApkPath => _downloadedApkPath;
   String? get error => _error;
   bool get updateAvailable => _updateInfo?.updateAvailable ?? false;
@@ -397,6 +400,16 @@ class UpdateService extends ChangeNotifier {
     }
     final path = await _apkPathForVersion(info.latestVersion);
     final file = File(path);
+    if (!info.updateAvailable) {
+      // A successful installation leaves the APK behind. Once the running
+      // package has caught up, clear both the stale action state and its files.
+      await _deleteIfExists(file);
+      await _deleteIfExists(File('$path.part'));
+      _hasDownloadedApk = false;
+      _downloadedApkPath = null;
+      _downloadProgress = null;
+      return;
+    }
     _hasDownloadedApk = await file.exists() && await file.length() > 0;
     if (_hasDownloadedApk && info.sha256.isNotEmpty) {
       final verified = await _verifyDownloadedApk(file, info);

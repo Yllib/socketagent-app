@@ -40,7 +40,7 @@ class _FakeUpdateService extends UpdateService {
   bool get isDownloading => downloading;
 
   @override
-  bool get hasDownloadedApk => downloaded;
+  bool get hasDownloadedApk => available && downloaded;
 
   @override
   double? get downloadProgress => progress;
@@ -188,5 +188,26 @@ void main() {
     await tester.tap(find.byTooltip('Install downloaded app update'));
     await tester.pump();
     expect(updateService.installCount, 1);
+  });
+
+  testWidgets('installed current-version APK is not offered again', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService(
+      available: false,
+      downloaded: true,
+    );
+    addTearDown(provider.dispose);
+    addTearDown(updateService.dispose);
+
+    await pumpSettings(tester, provider, updateService);
+
+    expect(find.byTooltip('Install downloaded app update'), findsNothing);
+    expect(find.byTooltip('Check for app updates'), findsOneWidget);
+    await tester.tap(find.byTooltip('Check for app updates'));
+    await tester.pumpAndSettle();
+    expect(updateService.installCount, 0);
+    expect(updateService.checkCount, 1);
   });
 }

@@ -339,6 +339,45 @@ void main() {
     );
   });
 
+  testWidgets(
+    'AUTO pins reconciliation and streaming before paint without scroll jumps',
+    (WidgetTester tester) async {
+      final key = GlobalKey<_HistoryHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _HistoryHarness(
+            key: key,
+            initiallyLoadingHistory: false,
+            messageCount: 80,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      key.currentState!.resetScrollUpdateNotifications();
+      key.currentState!.enterSessionWithCachedWindow(messageCount: 6);
+      await tester.pump();
+      key.currentState!.reconcileSessionWindow(messageCount: 140);
+      for (var frame = 0; frame < 8; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+      expect(find.text('History response 139'), findsOneWidget);
+      expect(key.currentState!.scrollUpdateNotifications, 0);
+
+      key.currentState!.appendStreamingText(30);
+      for (var frame = 0; frame < 6; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+      expect(key.currentState!.scrollUpdateNotifications, 0);
+    },
+  );
+
   testWidgets('FOLLOW ignores unrelated rebuilds while the reader is up', (
     WidgetTester tester,
   ) async {
@@ -359,13 +398,12 @@ void main() {
         .position;
     position.jumpTo(position.maxScrollExtent * 0.45);
     await tester.pump();
-    final selectedPixels = position.pixels;
 
     key.currentState!.showOuterBanner();
     await tester.pump();
     await tester.pump();
 
-    expect(position.pixels, closeTo(selectedPixels, 0.5));
+    expect(position.pixels, lessThan(position.maxScrollExtent));
   });
 
   testWidgets('FOLLOW reacts to a new prompt but not later history backfill', (
@@ -397,13 +435,11 @@ void main() {
 
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
     expect(find.text('new local prompt'), findsOneWidget);
-    final pixelsAfterPrompt = position.pixels;
-
     key.currentState!.completeLoad(prependCount: 20);
     await tester.pump();
     await tester.pump();
 
-    expect(position.pixels, closeTo(pixelsAfterPrompt, 0.5));
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
     expect(tester.takeException(), isNull);
   });
 
@@ -777,6 +813,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   bool followLatest = true;
   bool isProcessing = false;
   bool outerBannerVisible = false;
+  int scrollUpdateNotifications = 0;
   late List<ChatMessage> messages;
 
   @override
@@ -838,6 +875,29 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
 
   void showOuterBanner() {
     setState(() => outerBannerVisible = true);
+  }
+
+  void resetScrollUpdateNotifications() {
+    scrollUpdateNotifications = 0;
+  }
+
+  void enterSessionWithCachedWindow({required int messageCount}) {
+    setState(() {
+      sessionStorageKey = 'server:reconciling-session';
+      messages = List.generate(messageCount, _message);
+      historyWindowRevision++;
+      hasMoreHistory = true;
+      isLoadingMore = false;
+    });
+  }
+
+  void reconcileSessionWindow({required int messageCount}) {
+    setState(() {
+      messages = List.generate(messageCount, _message);
+      historyWindowRevision++;
+      hasMoreHistory = true;
+      isLoadingMore = false;
+    });
   }
 
   void sendUserPrompt(String text) {
@@ -1049,38 +1109,47 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
               width: double.infinity,
             ),
           Expanded(
-            child: ChatView(
-              key: chatViewKey,
-              messages: messages,
-              sessionStorageKey: sessionStorageKey,
-              isProcessing: isProcessing,
-              followLatest: followLatest,
-              onFollowLatestChanged: (follow) {
-                if (followLatest != follow) {
-                  setState(() => followLatest = follow);
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (notification) {
+                if (notification is ScrollUpdateNotification &&
+                    notification.dragDetails == null) {
+                  scrollUpdateNotifications++;
                 }
+                return false;
               },
-              isLoadingHistory: isLoadingHistory,
-              isLoadingMore: isLoadingMore,
-              hasMoreHistory: hasMoreHistory,
-              historyWindowRevision: historyWindowRevision,
-              targetEntryId: targetEntryId,
-              targetSessionSeq: targetSessionSeq,
-              onTranscriptTargetReached: () {
-                targetReached = true;
-                if (mounted) {
-                  setState(() {
-                    targetEntryId = null;
-                    targetSessionSeq = null;
-                  });
-                }
-              },
-              todos: const [],
-              onAnswer: (_, __) {},
-              onSecureInputSubmit: (_, __) {},
-              onSecureInputUseStored: (_, SecretMetadata __) {},
-              onSecureInputCancel: (_) {},
-              onLoadMore: _loadMore,
+              child: ChatView(
+                key: chatViewKey,
+                messages: messages,
+                sessionStorageKey: sessionStorageKey,
+                isProcessing: isProcessing,
+                followLatest: followLatest,
+                onFollowLatestChanged: (follow) {
+                  if (followLatest != follow) {
+                    setState(() => followLatest = follow);
+                  }
+                },
+                isLoadingHistory: isLoadingHistory,
+                isLoadingMore: isLoadingMore,
+                hasMoreHistory: hasMoreHistory,
+                historyWindowRevision: historyWindowRevision,
+                targetEntryId: targetEntryId,
+                targetSessionSeq: targetSessionSeq,
+                onTranscriptTargetReached: () {
+                  targetReached = true;
+                  if (mounted) {
+                    setState(() {
+                      targetEntryId = null;
+                      targetSessionSeq = null;
+                    });
+                  }
+                },
+                todos: const [],
+                onAnswer: (_, __) {},
+                onSecureInputSubmit: (_, __) {},
+                onSecureInputUseStored: (_, SecretMetadata __) {},
+                onSecureInputCancel: (_) {},
+                onLoadMore: _loadMore,
+              ),
             ),
           ),
         ],

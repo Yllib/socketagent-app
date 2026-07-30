@@ -108,8 +108,103 @@ class ChatView extends StatefulWidget {
   State<ChatView> createState() => ChatViewState();
 }
 
+class _AutoFollowScrollController extends ScrollController {
+  _AutoFollowScrollController({required this.shouldFollow});
+
+  final bool Function() shouldFollow;
+  bool _followRequested = false;
+
+  void requestFollow() {
+    _followRequested = true;
+    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
+      position.requestFollow();
+    }
+  }
+
+  void cancelFollow() {
+    _followRequested = false;
+    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
+      position.cancelFollow();
+    }
+  }
+
+  @override
+  ScrollPosition createScrollPosition(
+    ScrollPhysics physics,
+    ScrollContext context,
+    ScrollPosition? oldPosition,
+  ) {
+    return _AutoFollowScrollPosition(
+      physics: physics,
+      context: context,
+      oldPosition: oldPosition,
+      keepScrollOffset: keepScrollOffset,
+      debugLabel: debugLabel,
+      shouldFollow: shouldFollow,
+      initiallyRequested: _followRequested,
+      onRequestApplied: () => _followRequested = false,
+    );
+  }
+}
+
+class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
+  _AutoFollowScrollPosition({
+    required super.physics,
+    required super.context,
+    required this.shouldFollow,
+    required this.onRequestApplied,
+    required bool initiallyRequested,
+    super.keepScrollOffset,
+    super.oldPosition,
+    super.debugLabel,
+  }) : _followRequested = initiallyRequested;
+
+  final bool Function() shouldFollow;
+  final VoidCallback onRequestApplied;
+  bool _followRequested;
+
+  void requestFollow() => _followRequested = true;
+
+  void cancelFollow() => _followRequested = false;
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final previousMaxExtent = hasContentDimensions
+        ? this.maxScrollExtent
+        : null;
+    final wasPinnedToBottom =
+        previousMaxExtent != null &&
+        hasPixels &&
+        (pixels - previousMaxExtent).abs() < 1.0;
+    final correctToBottom =
+        shouldFollow() && (_followRequested || wasPinnedToBottom);
+
+    final accepted = super.applyContentDimensions(
+      minScrollExtent,
+      maxScrollExtent,
+    );
+    var corrected = false;
+    if (correctToBottom && hasPixels) {
+      if ((pixels - maxScrollExtent).abs() >= 0.5) {
+        // applyContentDimensions runs during layout. Correcting here updates
+        // the viewport before paint, unlike jumpTo after a frame, so history
+        // reconciliation and lazy extent refinement cannot visibly teleport.
+        correctPixels(maxScrollExtent);
+        corrected = true;
+      }
+      _followRequested = false;
+      onRequestApplied();
+    }
+    // The sliver pass that calculated these dimensions used the old offset.
+    // Ask the viewport for one immediate re-layout so it builds the actual
+    // bottom children before paint; otherwise the corrected offset can point
+    // at rows that were not laid out in this frame.
+    return corrected ? false : accepted;
+  }
+}
+
 class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
-  late final ScrollController _scrollController;
+  late final _AutoFollowScrollController _scrollController;
   final Set<String> _expandedImageCardIds = {};
   final Map<String, GlobalKey> _messageRowKeys = {};
   final Map<String, GlobalKey> _taskKeys = {};
@@ -126,7 +221,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   int _transcriptTargetSeekAttempts = 0;
   bool _transcriptTargetLoadRequested = false;
   String? _lastTranscriptTargetIdentity;
-  int _followBottomGeneration = 0;
+  bool _followFallbackScheduled = false;
   bool _userScrollInProgress = false;
   bool? _requestedFollowLatest;
 
@@ -138,14 +233,20 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _scrollController = ScrollController();
+    _scrollController = _AutoFollowScrollController(
+      shouldFollow: () =>
+          mounted &&
+          _effectiveFollowLatest &&
+          !_userScrollInProgress &&
+          !_hasTranscriptTarget,
+    );
     _reindexAllMessages(force: true);
     _scrollController.addListener(_onScroll);
     _scheduleTranscriptTargetSeek();
     if (_hasTranscriptTarget) {
       _disableFollowForTranscriptTarget();
     } else if (widget.followLatest) {
-      _jumpToBottom();
+      _followToBottom();
     }
   }
 
@@ -485,6 +586,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final sessionChanged =
         widget.sessionStorageKey != oldWidget.sessionStorageKey;
     if (sessionChanged) {
+      _cancelFollowBottom();
       _userScrollInProgress = false;
       _requestedFollowLatest = null;
       _expandedImageCardIds.clear();
@@ -532,16 +634,19 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         _scheduleTranscriptTargetSeek();
         return;
       }
+      if (widget.followLatest) {
+        _followToBottom();
+      }
       _maybeBackfillViewport();
       _scheduleHistoryPrefetchIfNeeded();
       return;
     }
 
-    // While a run is active, FOLLOW means exactly that: every streamed text
-    // growth, tool-card state change, thinking update, and final completion
-    // keeps the viewport at the actual bottom. ChatMessage instances are
-    // intentionally mutated in place by ChatProvider, so message-count or
-    // object-identity comparisons cannot detect these updates reliably.
+    // While a run is active, every provider update can represent an in-place
+    // stream/card revision. Coalesce all such updates into one post-layout
+    // bottom settle. Outside an active run, a row-count change is sufficient;
+    // authoritative history replacement and session transitions are handled
+    // explicitly above.
     if (widget.followLatest &&
         (widget.isProcessing ||
             oldWidget.isProcessing ||
@@ -635,7 +740,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   void _cancelFollowBottom() {
-    _followBottomGeneration++;
+    _scrollController.cancelFollow();
   }
 
   bool get _effectiveFollowLatest =>
@@ -666,13 +771,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
       _userScrollInProgress = true;
-    } else if (notification is UserScrollNotification &&
-        notification.direction != ScrollDirection.idle) {
-      _userScrollInProgress = true;
     }
 
     if (_userScrollInProgress &&
-        notification is ScrollUpdateNotification &&
+        (notification is ScrollUpdateNotification ||
+            notification is OverscrollNotification) &&
         _effectiveFollowLatest &&
         notification.metrics.extentAfter > 2) {
       _requestFollowLatest(false);
@@ -681,64 +784,44 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     if (notification is ScrollEndNotification ||
         (notification is UserScrollNotification &&
             notification.direction == ScrollDirection.idle)) {
-      if (_userScrollInProgress &&
+      final endedUserScroll = _userScrollInProgress;
+      if (endedUserScroll &&
           !_effectiveFollowLatest &&
           notification.metrics.extentAfter <= 12) {
         _requestFollowLatest(true);
       }
       _userScrollInProgress = false;
+      if (endedUserScroll && _effectiveFollowLatest) {
+        _followToBottom();
+      }
     }
     return false;
   }
 
-  void _jumpToBottom() {
-    _followToBottom();
-  }
-
   void _followToBottom() {
-    final generation = ++_followBottomGeneration;
+    _scrollController.requestFollow();
+    if (_followFallbackScheduled) return;
+    _followFallbackScheduled = true;
     final sessionStorageKey = widget.sessionStorageKey;
-    bool stillApplies() =>
-        mounted &&
-        generation == _followBottomGeneration &&
-        widget.followLatest &&
-        widget.sessionStorageKey == sessionStorageKey &&
-        !_hasTranscriptTarget &&
-        _scrollController.hasClients;
-
-    void settle({
-      required int attempt,
-      required double? previousMaxExtent,
-      required int stableFrames,
-    }) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!stillApplies()) return;
-        final position = _scrollController.position;
-        final maxExtent = position.maxScrollExtent;
-        if ((position.pixels - maxExtent).abs() >= 0.5) {
-          position.jumpTo(maxExtent);
-        }
-
-        final extentStable =
-            previousMaxExtent != null &&
-            (previousMaxExtent - maxExtent).abs() < 0.5;
-        final nextStableFrames = extentStable ? stableFrames + 1 : 0;
-
-        // ListView estimates the extent of unmounted, variable-height cards.
-        // Keep settling for a few layout frames until the estimate stops
-        // changing. The generation guard cancels this immediately when HOLD,
-        // another session, history targeting, or a newer live update wins.
-        if (attempt < 12 && nextStableFrames < 2) {
-          settle(
-            attempt: attempt + 1,
-            previousMaxExtent: maxExtent,
-            stableFrames: nextStableFrames,
-          );
-        }
-      });
-    }
-
-    settle(attempt: 0, previousMaxExtent: null, stableFrames: 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _followFallbackScheduled = false;
+      if (!mounted ||
+          !_effectiveFollowLatest ||
+          _userScrollInProgress ||
+          _hasTranscriptTarget ||
+          widget.sessionStorageKey != sessionStorageKey ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      final maxExtent = position.maxScrollExtent;
+      if ((position.pixels - maxExtent).abs() >= 0.5) {
+        // Normally applyContentDimensions has already corrected the offset
+        // before paint. This handles same-extent content replacements where
+        // Flutter legitimately skips a viewport layout.
+        position.jumpTo(maxExtent);
+      }
+    });
   }
 
   @override
