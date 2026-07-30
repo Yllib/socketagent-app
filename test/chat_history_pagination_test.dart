@@ -81,39 +81,47 @@ void main() {
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
 
-  testWidgets('prefetches near the oldest row without moving HOLD', (
-    WidgetTester tester,
-  ) async {
-    final key = GlobalKey<_HistoryHarnessState>();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: _HistoryHarness(
-          key: key,
-          initiallyLoadingHistory: false,
-          messageCount: 80,
+  testWidgets(
+    'prepend preserves the visible row and does not immediately loop',
+    (WidgetTester tester) async {
+      final key = GlobalKey<_HistoryHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _HistoryHarness(
+            key: key,
+            initiallyLoadingHistory: false,
+            messageCount: 80,
+          ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    key.currentState!.holdViewport();
-    await tester.pump();
-    final position = tester
-        .state<ScrollableState>(find.byType(Scrollable).first)
-        .position;
-    position.jumpTo(position.minScrollExtent + 10);
-    await tester.pump();
-    await tester.pump();
+      key.currentState!.holdViewport();
+      await tester.pump();
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      position.jumpTo(position.minScrollExtent + 10);
+      await tester.pump();
+      await tester.pump();
 
-    expect(position.pixels, closeTo(position.minScrollExtent + 10, 0.5));
-    expect(key.currentState!.loadMoreCalls, 1);
-    final pixelsBefore = position.pixels;
+      expect(key.currentState!.loadMoreCalls, 1);
+      final pixelsBefore = position.pixels;
+      final anchorBefore = _topVisibleMessage(tester);
+      key.currentState!.resetScrollUpdateNotifications();
 
-    key.currentState!.completeLoad(prependCount: 20);
-    await tester.pumpAndSettle();
+      key.currentState!.completeLoad(prependCount: 20, hasMoreAfter: true);
+      await tester.pumpAndSettle();
 
-    expect(position.pixels, closeTo(pixelsBefore, 0.5));
-  });
+      expect(position.pixels, greaterThan(pixelsBefore));
+      expect(
+        _messageTop(tester, anchorBefore.id),
+        closeTo(anchorBefore.top, 0.5),
+      );
+      expect(key.currentState!.loadMoreCalls, 1);
+      expect(key.currentState!.scrollUpdateNotifications, 0);
+    },
+  );
 
   testWidgets('authoritative history replacement discards the old extent', (
     WidgetTester tester,
@@ -930,7 +938,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
     });
   }
 
-  void completeLoad({required int prependCount}) {
+  void completeLoad({required int prependCount, bool hasMoreAfter = false}) {
     setState(() {
       messages = [
         ...List.generate(
@@ -940,7 +948,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
         ...messages,
       ];
       isLoadingMore = false;
-      hasMoreHistory = false;
+      hasMoreHistory = hasMoreAfter;
     });
   }
 

@@ -109,10 +109,16 @@ class ChatView extends StatefulWidget {
 }
 
 class _AutoFollowScrollController extends ScrollController {
-  _AutoFollowScrollController({required this.shouldFollow});
+  _AutoFollowScrollController({
+    required this.shouldFollow,
+    required this.prependAnchorCorrection,
+  });
 
   final bool Function() shouldFollow;
+  final double? Function() prependAnchorCorrection;
   bool _followRequested = false;
+  double? _preservedEndDistance;
+  double? _preservedPixels;
 
   void requestFollow() {
     _followRequested = true;
@@ -125,6 +131,27 @@ class _AutoFollowScrollController extends ScrollController {
     _followRequested = false;
     for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
       position.cancelFollow();
+    }
+  }
+
+  void preserveCurrentEndDistance() {
+    if (!hasClients) return;
+    final current = position;
+    _preservedPixels = current.pixels;
+    _preservedEndDistance = current.maxScrollExtent - _preservedPixels!;
+    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
+      position.preserveEndDistance(
+        _preservedEndDistance!,
+        pixels: _preservedPixels!,
+      );
+    }
+  }
+
+  void finishPreservingEndDistance() {
+    _preservedEndDistance = null;
+    _preservedPixels = null;
+    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
+      position.finishPreservingEndDistance();
     }
   }
 
@@ -141,7 +168,10 @@ class _AutoFollowScrollController extends ScrollController {
       keepScrollOffset: keepScrollOffset,
       debugLabel: debugLabel,
       shouldFollow: shouldFollow,
+      prependAnchorCorrection: prependAnchorCorrection,
       initiallyRequested: _followRequested,
+      preservedEndDistance: _preservedEndDistance,
+      preservedPixels: _preservedPixels,
       onRequestApplied: () => _followRequested = false,
     );
   }
@@ -152,20 +182,38 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
     required super.physics,
     required super.context,
     required this.shouldFollow,
+    required this.prependAnchorCorrection,
     required this.onRequestApplied,
     required bool initiallyRequested,
+    required double? preservedEndDistance,
+    required double? preservedPixels,
     super.keepScrollOffset,
     super.oldPosition,
     super.debugLabel,
-  }) : _followRequested = initiallyRequested;
+  }) : _followRequested = initiallyRequested,
+       _preservedEndDistance = preservedEndDistance,
+       _preservedPixels = preservedPixels;
 
   final bool Function() shouldFollow;
+  final double? Function() prependAnchorCorrection;
   final VoidCallback onRequestApplied;
   bool _followRequested;
+  double? _preservedEndDistance;
+  double? _preservedPixels;
 
   void requestFollow() => _followRequested = true;
 
   void cancelFollow() => _followRequested = false;
+
+  void preserveEndDistance(double distance, {required double pixels}) {
+    _preservedEndDistance = distance;
+    _preservedPixels = pixels;
+  }
+
+  void finishPreservingEndDistance() {
+    _preservedEndDistance = null;
+    _preservedPixels = null;
+  }
 
   @override
   bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
@@ -178,6 +226,7 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
         (pixels - previousMaxExtent).abs() < 1.0;
     final correctToBottom =
         shouldFollow() && (_followRequested || wasPinnedToBottom);
+    final preservedEndDistance = shouldFollow() ? null : _preservedEndDistance;
 
     final accepted = super.applyContentDimensions(
       minScrollExtent,
@@ -194,6 +243,21 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
       }
       _followRequested = false;
       onRequestApplied();
+    } else if (preservedEndDistance != null && hasPixels) {
+      final anchorCorrection = prependAnchorCorrection();
+      final preservedPixels =
+          (anchorCorrection == null
+                  ? maxScrollExtent - preservedEndDistance
+                  : (_preservedPixels ?? pixels) + anchorCorrection)
+              .clamp(minScrollExtent, maxScrollExtent)
+              .toDouble();
+      if ((pixels - preservedPixels).abs() >= 0.5) {
+        // Older rows were inserted ahead of the visible transcript. Preserve
+        // the previous distance from the end while layout is still running so
+        // the same rows remain under the user's finger without a painted jump.
+        correctPixels(preservedPixels);
+        corrected = true;
+      }
     }
     // The sliver pass that calculated these dimensions used the old offset.
     // Ask the viewport for one immediate re-layout so it builds the actual
@@ -222,6 +286,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   bool _transcriptTargetLoadRequested = false;
   String? _lastTranscriptTargetIdentity;
   bool _followFallbackScheduled = false;
+  int _prependPreservationGeneration = 0;
+  String? _prependAnchorRowKey;
+  double? _prependAnchorLayoutOffset;
+  RenderBox? _prependAnchorBox;
   bool _userScrollInProgress = false;
   bool? _requestedFollowLatest;
 
@@ -239,6 +307,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           _effectiveFollowLatest &&
           !_userScrollInProgress &&
           !_hasTranscriptTarget,
+      prependAnchorCorrection: _prependAnchorCorrection,
     );
     _reindexAllMessages(force: true);
     _scrollController.addListener(_onScroll);
@@ -579,6 +648,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final historyLoadFinished =
         oldWidget.isLoadingMore && !widget.isLoadingMore;
     final historyWasPrepended = _historyWasPrepended(oldWidget);
+    if (historyWasPrepended &&
+        !_effectiveFollowLatest &&
+        !_hasTranscriptTarget) {
+      _preserveViewportAcrossPrepend();
+    }
     if (historyLoadFinished || historyWasPrepended) {
       _transcriptTargetLoadRequested = false;
     }
@@ -587,6 +661,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         widget.sessionStorageKey != oldWidget.sessionStorageKey;
     if (sessionChanged) {
       _cancelFollowBottom();
+      _finishPreservingPrepend();
       _userScrollInProgress = false;
       _requestedFollowLatest = null;
       _expandedImageCardIds.clear();
@@ -741,6 +816,87 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
   void _cancelFollowBottom() {
     _scrollController.cancelFollow();
+  }
+
+  void _preserveViewportAcrossPrepend() {
+    if (!_scrollController.hasClients) return;
+    _capturePrependAnchor();
+    final generation = ++_prependPreservationGeneration;
+    _scrollController.preserveCurrentEndDistance();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || generation != _prependPreservationGeneration) return;
+      _finishPreservingPrepend();
+    });
+  }
+
+  void _finishPreservingPrepend() {
+    _prependPreservationGeneration++;
+    _scrollController.finishPreservingEndDistance();
+    _prependAnchorRowKey = null;
+    _prependAnchorLayoutOffset = null;
+    _prependAnchorBox = null;
+  }
+
+  void _capturePrependAnchor() {
+    final viewport =
+        _scrollController.position.context.notificationContext
+                ?.findRenderObject()
+            as RenderBox?;
+    if (viewport == null || !viewport.hasSize) return;
+    final viewportTop = viewport.localToGlobal(Offset.zero).dy;
+    final viewportBottom = viewportTop + viewport.size.height;
+    String? selectedRowKey;
+    double? selectedTop;
+    RenderBox? selectedBox;
+
+    for (final entry in _messageRowKeys.entries) {
+      final box = entry.value.currentContext?.findRenderObject() as RenderBox?;
+      if (box == null || !box.hasSize) continue;
+      final top = box.localToGlobal(Offset.zero).dy;
+      final bottom = top + box.size.height;
+      if (bottom <= viewportTop || top >= viewportBottom) continue;
+      if (selectedTop == null || top < selectedTop) {
+        selectedRowKey = entry.key;
+        selectedTop = top;
+        selectedBox = box;
+      }
+    }
+
+    _prependAnchorRowKey = selectedRowKey;
+    _prependAnchorBox = selectedBox;
+    _prependAnchorLayoutOffset = selectedBox == null
+        ? null
+        : _sliverLayoutOffsetFor(selectedBox);
+  }
+
+  double? _prependAnchorCorrection() {
+    final expectedOffset = _prependAnchorLayoutOffset;
+    final box = _prependAnchorBox;
+    if (_prependAnchorRowKey == null ||
+        expectedOffset == null ||
+        box == null ||
+        !box.attached ||
+        !box.hasSize) {
+      return null;
+    }
+    final currentOffset = _sliverLayoutOffsetFor(box);
+    return currentOffset == null ? null : currentOffset - expectedOffset;
+  }
+
+  double? _sliverLayoutOffsetFor(RenderObject anchor) {
+    RenderObject child = anchor;
+    RenderObject? parent = child.parent;
+    while (parent != null) {
+      if (parent is RenderSliverMultiBoxAdaptor) {
+        final parentData = child.parentData;
+        return parentData is SliverMultiBoxAdaptorParentData
+            ? parentData.layoutOffset
+            : null;
+      }
+      child = parent;
+      parent = child.parent;
+    }
+    return null;
   }
 
   bool get _effectiveFollowLatest =>
