@@ -80,6 +80,8 @@ class WorkReviewRepository extends ChangeNotifier {
   final Map<String, String> _draftRequestMutations = {};
   final Map<String, String> _draftInFlightRequests = {};
   final Map<String, Completer<void>> _draftIdleCompleters = {};
+  final Map<String, ({String key, Completer<bool> completer})> _finishRequests =
+      {};
   StreamSubscription<WorkReviewServerEvent>? _subscription;
   bool _initialized = false;
 
@@ -175,8 +177,42 @@ class WorkReviewRepository extends ChangeNotifier {
       _drafts[identity(serverId, reviewId)] = draft;
     }
     for (final review in _reviews.values) {
+      _migrateCachedDraftToCurrentRound(review);
       _ensurePublishedDraft(review);
     }
+  }
+
+  void _migrateCachedDraftToCurrentRound(WorkReview review) {
+    final key = identity(review.serverId, review.id);
+    final stale = _drafts[key];
+    if (stale == null ||
+        stale.roundId == review.roundId ||
+        review.status != WorkReviewStatus.open) {
+      return;
+    }
+    final migratedItems = <String, WorkReviewItemDraft>{
+      for (final item in review.items)
+        item.id: stale.items[item.id] ?? WorkReviewItemDraft(itemId: item.id),
+    };
+    final hasRecoverableFeedback =
+        stale.overallNotes.isNotEmpty ||
+        migratedItems.values.any(
+          (item) => item.disposition != null || item.notes.isNotEmpty,
+        );
+    _drafts[key] = WorkReviewDraft(
+      reviewId: review.id,
+      roundId: review.roundId,
+      currentItemId: migratedItems.containsKey(stale.currentItemId)
+          ? stale.currentItemId
+          : review.items.firstOrNull?.id,
+      overallDisposition: stale.overallDisposition,
+      overallNotes: stale.overallNotes,
+      items: migratedItems,
+      revision: 0,
+      mutationId: '',
+      updatedAt: stale.updatedAt,
+    );
+    if (hasRecoverableFeedback) _locallyDirty.add(key);
   }
 
   Future<void> _persist() => cache.write({
@@ -339,7 +375,15 @@ class WorkReviewRepository extends ChangeNotifier {
           completer.complete(null);
         }
       }
-      if (operation == 'finish') _publishing.remove(key);
+      if (operation == 'finish') {
+        _publishing.remove(key);
+        final pending = requestId == null
+            ? null
+            : _finishRequests.remove(requestId);
+        if (pending != null && !pending.completer.isCompleted) {
+          pending.completer.complete(false);
+        }
+      }
       notifyListeners();
       return;
     }
@@ -381,6 +425,12 @@ class WorkReviewRepository extends ChangeNotifier {
       _publishing.remove(key);
       _finishMutationIds.remove(key);
       _locallyDirty.remove(key);
+      final pending = requestId == null
+          ? null
+          : _finishRequests.remove(requestId);
+      if (pending != null && !pending.completer.isCompleted) {
+        pending.completer.complete(true);
+      }
     }
     unawaited(_persist());
     notifyListeners();
@@ -405,6 +455,7 @@ class WorkReviewRepository extends ChangeNotifier {
     final key = identity(incoming.serverId, incoming.id);
     final existing = _reviews[key];
     if (existing != null &&
+        incoming.roundId == existing.roundId &&
         incoming.items.isEmpty &&
         existing.items.isNotEmpty) {
       final merged = <String, dynamic>{
@@ -417,16 +468,45 @@ class WorkReviewRepository extends ChangeNotifier {
       _reviews[key] = incoming;
     }
     final review = _reviews[key]!;
+    final existingDraft = _drafts[key];
+    if (existingDraft != null && existingDraft.roundId != review.roundId) {
+      _resetRoundState(key);
+      _drafts[key] = WorkReviewDraft.empty(review);
+    }
     final draft = _drafts.putIfAbsent(key, () => WorkReviewDraft.empty(review));
-    if (review.items.any((item) => !draft.items.containsKey(item.id))) {
+    final currentItemIds = review.items.map((item) => item.id).toSet();
+    if (draft.items.keys.toSet().difference(currentItemIds).isNotEmpty ||
+        currentItemIds.difference(draft.items.keys.toSet()).isNotEmpty) {
       _drafts[key] = draft.copyWith(
         items: {
           for (final item in review.items)
             item.id:
                 draft.items[item.id] ?? WorkReviewItemDraft(itemId: item.id),
-          ...draft.items,
         },
       );
+    }
+  }
+
+  void _resetRoundState(String key) {
+    _draftTimers.remove(key)?.cancel();
+    _locallyDirty.remove(key);
+    _publishing.remove(key);
+    _finishMutationIds.remove(key);
+    final draftRequestId = _draftInFlightRequests.remove(key);
+    if (draftRequestId != null) {
+      _draftRequestMutations.remove(draftRequestId);
+    }
+    final idle = _draftIdleCompleters.remove(key);
+    if (idle != null && !idle.isCompleted) idle.complete();
+    final finishRequestIds = _finishRequests.entries
+        .where((entry) => entry.value.key == key)
+        .map((entry) => entry.key)
+        .toList();
+    for (final requestId in finishRequestIds) {
+      final pending = _finishRequests.remove(requestId);
+      if (pending != null && !pending.completer.isCompleted) {
+        pending.completer.complete(false);
+      }
     }
   }
 
@@ -434,6 +514,7 @@ class WorkReviewRepository extends ChangeNotifier {
     final key = identity(review.serverId, review.id);
     final local = _drafts[key];
     if (local == null ||
+        local.roundId != review.roundId ||
         (!_locallyDirty.contains(key) &&
             serverDraft.revision >= local.revision)) {
       final items = <String, WorkReviewItemDraft>{
@@ -453,6 +534,7 @@ class WorkReviewRepository extends ChangeNotifier {
     final key = identity(review.serverId, review.id);
     final existing = _drafts[key];
     if (existing != null &&
+        existing.roundId == review.roundId &&
         existing.items.values.any(
           (item) => item.disposition != null || item.notes.isNotEmpty,
         )) {
@@ -475,7 +557,12 @@ class WorkReviewRepository extends ChangeNotifier {
     final key = identity(review.serverId, review.id);
     _reviews.putIfAbsent(key, () => review);
     _ensurePublishedDraft(review);
-    return _drafts.putIfAbsent(key, () => WorkReviewDraft.empty(review));
+    final existing = _drafts[key];
+    if (existing != null && existing.roundId == review.roundId) {
+      return existing;
+    }
+    _resetRoundState(key);
+    return _drafts[key] = WorkReviewDraft.empty(review);
   }
 
   void setCurrentItem(WorkReview review, String itemId) {
@@ -559,6 +646,8 @@ class WorkReviewRepository extends ChangeNotifier {
 
   Future<bool> finishReview(WorkReview review) async {
     final key = identity(review.serverId, review.id);
+    review = _reviews[key] ?? review;
+    if (review.status != WorkReviewStatus.open) return false;
     var draft = ensureDraft(review);
     if (!draft.isComplete || _publishing.contains(key)) return false;
     _draftTimers.remove(key)?.cancel();
@@ -585,9 +674,12 @@ class WorkReviewRepository extends ChangeNotifier {
     _draftTimers.remove(key)?.cancel();
     draft = ensureDraft(review);
     final draftSaveStillInFlight = _draftInFlightRequests.containsKey(key);
+    final requestId = _requestId('finish');
+    final completer = Completer<bool>();
+    _finishRequests[requestId] = (key: key, completer: completer);
     final sent = transport.send(review.serverId, {
       'type': 'work_review_finish',
-      'requestId': _requestId('finish'),
+      'requestId': requestId,
       'reviewId': review.id,
       'roundId': draft.roundId,
       'mutationId': mutationId,
@@ -595,11 +687,23 @@ class WorkReviewRepository extends ChangeNotifier {
       'draft': draft.toWireJson(),
     });
     if (!sent) {
+      _finishRequests.remove(requestId);
       _publishing.remove(key);
       _errors[key] = 'Could not publish while the server is disconnected';
       notifyListeners();
+      return false;
     }
-    return sent;
+    return completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        _finishRequests.remove(requestId);
+        _publishing.remove(key);
+        _errors[key] =
+            'The server did not confirm that this review was published';
+        notifyListeners();
+        return false;
+      },
+    );
   }
 
   void _completeDraftRequest(
@@ -643,6 +747,9 @@ class WorkReviewRepository extends ChangeNotifier {
     _subscription?.cancel();
     for (final completer in _getCompleters.values) {
       if (!completer.isCompleted) completer.complete(null);
+    }
+    for (final pending in _finishRequests.values) {
+      if (!pending.completer.isCompleted) pending.completer.complete(false);
     }
     super.dispose();
   }

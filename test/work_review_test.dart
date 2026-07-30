@@ -74,6 +74,24 @@ Map<String, dynamic> _reviewJson({String reviewId = 'review-1'}) => {
   ],
 };
 
+Map<String, dynamic> _revisedReviewJson({String reviewId = 'review-1'}) => {
+  ..._reviewJson(reviewId: reviewId),
+  'roundId': 'round-2',
+  'title': 'Remaining checkout changes',
+  'updatedAt': '2026-07-29T13:00:00Z',
+  'items': [
+    {
+      'itemId': 'receipt',
+      'title': 'Revised receipt',
+      'primaryTarget': {
+        'kind': 'image',
+        'uri': 'https://example.com/revised-receipt.png',
+        'environment': 'development',
+      },
+    },
+  ],
+};
+
 void main() {
   test(
     'primary HTTPS targets embed even when legacy metadata says external',
@@ -268,6 +286,136 @@ void main() {
     },
   );
 
+  test('a live new round gets its own exact draft item set', () async {
+    final transport = _MemoryTransport();
+    final repository = WorkReviewRepository(
+      transport: transport,
+      cache: _MemoryCache(),
+      draftSyncDelay: const Duration(hours: 1),
+    );
+    await repository.initialize();
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_card',
+      'review': _reviewJson(),
+    });
+    final firstRound = repository.review('review-1', serverId: 'server-a')!;
+    repository.setDisposition(
+      firstRound,
+      'checkout',
+      WorkReviewDisposition.approved,
+    );
+    repository.setDisposition(
+      firstRound,
+      'receipt',
+      WorkReviewDisposition.changesRequested,
+    );
+
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_card',
+      'review': _revisedReviewJson(),
+    });
+
+    final revised = repository.review('review-1', serverId: 'server-a')!;
+    final draft = repository.draft('review-1', serverId: 'server-a')!;
+    expect(revised.roundId, 'round-2');
+    expect(revised.items.map((item) => item.id), ['receipt']);
+    expect(draft.roundId, 'round-2');
+    expect(draft.items.keys, ['receipt']);
+    expect(draft.items['receipt']?.disposition, isNull);
+
+    repository.dispose();
+    await transport.dispose();
+  });
+
+  test(
+    'cached stale-round feedback is migrated only to current items',
+    () async {
+      final transport = _MemoryTransport();
+      final cache = _MemoryCache()
+        ..value = {
+          'reviews': [
+            {..._revisedReviewJson(), '_serverId': 'server-a'},
+          ],
+          'drafts': [
+            {
+              '_serverId': 'server-a',
+              'reviewId': 'review-1',
+              'roundId': 'round-1',
+              'revision': 47,
+              'overallNote': 'Final revised pass.',
+              'items': [
+                {'itemId': 'checkout', 'status': 'approved'},
+                {
+                  'itemId': 'receipt',
+                  'status': 'changes_requested',
+                  'note': 'Keep the revised spacing.',
+                },
+              ],
+            },
+          ],
+        };
+      final repository = WorkReviewRepository(
+        transport: transport,
+        cache: cache,
+      );
+
+      await repository.initialize();
+
+      final draft = repository.draft('review-1', serverId: 'server-a')!;
+      expect(draft.roundId, 'round-2');
+      expect(draft.revision, 0);
+      expect(draft.items.keys, ['receipt']);
+      expect(
+        draft.items['receipt']?.disposition,
+        WorkReviewDisposition.changesRequested,
+      );
+      expect(draft.items['receipt']?.notes, 'Keep the revised spacing.');
+      expect(draft.overallNotes, 'Final revised pass.');
+
+      repository.handleServerMessage('server-a', {
+        'type': 'work_review_snapshot',
+        'review': _revisedReviewJson(),
+        'draft': {
+          'revision': 0,
+          'items': [
+            {'itemId': 'receipt', 'status': 'pending'},
+          ],
+        },
+      });
+      expect(
+        repository
+            .draft('review-1', serverId: 'server-a')
+            ?.items['receipt']
+            ?.disposition,
+        WorkReviewDisposition.changesRequested,
+        reason:
+            'the reconnect snapshot must not erase recovered phone feedback',
+      );
+
+      final review = repository.review('review-1', serverId: 'server-a')!;
+      final finish = repository.finishReview(review);
+      await Future<void>.delayed(Duration.zero);
+      final request = transport.sent.singleWhere(
+        (entry) => entry.message['type'] == 'work_review_finish',
+      );
+      expect(request.message['roundId'], 'round-2');
+      expect((request.message['draft'] as Map)['items'], hasLength(1));
+      repository.handleServerMessage('server-a', {
+        'type': 'work_review_operation_result',
+        'requestId': request.message['requestId'],
+        'operation': 'finish',
+        'reviewId': review.id,
+        'roundId': review.roundId,
+        'ok': true,
+        'review': {..._revisedReviewJson(), 'status': 'completed'},
+      });
+      expect(await finish, isTrue);
+
+      repository.dispose();
+      await transport.dispose();
+    },
+  );
+
   test('capability gates list requests and cached drafts recover', () async {
     final transport = _MemoryTransport();
     final cache = _MemoryCache();
@@ -416,10 +564,19 @@ void main() {
         'draft': {'revision': 1, 'items': (firstSave['draft'] as Map)['items']},
       });
 
-      expect(await finish, isTrue);
+      await Future<void>.delayed(Duration.zero);
       final publish = transport.sent.singleWhere(
         (entry) => entry.message['type'] == 'work_review_finish',
       );
+      repository.handleServerMessage('server-a', {
+        'type': 'work_review_operation_result',
+        'requestId': publish.message['requestId'],
+        'operation': 'finish',
+        'reviewId': review.id,
+        'roundId': review.roundId,
+        'ok': true,
+      });
+      expect(await finish, isTrue);
       expect(publish.message['baseRevision'], 1);
       expect(
         ((publish.message['draft'] as Map)['items'] as List)
@@ -460,13 +617,14 @@ void main() {
     );
     repository.setItemNotes(review, 'receipt', 'Increase contrast');
 
-    expect(await repository.finishReview(review), isTrue);
-    expect(await repository.finishReview(review), isFalse);
+    final finish = repository.finishReview(review);
+    await Future<void>.delayed(Duration.zero);
     final publishes = transport.sent.where(
       (entry) => entry.message['type'] == 'work_review_finish',
     );
     expect(publishes, hasLength(1));
-    final draft = publishes.single.message['draft'] as Map;
+    final publish = publishes.single.message;
+    final draft = publish['draft'] as Map;
     expect(draft['items'], hasLength(2));
     expect(
       (draft['items'] as List).whereType<Map>().any(
@@ -477,6 +635,67 @@ void main() {
       ),
       isTrue,
     );
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_operation_result',
+      'requestId': publish['requestId'],
+      'operation': 'finish',
+      'reviewId': review.id,
+      'roundId': review.roundId,
+      'ok': true,
+      'review': {..._reviewJson(), 'status': 'completed'},
+    });
+    expect(await finish, isTrue);
+    expect(await repository.finishReview(review), isFalse);
+    repository.dispose();
+    await transport.dispose();
+  });
+
+  test('finish reports a server rejection instead of silent success', () async {
+    final transport = _MemoryTransport();
+    final repository = WorkReviewRepository(
+      transport: transport,
+      cache: _MemoryCache(),
+      draftSyncDelay: const Duration(hours: 1),
+    );
+    await repository.initialize();
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_snapshot',
+      'review': _reviewJson(),
+    });
+    final review = repository.review('review-1', serverId: 'server-a')!;
+    repository.setDisposition(
+      review,
+      'checkout',
+      WorkReviewDisposition.approved,
+    );
+    repository.setDisposition(
+      review,
+      'receipt',
+      WorkReviewDisposition.changesRequested,
+    );
+
+    final finish = repository.finishReview(review);
+    await Future<void>.delayed(Duration.zero);
+    final request = transport.sent.singleWhere(
+      (entry) => entry.message['type'] == 'work_review_finish',
+    );
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_operation_result',
+      'requestId': request.message['requestId'],
+      'operation': 'finish',
+      'reviewId': review.id,
+      'roundId': review.roundId,
+      'ok': false,
+      'error': 'Finish Review targets a stale Work Review round',
+    });
+
+    expect(await finish, isFalse);
+    expect(repository.isPublishing(review), isFalse);
+    expect(
+      repository.errorFor(review),
+      'Finish Review targets a stale Work Review round',
+    );
+
     repository.dispose();
     await transport.dispose();
   });

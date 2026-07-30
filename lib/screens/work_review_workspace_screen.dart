@@ -163,7 +163,7 @@ class _WorkReviewWorkspaceScreenState extends State<WorkReviewWorkspaceScreen> {
       SnackBar(
         content: Text(
           sent
-              ? 'Publishing the consolidated review…'
+              ? 'Review published and sent to the agent'
               : _repository.errorFor(review) ?? 'Could not publish review',
         ),
       ),
