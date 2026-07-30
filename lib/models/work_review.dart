@@ -115,9 +115,10 @@ class WorkReviewTarget {
     if (html != null) 'html': html,
   };
 
-  bool get isWeb =>
-      kind == 'url' &&
-      (uri.startsWith('http://') || uri.startsWith('https://'));
+  bool get isWeb {
+    final parsed = Uri.tryParse(uri);
+    return parsed?.scheme == 'http' || parsed?.scheme == 'https';
+  }
 }
 
 class WorkReviewItem {

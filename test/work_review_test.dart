@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:app/models/message.dart';
 import 'package:app/models/work_review.dart';
+import 'package:app/screens/work_review_workspace_screen.dart';
 import 'package:app/services/work_review_repository.dart';
 import 'package:app/widgets/work_review_card.dart';
 import 'package:flutter/material.dart';
@@ -74,6 +75,20 @@ Map<String, dynamic> _reviewJson({String reviewId = 'review-1'}) => {
 };
 
 void main() {
+  test(
+    'primary HTTPS targets embed even when legacy metadata says external',
+    () {
+      final target = WorkReviewTarget.fromJson({
+        'kind': 'url',
+        'uri': 'https://marinadev.jarofdirt.info/email/compose',
+        'displayMode': 'external',
+      });
+
+      expect(target.isWeb, isTrue);
+      expect(shouldEmbedWorkReviewTarget(target), isTrue);
+    },
+  );
+
   test(
     'work review parses generic targets and canonical draft wire fields',
     () {

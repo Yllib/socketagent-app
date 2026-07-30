@@ -13,6 +13,19 @@ import '../services/work_review_repository.dart';
 import 'file_manager_screen.dart';
 import 'home_screen.dart';
 
+bool shouldEmbedWorkReviewTarget(WorkReviewTarget? target) {
+  if (target == null) return false;
+  if (target.isWeb) return true;
+  if (target.kind != 'html') return false;
+  if (target.html != null || target.uri.trimLeft().startsWith('<')) return true;
+  final uri = Uri.tryParse(target.uri);
+  return uri != null &&
+      (uri.scheme == 'data' ||
+          uri.scheme == 'about' ||
+          uri.scheme == 'http' ||
+          uri.scheme == 'https');
+}
+
 class WorkReviewWorkspaceScreen extends StatefulWidget {
   const WorkReviewWorkspaceScreen({super.key, required this.review});
 
@@ -851,21 +864,13 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
   void initState() {
     super.initState();
     final target = widget.target;
-    final uri = Uri.tryParse(target?.uri ?? '');
     final inlineHtml =
         target?.html ??
         (target?.uri.trimLeft().startsWith('<') == true ? target!.uri : null);
-    final embeddableHtmlUri =
-        uri != null &&
-        (uri.scheme == 'http' ||
-            uri.scheme == 'https' ||
-            uri.scheme == 'data' ||
-            uri.scheme == 'about');
-    final canEmbed =
-        target?.displayMode != 'external' &&
-        (target?.isWeb == true ||
-            (target?.kind == 'html' &&
-                (inlineHtml != null || embeddableHtmlUri)));
+    // The primary target is the review workspace, not a launcher card. Every
+    // HTTP(S) target is embedded so the review panel remains over the live
+    // site. "Open externally" in the toolbar is the explicit escape hatch.
+    final canEmbed = shouldEmbedWorkReviewTarget(target);
     if (canEmbed) {
       final controller = WebViewController()
         ..setJavaScriptMode(
@@ -997,11 +1002,11 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
               FilledButton.icon(
                 onPressed: openExternal,
                 icon: const Icon(Icons.open_in_new),
-                label: const Text('Open in viewer'),
+                label: const Text('Open externally'),
               ),
               const SizedBox(height: 8),
               const Text(
-                'Your review draft stays open here when you return.',
+                'This target cannot be embedded in the review workspace.',
                 textAlign: TextAlign.center,
               ),
             ],
