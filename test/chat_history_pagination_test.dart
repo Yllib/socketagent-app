@@ -253,6 +253,7 @@ void main() {
 
       final gesture = await tester.startGesture(tester.getCenter(list));
       final ownedPixels = position.pixels;
+      final anchorBefore = _topVisibleMessage(tester);
 
       // This is the session-entry race: cached chat is visible, the reader
       // touches it, then delayed older history arrives before drag recognition.
@@ -261,11 +262,16 @@ void main() {
       await tester.pump();
 
       expect(key.currentState!.followLatest, isFalse);
-      expect(position.pixels, closeTo(ownedPixels, 0.5));
+      expect(position.pixels, greaterThan(ownedPixels));
+      expect(
+        _messageTop(tester, anchorBefore.id),
+        closeTo(anchorBefore.top, 0.5),
+      );
 
+      final anchoredPixels = position.pixels;
       await gesture.moveBy(const Offset(0, 100));
       await tester.pump();
-      expect(position.pixels, lessThan(ownedPixels));
+      expect(position.pixels, lessThan(anchoredPixels));
       await gesture.up();
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
@@ -307,6 +313,52 @@ void main() {
       await gesture.up();
       await tester.pumpAndSettle();
       expect(position.pixels, closeTo(readerPixels, 0.5));
+    },
+  );
+
+  testWidgets(
+    'running session drag stays anchored across streaming and repeated prepends',
+    (WidgetTester tester) async {
+      final key = GlobalKey<_HistoryHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _HistoryHarness(
+            key: key,
+            initiallyLoadingHistory: false,
+            messageCount: 120,
+          ),
+        ),
+      );
+      key.currentState!.appendStreamingText(20);
+      await tester.pump();
+      await tester.pump();
+
+      final list = find.byType(ListView).first;
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      await gesture.moveBy(const Offset(0, 180));
+      await tester.pump();
+      expect(key.currentState!.followLatest, isFalse);
+
+      var anchor = _topVisibleMessage(tester);
+      key.currentState!.appendStreamingText(30);
+      key.currentState!.prependHistoryBatch(20);
+      await tester.pump();
+      await tester.pump();
+      expect(_messageTop(tester, anchor.id), closeTo(anchor.top, 0.5));
+
+      await gesture.moveBy(const Offset(0, 70));
+      await tester.pump();
+      anchor = _topVisibleMessage(tester);
+      key.currentState!.appendStreamingText(30);
+      key.currentState!.prependHistoryBatch(20);
+      await tester.pump();
+      await tester.pump();
+      expect(_messageTop(tester, anchor.id), closeTo(anchor.top, 0.5));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(key.currentState!.followLatest, isFalse);
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -905,6 +957,7 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   bool isProcessing = false;
   bool outerBannerVisible = false;
   int scrollUpdateNotifications = 0;
+  int _nextOlderMessageIndex = -1;
   late List<ChatMessage> messages;
 
   @override
@@ -1032,6 +1085,18 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
       ];
       isLoadingMore = false;
       hasMoreHistory = hasMoreAfter;
+    });
+  }
+
+  void prependHistoryBatch(int count) {
+    final firstIndex = _nextOlderMessageIndex - count + 1;
+    final older = List.generate(count, (index) => _message(firstIndex + index));
+    _nextOlderMessageIndex = firstIndex - 1;
+    setState(() {
+      messages = [...older, ...messages];
+      historyWindowRevision++;
+      hasMoreHistory = true;
+      isLoadingMore = false;
     });
   }
 

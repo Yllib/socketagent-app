@@ -147,6 +147,19 @@ class _AutoFollowScrollController extends ScrollController {
     }
   }
 
+  void rebasePreservedPosition() {
+    if (!hasClients || _preservedEndDistance == null) return;
+    final current = position;
+    _preservedPixels = current.pixels;
+    _preservedEndDistance = current.maxScrollExtent - current.pixels;
+    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
+      position.preserveEndDistance(
+        _preservedEndDistance!,
+        pixels: _preservedPixels!,
+      );
+    }
+  }
+
   void finishPreservingEndDistance() {
     _preservedEndDistance = null;
     _preservedPixels = null;
@@ -823,7 +836,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   void _preserveViewportAcrossPrepend() {
-    if (!_scrollController.hasClients || _userOwnsViewport) return;
+    if (!_scrollController.hasClients) return;
     _capturePrependAnchor();
     final generation = ++_prependPreservationGeneration;
     _scrollController.preserveCurrentEndDistance();
@@ -914,7 +927,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     // taking control. Cancel entry-time follow/prepend work before the drag
     // recognizer emits its first ScrollStartNotification.
     _cancelFollowBottom();
-    _finishPreservingPrepend();
+    // If a prepend was already queued, move its baseline to the exact offset
+    // at which the finger took ownership instead of discarding the anchor.
+    _scrollController.rebasePreservedPosition();
   }
 
   void _handleViewportPointerEnd(PointerEvent event) {
@@ -947,7 +962,16 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         notification.dragDetails != null) {
       _userScrollInProgress = true;
       _cancelFollowBottom();
-      _finishPreservingPrepend();
+      _scrollController.rebasePreservedPosition();
+    }
+
+    if (_userScrollInProgress &&
+        notification is ScrollUpdateNotification &&
+        notification.dragDetails != null) {
+      // A history page and a drag delta can land in adjacent layout passes.
+      // Keep any pending anchor based on the latest user-owned pixels so its
+      // correction adds only the prepended height, never a stale drag offset.
+      _scrollController.rebasePreservedPosition();
     }
 
     if (_userScrollInProgress && _effectiveFollowLatest) {
