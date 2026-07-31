@@ -362,6 +362,46 @@ void main() {
     },
   );
 
+  testWidgets('chat has a slim always-visible interactive scrollbar', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 120,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final scrollbar = tester.widget<RawScrollbar>(
+      find.byKey(const ValueKey('chat-scrollbar')),
+    );
+    expect(scrollbar.thumbVisibility, isTrue);
+    expect(scrollbar.trackVisibility, isFalse);
+    expect(scrollbar.interactive, isTrue);
+    expect(scrollbar.thickness, 3);
+    expect(scrollbar.minThumbLength, 56);
+    expect(scrollbar.scrollbarOrientation, ScrollbarOrientation.right);
+
+    // RawScrollbar expands an interactive thumb to Flutter's minimum touch
+    // target without widening the three-pixel painted thumb. Verify that a
+    // pointer drag in the scrollbar edge also claims viewport ownership.
+    expect(key.currentState!.followLatest, isTrue);
+    final rect = tester.getRect(find.byKey(const ValueKey('chat-scrollbar')));
+    final gesture = await tester.startGesture(
+      Offset(rect.right - 2, rect.center.dy),
+    );
+    await gesture.moveBy(const Offset(0, -12));
+    await tester.pump();
+    expect(key.currentState!.followLatest, isFalse);
+    await gesture.up();
+    await tester.pump();
+  });
+
   testWidgets('FOLLOW and HOLD are explicit, deterministic viewport modes', (
     WidgetTester tester,
   ) async {

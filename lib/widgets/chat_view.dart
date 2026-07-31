@@ -303,7 +303,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   String? _prependAnchorRowKey;
   double? _prependAnchorLayoutOffset;
   RenderBox? _prependAnchorBox;
-  bool _userPointerDown = false;
+  final Map<int, double> _activeViewportPointers = {};
   bool _userScrollInProgress = false;
   bool? _requestedFollowLatest;
 
@@ -919,10 +919,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   bool get _effectiveFollowLatest =>
       _requestedFollowLatest ?? widget.followLatest;
 
+  bool get _userPointerDown => _activeViewportPointers.isNotEmpty;
+
   bool get _userOwnsViewport => _userPointerDown || _userScrollInProgress;
 
   void _handleViewportPointerDown(PointerDownEvent event) {
-    _userPointerDown = true;
+    _activeViewportPointers[event.pointer] = event.position.dy;
     // Pointer-down is the earliest reliable indication that the reader is
     // taking control. Cancel entry-time follow/prepend work before the drag
     // recognizer emits its first ScrollStartNotification.
@@ -932,8 +934,17 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     _scrollController.rebasePreservedPosition();
   }
 
+  void _handleViewportPointerMove(PointerMoveEvent event) {
+    final startY = _activeViewportPointers[event.pointer];
+    if (startY == null || (event.position.dy - startY).abs() <= 2) return;
+    // RawScrollbar drives the ScrollPosition directly and may not attach drag
+    // details to its notifications. Pointer motion is the common ownership
+    // signal for both a chat drag and an interactive thumb drag.
+    if (_effectiveFollowLatest) _requestFollowLatest(false);
+  }
+
   void _handleViewportPointerEnd(PointerEvent event) {
-    _userPointerDown = false;
+    _activeViewportPointers.remove(event.pointer);
   }
 
   void _disableFollowForTranscriptTarget() {
@@ -1148,36 +1159,53 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               key: const ValueKey('chat-scroll-surface'),
               color: chatSurfaceColor,
               child: SizedBox.expand(
-                child: NotificationListener<ScrollNotification>(
-                  onNotification: _handleUserScrollNotification,
-                  child: Listener(
-                    behavior: HitTestBehavior.translucent,
-                    onPointerDown: _handleViewportPointerDown,
-                    onPointerUp: _handleViewportPointerEnd,
-                    onPointerCancel: _handleViewportPointerEnd,
-                    child: ListView.builder(
-                      key: ValueKey<String>(
-                        'chat-list:${widget.sessionStorageKey ?? ''}',
-                      ),
-                      controller: _scrollController,
-                      findChildIndexCallback: (key) =>
-                          listIndexByMessageKey[key],
-                      padding: const EdgeInsets.only(top: 8, bottom: 8),
-                      itemCount: itemCount,
-                      itemBuilder: (context, index) {
-                        var messageIndex = index;
-                        if (hasLoadMore) {
-                          if (messageIndex == 0) {
-                            return _buildLoadMoreButton(context);
+                child: Listener(
+                  behavior: HitTestBehavior.translucent,
+                  onPointerDown: _handleViewportPointerDown,
+                  onPointerMove: _handleViewportPointerMove,
+                  onPointerUp: _handleViewportPointerEnd,
+                  onPointerCancel: _handleViewportPointerEnd,
+                  child: RawScrollbar(
+                    key: const ValueKey('chat-scrollbar'),
+                    controller: _scrollController,
+                    thumbVisibility: true,
+                    trackVisibility: false,
+                    interactive: true,
+                    thickness: 3,
+                    minThumbLength: 56,
+                    radius: const Radius.circular(2),
+                    mainAxisMargin: 4,
+                    crossAxisMargin: 0,
+                    scrollbarOrientation: ScrollbarOrientation.right,
+                    thumbColor: Theme.of(
+                      context,
+                    ).colorScheme.onSurfaceVariant.withAlpha(145),
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: _handleUserScrollNotification,
+                      child: ListView.builder(
+                        key: ValueKey<String>(
+                          'chat-list:${widget.sessionStorageKey ?? ''}',
+                        ),
+                        controller: _scrollController,
+                        findChildIndexCallback: (key) =>
+                            listIndexByMessageKey[key],
+                        padding: const EdgeInsets.only(top: 8, bottom: 8),
+                        itemCount: itemCount,
+                        itemBuilder: (context, index) {
+                          var messageIndex = index;
+                          if (hasLoadMore) {
+                            if (messageIndex == 0) {
+                              return _buildLoadMoreButton(context);
+                            }
+                            messageIndex--;
                           }
-                          messageIndex--;
-                        }
-                        if (messageIndex < visibleRows.length) {
-                          final row = visibleRows[messageIndex];
-                          return _buildMessageWidget(row.message, row.rowKey);
-                        }
-                        return _buildThinkingIndicator(context);
-                      },
+                          if (messageIndex < visibleRows.length) {
+                            final row = visibleRows[messageIndex];
+                            return _buildMessageWidget(row.message, row.rowKey);
+                          }
+                          return _buildThinkingIndicator(context);
+                        },
+                      ),
                     ),
                   ),
                 ),
