@@ -506,7 +506,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Map<String, dynamic>? _terminalStatus;
   Map<String, dynamic>? _lastUsage;
   Map<String, dynamic>? _codexStatus;
-  // All file maps keyed on fileId (hash of path+mtime+size from server)
+  // All file maps keyed on the unique SendFile delivery ID. Content/version
+  // identity is tracked separately in _serverFileVersions.
   final Map<String, String> _receivedFiles = {}; // fileId → local path
   final Map<String, String> _serverFiles = {}; // fileId → server path
   final Map<String, String> _serverFileNames = {}; // fileId → display name
@@ -9098,10 +9099,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final historyFileName =
                   entry['fileName'] as String? ?? filePath.split('/').last;
               final historyFileSize = (entry['fileSize'] as num?)?.toInt();
+              final historyFileVersion = entry['fileVersion']?.toString();
               _serverFiles[historyFileId] = filePath;
               _serverFileNames[historyFileId] = historyFileName;
               if (historyFileSize != null && historyFileSize > 0) {
                 _serverFileSizes[historyFileId] = historyFileSize;
+              }
+              if (historyFileVersion != null && historyFileVersion.isNotEmpty) {
+                _serverFileVersions[historyFileId] = historyFileVersion;
               }
               toolInput['_file_id'] = historyFileId;
               toolInput['_file_name'] = historyFileName;
@@ -14050,13 +14055,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
       _filePathToId[filePath] = fileId;
-      final hasVisibleCard = _messages.any(
-        (m) =>
-            m.type == MessageType.toolCall &&
-            m.toolName == 'SendFile' &&
-            m.toolInput?['file_path'] == filePath,
+      final targetCardIndex = findSendFileAvailabilityCard(
+        _messages,
+        filePath: filePath,
+        fileId: fileId,
       );
-      if (!hasVisibleCard) {
+      if (targetCardIndex >= 0) {
+        mergeSendFileTransportMetadata(_messages[targetCardIndex].toolInput!, {
+          '_file_id': fileId,
+          '_file_name': fileName,
+          if (fileSize != null && fileSize > 0) '_file_size': fileSize,
+        });
+      } else {
         _messages.add(
           ChatMessage.toolCall(
             tool: 'SendFile',

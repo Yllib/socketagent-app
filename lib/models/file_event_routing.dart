@@ -1,6 +1,11 @@
+import 'message.dart';
+
 const _fileMetadataKeys = {'_file_id', '_file_name', '_file_size'};
 
-String? resolveDownloadServerId(String? recordedServerId, String? activeServerId) {
+String? resolveDownloadServerId(
+  String? recordedServerId,
+  String? activeServerId,
+) {
   final recorded = recordedServerId?.trim() ?? '';
   if (recorded.isNotEmpty) return recorded;
   final active = activeServerId?.trim() ?? '';
@@ -40,4 +45,24 @@ void mergeSendFileTransportMetadata(
       canonicalInput[key] = value;
     }
   }
+}
+
+/// Locate the exact live card that should own a file-availability packet.
+/// Completed path-only cards are intentionally ignored: a later invocation of
+/// SendFile for the same path is a different delivery with independent state.
+int findSendFileAvailabilityCard(
+  List<ChatMessage> messages, {
+  required String filePath,
+  required String fileId,
+}) {
+  return messages.lastIndexWhere((message) {
+    if (message.type != MessageType.toolCall ||
+        message.toolName != 'SendFile' ||
+        message.toolInput?['file_path'] != filePath) {
+      return false;
+    }
+    final embeddedId = message.toolInput?['_file_id']?.toString() ?? '';
+    return embeddedId == fileId ||
+        (embeddedId.isEmpty && message.toolStreaming);
+  });
 }
