@@ -227,6 +227,89 @@ void main() {
     expect(position.pixels, closeTo(pixelsBefore, 0.5));
   });
 
+  testWidgets(
+    'AUTO off gives an immediate pointer control over entry-time history work',
+    (WidgetTester tester) async {
+      final key = GlobalKey<_HistoryHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _HistoryHarness(
+            key: key,
+            initiallyLoadingHistory: false,
+            messageCount: 80,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      key.currentState!.holdViewport();
+      await tester.pump();
+      final list = find.byType(ListView).first;
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      position.jumpTo(position.maxScrollExtent * 0.45);
+      await tester.pump();
+
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      final ownedPixels = position.pixels;
+
+      // This is the session-entry race: cached chat is visible, the reader
+      // touches it, then delayed older history arrives before drag recognition.
+      key.currentState!.completeLoad(prependCount: 20, hasMoreAfter: true);
+      await tester.pump();
+      await tester.pump();
+
+      expect(key.currentState!.followLatest, isFalse);
+      expect(position.pixels, closeTo(ownedPixels, 0.5));
+
+      await gesture.moveBy(const Offset(0, 100));
+      await tester.pump();
+      expect(position.pixels, lessThan(ownedPixels));
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'first entry-time drag cancels AUTO before delayed reconciliation can snap',
+    (WidgetTester tester) async {
+      final key = GlobalKey<_HistoryHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: _HistoryHarness(
+            key: key,
+            initiallyLoadingHistory: false,
+            messageCount: 80,
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final list = find.byType(ListView).first;
+      final position = tester
+          .state<ScrollableState>(find.byType(Scrollable).first)
+          .position;
+      expect(key.currentState!.followLatest, isTrue);
+      expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+
+      final gesture = await tester.startGesture(tester.getCenter(list));
+      key.currentState!.completeLoad(prependCount: 20, hasMoreAfter: true);
+      await tester.pump();
+      await gesture.moveBy(const Offset(0, 120));
+      await tester.pump();
+
+      expect(key.currentState!.followLatest, isFalse);
+      expect(position.pixels, lessThan(position.maxScrollExtent));
+      final readerPixels = position.pixels;
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(position.pixels, closeTo(readerPixels, 0.5));
+    },
+  );
+
   testWidgets('FOLLOW and HOLD are explicit, deterministic viewport modes', (
     WidgetTester tester,
   ) async {

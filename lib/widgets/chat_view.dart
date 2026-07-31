@@ -290,6 +290,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   String? _prependAnchorRowKey;
   double? _prependAnchorLayoutOffset;
   RenderBox? _prependAnchorBox;
+  bool _userPointerDown = false;
   bool _userScrollInProgress = false;
   bool? _requestedFollowLatest;
 
@@ -305,6 +306,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       shouldFollow: () =>
           mounted &&
           _effectiveFollowLatest &&
+          !_userPointerDown &&
           !_userScrollInProgress &&
           !_hasTranscriptTarget,
       prependAnchorCorrection: _prependAnchorCorrection,
@@ -662,7 +664,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     if (sessionChanged) {
       _cancelFollowBottom();
       _finishPreservingPrepend();
-      _userScrollInProgress = false;
+      // A session ID can arrive after the cached chat has already painted.
+      // Do not erase ownership of a gesture that began in that window.
+      _userScrollInProgress = _userPointerDown;
       _requestedFollowLatest = null;
       _expandedImageCardIds.clear();
       _messageRowKeys.clear();
@@ -819,7 +823,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   void _preserveViewportAcrossPrepend() {
-    if (!_scrollController.hasClients) return;
+    if (!_scrollController.hasClients || _userOwnsViewport) return;
     _capturePrependAnchor();
     final generation = ++_prependPreservationGeneration;
     _scrollController.preserveCurrentEndDistance();
@@ -902,6 +906,21 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   bool get _effectiveFollowLatest =>
       _requestedFollowLatest ?? widget.followLatest;
 
+  bool get _userOwnsViewport => _userPointerDown || _userScrollInProgress;
+
+  void _handleViewportPointerDown(PointerDownEvent event) {
+    _userPointerDown = true;
+    // Pointer-down is the earliest reliable indication that the reader is
+    // taking control. Cancel entry-time follow/prepend work before the drag
+    // recognizer emits its first ScrollStartNotification.
+    _cancelFollowBottom();
+    _finishPreservingPrepend();
+  }
+
+  void _handleViewportPointerEnd(PointerEvent event) {
+    _userPointerDown = false;
+  }
+
   void _disableFollowForTranscriptTarget() {
     final identity = _transcriptTargetIdentity();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -927,14 +946,23 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     if (notification is ScrollStartNotification &&
         notification.dragDetails != null) {
       _userScrollInProgress = true;
+      _cancelFollowBottom();
+      _finishPreservingPrepend();
     }
 
-    if (_userScrollInProgress &&
-        (notification is ScrollUpdateNotification ||
-            notification is OverscrollNotification) &&
-        _effectiveFollowLatest &&
-        notification.metrics.extentAfter > 2) {
-      _requestFollowLatest(false);
+    if (_userScrollInProgress && _effectiveFollowLatest) {
+      final movedByDrag =
+          notification is ScrollUpdateNotification &&
+          (notification.scrollDelta?.abs() ?? 0) > 0;
+      final overscrollingAway =
+          notification is OverscrollNotification &&
+          notification.metrics.extentAfter > 2;
+      if (movedByDrag || overscrollingAway) {
+        // The first real drag delta transfers ownership immediately. Waiting
+        // for extentAfter is racy while entry-time history is still changing
+        // the content dimensions underneath the gesture.
+        _requestFollowLatest(false);
+      }
     }
 
     if (notification is ScrollEndNotification ||
@@ -955,6 +983,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   void _followToBottom() {
+    // Never even queue a follow while the reader owns the viewport. Checking
+    // only in the post-frame fallback is too late: applyContentDimensions can
+    // consume the request during layout and visibly snap before that callback.
+    if (_userOwnsViewport) return;
     _scrollController.requestFollow();
     if (_followFallbackScheduled) return;
     _followFallbackScheduled = true;
@@ -1094,28 +1126,35 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               child: SizedBox.expand(
                 child: NotificationListener<ScrollNotification>(
                   onNotification: _handleUserScrollNotification,
-                  child: ListView.builder(
-                    key: ValueKey<String>(
-                      'chat-list:${widget.sessionStorageKey ?? ''}',
-                    ),
-                    controller: _scrollController,
-                    findChildIndexCallback: (key) => listIndexByMessageKey[key],
-                    padding: const EdgeInsets.only(top: 8, bottom: 8),
-                    itemCount: itemCount,
-                    itemBuilder: (context, index) {
-                      var messageIndex = index;
-                      if (hasLoadMore) {
-                        if (messageIndex == 0) {
-                          return _buildLoadMoreButton(context);
+                  child: Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: _handleViewportPointerDown,
+                    onPointerUp: _handleViewportPointerEnd,
+                    onPointerCancel: _handleViewportPointerEnd,
+                    child: ListView.builder(
+                      key: ValueKey<String>(
+                        'chat-list:${widget.sessionStorageKey ?? ''}',
+                      ),
+                      controller: _scrollController,
+                      findChildIndexCallback: (key) =>
+                          listIndexByMessageKey[key],
+                      padding: const EdgeInsets.only(top: 8, bottom: 8),
+                      itemCount: itemCount,
+                      itemBuilder: (context, index) {
+                        var messageIndex = index;
+                        if (hasLoadMore) {
+                          if (messageIndex == 0) {
+                            return _buildLoadMoreButton(context);
+                          }
+                          messageIndex--;
                         }
-                        messageIndex--;
-                      }
-                      if (messageIndex < visibleRows.length) {
-                        final row = visibleRows[messageIndex];
-                        return _buildMessageWidget(row.message, row.rowKey);
-                      }
-                      return _buildThinkingIndicator(context);
-                    },
+                        if (messageIndex < visibleRows.length) {
+                          final row = visibleRows[messageIndex];
+                          return _buildMessageWidget(row.message, row.rowKey);
+                        }
+                        return _buildThinkingIndicator(context);
+                      },
+                    ),
                   ),
                 ),
               ),
