@@ -13,6 +13,7 @@ class _FakeUpdateService extends UpdateService {
     this.available = false,
     this.downloading = false,
     this.downloaded = false,
+    this.opening = false,
     this.progress,
   });
 
@@ -22,6 +23,7 @@ class _FakeUpdateService extends UpdateService {
   bool available;
   bool downloading;
   bool downloaded;
+  bool opening;
   double? progress;
 
   @override
@@ -41,6 +43,9 @@ class _FakeUpdateService extends UpdateService {
 
   @override
   bool get hasDownloadedApk => available && downloaded;
+
+  @override
+  bool get isOpeningInstaller => opening;
 
   @override
   double? get downloadProgress => progress;
@@ -188,6 +193,27 @@ void main() {
     await tester.tap(find.byTooltip('Install downloaded app update'));
     await tester.pump();
     expect(updateService.installCount, 1);
+  });
+
+  testWidgets('settings header shows and disables installer launch progress', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService(
+      available: true,
+      downloaded: true,
+      opening: true,
+    );
+    addTearDown(provider.dispose);
+    addTearDown(updateService.dispose);
+
+    await pumpSettings(tester, provider, updateService);
+
+    expect(find.byTooltip('Opening Android installer'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    await tester.tap(find.byTooltip('Opening Android installer'));
+    await tester.pump();
+    expect(updateService.installCount, 0);
   });
 
   testWidgets('installed current-version APK is not offered again', (

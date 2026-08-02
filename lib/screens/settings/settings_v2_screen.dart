@@ -104,7 +104,11 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
   }
 
   Future<void> _handleUpdateAction() async {
-    if (_checkingForUpdate || updateService.isDownloading) return;
+    if (_checkingForUpdate ||
+        updateService.isDownloading ||
+        updateService.isOpeningInstaller) {
+      return;
+    }
     if (updateService.hasDownloadedApk) {
       await updateService.installDownloaded();
     } else if (updateService.updateAvailable) {
@@ -127,8 +131,11 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     final downloaded = updateService.hasDownloadedApk;
     final available = updateService.updateAvailable;
     final progress = updateService.downloadProgress;
+    final openingInstaller = updateService.isOpeningInstaller;
 
-    final tooltip = _checkingForUpdate
+    final tooltip = openingInstaller
+        ? 'Opening Android installer'
+        : _checkingForUpdate
         ? 'Checking for app updates'
         : downloading
         ? progress == null
@@ -141,7 +148,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
         : 'Check for app updates';
 
     Widget icon;
-    if (_checkingForUpdate) {
+    if (_checkingForUpdate || openingInstaller) {
       icon = const SizedBox.square(
         dimension: 22,
         child: CircularProgressIndicator(strokeWidth: 2),
@@ -179,7 +186,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     return IconButton(
       tooltip: tooltip,
       icon: icon,
-      onPressed: _checkingForUpdate || downloading ? null : _handleUpdateAction,
+      onPressed: _checkingForUpdate || downloading || openingInstaller
+          ? null
+          : _handleUpdateAction,
     );
   }
 
@@ -485,14 +494,19 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     if (updateService.updateAvailable) {
       final downloading = updateService.isDownloading;
       final downloaded = updateService.hasDownloadedApk;
+      final openingInstaller = updateService.isOpeningInstaller;
       items.add(
         _AttentionItem(
-          icon: downloaded
+          icon: openingInstaller
+              ? Icons.open_in_new
+              : downloaded
               ? Icons.install_mobile
               : downloading
               ? Icons.downloading
               : Icons.system_update,
-          title: downloaded
+          title: openingInstaller
+              ? 'Opening Android installer'
+              : downloaded
               ? 'App update ready to install'
               : downloading
               ? 'Downloading app update'

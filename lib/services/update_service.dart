@@ -37,6 +37,8 @@ class UpdateService extends ChangeNotifier {
   UpdateInfo? _updateInfo;
   double? _downloadProgress;
   bool _isDownloading = false;
+  bool _isOpeningInstaller = false;
+  Timer? _installerLaunchResetTimer;
   bool _hasDownloadedApk = false;
   String? _downloadedApkPath;
   String? _error;
@@ -44,6 +46,7 @@ class UpdateService extends ChangeNotifier {
   UpdateInfo? get updateInfo => _updateInfo;
   double? get downloadProgress => _downloadProgress;
   bool get isDownloading => _isDownloading;
+  bool get isOpeningInstaller => _isOpeningInstaller;
   // A verified APK is only actionable while it targets a newer version.
   // Android leaves our downloaded installer in app storage after installation,
   // so file existence alone must never keep the UI in "ready to install".
@@ -54,6 +57,7 @@ class UpdateService extends ChangeNotifier {
 
   /// Direct app update check against the public release metadata on GitHub.
   Future<UpdateInfo?> checkForUpdate() async {
+    _finishInstallerLaunchState();
     _error = null;
     try {
       final packageInfo = await PackageInfo.fromPlatform();
@@ -236,10 +240,16 @@ class UpdateService extends ChangeNotifier {
   }
 
   Future<void> installDownloaded() async {
+    if (_isOpeningInstaller) return;
+    _isOpeningInstaller = true;
+    _error = null;
+    notifyListeners();
+
     await _refreshDownloadedApkState();
     final apkPath = _downloadedApkPath;
     if (apkPath == null || apkPath.isEmpty) {
       _error = 'No downloaded update found';
+      _finishInstallerLaunchState();
       notifyListeners();
       return;
     }
@@ -250,6 +260,7 @@ class UpdateService extends ChangeNotifier {
       _hasDownloadedApk = false;
       _downloadedApkPath = null;
       _error = e.toString().replaceFirst('Exception: ', '');
+      _finishInstallerLaunchState();
       notifyListeners();
       return;
     }
@@ -260,8 +271,32 @@ class UpdateService extends ChangeNotifier {
     );
     if (result.type != ResultType.done) {
       _error = 'Could not open installer: ${result.message}';
+      _finishInstallerLaunchState();
       notifyListeners();
+      return;
     }
+    // Keep every install affordance visibly busy while Android transitions to
+    // its package installer. If no lifecycle transition occurs, recover after
+    // a short guard period so a failed platform handoff is retryable.
+    _installerLaunchResetTimer?.cancel();
+    _installerLaunchResetTimer = Timer(
+      const Duration(seconds: 4),
+      _finishInstallerLaunchState,
+    );
+  }
+
+  void _finishInstallerLaunchState() {
+    _installerLaunchResetTimer?.cancel();
+    _installerLaunchResetTimer = null;
+    if (!_isOpeningInstaller) return;
+    _isOpeningInstaller = false;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _installerLaunchResetTimer?.cancel();
+    super.dispose();
   }
 
   Future<bool> _downloadWithResume({

@@ -31,8 +31,23 @@ DateTime? scheduledTaskLatestResultAt(Map<String, dynamic> task) {
 }
 
 bool scheduledTaskHasUnreadResult(Map<String, dynamic> task) {
+  if (scheduledTaskIsArchived(task)) return false;
   final latestResultAt = scheduledTaskLatestResultAt(task);
   if (latestResultAt == null) return false;
   final lastReadAt = _parseTimestamp(task['lastReadAt']);
   return lastReadAt == null || latestResultAt.isAfter(lastReadAt);
+}
+
+bool scheduledTaskIsArchived(Map<String, dynamic> task) {
+  final archivedAt = task['archivedAt'];
+  return archivedAt is String && archivedAt.isNotEmpty;
+}
+
+bool scheduledTaskCanArchive(Map<String, dynamic> task) {
+  if (scheduledTaskIsArchived(task)) return false;
+  final recurrence = task['recurrence'];
+  final recurring = recurrence is Map && recurrence['type'] != 'once';
+  final status = task['status']?.toString();
+  return !recurring &&
+      (status == 'completed' || status == 'failed' || status == 'cancelled');
 }

@@ -13128,6 +13128,49 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void archiveScheduledTask(String taskId) {
+    _setScheduledTaskArchived(taskId, true);
+  }
+
+  void restoreScheduledTask(String taskId) {
+    _setScheduledTaskArchived(taskId, false);
+  }
+
+  void _setScheduledTaskArchived(String taskId, bool archived) {
+    final serverId = _serverIdForScheduledTask(taskId);
+    final marker = DateTime.now().toUtc().toIso8601String();
+
+    void updateTask(Map<String, dynamic> task) {
+      if (archived) {
+        task['archivedAt'] = marker;
+        task['lastReadAt'] = marker;
+      } else {
+        task.remove('archivedAt');
+      }
+    }
+
+    for (final task in _scheduledTasks.where((task) => task['id'] == taskId)) {
+      updateTask(task);
+    }
+    if (serverId != null) {
+      for (final task in _perServerScheduledTasks[serverId] ?? const []) {
+        if (task['id'] == taskId) updateTask(task);
+      }
+    }
+    _saveScheduledTaskCacheSoon();
+    notifyListeners();
+
+    final msg = {
+      'type': archived ? 'archive_scheduled_task' : 'restore_scheduled_task',
+      'taskId': taskId,
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
+  }
+
   void deleteScheduledTask(String taskId) {
     final serverId = _serverIdForScheduledTask(taskId);
     _scheduledTasks.removeWhere((t) => t['id'] == taskId);

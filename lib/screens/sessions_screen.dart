@@ -1769,6 +1769,7 @@ class _SessionsTabState extends State<SessionsTab> {
     final updateService = shell.updateService;
     final downloading = updateService.isDownloading;
     final downloaded = updateService.hasDownloadedApk;
+    final openingInstaller = updateService.isOpeningInstaller;
     final progress = updateService.downloadProgress;
     return Container(
       margin: const EdgeInsets.fromLTRB(12, 4, 12, 4),
@@ -1811,7 +1812,7 @@ class _SessionsTabState extends State<SessionsTab> {
             ),
             const SizedBox(width: 4),
             FilledButton(
-              onPressed: downloading
+              onPressed: downloading || openingInstaller
                   ? null
                   : downloaded
                   ? updateService.installDownloaded
@@ -1821,7 +1822,19 @@ class _SessionsTabState extends State<SessionsTab> {
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
-              child: downloading
+              child: openingInstaller
+                  ? const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox.square(
+                          dimension: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(width: 6),
+                        Text('Opening', style: TextStyle(fontSize: 12)),
+                      ],
+                    )
+                  : downloading
                   ? Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [

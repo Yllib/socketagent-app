@@ -1031,6 +1031,15 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     );
                   },
                 ),
+              if (scheduledTaskCanArchive(task))
+                ListTile(
+                  leading: const Icon(Icons.archive_outlined),
+                  title: const Text('Archive Task'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    provider.archiveScheduledTask(task['id'] as String);
+                  },
+                ),
               if (canEdit)
                 ListTile(
                   leading: const Icon(Icons.edit_outlined),
@@ -1705,11 +1714,66 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     );
   }
 
+  Widget _buildArchivedTasks(
+    List<Map<String, dynamic>> tasks,
+    ChatProvider provider,
+  ) {
+    return Card(
+      margin: const EdgeInsets.only(top: 8),
+      child: ExpansionTile(
+        leading: const Icon(Icons.archive_outlined),
+        title: const Text('Archived'),
+        subtitle: Text(
+          '${tasks.length} one-off task${tasks.length == 1 ? '' : 's'}',
+        ),
+        children: [
+          for (final task in tasks)
+            ListTile(
+              dense: true,
+              leading: Icon(
+                _statusIcon(task['status']?.toString() ?? 'completed'),
+                color: _statusColor(task['status']?.toString() ?? 'completed'),
+              ),
+              title: Text(
+                ((task['name'] as String? ?? '').trim().isNotEmpty
+                            ? task['name']
+                            : task['prompt'])
+                        ?.toString() ??
+                    'Scheduled task',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              subtitle: Text(
+                'Archived ${_formatTime(task['archivedAt'] as String?)}',
+              ),
+              trailing: IconButton(
+                tooltip: 'Restore task',
+                icon: const Icon(Icons.unarchive_outlined),
+                onPressed: () =>
+                    provider.restoreScheduledTask(task['id'] as String),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, provider, _) {
         final tasks = provider.scheduledTasks;
+        final activeTasks = tasks
+            .where((task) => !scheduledTaskIsArchived(task))
+            .toList();
+        final archivedTasks = tasks.where(scheduledTaskIsArchived).toList()
+          ..sort((a, b) {
+            final aTime = DateTime.tryParse(a['archivedAt']?.toString() ?? '');
+            final bTime = DateTime.tryParse(b['archivedAt']?.toString() ?? '');
+            return (bTime ?? DateTime.fromMillisecondsSinceEpoch(0)).compareTo(
+              aTime ?? DateTime.fromMillisecondsSinceEpoch(0),
+            );
+          });
         return Scaffold(
           appBar: AppBar(title: const Text('Scheduled Tasks')),
           floatingActionButton: FloatingActionButton(
@@ -1755,9 +1819,13 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     left: 8,
                     right: 8,
                   ),
-                  itemCount: tasks.length,
+                  itemCount:
+                      activeTasks.length + (archivedTasks.isNotEmpty ? 1 : 0),
                   itemBuilder: (context, index) {
-                    final task = tasks[index];
+                    if (index == activeTasks.length) {
+                      return _buildArchivedTasks(archivedTasks, provider);
+                    }
+                    final task = activeTasks[index];
                     final taskId = task['id'] as String? ?? '';
                     final status = task['status'] as String? ?? 'pending';
                     final prompt = task['prompt'] as String? ?? '';
@@ -1780,7 +1848,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     final isExpanded = _expandedTasks.contains(taskId);
                     final isUnread = scheduledTaskHasUnreadResult(task);
 
-                    return Card(
+                    final taskCard = Card(
                       child: Column(
                         children: [
                           InkWell(
@@ -1851,9 +1919,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                             overflow: TextOverflow.ellipsis,
                                             style: TextStyle(
                                               fontSize: 12,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurfaceVariant,
+                                              color: Theme.of(
+                                                context,
+                                              ).colorScheme.onSurfaceVariant,
                                             ),
                                           ),
                                         ],
@@ -2105,6 +2173,57 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                           if (isExpanded) _buildRunHistory(task),
                         ],
                       ),
+                    );
+                    if (!scheduledTaskCanArchive(task)) return taskCard;
+                    return Dismissible(
+                      key: ValueKey('scheduled-task-$taskId'),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        padding: const EdgeInsets.only(right: 24),
+                        alignment: Alignment.centerRight,
+                        decoration: BoxDecoration(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.secondaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.archive_outlined,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSecondaryContainer,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              'Archive',
+                              style: TextStyle(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSecondaryContainer,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      onDismissed: (_) {
+                        provider.archiveScheduledTask(taskId);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: const Text('Task archived'),
+                            action: SnackBarAction(
+                              label: 'Undo',
+                              onPressed: () =>
+                                  provider.restoreScheduledTask(taskId),
+                            ),
+                          ),
+                        );
+                      },
+                      child: taskCard,
                     );
                   },
                 ),

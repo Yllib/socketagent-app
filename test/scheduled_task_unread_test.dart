@@ -54,4 +54,25 @@ void main() {
     ], status: 'running');
     expect(scheduledTaskHasUnreadResult(task), isTrue);
   });
+
+  test('archived results never contribute to the unread badge', () {
+    final task = taskWithRuns([
+      {'status': 'completed', 'completedAt': '2026-08-01T10:05:00.000Z'},
+    ])..['archivedAt'] = '2026-08-01T11:00:00.000Z';
+    expect(scheduledTaskHasUnreadResult(task), isFalse);
+  });
+
+  test('only terminal one-off tasks expose swipe archive', () {
+    expect(scheduledTaskCanArchive({'status': 'completed'}), isTrue);
+    expect(scheduledTaskCanArchive({'status': 'failed'}), isTrue);
+    expect(scheduledTaskCanArchive({'status': 'cancelled'}), isTrue);
+    expect(scheduledTaskCanArchive({'status': 'running'}), isFalse);
+    expect(
+      scheduledTaskCanArchive({
+        'status': 'completed',
+        'recurrence': {'type': 'daily'},
+      }),
+      isFalse,
+    );
+  });
 }
