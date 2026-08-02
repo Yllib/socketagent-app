@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:collection';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -7,15 +8,18 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../models/work_review.dart';
+import '../models/html_plan.dart';
 import '../services/chat_provider.dart';
 import '../services/html_plan_export_service.dart';
 import '../services/work_review_repository.dart';
 import 'file_manager_screen.dart';
 import 'home_screen.dart';
+import 'html_plan_viewer_screen.dart';
 
 bool shouldEmbedWorkReviewTarget(WorkReviewTarget? target) {
   if (target == null) return false;
   if (target.isWeb) return true;
+  if (target.kind == 'html_plan') return true;
   if (target.kind != 'html') return false;
   if (target.html != null || target.uri.trimLeft().startsWith('<')) return true;
   final uri = Uri.tryParse(target.uri);
@@ -239,6 +243,7 @@ class _WorkReviewWorkspaceScreenState extends State<WorkReviewWorkspaceScreen> {
                 items: review.items,
                 activeIndex: _itemIndex,
                 serverId: review.serverId,
+                linkedHtmlPlan: review.linkedHtmlPlan,
               );
               if (constraints.maxWidth >= 800) {
                 return _buildWide(
@@ -762,11 +767,13 @@ class _ReviewTargetStack extends StatefulWidget {
     required this.items,
     required this.activeIndex,
     required this.serverId,
+    required this.linkedHtmlPlan,
   });
 
   final List<WorkReviewItem> items;
   final int activeIndex;
   final String serverId;
+  final HtmlPlan? linkedHtmlPlan;
 
   @override
   State<_ReviewTargetStack> createState() => _ReviewTargetStackState();
@@ -834,6 +841,7 @@ class _ReviewTargetStackState extends State<_ReviewTargetStack> {
                   key: _keys[item.id],
                   target: item.primaryTarget,
                   serverId: widget.serverId,
+                  linkedHtmlPlan: widget.linkedHtmlPlan,
                 ),
               ),
             ),
@@ -847,10 +855,12 @@ class _WorkReviewTargetView extends StatefulWidget {
     super.key,
     required this.target,
     required this.serverId,
+    required this.linkedHtmlPlan,
   });
 
   final WorkReviewTarget? target;
   final String serverId;
+  final HtmlPlan? linkedHtmlPlan;
 
   @override
   State<_WorkReviewTargetView> createState() => _WorkReviewTargetViewState();
@@ -865,13 +875,14 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
     super.initState();
     final target = widget.target;
     final inlineHtml =
+        (target?.kind == 'html_plan' ? widget.linkedHtmlPlan?.html : null) ??
         target?.html ??
         (target?.uri.trimLeft().startsWith('<') == true ? target!.uri : null);
     // The primary target is the review workspace, not a launcher card. Every
     // HTTP(S) target is embedded so the review panel remains over the live
     // site. "Open externally" in the toolbar is the explicit escape hatch.
     final canEmbed = shouldEmbedWorkReviewTarget(target);
-    if (canEmbed) {
+    if (canEmbed && (target?.kind != 'html_plan' || inlineHtml != null)) {
       final controller = WebViewController()
         ..setJavaScriptMode(
           target?.kind == 'html'
@@ -884,9 +895,17 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
             onProgress: (progress) {
               if (mounted) setState(() => _progress = progress);
             },
+            onPageFinished: (_) async {
+              if (target?.kind != 'html_plan') return;
+              final anchor = target!.uri.replaceFirst(RegExp(r'^#'), '');
+              await _webController?.runJavaScript(
+                'document.getElementById(${jsonEncode(anchor)})?.scrollIntoView({block:"start"});',
+              );
+            },
           ),
         );
-      if (target?.kind == 'html' && inlineHtml != null) {
+      if ((target?.kind == 'html' || target?.kind == 'html_plan') &&
+          inlineHtml != null) {
         controller.loadHtmlString(
           HtmlPlanExportService.buildViewerDocument(inlineHtml),
         );
@@ -916,6 +935,14 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
   Future<void> openExternal() async {
     final target = widget.target;
     if (target == null) return;
+    if (target.kind == 'html_plan' && widget.linkedHtmlPlan != null) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => HtmlPlanViewerScreen(plan: widget.linkedHtmlPlan!),
+        ),
+      );
+      return;
+    }
     final uri = Uri.tryParse(target.uri);
     if ((target.kind == 'file' ||
             target.kind == 'image' ||

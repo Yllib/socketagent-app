@@ -107,6 +107,41 @@ void main() {
     },
   );
 
+  test('linked HTML plan targets parse and embed in the review workspace', () {
+    final json = _reviewJson();
+    json['linkedHtmlPlan'] = {
+      'planId': 'feedback-plan',
+      'sessionId': 'session-1',
+      'title': 'Feedback queue',
+      'html': '<section id="ticket-699">Ticket 699</section>',
+      'createdAt': '2026-07-29T12:00:00Z',
+      'updatedAt': '2026-07-29T12:00:00Z',
+      'currentRevision': 0,
+      'revisionCount': 0,
+    };
+    json['items'] = [
+      {
+        'itemId': 'ticket-699',
+        'title': 'Ticket 699',
+        'primaryTarget': {
+          'kind': 'html_plan',
+          'uri': '#ticket-699',
+          'displayMode': 'embedded',
+        },
+      },
+    ];
+    final review = WorkReview.fromJson(json, serverId: 'server-a');
+
+    expect(review.linkedHtmlPlan?.planId, 'feedback-plan');
+    expect(review.linkedHtmlPlan?.html, contains('ticket-699'));
+    expect(review.items.single.primaryTarget?.kind, 'html_plan');
+    expect(
+      shouldEmbedWorkReviewTarget(review.items.single.primaryTarget),
+      isTrue,
+    );
+    expect(review.toJson()['linkedHtmlPlan'], isA<Map<String, dynamic>>());
+  });
+
   test(
     'work review parses generic targets and canonical draft wire fields',
     () {

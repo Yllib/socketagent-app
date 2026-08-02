@@ -1,3 +1,5 @@
+import 'html_plan.dart';
+
 enum WorkReviewStatus {
   open,
   completed,
@@ -204,6 +206,7 @@ class WorkReview {
   final List<WorkReviewItem> items;
   final int itemCount;
   final Map<String, dynamic>? result;
+  final HtmlPlan? linkedHtmlPlan;
   final DateTime createdAt;
   final DateTime updatedAt;
   final Map<String, dynamic> extra;
@@ -222,6 +225,7 @@ class WorkReview {
     required this.items,
     required this.itemCount,
     required this.result,
+    this.linkedHtmlPlan,
     required this.createdAt,
     required this.updatedAt,
     this.extra = const {},
@@ -301,6 +305,11 @@ class WorkReview {
               (round['result'] ?? json['result']) as Map,
             )
           : null,
+      linkedHtmlPlan: json['linkedHtmlPlan'] is Map
+          ? HtmlPlan.fromJson(
+              Map<String, dynamic>.from(json['linkedHtmlPlan'] as Map),
+            )
+          : null,
       createdAt: DateTime.tryParse(json['createdAt']?.toString() ?? '') ?? now,
       updatedAt:
           DateTime.tryParse(json['updatedAt']?.toString() ?? '') ??
@@ -325,6 +334,7 @@ class WorkReview {
     'itemCount': itemCount,
     'currentRoundId': roundId,
     if (result != null) 'result': result,
+    if (linkedHtmlPlan != null) 'linkedHtmlPlan': linkedHtmlPlan!.toJson(),
     'createdAt': createdAt.toUtc().toIso8601String(),
     'updatedAt': updatedAt.toUtc().toIso8601String(),
   };
