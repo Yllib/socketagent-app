@@ -35,12 +35,14 @@ void main() {
       'sessionId': 'session-1',
       'serverId': 'server-1',
       'navigationTarget': 'scheduled_tasks',
+      'scheduledTaskId': 'task-1',
     });
     final target = parseNotificationNavigationPayload(payload!);
 
     expect(target?.sessionId, 'session-1');
     expect(target?.serverId, 'server-1');
     expect(target?.parent, NotificationParentDestination.scheduledTasks);
+    expect(target?.scheduledTaskId, 'task-1');
   });
 
   test('scheduled notifications without a session open the tasks list', () {

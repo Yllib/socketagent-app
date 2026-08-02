@@ -267,6 +267,20 @@ class _AppLauncherState extends State<AppLauncher>
       parent = NotificationParentDestination.scheduledTasks;
     }
     _showNotificationParent(parent);
+    if (parent == NotificationParentDestination.scheduledTasks) {
+      final scheduledTaskId = parsed.scheduledTaskId;
+      if (scheduledTaskId != null && scheduledTaskId.isNotEmpty) {
+        provider.markScheduledTaskRead(
+          scheduledTaskId,
+          serverId: parsed.serverId,
+        );
+      } else if (sessionId != null) {
+        provider.markScheduledTaskReadForSession(
+          sessionId,
+          serverId: parsed.serverId,
+        );
+      }
+    }
     if (sessionId == null) {
       Navigator.of(context).popUntil((route) => route.isFirst);
       return;

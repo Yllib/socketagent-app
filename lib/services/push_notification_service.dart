@@ -163,6 +163,8 @@ class PushNotificationService {
         'targetEntryId': data['targetEntryId'].toString(),
       if ((data['targetSessionSeq']?.toString() ?? '').isNotEmpty)
         'targetSessionSeq': data['targetSessionSeq'].toString(),
+      if ((data['scheduledTaskId']?.toString() ?? '').isNotEmpty)
+        'scheduledTaskId': data['scheduledTaskId'].toString(),
     };
     String withQuery(String base) {
       if (query.isEmpty) return base;

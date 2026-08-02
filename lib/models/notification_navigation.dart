@@ -8,6 +8,7 @@ class NotificationNavigationTarget {
     this.targetEntryId,
     this.targetSessionSeq,
     this.notificationKind,
+    this.scheduledTaskId,
   });
 
   final NotificationParentDestination parent;
@@ -16,6 +17,7 @@ class NotificationNavigationTarget {
   final String? targetEntryId;
   final int? targetSessionSeq;
   final String? notificationKind;
+  final String? scheduledTaskId;
 }
 
 NotificationNavigationTarget? parseNotificationNavigationPayload(
@@ -42,6 +44,7 @@ NotificationNavigationTarget? parseNotificationNavigationPayload(
       ? parsedTargetSessionSeq
       : null;
   final notificationKind = query['kind']?.trim();
+  final scheduledTaskId = query['scheduledTaskId']?.trim();
 
   if (routePayload.startsWith('session_')) {
     final sessionId = routePayload.substring('session_'.length);
@@ -54,6 +57,9 @@ NotificationNavigationTarget? parseNotificationNavigationPayload(
       notificationKind: notificationKind?.isEmpty == true
           ? null
           : notificationKind,
+      scheduledTaskId: scheduledTaskId?.isEmpty == true
+          ? null
+          : scheduledTaskId,
     );
   }
 
@@ -68,6 +74,9 @@ NotificationNavigationTarget? parseNotificationNavigationPayload(
       notificationKind: notificationKind?.isEmpty == true
           ? null
           : notificationKind,
+      scheduledTaskId: scheduledTaskId?.isEmpty == true
+          ? null
+          : scheduledTaskId,
     );
   }
 
@@ -91,6 +100,7 @@ NotificationNavigationTarget? parseNotificationNavigationPayload(
     notificationKind: notificationKind?.isEmpty == true
         ? null
         : notificationKind,
+    scheduledTaskId: scheduledTaskId?.isEmpty == true ? null : scheduledTaskId,
   );
 }
 

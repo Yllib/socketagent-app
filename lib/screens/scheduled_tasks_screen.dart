@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
+import '../models/scheduled_task_unread.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'home_screen.dart';
 
@@ -993,6 +994,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
         status == 'cancelled' ||
         status == 'completed' ||
         status == 'failed';
+    final isUnread = scheduledTaskHasUnreadResult(task);
 
     showModalBottomSheet(
       context: context,
@@ -1001,6 +1003,22 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (scheduledTaskLatestResultAt(task) != null)
+                ListTile(
+                  leading: Icon(
+                    isUnread
+                        ? Icons.mark_email_read_outlined
+                        : Icons.mark_email_unread_outlined,
+                  ),
+                  title: Text(isUnread ? 'Mark Read' : 'Mark Unread'),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    provider.markScheduledTaskRead(
+                      task['id'] as String,
+                      read: isUnread,
+                    );
+                  },
+                ),
               if (status != 'running')
                 ListTile(
                   leading: const Icon(Icons.play_arrow),
@@ -1028,6 +1046,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                   title: const Text('View Latest Session'),
                   onTap: () {
                     Navigator.pop(ctx);
+                    provider.markScheduledTaskRead(task['id'] as String);
                     provider.resumeSession(sessionId, serverId: taskServerId);
                     Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const HomeScreen()),
@@ -1573,8 +1592,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     });
   }
 
-  void _viewRunSession(String sessionId, String? serverId) {
+  void _viewRunSession(String sessionId, String? serverId, String taskId) {
     final provider = context.read<ChatProvider>();
+    provider.markScheduledTaskRead(taskId);
     provider.resumeSession(sessionId, serverId: serverId);
     Navigator.of(
       context,
@@ -1610,7 +1630,11 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
 
           return InkWell(
             onTap: runSessionId.isNotEmpty
-                ? () => _viewRunSession(runSessionId, taskServerId)
+                ? () => _viewRunSession(
+                    runSessionId,
+                    taskServerId,
+                    task['id'] as String,
+                  )
                 : null,
             child: Padding(
               padding: const EdgeInsets.only(
@@ -1754,6 +1778,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     final isRecurring = recurrence != null;
                     final isQuiet = task['notificationMode'] == 'quiet';
                     final isExpanded = _expandedTasks.contains(taskId);
+                    final isUnread = scheduledTaskHasUnreadResult(task);
 
                     return Card(
                       child: Column(
@@ -1761,6 +1786,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                           InkWell(
                             onTap: runs.isNotEmpty
                                 ? () {
+                                    if (isUnread) {
+                                      provider.markScheduledTaskRead(taskId);
+                                    }
                                     setState(() {
                                       if (isExpanded) {
                                         _expandedTasks.remove(taskId);
@@ -2052,6 +2080,23 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                       ],
                                     ),
                                   ),
+                                  if (isUnread)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 7,
+                                        left: 8,
+                                      ),
+                                      child: Container(
+                                        width: 9,
+                                        height: 9,
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.primary,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
                                 ],
                               ),
                             ),

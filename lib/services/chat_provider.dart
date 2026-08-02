@@ -22,6 +22,7 @@ import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import '../models/scheduled_task_cache.dart';
+import '../models/scheduled_task_unread.dart';
 import '../models/scheduled_task_update.dart';
 import '../models/task_display.dart';
 import '../models/session_notification_policy.dart';
@@ -772,6 +773,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> get todos =>
       _taskListDismissed ? const [] : visibleTasks(_todos, _dismissedTodoKeys);
   List<Map<String, dynamic>> get scheduledTasks => _scheduledTasks;
+  int get unreadScheduledTaskCount =>
+      _scheduledTasks.where(scheduledTaskHasUnreadResult).length;
   List<ArchiveEntry> get archives => _archives;
   Stream<String> get archiveFeedback => _archiveFeedback.stream;
   Stream<Map<String, dynamic>> get terminalEvents => _terminalEvents.stream;
@@ -13059,6 +13062,69 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(serverId, msg);
     } else {
       _connMgr.send(msg);
+    }
+  }
+
+  void markScheduledTaskRead(
+    String taskId, {
+    bool read = true,
+    String? serverId,
+  }) {
+    serverId ??= _serverIdForScheduledTask(taskId);
+    final marker = DateTime.now().toUtc().toIso8601String();
+
+    void updateTask(Map<String, dynamic> task) {
+      if (read) {
+        task['lastReadAt'] = marker;
+      } else {
+        task.remove('lastReadAt');
+      }
+    }
+
+    for (final task in _scheduledTasks.where((task) => task['id'] == taskId)) {
+      updateTask(task);
+    }
+    if (serverId != null) {
+      for (final task in _perServerScheduledTasks[serverId] ?? const []) {
+        if (task['id'] == taskId) updateTask(task);
+      }
+    }
+    _saveScheduledTaskCacheSoon();
+    notifyListeners();
+
+    final msg = {
+      'type': 'mark_scheduled_task_read',
+      'taskId': taskId,
+      'read': read,
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _connMgr.send(msg);
+    }
+  }
+
+  void markScheduledTaskReadForSession(String sessionId, {String? serverId}) {
+    for (final task in _scheduledTasks) {
+      final taskServerId = task['_serverId']?.toString();
+      if (serverId != null &&
+          serverId.isNotEmpty &&
+          taskServerId != null &&
+          taskServerId.isNotEmpty &&
+          taskServerId != serverId) {
+        continue;
+      }
+      final isLatest = task['sessionId']?.toString() == sessionId;
+      final containsRun = (task['runs'] as List? ?? const []).any(
+        (run) => run is Map && run['sessionId']?.toString() == sessionId,
+      );
+      if (isLatest || containsRun) {
+        markScheduledTaskRead(
+          task['id'].toString(),
+          serverId: taskServerId ?? serverId,
+        );
+        return;
+      }
     }
   }
 

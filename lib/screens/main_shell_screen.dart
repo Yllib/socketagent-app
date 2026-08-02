@@ -265,11 +265,7 @@ class MainShellScreenState extends State<MainShellScreen>
         ),
         bottomNavigationBar: Consumer<ChatProvider>(
           builder: (context, provider, _) {
-            final pendingTasks = provider.scheduledTasks
-                .where(
-                  (t) => t['status'] == 'pending' || t['status'] == 'running',
-                )
-                .length;
+            final unreadTasks = provider.unreadScheduledTaskCount;
             return NavigationBar(
               selectedIndex: _currentIndex,
               onDestinationSelected: _onTabChanged,
@@ -280,15 +276,15 @@ class MainShellScreenState extends State<MainShellScreen>
                   label: 'Sessions',
                 ),
                 NavigationDestination(
-                  icon: pendingTasks > 0
+                  icon: unreadTasks > 0
                       ? Badge(
-                          label: Text('$pendingTasks'),
+                          label: Text('$unreadTasks'),
                           child: const Icon(Icons.schedule_outlined),
                         )
                       : const Icon(Icons.schedule_outlined),
-                  selectedIcon: pendingTasks > 0
+                  selectedIcon: unreadTasks > 0
                       ? Badge(
-                          label: Text('$pendingTasks'),
+                          label: Text('$unreadTasks'),
                           child: const Icon(Icons.schedule),
                         )
                       : const Icon(Icons.schedule),
