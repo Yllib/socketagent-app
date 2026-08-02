@@ -174,6 +174,74 @@ class _WorkReviewWorkspaceScreenState extends State<WorkReviewWorkspaceScreen> {
     );
   }
 
+  Future<void> _confirmCancel() async {
+    final review = _review;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cancel this review?'),
+        content: const Text(
+          'This closes the review and discards its private draft. '
+          'No decisions, notes, or cancellation message will be sent to the agent.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep reviewing'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Cancel review'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final cancelled = await _repository.cancelReview(review);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          cancelled
+              ? 'Review cancelled. Nothing was sent to the agent.'
+              : _repository.errorFor(review) ?? 'Could not cancel review',
+        ),
+      ),
+    );
+    if (cancelled) Navigator.pop(context);
+  }
+
+  Future<void> _archiveReview() async {
+    final review = _review;
+    final archived = await _repository.archiveReview(review);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          archived
+              ? 'Review archived. Nothing was sent to the agent.'
+              : _repository.errorFor(review) ?? 'Could not archive review',
+        ),
+      ),
+    );
+    if (archived) Navigator.pop(context);
+  }
+
+  Future<void> _restoreReview() async {
+    final review = _review;
+    final restored = await _repository.restoreReview(review);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          restored
+              ? 'Review restored'
+              : _repository.errorFor(review) ?? 'Could not restore review',
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<WorkReviewRepository>(
@@ -185,6 +253,7 @@ class _WorkReviewWorkspaceScreenState extends State<WorkReviewWorkspaceScreen> {
         final item = review.items.isEmpty ? null : review.items[_itemIndex];
         final target = item?.primaryTarget;
         final host = Uri.tryParse(target?.uri ?? '')?.host ?? '';
+        final changingLifecycle = repository.isChangingLifecycle(review);
         return Scaffold(
           appBar: AppBar(
             titleSpacing: 4,
@@ -212,6 +281,46 @@ class _WorkReviewWorkspaceScreenState extends State<WorkReviewWorkspaceScreen> {
               ],
             ),
             actions: [
+              if (repository.supportsSilentLifecycle(review.serverId))
+                changingLifecycle
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(horizontal: 14),
+                        child: Center(
+                          child: SizedBox.square(
+                            dimension: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        ),
+                      )
+                    : PopupMenuButton<String>(
+                        tooltip: 'Review actions',
+                        onSelected: (action) {
+                          if (action == 'cancel') {
+                            _confirmCancel();
+                          } else if (action == 'archive') {
+                            _archiveReview();
+                          } else if (action == 'restore') {
+                            _restoreReview();
+                          }
+                        },
+                        itemBuilder: (_) => [
+                          if (review.status == WorkReviewStatus.open)
+                            const PopupMenuItem(
+                              value: 'cancel',
+                              child: Text('Cancel review'),
+                            ),
+                          if (review.status != WorkReviewStatus.archived)
+                            const PopupMenuItem(
+                              value: 'archive',
+                              child: Text('Archive review'),
+                            ),
+                          if (review.status == WorkReviewStatus.archived)
+                            const PopupMenuItem(
+                              value: 'restore',
+                              child: Text('Restore review'),
+                            ),
+                        ],
+                      ),
               IconButton(
                 tooltip: 'Back in target',
                 onPressed: () => _targetKey.currentState?.goBack(),
@@ -736,6 +845,10 @@ class _ReviewPanel extends StatelessWidget {
                                 ? 'Publishing…'
                                 : review.status == WorkReviewStatus.completed
                                 ? 'Review published'
+                                : review.status == WorkReviewStatus.cancelled
+                                ? 'Review cancelled'
+                                : review.status == WorkReviewStatus.archived
+                                ? 'Review archived'
                                 : 'Finish review',
                           ),
                         ),

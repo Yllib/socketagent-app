@@ -37,6 +37,8 @@ class WorkReviewCard extends StatelessWidget {
         draft?.items.values.where((item) => item.disposition != null).length ??
         0;
     final complete = review.status == WorkReviewStatus.completed;
+    final cancelled = review.status == WorkReviewStatus.cancelled;
+    final archived = review.status == WorkReviewStatus.archived;
     final theme = Theme.of(context);
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
@@ -56,14 +58,20 @@ class WorkReviewCard extends StatelessWidget {
                 width: 42,
                 height: 42,
                 decoration: BoxDecoration(
-                  color: complete
+                  color: complete || cancelled || archived
                       ? theme.colorScheme.secondaryContainer
                       : theme.colorScheme.primaryContainer,
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
-                  complete ? Icons.task_alt : Icons.fact_check_outlined,
-                  color: complete
+                  complete
+                      ? Icons.task_alt
+                      : cancelled
+                      ? Icons.cancel_outlined
+                      : archived
+                      ? Icons.archive_outlined
+                      : Icons.fact_check_outlined,
+                  color: complete || cancelled || archived
                       ? theme.colorScheme.onSecondaryContainer
                       : theme.colorScheme.onPrimaryContainer,
                 ),
@@ -83,7 +91,7 @@ class WorkReviewCard extends StatelessWidget {
                             ),
                           ),
                         ),
-                        _StatusPill(complete: complete),
+                        _StatusPill(status: review.status),
                       ],
                     ),
                     if (review.summary.isNotEmpty) ...[
@@ -101,6 +109,10 @@ class WorkReviewCard extends StatelessWidget {
                     Text(
                       complete
                           ? '${review.items.length} items · Review published'
+                          : cancelled
+                          ? '${review.items.length} items · Cancelled without sending'
+                          : archived
+                          ? '${review.items.length} items · Archived'
                           : '$decided of ${review.items.length} items reviewed · Tap to continue',
                       style: theme.textTheme.labelSmall?.copyWith(
                         color: theme.colorScheme.primary,
@@ -122,9 +134,9 @@ class WorkReviewCard extends StatelessWidget {
 }
 
 class _StatusPill extends StatelessWidget {
-  const _StatusPill({required this.complete});
+  const _StatusPill({required this.status});
 
-  final bool complete;
+  final WorkReviewStatus status;
 
   @override
   Widget build(BuildContext context) {
@@ -132,17 +144,24 @@ class _StatusPill extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
       decoration: BoxDecoration(
-        color: complete ? colors.secondaryContainer : colors.tertiaryContainer,
+        color: status == WorkReviewStatus.open
+            ? colors.tertiaryContainer
+            : colors.secondaryContainer,
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-        complete ? 'FINISHED' : 'REVIEW',
+        switch (status) {
+          WorkReviewStatus.open => 'REVIEW',
+          WorkReviewStatus.completed => 'FINISHED',
+          WorkReviewStatus.cancelled => 'CANCELLED',
+          WorkReviewStatus.archived => 'ARCHIVED',
+        },
         style: Theme.of(context).textTheme.labelSmall?.copyWith(
           fontSize: 9,
           fontWeight: FontWeight.w800,
-          color: complete
-              ? colors.onSecondaryContainer
-              : colors.onTertiaryContainer,
+          color: status == WorkReviewStatus.open
+              ? colors.onTertiaryContainer
+              : colors.onSecondaryContainer,
         ),
       ),
     );

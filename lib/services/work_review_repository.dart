@@ -82,6 +82,9 @@ class WorkReviewRepository extends ChangeNotifier {
   final Map<String, Completer<void>> _draftIdleCompleters = {};
   final Map<String, ({String key, Completer<bool> completer})> _finishRequests =
       {};
+  final Map<String, ({String key, Completer<bool> completer})>
+  _lifecycleRequests = {};
+  final Set<String> _changingLifecycle = {};
   StreamSubscription<WorkReviewServerEvent>? _subscription;
   bool _initialized = false;
 
@@ -130,6 +133,9 @@ class WorkReviewRepository extends ChangeNotifier {
   bool isPublishing(WorkReview review) =>
       _publishing.contains(identity(review.serverId, review.id));
 
+  bool isChangingLifecycle(WorkReview review) =>
+      _changingLifecycle.contains(identity(review.serverId, review.id));
+
   String? errorFor(WorkReview review) =>
       _errors[identity(review.serverId, review.id)];
 
@@ -141,6 +147,9 @@ class WorkReviewRepository extends ChangeNotifier {
 
   bool supportsServer(String serverId) =>
       (_capabilityVersions[serverId] ?? 0) >= 1;
+
+  bool supportsSilentLifecycle(String serverId) =>
+      (_capabilityVersions[serverId] ?? 0) >= 2;
 
   Future<void> initialize() async {
     if (_initialized) return;
@@ -384,6 +393,19 @@ class WorkReviewRepository extends ChangeNotifier {
           pending.completer.complete(false);
         }
       }
+      if (operation == 'cancel' ||
+          operation == 'archive' ||
+          operation == 'restore') {
+        final pending = requestId == null
+            ? null
+            : _lifecycleRequests.remove(requestId);
+        if (pending != null) {
+          _changingLifecycle.remove(pending.key);
+          if (!pending.completer.isCompleted) {
+            pending.completer.complete(false);
+          }
+        }
+      }
       notifyListeners();
       return;
     }
@@ -430,6 +452,22 @@ class WorkReviewRepository extends ChangeNotifier {
           : _finishRequests.remove(requestId);
       if (pending != null && !pending.completer.isCompleted) {
         pending.completer.complete(true);
+      }
+    } else if (operation == 'cancel' ||
+        operation == 'archive' ||
+        operation == 'restore') {
+      final pending = requestId == null
+          ? null
+          : _lifecycleRequests.remove(requestId);
+      if (pending != null) {
+        _changingLifecycle.remove(pending.key);
+        if (operation == 'cancel') {
+          _resetRoundState(key);
+          _drafts.remove(key);
+        }
+        if (!pending.completer.isCompleted) {
+          pending.completer.complete(true);
+        }
       }
     }
     unawaited(_persist());
@@ -706,6 +744,103 @@ class WorkReviewRepository extends ChangeNotifier {
     );
   }
 
+  Future<bool> cancelReview(WorkReview review) async {
+    final key = identity(review.serverId, review.id);
+    review = _reviews[key] ?? review;
+    if (review.status != WorkReviewStatus.open ||
+        !supportsSilentLifecycle(review.serverId)) {
+      return false;
+    }
+    _draftTimers.remove(key)?.cancel();
+    return _sendLifecycleOperation(
+      review,
+      operation: 'cancel',
+      messageType: 'work_review_cancel',
+      includeRoundId: true,
+    );
+  }
+
+  Future<bool> archiveReview(WorkReview review) async {
+    final key = identity(review.serverId, review.id);
+    review = _reviews[key] ?? review;
+    if (review.status == WorkReviewStatus.archived ||
+        !supportsSilentLifecycle(review.serverId)) {
+      return false;
+    }
+
+    // Preserve private in-progress feedback before hiding an open review.
+    _draftTimers.remove(key)?.cancel();
+    if (_locallyDirty.contains(key)) {
+      _syncDraft(review);
+      final idle = _draftIdleCompleters[key];
+      if (idle != null && !idle.isCompleted) {
+        try {
+          await idle.future.timeout(const Duration(seconds: 5));
+        } on TimeoutException {
+          _errors[key] = 'Could not archive before the private draft synced';
+          notifyListeners();
+          return false;
+        }
+      }
+    }
+    return _sendLifecycleOperation(
+      review,
+      operation: 'archive',
+      messageType: 'work_review_archive',
+    );
+  }
+
+  Future<bool> restoreReview(WorkReview review) {
+    if (review.status != WorkReviewStatus.archived ||
+        !supportsSilentLifecycle(review.serverId)) {
+      return Future.value(false);
+    }
+    return _sendLifecycleOperation(
+      review,
+      operation: 'restore',
+      messageType: 'work_review_restore',
+    );
+  }
+
+  Future<bool> _sendLifecycleOperation(
+    WorkReview review, {
+    required String operation,
+    required String messageType,
+    bool includeRoundId = false,
+  }) {
+    final key = identity(review.serverId, review.id);
+    if (_changingLifecycle.contains(key)) return Future.value(false);
+    final requestId = _requestId(operation);
+    final completer = Completer<bool>();
+    _lifecycleRequests[requestId] = (key: key, completer: completer);
+    _changingLifecycle.add(key);
+    _errors.remove(key);
+    notifyListeners();
+    final sent = transport.send(review.serverId, {
+      'type': messageType,
+      'requestId': requestId,
+      'reviewId': review.id,
+      if (includeRoundId) 'roundId': review.roundId,
+    });
+    if (!sent) {
+      _lifecycleRequests.remove(requestId);
+      _changingLifecycle.remove(key);
+      _errors[key] = 'Could not update the review while disconnected';
+      notifyListeners();
+      return Future.value(false);
+    }
+    return completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        _lifecycleRequests.remove(requestId);
+        _changingLifecycle.remove(key);
+        _errors[key] = 'The server did not confirm the review update';
+        notifyListeners();
+        return false;
+      },
+    );
+  }
+
   void _completeDraftRequest(
     String key,
     String requestId,
@@ -749,6 +884,9 @@ class WorkReviewRepository extends ChangeNotifier {
       if (!completer.isCompleted) completer.complete(null);
     }
     for (final pending in _finishRequests.values) {
+      if (!pending.completer.isCompleted) pending.completer.complete(false);
+    }
+    for (final pending in _lifecycleRequests.values) {
       if (!pending.completer.isCompleted) pending.completer.complete(false);
     }
     super.dispose();

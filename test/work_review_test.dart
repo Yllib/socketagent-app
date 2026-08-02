@@ -223,6 +223,20 @@ void main() {
     expect(review.authorization, contains('production deployment'));
   });
 
+  test('cancelled and archived lifecycle states parse distinctly', () {
+    final cancelled = WorkReview.fromJson({
+      ..._reviewJson(reviewId: 'cancelled-review'),
+      'status': 'cancelled',
+    }, serverId: 'server-a');
+    final archived = WorkReview.fromJson({
+      ..._reviewJson(reviewId: 'archived-review'),
+      'archivedAt': '2026-07-29T14:00:00Z',
+    }, serverId: 'server-a');
+
+    expect(cancelled.status, WorkReviewStatus.cancelled);
+    expect(archived.status, WorkReviewStatus.archived);
+  });
+
   test(
     'completed card and restart restore immutable published decisions',
     () async {
@@ -491,6 +505,157 @@ void main() {
       'Locally recoverable',
     );
     restored.dispose();
+    await transport.dispose();
+  });
+
+  test(
+    'cancel discards the private draft only after silent server confirmation',
+    () async {
+      final transport = _MemoryTransport();
+      final repository = WorkReviewRepository(
+        transport: transport,
+        cache: _MemoryCache(),
+        draftSyncDelay: const Duration(hours: 1),
+      );
+      await repository.initialize();
+      repository.handleServerMessage('server-a', {
+        'type': 'server_capabilities',
+        'workReviews': {'version': 2},
+      });
+      repository.handleServerMessage('server-a', {
+        'type': 'work_review_snapshot',
+        'review': _reviewJson(),
+      });
+      final review = repository.review('review-1', serverId: 'server-a')!;
+      repository.setItemNotes(review, 'checkout', 'Private cancellation note');
+
+      final cancellation = repository.cancelReview(review);
+      await Future<void>.delayed(Duration.zero);
+      final request = transport.sent.single.message;
+      expect(request['type'], 'work_review_cancel');
+      expect(request['roundId'], review.roundId);
+      expect(
+        repository
+            .draft(review.id, serverId: review.serverId)
+            ?.items['checkout']
+            ?.notes,
+        'Private cancellation note',
+      );
+
+      repository.handleServerMessage('server-a', {
+        'type': 'work_review_operation_result',
+        'requestId': request['requestId'],
+        'operation': 'cancel',
+        'reviewId': review.id,
+        'roundId': review.roundId,
+        'ok': true,
+        'review': {..._reviewJson(), 'status': 'cancelled'},
+      });
+
+      expect(await cancellation, isTrue);
+      expect(
+        repository.review(review.id, serverId: review.serverId)?.status,
+        WorkReviewStatus.cancelled,
+      );
+      expect(repository.draft(review.id, serverId: review.serverId), isNull);
+      expect(
+        transport.sent.where(
+          (entry) =>
+              entry.message['type'] == 'work_review_finish' ||
+              entry.message['type'] == 'work_review_draft_update',
+        ),
+        isEmpty,
+      );
+
+      repository.dispose();
+      await transport.dispose();
+    },
+  );
+
+  test('archive preserves a private draft and restore is app-only', () async {
+    final transport = _MemoryTransport();
+    final repository = WorkReviewRepository(
+      transport: transport,
+      cache: _MemoryCache(),
+      draftSyncDelay: const Duration(hours: 1),
+    );
+    await repository.initialize();
+    repository.handleServerMessage('server-a', {
+      'type': 'server_capabilities',
+      'workReviews': {'version': 2},
+    });
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_snapshot',
+      'review': _reviewJson(),
+    });
+    final review = repository.review('review-1', serverId: 'server-a')!;
+    repository.setItemNotes(review, 'checkout', 'Keep this private draft');
+
+    final archival = repository.archiveReview(review);
+    await Future<void>.delayed(Duration.zero);
+    final draftSave = transport.sent.single.message;
+    expect(draftSave['type'], 'work_review_draft_update');
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_operation_result',
+      'requestId': draftSave['requestId'],
+      'operation': 'draft_update',
+      'reviewId': review.id,
+      'roundId': review.roundId,
+      'ok': true,
+      'review': _reviewJson(),
+      'draft': {'revision': 1, 'items': (draftSave['draft'] as Map)['items']},
+    });
+    await Future<void>.delayed(Duration.zero);
+    final archiveRequest = transport.sent.singleWhere(
+      (entry) => entry.message['type'] == 'work_review_archive',
+    );
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_operation_result',
+      'requestId': archiveRequest.message['requestId'],
+      'operation': 'archive',
+      'reviewId': review.id,
+      'ok': true,
+      'review': {..._reviewJson(), 'archivedAt': '2026-07-29T14:00:00Z'},
+      'draft': {'revision': 1, 'items': (draftSave['draft'] as Map)['items']},
+    });
+    expect(await archival, isTrue);
+    final archived = repository.review(review.id, serverId: review.serverId)!;
+    expect(archived.status, WorkReviewStatus.archived);
+    expect(
+      repository
+          .draft(review.id, serverId: review.serverId)
+          ?.items['checkout']
+          ?.notes,
+      'Keep this private draft',
+    );
+
+    final restoration = repository.restoreReview(archived);
+    await Future<void>.delayed(Duration.zero);
+    final restoreRequest = transport.sent.singleWhere(
+      (entry) => entry.message['type'] == 'work_review_restore',
+    );
+    repository.handleServerMessage('server-a', {
+      'type': 'work_review_operation_result',
+      'requestId': restoreRequest.message['requestId'],
+      'operation': 'restore',
+      'reviewId': review.id,
+      'ok': true,
+      'review': _reviewJson(),
+      'draft': {'revision': 1, 'items': (draftSave['draft'] as Map)['items']},
+    });
+    expect(await restoration, isTrue);
+    expect(
+      repository.review(review.id, serverId: review.serverId)?.status,
+      WorkReviewStatus.open,
+    );
+    expect(
+      transport.sent.where(
+        (entry) => entry.message['type'] == 'work_review_finish',
+      ),
+      isEmpty,
+    );
+
+    repository.dispose();
     await transport.dispose();
   });
 

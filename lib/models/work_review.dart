@@ -3,6 +3,7 @@ import 'html_plan.dart';
 enum WorkReviewStatus {
   open,
   completed,
+  cancelled,
   archived;
 
   static WorkReviewStatus parse(Object? value) {
@@ -13,6 +14,9 @@ enum WorkReviewStatus {
         return completed;
       case 'archived':
         return archived;
+      case 'cancelled':
+      case 'canceled':
+        return cancelled;
       default:
         return open;
     }
