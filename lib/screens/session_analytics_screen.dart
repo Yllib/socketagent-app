@@ -238,7 +238,11 @@ class _RunRow extends StatelessWidget {
           fontFeatures: [FontFeature.tabularFigures()],
         ),
       ),
-      subtitle: Text(timestamp),
+      subtitle: Text(
+        run.source == 'transcript_estimate'
+            ? '$timestamp · Transcript estimate'
+            : timestamp,
+      ),
       trailing: run.outcome == 'completed'
           ? null
           : Text(run.outcome, style: TextStyle(color: color)),

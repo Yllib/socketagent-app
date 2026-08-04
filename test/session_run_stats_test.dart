@@ -25,6 +25,7 @@ void main() {
             'finishedAt': '2026-08-04T10:02:00.000Z',
             'durationMs': 120000,
             'outcome': 'completed',
+            'source': 'transcript_estimate',
           },
         ],
       },
@@ -35,6 +36,7 @@ void main() {
     expect(session.runStats?.averageDurationMs, 120000);
     expect(session.runStats?.recentRuns.single.durationMs, 120000);
     expect(session.runStats?.recentRuns.single.runNumber, 1);
+    expect(session.runStats?.recentRuns.single.source, 'transcript_estimate');
     expect(session.toJson()['runStats'], isA<Map<String, dynamic>>());
   });
 

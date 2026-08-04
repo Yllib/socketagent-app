@@ -603,6 +603,7 @@ class SessionRunRecord {
   final DateTime finishedAt;
   final int durationMs;
   final String outcome;
+  final String? source;
 
   const SessionRunRecord({
     required this.runId,
@@ -611,6 +612,7 @@ class SessionRunRecord {
     required this.finishedAt,
     required this.durationMs,
     required this.outcome,
+    this.source,
   });
 
   factory SessionRunRecord.fromJson(Map<String, dynamic> json) =>
@@ -625,6 +627,7 @@ class SessionRunRecord {
             DateTime.now(),
         durationMs: (json['durationMs'] as num?)?.toInt() ?? 0,
         outcome: json['outcome']?.toString() ?? 'completed',
+        source: json['source']?.toString(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -634,6 +637,7 @@ class SessionRunRecord {
     'finishedAt': finishedAt.toIso8601String(),
     'durationMs': durationMs,
     'outcome': outcome,
+    if (source != null) 'source': source,
   };
 }
 
