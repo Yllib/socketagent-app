@@ -40,18 +40,18 @@ void main() {
   });
 
   test('an authoritative finish blocks a late running push', () async {
-    final finishedAt = DateTime.utc(2026, 8, 2, 12);
+    final runStartedAt = DateTime.utc(2026, 8, 2, 12);
     await PushNotificationService.recordSessionFinished(
       sessionId: sessionId,
       serverId: serverId,
-      finishedAt: finishedAt,
+      runStartedAt: runStartedAt,
     );
 
     expect(
       await PushNotificationService.isStaleRunningEvent({
         'sessionId': sessionId,
         'serverId': serverId,
-        'startedAt': finishedAt
+        'startedAt': runStartedAt
             .subtract(const Duration(minutes: 1))
             .toIso8601String(),
       }),
@@ -61,7 +61,45 @@ void main() {
       await PushNotificationService.isStaleRunningEvent({
         'sessionId': sessionId,
         'serverId': serverId,
-        'startedAt': finishedAt
+        'startedAt': runStartedAt
+            .add(const Duration(minutes: 1))
+            .toIso8601String(),
+      }),
+      isFalse,
+    );
+  });
+
+  test('viewing a session does not suppress its quiet ongoing card', () {
+    expect(
+      shouldMaintainOngoingSessionNotification(
+        sessionMuted: false,
+        serverPushDisabled: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldMaintainOngoingSessionNotification(
+        sessionMuted: true,
+        serverPushDisabled: false,
+      ),
+      isFalse,
+    );
+  });
+
+  test('a late finish timestamp cannot suppress a newer run', () async {
+    final completedRunStartedAt = DateTime.utc(2026, 8, 2, 12);
+    await PushNotificationService.recordSessionFinished(
+      sessionId: sessionId,
+      serverId: serverId,
+      runStartedAt: completedRunStartedAt,
+      finishedAt: completedRunStartedAt.add(const Duration(hours: 1)),
+    );
+
+    expect(
+      await PushNotificationService.isStaleRunningEvent({
+        'sessionId': sessionId,
+        'serverId': serverId,
+        'startedAt': completedRunStartedAt
             .add(const Duration(minutes: 1))
             .toIso8601String(),
       }),

@@ -1058,14 +1058,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> _settleOngoingSessionNotification(
     String sessionId,
-    String serverId,
-  ) async {
+    String serverId, {
+    DateTime? runStartedAt,
+  }) async {
     // Persist the terminal boundary before cancelling. If an older periodic
     // session_running push arrives late, the FCM handler will reject it rather
     // than resurrecting the ongoing card we just removed.
     await PushNotificationService.recordSessionFinished(
       sessionId: sessionId,
       serverId: serverId,
+      runStartedAt: runStartedAt,
     );
     await _notifications.cancel(
       NotificationService.sessionOngoingId(sessionId, serverId: serverId),
@@ -1097,6 +1099,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await PushNotificationService.recordSessionFinished(
         sessionId: notification.sessionId,
         serverId: notification.serverId ?? serverId,
+        runStartedAt: notification.startedAt,
       );
     }
   }
@@ -1155,18 +1158,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (serverId == null || serverId.isEmpty) return true;
       return info.serverId == serverId;
     }).toList();
-    final targetServerIds = <String>{
+    final targets = <String, DateTime?>{
       for (final key in matchingKeys)
-        if (_runningSessionNotifications[key] case final info?) info.serverId,
+        if (_runningSessionNotifications[key] case final info?)
+          info.serverId: info.startedAt,
     };
-    if (targetServerIds.isEmpty) {
-      targetServerIds.add(serverId ?? _connMgr.activeServerId ?? '');
+    if (targets.isEmpty) {
+      targets[serverId ?? _connMgr.activeServerId ?? ''] = null;
     }
     for (final key in matchingKeys) {
       _runningSessionNotifications.remove(key);
     }
-    for (final targetServerId in targetServerIds) {
-      unawaited(_settleOngoingSessionNotification(sessionId, targetServerId));
+    for (final target in targets.entries) {
+      unawaited(
+        _settleOngoingSessionNotification(
+          sessionId,
+          target.key,
+          runStartedAt: target.value,
+        ),
+      );
     }
     _syncOngoingSessionNotifications();
   }
@@ -1187,10 +1197,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               info.serverId == sid &&
               !runningSessionIds.contains(info.sessionId),
         )
-        .map((info) => info.sessionId)
-        .toSet();
-    for (final sessionId in stoppedSessions) {
-      unawaited(_settleOngoingSessionNotification(sessionId, sid));
+        .toList();
+    for (final info in stoppedSessions) {
+      unawaited(
+        _settleOngoingSessionNotification(
+          info.sessionId,
+          sid,
+          runStartedAt: info.startedAt,
+        ),
+      );
     }
     _runningSessionNotifications.removeWhere(
       (key, _) => key.startsWith(prefix),

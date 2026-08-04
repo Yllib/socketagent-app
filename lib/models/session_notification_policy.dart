@@ -12,6 +12,14 @@ bool shouldAutoEnrollComputerNotifications({
   required bool explicitlyDisabled,
 }) => !explicitlyDisabled;
 
+/// Running-session cards are quiet, persistent state rather than foreground
+/// alerts. Viewing the session must not remove them; only an explicit mute or
+/// computer-level push opt-out may suppress them.
+bool shouldMaintainOngoingSessionNotification({
+  required bool sessionMuted,
+  required bool serverPushDisabled,
+}) => !sessionMuted && !serverPushDisabled;
+
 bool shouldDisplayForegroundSessionNotification({
   required Map<String, dynamic> data,
   required bool appInForeground,

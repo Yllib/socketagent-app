@@ -3,6 +3,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/session_notification_policy.dart';
 import 'notification_service.dart';
 
 @pragma('vm:entry-point')
@@ -134,10 +135,12 @@ class PushNotificationService {
     var shouldDisplay = foreground
         ? (shouldDisplayForegroundNotification?.call(data) ?? true)
         : true;
-    if (!foreground && await _isSessionMuted(data)) {
+    final sessionMuted = await _isSessionMuted(data);
+    if (!foreground && sessionMuted) {
       shouldDisplay = false;
     }
-    if (await isServerPushDisabledForData(data)) {
+    final serverPushDisabled = await isServerPushDisabledForData(data);
+    if (serverPushDisabled) {
       shouldDisplay = false;
     }
     final notifications = NotificationService();
@@ -145,7 +148,14 @@ class PushNotificationService {
 
     if (kind == 'session_started' || kind == 'session_running') {
       if (await isStaleRunningEvent(data)) return;
-      if (!shouldDisplay) {
+      // This low-priority ongoing card is state, not a popup. Keep it present
+      // even while its chat is visible; foreground alert policy applies only
+      // to completion/attention notifications.
+      final maintainOngoing = shouldMaintainOngoingSessionNotification(
+        sessionMuted: sessionMuted,
+        serverPushDisabled: serverPushDisabled,
+      );
+      if (!maintainOngoing) {
         await notifications.cancel(id);
         return;
       }
@@ -200,6 +210,8 @@ class PushNotificationService {
         'targetSessionSeq': data['targetSessionSeq'].toString(),
       if ((data['scheduledTaskId']?.toString() ?? '').isNotEmpty)
         'scheduledTaskId': data['scheduledTaskId'].toString(),
+      if ((data['startedAt']?.toString() ?? '').isNotEmpty)
+        'startedAt': data['startedAt'].toString(),
     };
     String withQuery(String base) {
       if (query.isEmpty) return base;
@@ -269,27 +281,47 @@ class PushNotificationService {
     return 'push_session_finished_${Uri.encodeComponent(serverId)}_${Uri.encodeComponent(sessionId)}';
   }
 
+  static String? _sessionCompletedRunKey(Map<String, dynamic> data) {
+    final sessionId = data['sessionId'] as String?;
+    if (sessionId == null || sessionId.isEmpty) return null;
+    final serverId = data['serverId'] as String? ?? '';
+    return 'push_session_completed_run_v2_${Uri.encodeComponent(serverId)}_${Uri.encodeComponent(sessionId)}';
+  }
+
   static Future<void> _recordFinishedEvent(Map<String, dynamic> data) async {
     final key = _sessionStateKey(data);
     if (key == null) return;
-    final finishedAt =
-        DateTime.tryParse(data['finishedAt'] as String? ?? '') ??
-        DateTime.now().toUtc();
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(key, finishedAt.toUtc().toIso8601String());
+    final runStartedAt = DateTime.tryParse(data['startedAt'] as String? ?? '');
+    final completedRunKey = _sessionCompletedRunKey(data);
+    if (runStartedAt != null && completedRunKey != null) {
+      await prefs.setString(
+        completedRunKey,
+        runStartedAt.toUtc().toIso8601String(),
+      );
+    }
+    final finishedAt = DateTime.tryParse(data['finishedAt'] as String? ?? '');
+    if (finishedAt != null || runStartedAt == null) {
+      await prefs.setString(
+        key,
+        (finishedAt ?? DateTime.now().toUtc()).toUtc().toIso8601String(),
+      );
+    }
   }
 
   static Future<void> recordSessionFinished({
     required String sessionId,
     String? serverId,
+    DateTime? runStartedAt,
     DateTime? finishedAt,
   }) {
     return _recordFinishedEvent({
       'sessionId': sessionId,
       if (serverId != null) 'serverId': serverId,
-      'finishedAt': (finishedAt ?? DateTime.now().toUtc())
-          .toUtc()
-          .toIso8601String(),
+      if (runStartedAt != null)
+        'startedAt': runStartedAt.toUtc().toIso8601String(),
+      if (finishedAt != null)
+        'finishedAt': finishedAt.toUtc().toIso8601String(),
     });
   }
 
@@ -299,6 +331,12 @@ class PushNotificationService {
     final startedAt = DateTime.tryParse(data['startedAt'] as String? ?? '');
     if (key == null || startedAt == null) return false;
     final prefs = await SharedPreferences.getInstance();
+    final completedRunAt = DateTime.tryParse(
+      prefs.getString(_sessionCompletedRunKey(data) ?? '') ?? '',
+    );
+    if (completedRunAt != null) {
+      return !startedAt.isAfter(completedRunAt);
+    }
     final finishedAt = DateTime.tryParse(prefs.getString(key) ?? '');
     return finishedAt != null && !startedAt.isAfter(finishedAt);
   }

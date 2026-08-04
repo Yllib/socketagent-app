@@ -511,6 +511,7 @@ class NotificationService {
             sessionId: target.sessionId,
             serverId: target.serverId,
             title: notification.title ?? 'Session',
+            startedAt: target.startedAt,
           ),
         );
       }
@@ -520,14 +521,19 @@ class NotificationService {
     return recovered;
   }
 
-  static ({String sessionId, String? serverId})? _sessionTargetFromPayload(
-    String? payload,
-  ) {
+  static ({String sessionId, String? serverId, DateTime? startedAt})?
+  _sessionTargetFromPayload(String? payload) {
     if (payload == null) return null;
     final target = parseNotificationNavigationPayload(payload);
     final sessionId = target?.sessionId;
     if (sessionId == null || sessionId.isEmpty) return null;
-    return (sessionId: sessionId, serverId: target?.serverId);
+    return (
+      sessionId: sessionId,
+      serverId: target?.serverId,
+      startedAt: DateTime.tryParse(
+        Uri.tryParse(payload)?.queryParameters['startedAt'] ?? '',
+      ),
+    );
   }
 
   Future<void> _updateGroupSummary({
@@ -712,9 +718,11 @@ class RecoveredSessionNotification {
     required this.sessionId,
     required this.serverId,
     required this.title,
+    this.startedAt,
   });
 
   final String sessionId;
   final String? serverId;
   final String title;
+  final DateTime? startedAt;
 }
