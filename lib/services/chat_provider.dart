@@ -47,6 +47,7 @@ import 'secure_storage_service.dart';
 import 'adb_bridge_service.dart';
 import 'tool_event_reconciler.dart';
 import 'session_transcript_cache.dart';
+import 'hard_stop_target.dart';
 
 const _codexAgentControlTypes = {
   'wait',
@@ -10520,8 +10521,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> abortQuery() async {
-    final sessionId = _activeSessionId ?? _viewingSessionId;
-    if (sessionId == null || sessionId.isEmpty) return;
+    // Stop always targets the session whose screen the user is looking at.
+    // _activeSessionId can briefly lag behind navigation/reconciliation.
+    final sessionId = selectHardStopSessionId(
+      viewingSessionId: _viewingSessionId,
+      activeSessionId: _activeSessionId,
+    );
+    if (sessionId == null) return;
     final serverId =
         _viewingServerId ??
         _activeSessionServerId ??
