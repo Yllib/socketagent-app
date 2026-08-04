@@ -58,7 +58,7 @@ class _PairScreenState extends State<PairScreen> {
       if (parts.length != 3 || (parts[0] != 'SA' && parts[0] != 'SC')) {
         setState(() {
           _error =
-              'Invalid QR code — expected SA|token|pubkey or SC|token|pubkey format';
+              'That is not a SocketAgent pairing code. Show a new code on the computer and try again.';
           _processing = false;
         });
         return;
@@ -68,7 +68,8 @@ class _PairScreenState extends State<PairScreen> {
 
       if (token.isEmpty || pubkey.isEmpty) {
         setState(() {
-          _error = 'Invalid data — missing token or pubkey';
+          _error =
+              'That pairing code is incomplete. Show a new code on the computer and try again.';
           _processing = false;
         });
         return;
@@ -143,7 +144,7 @@ class _PairScreenState extends State<PairScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const Text(
-                      'Paste the pairing JSON from the server terminal:',
+                      'Paste the pairing code shown by SocketAgent on the computer:',
                       style: TextStyle(color: Colors.grey),
                     ),
                     const SizedBox(height: 12),

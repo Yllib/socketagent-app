@@ -86,7 +86,7 @@ class VoiceSpeechScreen extends StatelessWidget {
                 ),
                 DropdownMenuItem(
                   value: TtsEngineMode.kokoroServer,
-                  child: Text('Kokoro (Server)'),
+                  child: Text('Kokoro (Computer)'),
                 ),
                 DropdownMenuItem(
                   value: TtsEngineMode.kokoroDevice,

@@ -182,21 +182,21 @@ class _ConfigExportScreenState extends State<ConfigExportScreen> {
                   const SizedBox(height: 24),
                   Text(
                     qrData.isEmpty
-                        ? '${configs.length} server${configs.length == 1 ? '' : 's'}'
-                        : '${configs.length} server${configs.length == 1 ? '' : 's'} · ${qrData.length} bytes · encrypted',
+                        ? '${configs.length} computer${configs.length == 1 ? '' : 's'}'
+                        : '${configs.length} computer${configs.length == 1 ? '' : 's'} · ${qrData.length} bytes · encrypted',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withAlpha(128),
                     ),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Scan this QR code on your new phone\nto import all server configurations.',
+                    'Scan this QR code on your new phone\nto import all connected computers.',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodyMedium,
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Open SocketAgent → Settings → Files & Security → Import Server Configs',
+                    'Open SocketAgent → Settings → Files & Security → Import Computers',
                     textAlign: TextAlign.center,
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurface.withAlpha(128),

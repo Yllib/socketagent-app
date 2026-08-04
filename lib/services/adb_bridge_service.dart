@@ -116,7 +116,7 @@ class AdbBridgeService extends ChangeNotifier {
     String channelName = 'adb',
   }) async {
     if (!server.isRelayPaired) {
-      throw StateError('ADB bridge requires a relay-paired server.');
+      throw StateError('ADB bridge requires a relay-paired computer.');
     }
     if (targetHost.trim().isEmpty) {
       throw StateError('Target host is required.');

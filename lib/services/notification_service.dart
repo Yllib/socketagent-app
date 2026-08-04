@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tzdata;
@@ -19,6 +20,9 @@ class NotificationService {
   static const reminderChannelId = 'reminders_v2';
   static const activeSessionsGroup = 'socketagent.active_sessions';
   static const completedSessionsGroup = 'socketagent.completed_sessions';
+  static const MethodChannel _nativeChannel = MethodChannel(
+    'com.socketagent.app/intent',
+  );
   static final activeSessionsSummaryId = stableId(
     'notification-summary:active-sessions',
   );
@@ -210,6 +214,42 @@ class NotificationService {
     debugPrint(
       '[Notification] initialized${requestPermissions ? '' : ' for background delivery'}',
     );
+  }
+
+  /// Whether Android currently allows this app to post notifications.
+  ///
+  /// FCM token registration and Android display permission are independent;
+  /// callers must not present a stored server token as proof that alerts can
+  /// actually be shown on the device.
+  Future<bool> areNotificationsEnabled() async {
+    await initialize(requestPermissions: false);
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    return await androidPlugin?.areNotificationsEnabled() ?? true;
+  }
+
+  Future<bool> requestNotificationPermission() async {
+    await initialize(requestPermissions: false);
+    final androidPlugin = _plugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await androidPlugin?.requestNotificationsPermission();
+    return areNotificationsEnabled();
+  }
+
+  Future<bool> openNotificationSettings() async {
+    try {
+      return await _nativeChannel.invokeMethod<bool>(
+            'openNotificationSettings',
+          ) ??
+          false;
+    } on PlatformException catch (error) {
+      debugPrint('[Notification] Could not open Android settings: $error');
+      return false;
+    }
   }
 
   Future<void> _ensureTimeZoneInitialized() async {

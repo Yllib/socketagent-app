@@ -207,7 +207,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
     if (!anySent) {
       setState(() {
         _loading = false;
-        _error = 'No servers connected';
+        _error = 'No computers connected';
       });
     }
 
@@ -216,7 +216,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       if (mounted && _loading) {
         setState(() {
           _loading = false;
-          _error = _byServer.isEmpty ? 'Timed out waiting for servers' : null;
+          _error = _byServer.isEmpty ? 'Timed out waiting for computers' : null;
         });
       }
     });
@@ -317,7 +317,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'Create on which server?',
+                'Create on which computer?',
                 style: Theme.of(ctx).textTheme.titleSmall,
               ),
             ),
@@ -908,7 +908,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
         builder: (ctx) => AlertDialog(
           title: const Text('Remove Marketplace?'),
           content: Text(
-            'Remove "$name" from all servers?\nPlugins from this marketplace will no longer appear.',
+            'Remove "$name" from all computers?\nPlugins from this marketplace will no longer appear.',
           ),
           actions: [
             TextButton(

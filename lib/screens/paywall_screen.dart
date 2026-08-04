@@ -44,7 +44,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (result == null) {
       setState(() {
         _loading = false;
-        _error = 'Could not connect to server. Check your internet connection.';
+        _error =
+            'Could not reach the relay service. Check your internet connection.';
       });
       return;
     }
@@ -53,7 +54,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     if (result.containsKey('error')) {
       setState(() {
         _loading = false;
-        _error = result['error'] as String? ?? 'Unknown server error';
+        _error = result['error'] as String? ?? 'Unknown relay error';
       });
       return;
     }

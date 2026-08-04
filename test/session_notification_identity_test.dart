@@ -1,11 +1,20 @@
 import 'package:app/services/notification_service.dart';
 import 'package:app/services/push_notification_service.dart';
 import 'package:app/models/session_notification_policy.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   const sessionId = 'session-1';
   const serverId = 'server-1';
+
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+  });
 
   test('running and finished notifications cannot cancel each other', () {
     final running = PushNotificationService.notificationIdForData({
@@ -28,6 +37,99 @@ void main() {
       NotificationService.sessionCompletionId(sessionId, serverId: serverId),
     );
     expect(finished, isNot(running));
+  });
+
+  test('an authoritative finish blocks a late running push', () async {
+    final finishedAt = DateTime.utc(2026, 8, 2, 12);
+    await PushNotificationService.recordSessionFinished(
+      sessionId: sessionId,
+      serverId: serverId,
+      finishedAt: finishedAt,
+    );
+
+    expect(
+      await PushNotificationService.isStaleRunningEvent({
+        'sessionId': sessionId,
+        'serverId': serverId,
+        'startedAt': finishedAt
+            .subtract(const Duration(minutes: 1))
+            .toIso8601String(),
+      }),
+      isTrue,
+    );
+    expect(
+      await PushNotificationService.isStaleRunningEvent({
+        'sessionId': sessionId,
+        'serverId': serverId,
+        'startedAt': finishedAt
+            .add(const Duration(minutes: 1))
+            .toIso8601String(),
+      }),
+      isFalse,
+    );
+  });
+
+  test('authoritative status removes only stale running cards', () async {
+    FlutterLocalNotificationsPlatform.instance =
+        AndroidFlutterLocalNotificationsPlugin();
+    const channel = MethodChannel('dexterous.com/flutter/local_notifications');
+    final staleId = NotificationService.sessionOngoingId(
+      'stale-session',
+      serverId: serverId,
+    );
+    final currentId = NotificationService.sessionOngoingId(
+      'current-session',
+      serverId: serverId,
+    );
+    final cancelled = <int>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          switch (call.method) {
+            case 'getNotificationAppLaunchDetails':
+              return <String, dynamic>{'notificationLaunchedApp': false};
+            case 'getActiveNotifications':
+              return <Map<String, dynamic>>[
+                {
+                  'id': staleId,
+                  'channelId': NotificationService.activeWorkChannelId,
+                  'groupKey': NotificationService.activeSessionsGroup,
+                  'title': 'Stale',
+                  'payload': 'session:stale-session:$serverId',
+                },
+                {
+                  'id': currentId,
+                  'channelId': NotificationService.activeWorkChannelId,
+                  'groupKey': NotificationService.activeSessionsGroup,
+                  'title': 'Current',
+                  'payload': 'session:current-session:$serverId',
+                },
+              ];
+            case 'cancel':
+              final arguments = call.arguments;
+              cancelled.add(
+                arguments is int
+                    ? arguments
+                    : (arguments as Map<dynamic, dynamic>)['id'] as int,
+              );
+              return null;
+            default:
+              return true;
+          }
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    final recovered = await NotificationService()
+        .removeStaleActiveSessionsForServer(
+          serverId: serverId,
+          expectedNotificationIds: {currentId},
+        );
+
+    expect(cancelled, contains(staleId));
+    expect(cancelled, isNot(contains(currentId)));
+    expect(recovered.map((entry) => entry.sessionId), ['stale-session']);
   });
 
   test('other session alerts do not overwrite running or completion', () {
@@ -114,6 +216,17 @@ void main() {
     );
   });
 
+  test('computer push auto-enrolls unless the user explicitly disabled it', () {
+    expect(
+      shouldAutoEnrollComputerNotifications(explicitlyDisabled: false),
+      isTrue,
+    );
+    expect(
+      shouldAutoEnrollComputerNotifications(explicitlyDisabled: true),
+      isFalse,
+    );
+  });
+
   test('every push for the visible foreground session is suppressed', () {
     for (final kind in const [
       'session_started',
@@ -124,11 +237,7 @@ void main() {
     ]) {
       expect(
         shouldDisplayForegroundSessionNotification(
-          data: {
-            'kind': kind,
-            'sessionId': sessionId,
-            'serverId': serverId,
-          },
+          data: {'kind': kind, 'sessionId': sessionId, 'serverId': serverId},
           appInForeground: true,
           viewingSessionId: sessionId,
           viewingServerId: serverId,
@@ -184,6 +293,27 @@ void main() {
         viewingServerId: serverId,
         mutedSessionIds: const {sessionId},
       ),
+      isFalse,
+    );
+  });
+
+  test('explicit computer opt-out suppresses late relay pushes', () async {
+    SharedPreferences.setMockInitialValues({
+      PushNotificationService.pushDisabledServersPrefsKey: [serverId],
+    });
+
+    expect(
+      await PushNotificationService.isServerPushDisabledForData({
+        'serverId': serverId,
+        'sessionId': sessionId,
+      }),
+      isTrue,
+    );
+    expect(
+      await PushNotificationService.isServerPushDisabledForData({
+        'serverId': 'server-2',
+        'sessionId': sessionId,
+      }),
       isFalse,
     );
   });

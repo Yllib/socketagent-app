@@ -61,4 +61,38 @@ class RelayPushService {
       if (ownedClient) requestClient.close();
     }
   }
+
+  static Future<bool> unregister({
+    required String relayUrl,
+    required String pairingToken,
+    required String fcmToken,
+    http.Client? client,
+  }) async {
+    final registration = registrationUri(relayUrl);
+    if (registration == null || pairingToken.isEmpty || fcmToken.isEmpty) {
+      return false;
+    }
+    final uri = registration.replace(path: '/api/push/unregister');
+    final ownedClient = client == null;
+    final requestClient = client ?? http.Client();
+    try {
+      final response = await requestClient
+          .post(
+            uri,
+            headers: const {'content-type': 'application/json'},
+            body: jsonEncode({
+              'pairingToken': pairingToken,
+              'fcmToken': fcmToken,
+            }),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return false;
+      final body = jsonDecode(response.body);
+      return body is Map && body['ok'] == true;
+    } catch (_) {
+      return false;
+    } finally {
+      if (ownedClient) requestClient.close();
+    }
+  }
 }

@@ -15,6 +15,7 @@ class SubAgentCard extends StatefulWidget {
   final bool isRunning;
   final GlobalKey? scrollKey;
   final bool greenTheme; // completion card styling
+  final String? sourceServerId;
 
   const SubAgentCard({
     super.key,
@@ -23,6 +24,7 @@ class SubAgentCard extends StatefulWidget {
     required this.isRunning,
     this.scrollKey,
     this.greenTheme = false,
+    this.sourceServerId,
   });
 
   @override
@@ -336,7 +338,10 @@ class _SubAgentCardState extends State<SubAgentCard> {
   Widget _buildChildMessage(ChatMessage msg) {
     switch (msg.type) {
       case MessageType.text:
-        return MessageBubble(message: msg);
+        return MessageBubble(
+          message: msg,
+          sourceServerId: widget.sourceServerId,
+        );
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') return SpeakCard(message: msg);
         if (msg.toolName == 'SendFile') return FileCard(message: msg);

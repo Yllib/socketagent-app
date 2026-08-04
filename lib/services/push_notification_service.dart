@@ -25,6 +25,7 @@ class PushNotificationService {
 
   bool _initialized = false;
   bool _available = false;
+  Future<bool>? _initializationInFlight;
   String? _launchPayload;
   StreamSubscription<String>? _tokenRefreshSub;
   StreamSubscription<RemoteMessage>? _messageSub;
@@ -38,6 +39,8 @@ class PushNotificationService {
   shouldBadgeForegroundSessionCompletion;
   static final Set<String> _claimedEventKeysInProcess = <String>{};
   static final List<String> _claimedEventKeyOrder = <String>[];
+  static const String pushDisabledServersPrefsKey =
+      'push_disabled_server_ids_v1';
 
   String? takeLaunchPayload() {
     final payload = _launchPayload;
@@ -47,7 +50,20 @@ class PushNotificationService {
 
   Future<bool> initialize() async {
     if (_initialized) return _available;
-    _initialized = true;
+    final inFlight = _initializationInFlight;
+    if (inFlight != null) return inFlight;
+    final attempt = _initializeOnce();
+    _initializationInFlight = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (identical(_initializationInFlight, attempt)) {
+        _initializationInFlight = null;
+      }
+    }
+  }
+
+  Future<bool> _initializeOnce() async {
     try {
       await Firebase.initializeApp();
       final messaging = FirebaseMessaging.instance;
@@ -56,6 +72,9 @@ class PushNotificationService {
       );
       await messaging.requestPermission(alert: true, badge: true, sound: true);
       _launchPayload = _payloadFor(await messaging.getInitialMessage());
+      await _tokenRefreshSub?.cancel();
+      await _messageSub?.cancel();
+      await _openedSub?.cancel();
       _tokenRefreshSub = messaging.onTokenRefresh.listen((token) {
         onTokenRefresh?.call(token);
       });
@@ -66,17 +85,30 @@ class PushNotificationService {
         onNotificationTap?.call(_payloadFor(message));
       });
       _available = true;
+      _initialized = true;
     } catch (e) {
       debugPrint('[Push] Firebase unavailable: $e');
       _available = false;
+      _initialized = false;
     }
     return _available;
   }
 
   Future<String?> getFcmToken() async {
-    if (!await initialize()) return null;
-    final token = await FirebaseMessaging.instance.getToken();
-    return token != null && token.isNotEmpty ? token : null;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      if (await initialize()) {
+        try {
+          final token = await FirebaseMessaging.instance.getToken();
+          if (token != null && token.isNotEmpty) return token;
+        } catch (error) {
+          debugPrint('[Push] FCM token attempt ${attempt + 1} failed: $error');
+        }
+      }
+      if (attempt == 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+      }
+    }
+    return null;
   }
 
   String? _payloadFor(RemoteMessage? message) {
@@ -105,11 +137,14 @@ class PushNotificationService {
     if (!foreground && await _isSessionMuted(data)) {
       shouldDisplay = false;
     }
+    if (await isServerPushDisabledForData(data)) {
+      shouldDisplay = false;
+    }
     final notifications = NotificationService();
     await notifications.initialize(requestPermissions: foreground);
 
     if (kind == 'session_started' || kind == 'session_running') {
-      if (await _isStaleRunningEvent(data)) return;
+      if (await isStaleRunningEvent(data)) return;
       if (!shouldDisplay) {
         await notifications.cancel(id);
         return;
@@ -258,7 +293,8 @@ class PushNotificationService {
     });
   }
 
-  static Future<bool> _isStaleRunningEvent(Map<String, dynamic> data) async {
+  @visibleForTesting
+  static Future<bool> isStaleRunningEvent(Map<String, dynamic> data) async {
     final key = _sessionStateKey(data);
     final startedAt = DateTime.tryParse(data['startedAt'] as String? ?? '');
     if (key == null || startedAt == null) return false;
@@ -273,6 +309,18 @@ class PushNotificationService {
     final prefs = await SharedPreferences.getInstance();
     return (prefs.getStringList('notif_muted_sessions') ?? const <String>[])
         .contains(sessionId);
+  }
+
+  @visibleForTesting
+  static Future<bool> isServerPushDisabledForData(
+    Map<String, dynamic> data,
+  ) async {
+    final serverId = data['serverId'] as String?;
+    if (serverId == null || serverId.isEmpty) return false;
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList(pushDisabledServersPrefsKey) ??
+            const <String>[])
+        .contains(serverId);
   }
 
   static Future<bool> _claimRemoteEvent(RemoteMessage message) async {

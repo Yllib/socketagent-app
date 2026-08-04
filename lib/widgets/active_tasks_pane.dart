@@ -14,6 +14,7 @@ class ActiveTasksPane extends StatefulWidget {
   final Map<String, Map<String, dynamic>> subagentTasks;
   final Map<String, Map<String, dynamic>> workflowTasks;
   final List<ChatMessage> messages;
+  final String? sourceServerId;
   final void Function(String taskId)? onStopTask;
   final void Function(String toolUseId)? onScrollToTask;
   final void Function(String toolUseId)? onDismissSubagent;
@@ -25,6 +26,7 @@ class ActiveTasksPane extends StatefulWidget {
     required this.subagentTasks,
     required this.workflowTasks,
     required this.messages,
+    this.sourceServerId,
     this.onStopTask,
     this.onScrollToTask,
     this.onDismissSubagent,
@@ -711,7 +713,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
   Widget _buildChildMessage(ChatMessage msg) {
     switch (msg.type) {
       case MessageType.text:
-        return MessageBubble(message: msg);
+        return MessageBubble(
+          message: msg,
+          sourceServerId: widget.sourceServerId,
+        );
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') return SpeakCard(message: msg);
         if (msg.toolName == 'SendFile') return FileCard(message: msg);

@@ -65,7 +65,7 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       final payload = ConfigTransfer.decode(rawData, passphrase: passphrase);
       if (payload.servers.isEmpty) {
         setState(() {
-          _error = 'No server configs found in QR code.';
+          _error = 'No computers found in that transfer code.';
           _processing = false;
         });
         if (scannerPaused) {
@@ -170,7 +170,7 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       builder: (ctx) {
         return AlertDialog(
           title: Text(
-            'Import ${configs.length} Server${configs.length == 1 ? '' : 's'}?',
+            'Import ${configs.length} Computer${configs.length == 1 ? '' : 's'}?',
           ),
           content: SizedBox(
             width: double.maxFinite,

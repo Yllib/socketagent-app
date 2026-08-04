@@ -5,6 +5,13 @@ bool shouldScheduleSessionCompletionFallback({
   return !suppressAutomaticNotifications && !sessionId.startsWith('scheduled-');
 }
 
+/// Computers enroll automatically once connected. Only a durable, explicit
+/// user opt-out may suppress registration; an empty/stale server token cache
+/// must never be interpreted as the user disabling notifications.
+bool shouldAutoEnrollComputerNotifications({
+  required bool explicitlyDisabled,
+}) => !explicitlyDisabled;
+
 bool shouldDisplayForegroundSessionNotification({
   required Map<String, dynamic> data,
   required bool appInForeground,

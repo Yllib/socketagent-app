@@ -1,17 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
-import '../screens/file_manager_screen.dart';
-import '../services/chat_provider.dart';
+import '../services/socketagent_link_router.dart';
 
 class MessageBubble extends StatelessWidget {
   final ChatMessage message;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractPending;
+  final String? sourceServerId;
 
   const MessageBubble({
     super.key,
@@ -19,6 +17,7 @@ class MessageBubble extends StatelessWidget {
     this.onRewindConversation,
     this.onBranch,
     this.onRetractPending,
+    this.sourceServerId,
   });
 
   @override
@@ -111,10 +110,16 @@ class MessageBubble extends StatelessWidget {
                       style: TextStyle(color: textColor, fontSize: 15),
                     )
                   : MarkdownBody(
-                      data: message.textContent,
+                      data: SocketAgentLinkRouter.prepareMarkdown(
+                        message.textContent,
+                      ),
                       selectable: true,
                       onTapLink: (text, href, title) {
-                        _handleLinkTap(context, href);
+                        SocketAgentLinkRouter.open(
+                          context,
+                          href,
+                          sourceServerId: sourceServerId,
+                        );
                       },
                       styleSheet: MarkdownStyleSheet(
                         p: TextStyle(
@@ -301,122 +306,6 @@ class MessageBubble extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  Future<void> _handleLinkTap(BuildContext context, String? href) async {
-    if (href == null || href.trim().isEmpty) return;
-    final uri = Uri.tryParse(href);
-    if (uri == null) return;
-
-    if (uri.scheme == 'socketagent' && uri.host == 'file') {
-      await _handleSocketAgentFileLink(context, uri);
-      return;
-    }
-
-    await launchUrl(uri);
-  }
-
-  Future<void> _handleSocketAgentFileLink(BuildContext context, Uri uri) async {
-    final action = uri.pathSegments.isNotEmpty ? uri.pathSegments.first : '';
-    final filePath = uri.queryParameters['path'];
-    final serverId = uri.queryParameters['serverId'];
-    if (filePath == null || filePath.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('File link is missing a path')),
-      );
-      return;
-    }
-
-    switch (action) {
-      case 'download':
-        await _downloadSocketAgentFile(context, filePath, serverId);
-        return;
-      case 'browse':
-        _openFileManager(context, filePath, serverId);
-        return;
-      case 'reveal':
-        _openFileManager(
-          context,
-          _parentPath(filePath),
-          serverId,
-          highlightPath: filePath,
-        );
-        return;
-      case 'view':
-        _openFileManager(
-          context,
-          _parentPath(filePath),
-          serverId,
-          highlightPath: filePath,
-          initialAction: 'view',
-        );
-        return;
-      default:
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Unsupported file link action: $action')),
-        );
-    }
-  }
-
-  Future<void> _downloadSocketAgentFile(
-    BuildContext context,
-    String filePath,
-    String? serverId,
-  ) async {
-    final provider = context.read<ChatProvider>();
-    final name = _baseName(filePath);
-    try {
-      await provider.downloadFileManagerFile(
-        path: filePath,
-        fileName: name,
-        serverId: serverId == null || serverId.isEmpty
-            ? provider.activeServerId
-            : serverId,
-        showInChat: true,
-      );
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Downloading $name')));
-    } catch (e) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Download failed: $e')));
-    }
-  }
-
-  void _openFileManager(
-    BuildContext context,
-    String path,
-    String? serverId, {
-    String? highlightPath,
-    String? initialAction,
-  }) {
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => FileManagerScreen(
-          serverId: serverId == null || serverId.isEmpty ? null : serverId,
-          initialPath: path,
-          highlightPath: highlightPath,
-          initialAction: initialAction,
-        ),
-      ),
-    );
-  }
-
-  String _parentPath(String filePath) {
-    final normalized = filePath.replaceAll('\\', '/');
-    final idx = normalized.lastIndexOf('/');
-    if (idx <= 0) return filePath.startsWith('/') ? '/' : '';
-    return filePath.substring(0, idx);
-  }
-
-  String _baseName(String filePath) {
-    final normalized = filePath.replaceAll('\\', '/');
-    final idx = normalized.lastIndexOf('/');
-    if (idx < 0 || idx == normalized.length - 1) return normalized;
-    return normalized.substring(idx + 1);
   }
 
   void _showRewindSheet(BuildContext context) {

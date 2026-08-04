@@ -42,4 +42,29 @@ void main() {
       false,
     );
   });
+
+  test('removes the FCM token from the relay pairing', () async {
+    late Map<String, dynamic> received;
+    final client = MockClient((request) async {
+      expect(
+        request.url.toString(),
+        'https://relay.example/api/push/unregister',
+      );
+      received = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response(jsonEncode({'ok': true}), 200);
+    });
+
+    final unregistered = await RelayPushService.unregister(
+      relayUrl: 'wss://relay.example/socket?ignored=true',
+      pairingToken: 'pairing-token',
+      fcmToken: 'fcm-token',
+      client: client,
+    );
+
+    expect(unregistered, true);
+    expect(received, {
+      'pairingToken': 'pairing-token',
+      'fcmToken': 'fcm-token',
+    });
+  });
 }

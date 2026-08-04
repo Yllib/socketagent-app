@@ -35,7 +35,7 @@ class UploadAckGate {
         ackTimeout,
         onTimeout: () {
           throw TimeoutException(
-            'Upload stalled waiting for server acknowledgement',
+            'Upload stalled waiting for computer acknowledgement',
           );
         },
       );

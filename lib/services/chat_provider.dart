@@ -18,7 +18,6 @@ import '../models/composer_attachment.dart';
 import '../models/html_plan.dart';
 import '../models/archive_entry.dart';
 import '../models/file_manager_entry.dart';
-import '../screens/pair_screen.dart' show PairingResult;
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
 import '../models/scheduled_task_cache.dart';
@@ -43,6 +42,7 @@ import 'notification_service.dart';
 import 'push_notification_service.dart';
 import 'relay_push_service.dart';
 import 'crypto_service.dart';
+import 'server_connection_probe.dart';
 import 'secure_storage_service.dart';
 import 'adb_bridge_service.dart';
 import 'tool_event_reconciler.dart';
@@ -551,6 +551,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Per-session notification toggles
   Set<String> _notifMutedSessions = {};
   final Set<String> _pushRegisteredServers = {};
+  final Set<String> _pushDisabledServers = {};
   // Pinned sessions
   Set<String> _pinnedSessionIds = {};
   final Map<String, Session> _pendingArchivedSessions = {};
@@ -737,7 +738,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _pendingCwdCheckRequestId;
   String? _pendingCwdCheckServerId;
   Map<String, dynamic>? _lastCwdCheck;
-  Completer<Map<String, dynamic>>? _pendingDirList;
+  final Map<String, Completer<Map<String, dynamic>>> _directoryCompleters = {};
   final Map<String, Completer<SdkSessionPage>> _sdkSessionCompleters = {};
   final Map<String, String?> _sdkSessionRequestServers = {};
   final Map<String, String> _sdkSessionRequestCwds = {};
@@ -751,11 +752,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Completer<Map<String, dynamic>>>
   _fileManagerTextCompleters = {};
   int _sdkSessionsRequestSeq = 0;
+  int _directoryRequestSeq = 0;
   Completer<Map<String, dynamic>>? _pendingVersionCheck;
   String? _pendingVersionCheckServerId;
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
   Completer<Map<String, dynamic>?>? _pendingCodexStatus;
   final Map<String, Completer<bool>> _pushRegistrationCompleters = {};
+  final Map<String, Timer> _pushRegistrationRetryTimers = {};
+  final Map<String, int> _pushRegistrationRetryAttempts = {};
   final Map<String, Completer<Map<String, dynamic>>>
   _adbBridgeSidecarCompleters = {};
   final Map<String, Completer<Map<String, dynamic>>> _adbCommandCompleters = {};
@@ -789,6 +793,75 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeSessionServerId ?? _connMgr.activeServerId;
   String? get activeSessionCwd => _activeSessionCwd;
   String? get activeSessionTitle => _activeSessionTitle;
+  SessionRunStats? get activeSessionRunStats {
+    final sessionId = _activeSessionId;
+    if (sessionId == null) return null;
+    return _sessions
+        .where(
+          (session) =>
+              session.id == sessionId &&
+              (_activeSessionServerId == null ||
+                  session.serverId == _activeSessionServerId),
+        )
+        .firstOrNull
+        ?.runStats;
+  }
+
+  List<ChatMessage> get completedRunBoundaries =>
+      _messages
+          .where((message) => message.type == MessageType.runBoundary)
+          .toList()
+        ..sort((left, right) => right.timestamp.compareTo(left.timestamp));
+
+  void _applySessionRunStats(
+    String sessionId,
+    String? serverId,
+    SessionRunStats stats,
+  ) {
+    void updateList(List<Session> sessions) {
+      for (var index = 0; index < sessions.length; index++) {
+        if (sessions[index].id == sessionId) {
+          sessions[index] = sessions[index].copyWith(runStats: stats);
+        }
+      }
+    }
+
+    if (serverId != null && serverId.isNotEmpty) {
+      final sessions = _perServerSessions[serverId];
+      if (sessions != null) updateList(sessions);
+      _rebuildSessionList();
+    } else {
+      updateList(_sessions);
+      for (final sessions in _perServerSessions.values) {
+        updateList(sessions);
+      }
+    }
+    _saveSessionCacheSoon();
+    if (sessionId == _activeSessionId &&
+        (serverId == null ||
+            _activeSessionServerId == null ||
+            serverId == _activeSessionServerId)) {
+      if (stats.current != null) {
+        _markSessionRunning(
+          sessionId,
+          serverId: serverId ?? _activeSessionServerId,
+          startedAt: stats.current!.startedAt,
+        );
+        _isProcessing = true;
+        _startPromptRuntime(startedAt: stats.current!.startedAt, replace: true);
+      } else if (!_hasPendingHardStop(
+        sessionId,
+        serverId: serverId ?? _activeSessionServerId,
+      )) {
+        _markSessionIdle(
+          sessionId,
+          serverId: serverId ?? _activeSessionServerId,
+        );
+        _isProcessing = false;
+        _stopPromptRuntime();
+      }
+    }
+  }
 
   // Session notifications
   bool isNotifEnabled(String sessionId) =>
@@ -796,6 +869,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   bool isPushRegisteredForServer(String serverId) =>
       _pushRegisteredServers.contains(serverId);
+
+  bool isPushDisabledForServer(String serverId) =>
+      _pushDisabledServers.contains(serverId);
 
   int get pushRegisteredServerCount => _pushRegisteredServers.length;
 
@@ -975,7 +1051,53 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _syncOngoingSessionNotifications() {
-    // WebSocket state updates UI only. FCM owns Android notifications.
+    // WebSocket state never creates Android notifications. FCM owns creation;
+    // authoritative session state is only allowed to remove stale FCM cards.
+  }
+
+  Future<void> _settleOngoingSessionNotification(
+    String sessionId,
+    String serverId,
+  ) async {
+    // Persist the terminal boundary before cancelling. If an older periodic
+    // session_running push arrives late, the FCM handler will reject it rather
+    // than resurrecting the ongoing card we just removed.
+    await PushNotificationService.recordSessionFinished(
+      sessionId: sessionId,
+      serverId: serverId,
+    );
+    await _notifications.cancel(
+      NotificationService.sessionOngoingId(sessionId, serverId: serverId),
+    );
+  }
+
+  Future<void> _reconcileOngoingSessionNotificationsForServer(
+    String serverId,
+    Set<String> runningSessionIds,
+    Set<String> expectedNotificationSessionIds,
+  ) async {
+    final expectedNotificationIds = expectedNotificationSessionIds
+        .map(
+          (sessionId) => NotificationService.sessionOngoingId(
+            sessionId,
+            serverId: serverId,
+          ),
+        )
+        .toSet();
+    final recovered = await _notifications.removeStaleActiveSessionsForServer(
+      serverId: serverId,
+      expectedNotificationIds: expectedNotificationIds,
+    );
+    for (final notification in recovered) {
+      // Quiet scheduled work is still running; its card is intentionally
+      // absent, but it must not be marked finished and poison this run's FCM
+      // startedAt boundary.
+      if (runningSessionIds.contains(notification.sessionId)) continue;
+      await PushNotificationService.recordSessionFinished(
+        sessionId: notification.sessionId,
+        serverId: notification.serverId ?? serverId,
+      );
+    }
   }
 
   String _sessionTitleFor(String sessionId, {String? serverId}) {
@@ -1032,8 +1154,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (serverId == null || serverId.isEmpty) return true;
       return info.serverId == serverId;
     }).toList();
+    final targetServerIds = <String>{
+      for (final key in matchingKeys)
+        if (_runningSessionNotifications[key] case final info?) info.serverId,
+    };
+    if (targetServerIds.isEmpty) {
+      targetServerIds.add(serverId ?? _connMgr.activeServerId ?? '');
+    }
     for (final key in matchingKeys) {
       _runningSessionNotifications.remove(key);
+    }
+    for (final targetServerId in targetServerIds) {
+      unawaited(_settleOngoingSessionNotification(sessionId, targetServerId));
     }
     _syncOngoingSessionNotifications();
   }
@@ -1048,6 +1180,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final sid = serverId ?? '';
     final prefix = '$sid\u0001';
+    final stoppedSessions = _runningSessionNotifications.values
+        .where(
+          (info) =>
+              info.serverId == sid &&
+              !runningSessionIds.contains(info.sessionId),
+        )
+        .map((info) => info.sessionId)
+        .toSet();
+    for (final sessionId in stoppedSessions) {
+      unawaited(_settleOngoingSessionNotification(sessionId, sid));
+    }
     _runningSessionNotifications.removeWhere(
       (key, _) => key.startsWith(prefix),
     );
@@ -1064,6 +1207,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sync: false,
       );
     }
+    final expectedNotificationSessions = runningSessionIds.difference(
+      suppressOngoingSessionIds,
+    );
+    unawaited(
+      _reconcileOngoingSessionNotificationsForServer(
+        sid,
+        runningSessionIds,
+        expectedNotificationSessions,
+      ),
+    );
     _syncOngoingSessionNotifications();
   }
 
@@ -1856,7 +2009,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final useRelay = prefs.getBool('use_relay') ?? false;
       final migrated = ServerConfig(
         id: ServerConfig.generateId(),
-        name: 'Server',
+        name: 'Computer',
         host: _serverHost,
         port: _serverPort,
         token: _authToken,
@@ -1887,6 +2040,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         prefs.getStringList(_pushRegisteredServersPrefsKey) ?? const <String>[],
       );
     _pushRegisteredServers.retainAll(_serverConfigs.map((c) => c.id).toSet());
+    _pushDisabledServers
+      ..clear()
+      ..addAll(
+        prefs.getStringList(
+              PushNotificationService.pushDisabledServersPrefsKey,
+            ) ??
+            const <String>[],
+      )
+      ..retainAll(_serverConfigs.map((c) => c.id).toSet());
 
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
@@ -1980,10 +2142,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _pushRegisteredServersPrefsKey,
       _pushRegisteredServers.toList(),
     );
+    await prefs.setStringList(
+      PushNotificationService.pushDisabledServersPrefsKey,
+      _pushDisabledServers.toList(),
+    );
   }
 
   void _markPushRegistered(String? serverId) {
     if (serverId == null || serverId.isEmpty) return;
+    if (_pushDisabledServers.contains(serverId)) return;
+    _pushRegistrationRetryTimers.remove(serverId)?.cancel();
+    _pushRegistrationRetryAttempts.remove(serverId);
     final completer = _pushRegistrationCompleters.remove(serverId);
     if (completer != null && !completer.isCompleted) {
       completer.complete(true);
@@ -1994,20 +2163,60 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _markPushUnregistered(String? serverId) {
+  void _markPushUnregistered(
+    String? serverId, {
+    bool explicitlyDisabled = false,
+  }) {
     if (serverId == null || serverId.isEmpty) return;
+    if (explicitlyDisabled) {
+      _pushRegistrationRetryTimers.remove(serverId)?.cancel();
+      _pushRegistrationRetryAttempts.remove(serverId);
+    }
     final completer = _pushRegistrationCompleters.remove(serverId);
     if (completer != null && !completer.isCompleted) {
       completer.complete(true);
     }
-    if (_pushRegisteredServers.remove(serverId)) {
+    final registrationChanged = _pushRegisteredServers.remove(serverId);
+    final disabledChanged = explicitlyDisabled
+        ? _pushDisabledServers.add(serverId)
+        : false;
+    if (registrationChanged || disabledChanged) {
       unawaited(_savePushRegisteredServers());
       notifyListeners();
     }
   }
 
   void _handlePushTokenRefresh(String token) {
-    unawaited(_registerPushNotifications(fcmToken: token));
+    for (final config in _serverConfigs) {
+      if (_connMgr.statusOf(config.id) == ConnectionStatus.connected) {
+        unawaited(_syncPushRegistrationForServer(config.id, fcmToken: token));
+      }
+    }
+  }
+
+  void _schedulePushRegistrationRetry(String serverId) {
+    if (_pushDisabledServers.contains(serverId) ||
+        _pushRegistrationRetryTimers.containsKey(serverId)) {
+      return;
+    }
+    final attempt = (_pushRegistrationRetryAttempts[serverId] ?? 0) + 1;
+    _pushRegistrationRetryAttempts[serverId] = attempt;
+    final seconds = switch (attempt) {
+      1 => 5,
+      2 => 15,
+      3 => 60,
+      _ => 300,
+    };
+    _pushRegistrationRetryTimers[serverId] = Timer(
+      Duration(seconds: seconds),
+      () {
+        _pushRegistrationRetryTimers.remove(serverId);
+        if (_connMgr.statusOf(serverId) == ConnectionStatus.connected &&
+            !_pushDisabledServers.contains(serverId)) {
+          unawaited(_syncPushRegistrationForServer(serverId));
+        }
+      },
+    );
   }
 
   Future<bool> _registerPushNotifications({
@@ -2026,6 +2235,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .where((item) => item.id == serverId)
           .firstOrNull;
       if (config == null) return false;
+      if (!shouldAutoEnrollComputerNotifications(
+        explicitlyDisabled: _pushDisabledServers.contains(serverId),
+      )) {
+        return false;
+      }
       final ws = _connMgr.getConnection(serverId);
       if (ws?.status != ConnectionStatus.connected) return false;
       if (config.isRelayPaired) {
@@ -2046,7 +2260,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     var sent = false;
     for (final config in _serverConfigs) {
-      if (!_pushRegisteredServers.contains(config.id)) continue;
+      if (!shouldAutoEnrollComputerNotifications(
+        explicitlyDisabled: _pushDisabledServers.contains(config.id),
+      )) {
+        continue;
+      }
       final ws = _connMgr.getConnection(config.id);
       if (ws?.status == ConnectionStatus.connected) {
         if (config.isRelayPaired) {
@@ -2072,6 +2290,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<bool> registerPushNotificationsNow() => _registerPushNotifications();
 
   Future<bool> registerPushNotificationsForServer(String serverId) async {
+    final reenabled = _pushDisabledServers.remove(serverId);
+    if (reenabled) {
+      await _savePushRegisteredServers();
+      notifyListeners();
+    }
     _pushRegistrationCompleters.remove(serverId)?.complete(false);
     final completer = Completer<bool>();
     _pushRegistrationCompleters[serverId] = completer;
@@ -2080,6 +2303,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (!sent) {
       _pushRegistrationCompleters.remove(serverId);
       if (!completer.isCompleted) completer.complete(false);
+      _schedulePushRegistrationRetry(serverId);
       return false;
     }
 
@@ -2094,7 +2318,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  Future<void> _sendPushUnregistration(
+    String serverId,
+    String token,
+    WebSocketService ws,
+  ) async {
+    final config = _serverConfigs
+        .where((item) => item.id == serverId)
+        .firstOrNull;
+    if (config?.isRelayPaired == true) {
+      final relayUnregistered = await RelayPushService.unregister(
+        relayUrl: config!.relayUrl,
+        pairingToken: config.pairingToken,
+        fcmToken: token,
+      );
+      if (!relayUnregistered) {
+        debugPrint('[Push] Relay FCM unregistration failed for $serverId');
+      }
+    }
+    ws.send({
+      'type': 'unregister_push_token',
+      'fcmToken': token,
+      'appServerId': serverId,
+    });
+  }
+
   Future<bool> unregisterPushNotificationsForServer(String serverId) async {
+    final disabledChanged = _pushDisabledServers.add(serverId);
+    final registrationChanged = _pushRegisteredServers.remove(serverId);
+    if (disabledChanged || registrationChanged) {
+      await _savePushRegisteredServers();
+      notifyListeners();
+    }
     _pushRegistrationCompleters.remove(serverId)?.complete(false);
     final completer = Completer<bool>();
     _pushRegistrationCompleters[serverId] = completer;
@@ -2105,15 +2360,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         token.isEmpty ||
         ws?.status != ConnectionStatus.connected) {
       _pushRegistrationCompleters.remove(serverId);
-      if (!completer.isCompleted) completer.complete(false);
-      return false;
+      if (!completer.isCompleted) completer.complete(true);
+      return true;
     }
 
-    ws!.send({
-      'type': 'unregister_push_token',
-      'fcmToken': token,
-      'appServerId': serverId,
-    });
+    await _sendPushUnregistration(serverId, token, ws!);
 
     return completer.future.timeout(
       const Duration(seconds: 5),
@@ -2121,27 +2372,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (_pushRegistrationCompleters[serverId] == completer) {
           _pushRegistrationCompleters.remove(serverId);
         }
-        return !_pushRegisteredServers.contains(serverId);
+        return _pushDisabledServers.contains(serverId);
       },
     );
   }
 
-  Future<void> _syncPushRegistrationForServer(String serverId) async {
+  Future<void> _syncPushRegistrationForServer(
+    String serverId, {
+    String? fcmToken,
+  }) async {
     final ws = _connMgr.getConnection(serverId);
     if (ws?.status != ConnectionStatus.connected) return;
 
-    if (_pushRegisteredServers.contains(serverId)) {
-      await _registerPushNotifications(serverId: serverId);
+    if (_pushDisabledServers.contains(serverId)) {
+      final token = fcmToken ?? await PushNotificationService().getFcmToken();
+      if (token == null || token.isEmpty) return;
+      await _sendPushUnregistration(serverId, token, ws!);
       return;
     }
-
-    final token = await PushNotificationService().getFcmToken();
-    if (token == null || token.isEmpty) return;
-    ws!.send({
-      'type': 'get_push_registration',
-      'fcmToken': token,
-      'appServerId': serverId,
-    });
+    final sent = await _registerPushNotifications(
+      serverId: serverId,
+      fcmToken: fcmToken,
+    );
+    if (!sent) {
+      _schedulePushRegistrationRetry(serverId);
+    }
   }
 
   Future<void> _captureRelayPairingFromCapabilities(
@@ -2224,25 +2479,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  /// Create a new server from a QR pairing result and connect via relay.
-  Future<void> addServerFromPairing(PairingResult result) async {
-    final config = ServerConfig(
-      id: ServerConfig.generateId(),
-      name: 'My Server',
-      host: '',
-      port: 8085,
-      token: '',
-      useRelay: true,
-      sortOrder: _serverConfigs.length,
-      relayUrl: result.relayUrl,
-      pairingToken: result.pairingToken,
-      serverPubkey: result.serverPubkey,
+  bool hasServerConnection(ServerConfig candidate) => _serverConfigs.any(
+    (existing) => existing.connectionIdentity == candidate.connectionIdentity,
+  );
+
+  Future<ServerProbeResult> probeServerConnection(
+    ServerConfig candidate, {
+    Duration timeout = const Duration(seconds: 18),
+  }) {
+    return const ServerConnectionProbe().verify(
+      candidate,
+      subscriberToken: _subscriberToken,
+      timeout: timeout,
     );
-    _serverConfigs.add(config);
-    await _saveServerConfigs();
-    await _connMgr.setServers(_serverConfigs);
-    await _registerPushNotifications();
-    notifyListeners();
   }
 
   Future<void> updateServer(ServerConfig config) async {
@@ -2295,8 +2544,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _scheduledTaskRefreshRetries.remove(serverId)?.cancel();
     _rebuildScheduledTaskList();
     final removedPushRegistration = _pushRegisteredServers.remove(serverId);
+    final removedPushDisablement = _pushDisabledServers.remove(serverId);
     await _saveServerConfigs();
-    if (removedPushRegistration) {
+    if (removedPushRegistration || removedPushDisablement) {
       await _savePushRegisteredServers();
     }
     await _saveSessionCache();
@@ -2965,10 +3215,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final errBody = jsonDecode(response.body) as Map<String, dynamic>;
           return {
             'error':
-                errBody['error'] ?? 'Server error (${response.statusCode})',
+                errBody['error'] ??
+                'SocketAgent error (${response.statusCode})',
           };
         } catch (_) {
-          return {'error': 'Server error (${response.statusCode})'};
+          return {'error': 'SocketAgent error (${response.statusCode})'};
         }
       } catch (e) {
         lastError = e;
@@ -3732,6 +3983,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'session_history':
           _handleSessionHistory(msg, serverId: serverId);
           break;
+        case 'session_run_completed':
+          final boundary = msg['boundary'];
+          if (boundary is Map) {
+            _handleSessionHistory({
+              'type': 'session_history',
+              'sessionId': msg['sessionId'],
+              'messages': [Map<String, dynamic>.from(boundary)],
+              'historyKind': 'append',
+              if (msg['runStats'] is Map) 'runStats': msg['runStats'],
+            }, serverId: serverId);
+          }
+          break;
         case 'session_list':
           _handleSessionList(msg, serverId);
           break;
@@ -3810,6 +4073,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             final appServerId = msg['appServerId'];
             _markPushUnregistered(
               serverId ?? (appServerId is String ? appServerId : null),
+              explicitlyDisabled: true,
             );
             break;
           }
@@ -4018,8 +4282,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
         case 'directory_listing':
-          _pendingDirList?.complete(Map<String, dynamic>.from(msg));
-          _pendingDirList = null;
+          final requestId = msg['requestId'] as String? ?? '';
+          var directoryCompleter = _directoryCompleters.remove(requestId);
+          // Compatibility with servers that predate correlated directory
+          // requests. Only route an untagged response when it is unambiguous.
+          if (directoryCompleter == null &&
+              requestId.isEmpty &&
+              _directoryCompleters.length == 1) {
+            final legacyId = _directoryCompleters.keys.single;
+            directoryCompleter = _directoryCompleters.remove(legacyId);
+          }
+          if (directoryCompleter != null && !directoryCompleter.isCompleted) {
+            directoryCompleter.complete(Map<String, dynamic>.from(msg));
+          }
           break;
         case 'file_manager_list_result':
           {
@@ -4300,18 +4575,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               replace: serverActiveStartedAt != null,
             );
           } else if (sessionState == 'idle') {
-            _markSessionIdle(
-              stateSessionId,
-              serverId: serverId ?? _connMgr.activeServerId,
-            );
-            _isProcessing = false;
-            _processingSetAt = null;
-            _stopPromptRuntime();
-            _closeLiveStreamsForParent(null);
-            settleIdleToolCards(
-              _messages,
-              activeBackgroundTaskIds: _activeBackgroundTaskIds(),
-            );
+            final logicalRunActive = activeSessionRunStats?.current != null;
+            if (logicalRunActive) {
+              _isProcessing = true;
+            } else {
+              _markSessionIdle(
+                stateSessionId,
+                serverId: serverId ?? _connMgr.activeServerId,
+              );
+              _isProcessing = false;
+              _processingSetAt = null;
+              _stopPromptRuntime();
+              _closeLiveStreamsForParent(null);
+              settleIdleToolCards(
+                _messages,
+                activeBackgroundTaskIds: _activeBackgroundTaskIds(),
+              );
+            }
           }
           // requires_action keeps _isProcessing true (still mid-query)
           notifyListeners();
@@ -4550,7 +4830,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 sender: MessageSender.system,
                 type: MessageType.taskNotification,
                 timestamp: DateTime.now(),
-                textContent: 'Server restarted (PID $pid)',
+                textContent: 'SocketAgent restarted (PID $pid)',
                 toolName: 'restarted',
               ),
             );
@@ -6659,12 +6939,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       serverId: _connMgr.activeServerId,
     );
     final continuationPending = msg['continuationPending'] == true;
-    if (!awaitingAbort && !continuationPending) {
+    final logicalRunActive = activeSessionRunStats?.current != null;
+    if (!awaitingAbort && !continuationPending && !logicalRunActive) {
       _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
     }
     _closeLiveStreamsForParent(null);
-    _isProcessing = awaitingAbort || continuationPending;
-    if (!continuationPending) {
+    _isProcessing = awaitingAbort || continuationPending || logicalRunActive;
+    if (!continuationPending && !logicalRunActive) {
       _stopPromptRuntime();
     }
     _isCompacting = false;
@@ -8250,6 +8531,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
     if (!decision.accept) return;
 
+    final rawRunStats = msg['runStats'];
+    if (historySessionId != null && rawRunStats is Map) {
+      _applySessionRunStats(
+        historySessionId,
+        serverId,
+        SessionRunStats.fromJson(Map<String, dynamic>.from(rawRunStats)),
+      );
+    }
+
     if ((decision.kind == SessionHistoryKind.initial ||
             decision.kind == SessionHistoryKind.delta) &&
         !fromCache) {
@@ -9375,6 +9665,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           }
           break;
+        case 'run_boundary':
+          loaded.add(ChatMessage.runBoundary(entry));
+          break;
         case 'elicitation_url':
           final elicitQId = entry['questionId'] as String? ?? '';
           final elicitServer =
@@ -10151,7 +10444,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       onStall: () {
         if (!completer.isCompleted) {
           completer.completeError(
-            Exception('Upload stalled — no progress from server for 30s'),
+            Exception('Upload stalled — no progress from the computer for 30s'),
           );
         }
       },
@@ -10255,7 +10548,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sender: MessageSender.system,
         type: MessageType.taskNotification,
         timestamp: DateTime.now(),
-        textContent: 'Stopping — waiting for server confirmation…',
+        textContent: 'Stopping — waiting for computer confirmation…',
         toolName: 'stopping',
       ),
     );
@@ -10337,7 +10630,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sender: MessageSender.system,
         type: MessageType.taskNotification,
         timestamp: DateTime.now(),
-        textContent: 'Stopping — waiting for server confirmation…',
+        textContent: 'Stopping — waiting for computer confirmation…',
         toolName: 'stopping',
       ),
     );
@@ -10586,7 +10879,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _secretInventoryRequestTracker.cancel();
     if (serverId == null || serverId.isEmpty) {
       _secretInventoryLoading = false;
-      _secretInventoryError = 'No server is selected for this session.';
+      _secretInventoryError = 'No computer is selected for this session.';
       notifyListeners();
       return;
     }
@@ -10596,7 +10889,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         .map((config) => config.name.trim())
         .where((name) => name.isNotEmpty)
         .firstOrNull;
-    final serverLabel = serverName ?? 'The selected server';
+    final serverLabel = serverName ?? 'The selected computer';
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) {
       _secretInventoryLoading = false;
       _secretInventoryError =
@@ -10608,8 +10901,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_serverSecretManagementVersions[serverId] == 0) {
       _secretInventoryLoading = false;
       _secretInventoryError =
-          '$serverLabel is running an older SocketAgent server that does not '
-          'support managed secrets. Update that server, then tap Refresh.';
+          '$serverLabel is running an older SocketAgent version that does not '
+          'support managed secrets. Update SocketAgent on that computer, then tap Refresh.';
       notifyListeners();
       return;
     }
@@ -10705,7 +10998,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) {
       _htmlPlansLoading = false;
       _htmlPlansError =
-          'The selected server is offline. Reconnect it and try again.';
+          'The selected computer is offline. Reconnect it and try again.';
       notifyListeners();
       return;
     }
@@ -10723,7 +11016,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _htmlPlanListRequestId = null;
       _htmlPlansLoading = false;
       _htmlPlansError =
-          'The server did not answer the HTML plan request. Reconnect it, or update that server if it is running an older SocketAgent version.';
+          'The computer did not answer the HTML plan request. Reconnect it, or update SocketAgent if it is running an older version.';
       notifyListeners();
     });
     notifyListeners();
@@ -11037,7 +11330,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         status: 'failed',
         running: false,
         message:
-            'Server did not acknowledge the $operationName request. It may be running an older SocketAgent build or the server process may be wedged. Run Check for Updates / Update Now, then try again.',
+            'The computer did not acknowledge the $operationName request. It may be running an older SocketAgent build or its SocketAgent process may be stuck. Run Check for Updates / Update Now, then try again.',
       );
       notifyListeners();
     });
@@ -11158,7 +11451,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     _messages.add(
       ChatMessage.error(
-        '$message I started Codex sign-in for this server. Open Settings > Servers > Backend Status to enter the device code.',
+        '$message I started Codex sign-in for this computer. Open Settings > Computers > Backend Status to enter the device code.',
       ),
     );
     _isProcessing = false;
@@ -11380,9 +11673,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       onTimeout: () {
         _failPhoneAdbTransfer(
           requestId,
-          'Timed out receiving APK from server.',
+          'Timed out receiving APK from the computer.',
         );
-        throw TimeoutException('Timed out receiving APK from server.');
+        throw TimeoutException('Timed out receiving APK from the computer.');
       },
     );
   }
@@ -12029,7 +12322,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _historyOpenTraceStartedAt.remove(requestId);
       _messages.add(
         ChatMessage.error(
-          'Timed out loading this session from its server. Check the server connection and try again.',
+          'Timed out loading this session from its computer. Check the computer connection and try again.',
         ),
       );
       notifyListeners();
@@ -12064,7 +12357,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'exists': false,
           'isDirectory': false,
           'serverId': serverId,
-          'error': 'Timed out waiting for server',
+          'error': 'Timed out waiting for computer',
         };
         _lastCwdCheck = timeout;
         return timeout;
@@ -12100,7 +12393,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'exists': false,
           'isDirectory': false,
           'serverId': serverId,
-          'error': 'Timed out waiting for server',
+          'error': 'Timed out waiting for computer',
         };
         _lastCwdCheck = timeout;
         return timeout;
@@ -12115,21 +12408,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String dirPath, {
     String? serverId,
   }) async {
-    _pendingDirList = Completer<Map<String, dynamic>>();
-    final msg = {'type': 'list_directory', 'path': dirPath};
+    final requestId =
+        'dir_${DateTime.now().microsecondsSinceEpoch}_${++_directoryRequestSeq}';
+    final completer = Completer<Map<String, dynamic>>();
+    _directoryCompleters[requestId] = completer;
+    final msg = {
+      'type': 'list_directory',
+      'path': dirPath,
+      'requestId': requestId,
+    };
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
     } else {
       _ws.send(msg);
     }
-    return _pendingDirList!.future.timeout(
-      const Duration(seconds: 5),
-      onTimeout: () => {
-        'path': dirPath,
-        'directories': <String>[],
-        'error': 'Timeout',
-      },
-    );
+    try {
+      return await completer.future.timeout(
+        const Duration(seconds: 8),
+        onTimeout: () => {
+          'path': dirPath,
+          'directories': <String>[],
+          'error': 'Timeout',
+        },
+      );
+    } finally {
+      _directoryCompleters.remove(requestId);
+    }
   }
 
   Future<FileManagerListing> listFileManagerDirectory(
@@ -12470,19 +12774,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     if (_connMgr.statusOf(source.serverId) != ConnectionStatus.connected) {
-      throw StateError('The source server is offline');
+      throw StateError('The source computer is offline');
     }
     if (_connMgr.statusOf(destinationServerId) != ConnectionStatus.connected) {
-      throw StateError('The destination server is offline');
+      throw StateError('The destination computer is offline');
     }
     if ((_serverSessionTransferVersions[source.serverId] ?? 0) < 1) {
       throw StateError(
-        'The source server must update before it can transfer sessions',
+        'SocketAgent on the source computer must update before it can transfer sessions',
       );
     }
     if ((_serverSessionTransferVersions[destinationServerId] ?? 0) < 1) {
       throw StateError(
-        'The destination server must update before it can receive sessions',
+        'SocketAgent on the destination computer must update before it can receive sessions',
       );
     }
     final cwd = destinationCwd.trim();
@@ -12705,6 +13009,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String cwd, {
     String? serverId,
     int limit = 30,
+    bool recursive = false,
+    bool all = false,
+    String query = '',
   }) async {
     final seq = ++_sdkSessionsRequestSeq;
     final requestId = 'sdk_${DateTime.now().microsecondsSinceEpoch}_$seq';
@@ -12718,6 +13025,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'cwd': cwd,
       'requestId': requestId,
       'limit': limit,
+      if (recursive) 'recursive': true,
+      if (all) 'all': true,
+      if (query.trim().isNotEmpty) 'query': query.trim(),
     };
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
@@ -12726,7 +13036,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     try {
       return await completer.future.timeout(
-        const Duration(seconds: 5),
+        all || recursive
+            ? const Duration(seconds: 30)
+            : const Duration(seconds: 8),
         onTimeout: () =>
             const SdkSessionPage(sessions: [], total: 0, hasMore: false),
       );
@@ -13949,7 +14261,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ]) async {
     final server = _getDirectServer();
     if (server == null) {
-      throw Exception('No direct server configured for model download');
+      throw Exception('No direct computer configured for model download');
     }
     await _kokoroModelManager.downloadModel(
       serverHost: server.host,
@@ -15275,6 +15587,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _initialHistoryTimeout?.cancel();
     _foregroundResumeTimer?.cancel();
     _rateLimitExpiryTimer?.cancel();
+    for (final timer in _pushRegistrationRetryTimers.values) {
+      timer.cancel();
+    }
+    _pushRegistrationRetryTimers.clear();
+    _pushRegistrationRetryAttempts.clear();
     _secretInventoryRequestTracker.cancel();
     _htmlPlanListTimeout?.cancel();
     _messageSub?.cancel();

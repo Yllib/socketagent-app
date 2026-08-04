@@ -1,9 +1,9 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
 import '../models/raw_event.dart';
+import '../services/socketagent_link_router.dart';
 import 'message_bubble.dart';
 import 'tool_output_block.dart';
 import 'speak_card.dart';
@@ -35,6 +35,7 @@ import '../models/composer_attachment.dart';
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final String? sessionStorageKey;
+  final String? serverId;
   final bool isProcessing;
   final bool followLatest;
   final ValueChanged<bool>? onFollowLatestChanged;
@@ -72,6 +73,7 @@ class ChatView extends StatefulWidget {
     super.key,
     required this.messages,
     this.sessionStorageKey,
+    this.serverId,
     required this.isProcessing,
     this.followLatest = true,
     this.onFollowLatestChanged,
@@ -1245,6 +1247,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       case MessageType.text:
         return MessageBubble(
           message: msg,
+          sourceServerId: widget.serverId,
           onRewindConversation: widget.onRewindConversation,
           onBranch: widget.onBranch,
           onRetractPending: widget.onRetractQueuedMessage,
@@ -1315,6 +1318,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             childMessages: children,
             isRunning: isRunning,
             scrollKey: _taskKeys[rowKey],
+            sourceServerId: widget.serverId,
           );
         }
         // Backgrounded bash — register key for scroll-to
@@ -1333,7 +1337,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         if (msg.emailPreview != null) {
           return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);
         }
-        return QuestionCard(message: msg, onAnswer: widget.onAnswer);
+        return QuestionCard(
+          message: msg,
+          onAnswer: widget.onAnswer,
+          sourceServerId: widget.serverId,
+        );
       case MessageType.secureInput:
         return SecureInputCard(
           message: msg,
@@ -1343,7 +1351,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           availableSecrets: widget.availableSecrets,
         );
       case MessageType.result:
-        return MessageBubble(message: msg);
+        return MessageBubble(message: msg, sourceServerId: widget.serverId);
       case MessageType.error:
         return _buildErrorWidget(msg);
       case MessageType.taskNotification:
@@ -1374,6 +1382,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         return HtmlPlanCard(message: msg);
       case MessageType.workReview:
         return WorkReviewCard(message: msg);
+      case MessageType.runBoundary:
+        return _buildRunBoundaryDivider(msg);
     }
   }
 
@@ -1629,6 +1639,48 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
+  Widget _buildRunBoundaryDivider(ChatMessage msg) {
+    final theme = Theme.of(context);
+    final durationMs = (msg.toolInput?['runDurationMs'] as num?)?.toInt() ?? 0;
+    final runNumber = (msg.toolInput?['runNumber'] as num?)?.toInt();
+    final outcome = msg.textContent;
+    final color = outcome == 'failed'
+        ? theme.colorScheme.error
+        : outcome == 'stopped'
+        ? theme.colorScheme.tertiary
+        : theme.colorScheme.primary;
+    final runLabel = runNumber == null || runNumber <= 0
+        ? 'Run'
+        : 'Run $runNumber';
+    final label = outcome == 'completed'
+        ? '$runLabel · ${_formatElapsed(Duration(milliseconds: durationMs))}'
+        : '${outcome[0].toUpperCase()}${outcome.substring(1)} · ${_formatElapsed(Duration(milliseconds: durationMs))}';
+    return Semantics(
+      label:
+          '$outcome run duration ${_formatElapsed(Duration(milliseconds: durationMs))}',
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+        child: Row(
+          children: [
+            Expanded(child: Divider(color: color.withAlpha(65))),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ),
+            Expanded(child: Divider(color: color.withAlpha(65))),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildSkillInvocationCard(ChatMessage msg) {
     final theme = Theme.of(context);
     final name = msg.toolName ?? msg.toolInput?['name'] as String? ?? '';
@@ -1750,6 +1802,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             childMessages: children,
             isRunning: false,
             greenTheme: true,
+            sourceServerId: widget.serverId,
           );
         }
       }
@@ -1829,7 +1882,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   Widget _buildErrorText(String text) {
-    final urlPattern = RegExp(r'https?://\S+');
+    final urlPattern = RegExp(r'(?:https?://|socketagent://)\S+');
     final style = TextStyle(color: Colors.red.shade200, fontSize: 13);
     final linkStyle = TextStyle(
       color: Colors.blue.shade300,
@@ -1851,7 +1904,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           text: 'Open login page',
           style: linkStyle,
           recognizer: TapGestureRecognizer()
-            ..onTap = () => launchUrl(Uri.parse(url)),
+            ..onTap = () => SocketAgentLinkRouter.open(
+              context,
+              url,
+              sourceServerId: widget.serverId,
+            ),
         ),
       );
       last = m.end;

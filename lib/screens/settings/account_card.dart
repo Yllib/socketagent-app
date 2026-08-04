@@ -27,7 +27,7 @@ class AccountCard extends StatelessWidget {
             icon: Icons.bolt,
             iconColor: Theme.of(context).colorScheme.primary,
             title: 'Relay access',
-            subtitle: 'Sign up for relay, then pair your server',
+            subtitle: 'Sign up for relay, then pair your computer',
             action: FilledButton.icon(
               onPressed: () {
                 Navigator.of(context)

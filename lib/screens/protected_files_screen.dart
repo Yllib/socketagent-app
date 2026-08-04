@@ -56,7 +56,7 @@ class _ProtectedFilesScreenState extends State<ProtectedFilesScreen> {
     final provider = context.read<ChatProvider>();
     final config = _selectedConfig(provider);
     if (config == null) {
-      throw Exception('No SocketAgent server configured');
+      throw Exception('No computer connected');
     }
 
     _serverId = config.id;
@@ -146,7 +146,7 @@ class _ProtectedFilesScreenState extends State<ProtectedFilesScreen> {
               controller: labelController,
               decoration: const InputDecoration(
                 labelText: 'Label (optional)',
-                hintText: 'Server restart script',
+                hintText: 'SocketAgent restart script',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.label_outline),
               ),
@@ -267,7 +267,7 @@ class _ProtectedFilesScreenState extends State<ProtectedFilesScreen> {
           if (configs.length > 1)
             PopupMenuButton<String>(
               icon: const Icon(Icons.dns_outlined),
-              tooltip: selected?.name ?? 'Server',
+              tooltip: selected?.name ?? 'Computer',
               onSelected: (id) {
                 setState(() => _serverId = id);
                 _fetchEntries();

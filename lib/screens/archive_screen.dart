@@ -529,7 +529,7 @@ class _ArchiveScreenState extends State<ArchiveScreen>
             const SizedBox(height: 12),
             Text(
               _searchQuery.isEmpty
-                  ? 'No archives on this server'
+                  ? 'No archives on this computer'
                   : 'No matches',
               textAlign: TextAlign.center,
               style: TextStyle(
@@ -1005,6 +1005,7 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
                           itemBuilder: (_, idx) {
                             return _ArchiveChatMessageTile(
                               message: _messages![idx],
+                              sourceServerId: widget.entry.serverId,
                             );
                           },
                         ),
@@ -1017,13 +1018,14 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
 
 class _ArchiveChatMessageTile extends StatelessWidget {
   final ChatMessage message;
-  const _ArchiveChatMessageTile({required this.message});
+  final String? sourceServerId;
+  const _ArchiveChatMessageTile({required this.message, this.sourceServerId});
 
   @override
   Widget build(BuildContext context) {
     switch (message.type) {
       case MessageType.text:
-        return MessageBubble(message: message);
+        return MessageBubble(message: message, sourceServerId: sourceServerId);
       case MessageType.toolCall:
         if (message.toolName == 'Speak') return SpeakCard(message: message);
         if (message.toolName == 'SendFile') return FileCard(message: message);
@@ -1044,10 +1046,10 @@ class _ArchiveChatMessageTile extends StatelessWidget {
         if (message.toolName == 'manual') {
           return NotificationReceiptCard(message: message);
         }
-        return MessageBubble(message: message);
+        return MessageBubble(message: message, sourceServerId: sourceServerId);
       default:
         if (message.textContent.trim().isEmpty) return const SizedBox.shrink();
-        return MessageBubble(message: message);
+        return MessageBubble(message: message, sourceServerId: sourceServerId);
     }
   }
 }

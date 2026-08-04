@@ -18,6 +18,7 @@ import '../widgets/secret_manager_sheet.dart';
 import '../widgets/html_plan_manager_sheet.dart';
 import '../services/work_review_repository.dart';
 import 'work_reviews_screen.dart';
+import 'session_analytics_screen.dart';
 
 class _BarSegment {
   final String label;
@@ -409,7 +410,7 @@ class HomeScreenState extends State<HomeScreen> {
                           ),
                           DropdownMenuItem(
                             value: 'global',
-                            child: Text('This server'),
+                            child: Text('This computer'),
                           ),
                         ],
                         onChanged: (value) {
@@ -580,6 +581,7 @@ class HomeScreenState extends State<HomeScreen> {
             backgroundColor: chatSurfaceColor,
             resizeToAvoidBottomInset: true,
             appBar: AppBar(
+              toolbarHeight: 64,
               title: GestureDetector(
                 onLongPress: () {
                   provider.toggleRawMode();
@@ -594,82 +596,123 @@ class HomeScreenState extends State<HomeScreen> {
                 },
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      () {
-                        final title = provider.activeSessionTitle;
-                        final hasTitle =
-                            title != null &&
-                            title.isNotEmpty &&
-                            title != 'Untitled';
-                        final flags = <String>[];
-                        if (provider.activeSessionBackend == 'codex') {
-                          flags.add('CODEX');
-                        }
-                        if (provider.activeSessionBackend == 'codex' &&
-                            provider.codexFastMode) {
-                          flags.add('FAST');
-                        }
-                        if (isPlan) {
-                          flags.add(
-                            provider.activeSessionBackend == 'codex'
-                                ? 'READ'
-                                : 'PLAN',
-                          );
-                        }
-                        if (provider.rawMode) flags.add('RAW');
-                        final suffix = flags.isEmpty
-                            ? ''
-                            : ' [${flags.join('·')}]';
-                        return (hasTitle ? title : 'SocketAgent') + suffix;
-                      }(),
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: sessionTheme?.textColor,
-                      ),
-                    ),
-                    if (provider.activeSessionCwd != null)
-                      Text(
-                        provider.serverConfigs.length > 1 &&
-                                provider.connMgr.activeConfig != null
-                            ? '${provider.connMgr.activeConfig!.name} · ${provider.activeSessionCwd!}'
-                            : provider.activeSessionCwd!,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color:
-                              (sessionTheme?.textColor ??
-                                      Theme.of(context).colorScheme.onSurface)
-                                  .withAlpha(178),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _sessionHeaderTitle(provider, isPlan: isPlan),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: sessionTheme?.textColor,
+                            ),
+                          ),
                         ),
-                      ),
-                    if (provider.activeSessionId != null ||
-                        provider.isPendingNewSession)
-                      GestureDetector(
-                        onTap: () => _showPermissionModePicker(provider),
-                        child: Padding(
-                          padding: const EdgeInsets.only(top: 2),
+                      ],
+                    ),
+                    const SizedBox(height: 1),
+                    Row(
+                      children: [
+                        Flexible(
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              Icon(
-                                _permissionModeIcon(displayPermMode),
-                                size: 11,
-                                color:
-                                    (sessionTheme?.textColor ??
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface)
-                                        .withAlpha(178),
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                _permissionModeLabel(
-                                  displayPermMode,
-                                  backend: provider.activeSessionBackend,
+                              Flexible(
+                                child: Text(
+                                  _activeComputerName(provider),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color:
+                                        (sessionTheme?.textColor ??
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface)
+                                            .withAlpha(178),
+                                  ),
                                 ),
+                              ),
+                              const SizedBox(width: 6),
+                              _buildHarnessBadge(
+                                provider.activeSessionBackend,
+                                sessionTheme?.textColor,
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Spacer(),
+                        if (provider.lastUsage != null)
+                          _buildUsageIndicator(provider.lastUsage!),
+                        _buildConnectionIndicator(provider.connectionStatus),
+                      ],
+                    ),
+                    const SizedBox(height: 1),
+                    Row(
+                      children: [
+                        if (provider.activeSessionId != null ||
+                            provider.isPendingNewSession)
+                          GestureDetector(
+                            onTap: () => _showPermissionModePicker(provider),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _permissionModeIcon(displayPermMode),
+                                  size: 11,
+                                  color:
+                                      (sessionTheme?.textColor ??
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface)
+                                          .withAlpha(178),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _permissionModeLabel(
+                                    displayPermMode,
+                                    backend: provider.activeSessionBackend,
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color:
+                                        (sessionTheme?.textColor ??
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface)
+                                            .withAlpha(178),
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.arrow_drop_down,
+                                  size: 14,
+                                  color:
+                                      (sessionTheme?.textColor ??
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface)
+                                          .withAlpha(128),
+                                ),
+                              ],
+                            ),
+                          ),
+                        const Spacer(),
+                        if (provider.activeSessionCwd != null)
+                          Flexible(
+                            child: Tooltip(
+                              message: provider.activeSessionCwd!,
+                              child: Text(
+                                _compactCwd(provider.activeSessionCwd!),
+                                textAlign: TextAlign.right,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 11,
+                                  fontFamily: 'monospace',
                                   color:
                                       (sessionTheme?.textColor ??
                                               Theme.of(
@@ -678,28 +721,13 @@ class HomeScreenState extends State<HomeScreen> {
                                           .withAlpha(178),
                                 ),
                               ),
-                              Icon(
-                                Icons.arrow_drop_down,
-                                size: 14,
-                                color:
-                                    (sessionTheme?.textColor ??
-                                            Theme.of(
-                                              context,
-                                            ).colorScheme.onSurface)
-                                        .withAlpha(128),
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ),
+                      ],
+                    ),
                   ],
                 ),
               ),
-              actions: [
-                if (provider.lastUsage != null)
-                  _buildUsageIndicator(provider.lastUsage!),
-                _buildConnectionIndicator(provider.connectionStatus),
-              ],
             ),
             body: ColoredBox(
               color: chatSurfaceColor,
@@ -716,6 +744,7 @@ class HomeScreenState extends State<HomeScreen> {
                     child: ChatView(
                       key: _chatViewKey,
                       messages: provider.filteredMessages,
+                      serverId: provider.activeSessionServerId,
                       sessionStorageKey:
                           '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
                       isProcessing: provider.isProcessing,
@@ -783,6 +812,7 @@ class HomeScreenState extends State<HomeScreen> {
                       subagentTasks: provider.subagentTasks,
                       workflowTasks: provider.workflowTasks,
                       messages: provider.messages,
+                      sourceServerId: provider.activeSessionServerId,
                       onStopTask: provider.stopTask,
                       onScrollToTask: (toolUseId) {
                         _chatViewKey.currentState?.scrollToTask(toolUseId);
@@ -798,6 +828,69 @@ class HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+  }
+
+  String _sessionHeaderTitle(ChatProvider provider, {required bool isPlan}) {
+    final title = provider.activeSessionTitle;
+    final hasTitle = title != null && title.isNotEmpty && title != 'Untitled';
+    final flags = <String>[];
+    if (provider.activeSessionBackend == 'codex' && provider.codexFastMode) {
+      flags.add('FAST');
+    }
+    if (isPlan) {
+      flags.add(provider.activeSessionBackend == 'codex' ? 'READ' : 'PLAN');
+    }
+    if (provider.rawMode) flags.add('RAW');
+    final suffix = flags.isEmpty ? '' : ' [${flags.join('·')}]';
+    return (hasTitle ? title : 'SocketAgent') + suffix;
+  }
+
+  String _activeComputerName(ChatProvider provider) {
+    final id = provider.activeSessionServerId;
+    return provider.serverConfigs
+            .where((server) => server.id == id)
+            .firstOrNull
+            ?.name ??
+        provider.connMgr.activeConfig?.name ??
+        'Computer';
+  }
+
+  Widget _buildHarnessBadge(String? backend, Color? foreground) {
+    final isCodex = backend == 'codex';
+    final color = isCodex ? const Color(0xFF89B4FA) : const Color(0xFFCBA6F7);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+      decoration: BoxDecoration(
+        color: color.withAlpha(38),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(105)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            isCodex ? Icons.code : Icons.psychology_alt,
+            size: 10,
+            color: foreground ?? color,
+          ),
+          const SizedBox(width: 3),
+          Text(
+            isCodex ? 'Codex' : 'Claude',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: foreground ?? color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _compactCwd(String cwd) {
+    const maxLength = 42;
+    if (cwd.length <= maxLength) return cwd;
+    return '…${cwd.substring(cwd.length - maxLength + 1)}';
   }
 
   Widget _buildControlChips(ChatProvider provider) {
@@ -987,6 +1080,11 @@ class HomeScreenState extends State<HomeScreen> {
               if (mounted) _showHtmlPlanManager(provider);
             });
             break;
+          case 'session_analytics':
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SessionAnalyticsScreen()),
+            );
+            break;
           case 'work_reviews':
             if (serverId != null) {
               final config = provider.serverConfigs
@@ -1155,6 +1253,29 @@ class HomeScreenState extends State<HomeScreen> {
           ),
         ),
         PopupMenuItem(
+          value: 'session_analytics',
+          enabled: provider.activeSessionId != null,
+          child: const Row(
+            children: [
+              Icon(Icons.insights_outlined, size: 18),
+              SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text('Session analytics'),
+                    Text(
+                      'Run times and history',
+                      style: TextStyle(fontSize: 11),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        PopupMenuItem(
           value: 'work_reviews',
           enabled: supportsReviews,
           child: Row(
@@ -1170,8 +1291,8 @@ class HomeScreenState extends State<HomeScreen> {
                     Text(
                       pendingReviews == 0
                           ? supportsReviews
-                                ? 'Review agent work on this server'
-                                : 'Requires a server with Work Reviews'
+                                ? 'Review agent work on this computer'
+                                : 'Requires a computer with Work Reviews'
                           : '$pendingReviews awaiting review',
                       style: const TextStyle(fontSize: 11),
                     ),
@@ -1198,7 +1319,7 @@ class HomeScreenState extends State<HomeScreen> {
                     Text(
                       projectPath != null && projectPath.isNotEmpty
                           ? projectPath
-                          : 'Active server shell',
+                          : 'Active computer shell',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
@@ -1432,7 +1553,7 @@ class HomeScreenState extends State<HomeScreen> {
                         provider.claudeAutoCompactWindowOverride == null
                             ? provider.claudeAutoCompactWindowEffective == null
                                   ? 'Inherit Claude SDK/model default'
-                                  : 'Inherit server: ${provider.claudeAutoCompactWindowEffective} tokens'
+                                  : 'Inherit computer: ${provider.claudeAutoCompactWindowEffective} tokens'
                             : 'Session override: ${provider.claudeAutoCompactWindowOverride} tokens',
                         style: TextStyle(
                           fontSize: 11,
@@ -2010,8 +2131,8 @@ class HomeScreenState extends State<HomeScreen> {
                 inherited
                     ? provider.claudeAutoCompactWindowEffective == null
                           ? 'Currently inheriting the Claude SDK/model default.'
-                          : 'Currently inheriting ${provider.claudeAutoCompactWindowEffective} tokens from the server.'
-                    : 'This session currently overrides the server default.',
+                          : 'Currently inheriting ${provider.claudeAutoCompactWindowEffective} tokens from the computer.'
+                    : 'This session currently overrides the computer default.',
               ),
               const SizedBox(height: 16),
               TextField(
@@ -2021,7 +2142,7 @@ class HomeScreenState extends State<HomeScreen> {
                 decoration: InputDecoration(
                   labelText: 'Override tokens',
                   hintText: '100000–1000000',
-                  helperText: 'Leave blank to inherit the server setting.',
+                  helperText: 'Leave blank to inherit the computer setting.',
                   errorText: error,
                   border: const OutlineInputBorder(),
                 ),

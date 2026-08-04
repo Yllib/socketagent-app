@@ -672,7 +672,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             }
                           },
                           icon: const Icon(Icons.folder_open, size: 18),
-                          label: const Text('Browse Server'),
+                          label: const Text('Browse Computer'),
                         ),
                       ),
                     ),
@@ -1297,7 +1297,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             }
                           },
                           icon: const Icon(Icons.folder_open, size: 18),
-                          label: const Text('Browse Server'),
+                          label: const Text('Browse Computer'),
                         ),
                       ),
                     ),

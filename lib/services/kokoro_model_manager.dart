@@ -98,7 +98,9 @@ class KokoroModelManager {
     final response = await http.Client().send(request);
 
     if (response.statusCode != 200) {
-      throw Exception('Server returned ${response.statusCode} for $fileName');
+      throw Exception(
+        'SocketAgent returned ${response.statusCode} for $fileName',
+      );
     }
 
     final total = response.contentLength ?? 0;

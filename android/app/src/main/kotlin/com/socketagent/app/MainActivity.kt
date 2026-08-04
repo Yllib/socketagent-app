@@ -148,6 +148,14 @@ class MainActivity : FlutterActivity() {
                         result.error("OPEN_OVERLAY_SETTINGS_ERROR", e.message, null)
                     }
                 }
+                "openNotificationSettings" -> {
+                    try {
+                        openNotificationSettings()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        result.error("OPEN_NOTIFICATION_SETTINGS_ERROR", e.message, null)
+                    }
+                }
                 "showAuthCodeOverlay" -> {
                     try {
                         val code = call.argument<String>("code") ?: ""
@@ -317,6 +325,29 @@ class MainActivity : FlutterActivity() {
             }
         }
         throw lastError ?: IllegalStateException("Unable to open overlay permission settings.")
+    }
+
+    private fun openNotificationSettings() {
+        val intents = listOf(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            },
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName")
+            )
+        )
+
+        var lastError: Exception? = null
+        for (intent in intents) {
+            try {
+                startActivity(intent)
+                return
+            } catch (e: Exception) {
+                lastError = e
+            }
+        }
+        throw lastError ?: IllegalStateException("Unable to open notification settings.")
     }
 
     private fun openDigitalAssistantSettings() {

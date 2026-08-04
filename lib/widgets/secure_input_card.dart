@@ -89,7 +89,7 @@ class _SecureInputCardState extends State<SecureInputCard> {
             const ListTile(
               leading: Icon(Icons.key_outlined),
               title: Text('Use a stored secret'),
-              subtitle: Text('The value remains hidden on the server.'),
+              subtitle: Text('The value remains hidden on the computer.'),
             ),
             for (final secret in secrets)
               ListTile(

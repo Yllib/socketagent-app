@@ -9,6 +9,7 @@ import '../../services/chat_provider.dart';
 import '../../services/websocket_service.dart';
 import '../../services/window_security_service.dart';
 import '../pair_screen.dart';
+import '../connect_computer_screen.dart';
 import '../paywall_screen.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
@@ -58,7 +59,7 @@ class _ServersScreenState extends State<ServersScreen> {
         final configs = provider.serverConfigs;
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Servers'),
+            title: const Text('Computers'),
             actions: [
               if (configs.isNotEmpty)
                 IconButton(
@@ -85,7 +86,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text(
-                          'Imported $imported server${imported == 1 ? '' : 's'}',
+                          'Imported $imported computer${imported == 1 ? '' : 's'}',
                         ),
                       ),
                     );
@@ -95,9 +96,11 @@ class _ServersScreenState extends State<ServersScreen> {
             ],
           ),
           floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _showServerDialog(context, provider),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const ConnectComputerScreen()),
+            ),
             icon: const Icon(Icons.add),
-            label: const Text('Add Server'),
+            label: const Text('Add Computer'),
           ),
           body: configs.isEmpty
               ? Center(
@@ -111,7 +114,7 @@ class _ServersScreenState extends State<ServersScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        'No servers configured',
+                        'No computers configured',
                         style: TextStyle(
                           fontSize: 18,
                           color: Theme.of(context).colorScheme.outline,
@@ -119,7 +122,7 @@ class _ServersScreenState extends State<ServersScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Tap "Add Server" to connect',
+                        'Tap "Add Computer" to connect',
                         style: TextStyle(
                           fontSize: 14,
                           color: Theme.of(
@@ -137,6 +140,9 @@ class _ServersScreenState extends State<ServersScreen> {
                     final isConnected = status == ConnectionStatus.connected;
                     final isConnecting = status == ConnectionStatus.connecting;
                     final pushRegistered = provider.isPushRegisteredForServer(
+                      config.id,
+                    );
+                    final pushDisabled = provider.isPushDisabledForServer(
                       config.id,
                     );
                     final pushRegistering = _registeringPushServerIds.contains(
@@ -158,8 +164,10 @@ class _ServersScreenState extends State<ServersScreen> {
                         : 'Direct ${config.host}:${config.port}';
                     final notificationsLabel = pushRegistered
                         ? 'Notifications on'
+                        : pushDisabled
+                        ? 'Notifications off'
                         : isConnected
-                        ? 'Notifications not registered'
+                        ? 'Notifications registering'
                         : 'Notifications will register when connected';
                     final backendWarning = provider.backendWarningForServer(
                       config.id,
@@ -322,7 +330,7 @@ class _ServersScreenState extends State<ServersScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(existing != null ? 'Edit Server' : 'Add Server'),
+          title: Text(existing != null ? 'Edit Computer' : 'Add Computer'),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -331,7 +339,7 @@ class _ServersScreenState extends State<ServersScreen> {
                   controller: nameCtrl,
                   decoration: const InputDecoration(
                     labelText: 'Name',
-                    hintText: 'Home Server',
+                    hintText: 'Home Computer',
                     border: OutlineInputBorder(),
                     prefixIcon: Icon(Icons.label),
                   ),
@@ -351,7 +359,9 @@ class _ServersScreenState extends State<ServersScreen> {
                   contentPadding: EdgeInsets.zero,
                   value: expectedOnline,
                   title: const Text('Expected to stay online'),
-                  subtitle: const Text('Warn when this server is unavailable'),
+                  subtitle: const Text(
+                    'Warn when this computer is unavailable',
+                  ),
                   secondary: const Icon(Icons.power_settings_new_outlined),
                   onChanged: (value) =>
                       setDialogState(() => expectedOnline = value),
@@ -368,7 +378,7 @@ class _ServersScreenState extends State<ServersScreen> {
                         : null,
                     helperText: canEditSystemPrompt
                         ? null
-                        : 'Connect to this server to edit',
+                        : 'Connect to this computer to edit',
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.description),
                     alignLabelWithHint: true,
@@ -487,8 +497,8 @@ class _ServersScreenState extends State<ServersScreen> {
                       Expanded(
                         child: Text(
                           existing?.isRelayPaired == true
-                              ? 'Relay pairing is saved for this server.'
-                              : 'Scan the server QR code to pair this relay connection.',
+                              ? 'Relay pairing is saved for this computer.'
+                              : 'Scan the computer pairing code to connect through the relay.',
                           style: TextStyle(
                             fontSize: 13,
                             color: Theme.of(
@@ -543,7 +553,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     controller: pubkeyCtrl,
                     obscureText: !pubkeyVis,
                     decoration: InputDecoration(
-                      labelText: 'Server Public Key',
+                      labelText: 'Computer Public Key',
                       hintText: 'Paste from pairing QR',
                       border: const OutlineInputBorder(),
                       prefixIcon: const Icon(Icons.verified_user),
@@ -583,7 +593,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     ScaffoldMessenger.of(ctx).showSnackBar(
                       const SnackBar(
                         content: Text(
-                          'Enter a host and server public key for direct connection',
+                          'Enter an address and computer public key for direct connection',
                         ),
                       ),
                     );
@@ -618,7 +628,7 @@ class _ServersScreenState extends State<ServersScreen> {
                   if (name.isEmpty) {
                     ScaffoldMessenger.of(ctx).showSnackBar(
                       const SnackBar(
-                        content: Text('Enter a name for the server'),
+                        content: Text('Enter a name for the computer'),
                       ),
                     );
                     return;
@@ -994,6 +1004,7 @@ class _ServersScreenState extends State<ServersScreen> {
     final plugins = provider.serverPlugins(config.id);
     final hasOutlookAuth = plugins.contains('outlook-auth');
     final pushRegistered = provider.isPushRegisteredForServer(config.id);
+    final pushDisabled = provider.isPushDisabledForServer(config.id);
     final pushRegistering = _registeringPushServerIds.contains(config.id);
 
     showModalBottomSheet(
@@ -1017,18 +1028,24 @@ class _ServersScreenState extends State<ServersScreen> {
                 leading: Icon(
                   pushRegistered
                       ? Icons.notifications_active_outlined
+                      : pushDisabled
+                      ? Icons.notifications_off_outlined
                       : Icons.notification_add_outlined,
                   color: pushRegistered ? Colors.green : null,
                 ),
                 title: Text(
                   pushRegistered
                       ? 'Notifications Registered'
-                      : 'Register Notifications',
+                      : pushDisabled
+                      ? 'Enable Notifications'
+                      : 'Retry Notification Registration',
                 ),
                 subtitle: Text(
                   pushRegistered
                       ? 'This phone is registered for ${config.name}'
-                      : 'Register this phone for ${config.name}',
+                      : pushDisabled
+                      ? 'Notifications are disabled for ${config.name}'
+                      : 'Automatic registration is still pending',
                   style: const TextStyle(fontSize: 12),
                 ),
                 enabled: !pushRegistered && !pushRegistering,
@@ -1137,7 +1154,7 @@ class _ServersScreenState extends State<ServersScreen> {
                 leading: const Icon(Icons.cloud),
                 title: const Text('Use Relay Connection'),
                 subtitle: const Text(
-                  'Switch this server back to relay',
+                  'Switch this computer back to relay',
                   style: TextStyle(fontSize: 12),
                 ),
                 onTap: () async {
@@ -1155,7 +1172,7 @@ class _ServersScreenState extends State<ServersScreen> {
                 leading: const Icon(Icons.qr_code_scanner),
                 title: const Text('Pair Relay Connection'),
                 subtitle: const Text(
-                  'Scan a relay QR for this server',
+                  'Scan a relay pairing code for this computer',
                   style: TextStyle(fontSize: 12),
                 ),
                 onTap: () {
@@ -1618,8 +1635,8 @@ class _ServersScreenState extends State<ServersScreen> {
                 if (running != null) const SizedBox(height: 12),
                 Text(
                   info['gitAvailable'] == false
-                      ? 'This server was not installed from a git checkout, so in-app updates are unavailable.'
-                      : 'This server did not return git version details.',
+                      ? 'SocketAgent on this computer was not installed from a git checkout, so in-app updates are unavailable.'
+                      : 'This computer did not return SocketAgent version details.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -1629,7 +1646,7 @@ class _ServersScreenState extends State<ServersScreen> {
               if (runningStale) ...[
                 const SizedBox(height: 12),
                 Text(
-                  'The checkout is newer than the running server process. Restart/update this server to load the current code.',
+                  'The checkout is newer than the running SocketAgent process. Restart or update SocketAgent on this computer to load the current code.',
                   style: const TextStyle(fontSize: 12, color: Colors.orange),
                 ),
               ],
@@ -1747,7 +1764,7 @@ class _ServersScreenState extends State<ServersScreen> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete Server?'),
+        title: const Text('Delete Computer?'),
         content: Text(
           'Remove "${config.name}" and all its sessions from the list?',
         ),

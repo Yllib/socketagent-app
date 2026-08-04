@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../models/message.dart';
+import '../services/socketagent_link_router.dart';
 import 'scroll_passthrough.dart';
 
 class QuestionCard extends StatefulWidget {
   final ChatMessage message;
   final void Function(String questionId, Map<String, String> answers) onAnswer;
+  final String? sourceServerId;
 
   const QuestionCard({
     super.key,
     required this.message,
     required this.onAnswer,
+    this.sourceServerId,
   });
 
   @override
@@ -159,7 +162,16 @@ class _QuestionCardState extends State<QuestionCard> {
               child: Scrollbar(
                 child: SingleChildScrollView(
                   child: MarkdownBody(
-                    data: question.question,
+                    data: SocketAgentLinkRouter.prepareMarkdown(
+                      question.question,
+                    ),
+                    onTapLink: (text, href, title) {
+                      SocketAgentLinkRouter.open(
+                        context,
+                        href,
+                        sourceServerId: widget.sourceServerId,
+                      );
+                    },
                     styleSheet: MarkdownStyleSheet(
                       p: TextStyle(
                         fontSize: 13,
@@ -396,7 +408,14 @@ class _QuestionCardState extends State<QuestionCard> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: MarkdownBody(
-                data: option.preview!,
+                data: SocketAgentLinkRouter.prepareMarkdown(option.preview!),
+                onTapLink: (text, href, title) {
+                  SocketAgentLinkRouter.open(
+                    context,
+                    href,
+                    sourceServerId: widget.sourceServerId,
+                  );
+                },
                 styleSheet: MarkdownStyleSheet(
                   p: TextStyle(
                     fontSize: 12,

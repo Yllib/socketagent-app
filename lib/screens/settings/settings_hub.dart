@@ -31,7 +31,7 @@ class SettingsHub extends StatelessWidget {
               _buildCategoryTile(
                 context,
                 icon: Icons.dns_outlined,
-                title: 'Servers',
+                title: 'Computers',
                 subtitle: _serversSubtitle(provider),
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const ServersScreen()),
@@ -89,7 +89,7 @@ class SettingsHub extends StatelessWidget {
               _buildCategoryTile(
                 context,
                 icon: Icons.folder_open_outlined,
-                title: 'Server Files',
+                title: 'Computer Files',
                 subtitle: 'Browse files and manage agent protection',
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const FileManagerScreen()),
@@ -132,7 +132,7 @@ class SettingsHub extends StatelessWidget {
 
   String _serversSubtitle(ChatProvider provider) {
     final configs = provider.serverConfigs;
-    if (configs.isEmpty) return 'No servers configured';
+    if (configs.isEmpty) return 'No computers configured';
     final connected = configs
         .where(
           (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
@@ -151,7 +151,7 @@ class SettingsHub extends StatelessWidget {
         engine = 'System TTS';
         break;
       case TtsEngineMode.kokoroServer:
-        engine = 'Kokoro (Server)';
+        engine = 'Kokoro (Computer)';
         break;
       case TtsEngineMode.kokoroDevice:
         engine = 'Kokoro (On-Device)';

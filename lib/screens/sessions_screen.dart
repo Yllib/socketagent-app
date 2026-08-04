@@ -11,6 +11,7 @@ import 'archive_screen.dart';
 import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
+import 'session_browser_screen.dart';
 
 class SessionsTab extends StatefulWidget {
   const SessionsTab({super.key});
@@ -28,11 +29,166 @@ class _SessionsTabState extends State<SessionsTab> {
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _collapsedDelegatedParents = {};
+  Timer? _globalSearchDebounce;
+  int _globalSearchGeneration = 0;
+  bool _globalSearchLoading = false;
+  List<Map<String, dynamic>> _globalSearchResults = const [];
 
   @override
   void dispose() {
+    _globalSearchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _showSessionActionMenu(
+    BuildContext context,
+    ChatProvider provider,
+  ) async {
+    final mode = await showModalBottomSheet<SessionBrowserMode>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const CircleAvatar(
+                child: Icon(Icons.add_comment_outlined),
+              ),
+              title: const Text('New session'),
+              subtitle: const Text('Choose a computer and working folder'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  Navigator.pop(sheetContext, SessionBrowserMode.create),
+            ),
+            ListTile(
+              leading: const CircleAvatar(child: Icon(Icons.history)),
+              title: const Text('Resume session'),
+              subtitle: const Text('Browse Claude and Codex history'),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () =>
+                  Navigator.pop(sheetContext, SessionBrowserMode.resume),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (mode == null || !context.mounted) return;
+
+    final result = await Navigator.of(context).push<SessionBrowserResult>(
+      MaterialPageRoute(
+        builder: (_) => SessionBrowserScreen(
+          mode: mode,
+          initialServerId: _serverIdForNewSession(provider),
+        ),
+      ),
+    );
+    if (result == null || !context.mounted) return;
+
+    if (mode == SessionBrowserMode.resume && result.sessionId != null) {
+      await _openSession(
+        context,
+        sessionId: result.sessionId,
+        cwd: result.cwd,
+        serverId: result.serverId,
+        backend: result.backend,
+        sdkSession: !result.tracked,
+      );
+      return;
+    }
+
+    final supported = provider.backendsForServer(result.serverId);
+    String backend = provider.preferredBackendForServer(result.serverId);
+    if (supported.length > 1) {
+      final selection = await _pickServerAndBackend(
+        context,
+        provider,
+        presetServerId: result.serverId,
+      );
+      if (selection == null || !context.mounted) return;
+      backend = selection.backend;
+    }
+    await _openSession(
+      context,
+      cwd: result.cwd,
+      serverId: result.serverId,
+      backend: backend,
+    );
+  }
+
+  void _handleSearchChanged(String value) {
+    setState(() => _searchQuery = value);
+    _globalSearchDebounce?.cancel();
+    if (value.trim().isEmpty) {
+      setState(() {
+        _globalSearchLoading = false;
+        _globalSearchResults = const [];
+      });
+      return;
+    }
+    _globalSearchDebounce = Timer(
+      const Duration(milliseconds: 280),
+      () => unawaited(_runGlobalSearch(value.trim())),
+    );
+  }
+
+  Future<void> _runGlobalSearch(String query) async {
+    final provider = context.read<ChatProvider>();
+    final generation = ++_globalSearchGeneration;
+    setState(() => _globalSearchLoading = true);
+    final connected = provider.serverConfigs.where(
+      (server) =>
+          provider.connMgr.statusOf(server.id) == ConnectionStatus.connected,
+    );
+    final batches = await Future.wait(
+      connected.map((server) async {
+        try {
+          final computerMatches = server.name.toLowerCase().contains(
+            query.toLowerCase(),
+          );
+          final page = await provider.requestSdkSessions(
+            '',
+            serverId: server.id,
+            all: true,
+            query: computerMatches ? '' : query,
+            limit: 500,
+          );
+          return page.sessions
+              .map(
+                (session) => <String, dynamic>{
+                  ...session,
+                  '_serverId': server.id,
+                  '_serverName': server.name,
+                },
+              )
+              .toList();
+        } catch (_) {
+          return <Map<String, dynamic>>[];
+        }
+      }),
+    );
+    if (!mounted || generation != _globalSearchGeneration) return;
+    final deduped = <String, Map<String, dynamic>>{};
+    for (final session in batches.expand((batch) => batch)) {
+      final key = [
+        session['_serverId'],
+        session['backend'] ?? 'claude',
+        session['sessionId'],
+      ].join(':');
+      deduped[key] = session;
+    }
+    final results = deduped.values.toList()
+      ..sort(
+        (left, right) => (right['lastActive']?.toString() ?? '').compareTo(
+          left['lastActive']?.toString() ?? '',
+        ),
+      );
+    setState(() {
+      _globalSearchResults = results;
+      _globalSearchLoading = false;
+    });
   }
 
   Future<bool> _requireSubscription() async {
@@ -203,7 +359,7 @@ class _SessionsTabState extends State<SessionsTab> {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                       child: Text(
-                        'Server',
+                        'Computer',
                         style: Theme.of(context).textTheme.labelSmall,
                       ),
                     ),
@@ -389,7 +545,7 @@ class _SessionsTabState extends State<SessionsTab> {
     final check = provider.lastCwdCheck;
     final exists = check?['exists'] == true;
     final isDirectory = check?['isDirectory'] == true;
-    final timedOut = check?['error'] == 'Timed out waiting for server';
+    final timedOut = check?['error'] == 'Timed out waiting for computer';
     final firstLine = timedOut
         ? '$path could not be checked.'
         : exists && !isDirectory
@@ -402,7 +558,7 @@ class _SessionsTabState extends State<SessionsTab> {
     final serverName = server?.name ?? provider.connMgr.activeConfig?.name;
     if (serverName != null && serverName.isNotEmpty) {
       lines.add('');
-      lines.add('Server: $serverName');
+      lines.add('Computer: $serverName');
     }
     if (check != null) {
       final resolved = check['resolvedPath'] as String?;
@@ -422,8 +578,8 @@ class _SessionsTabState extends State<SessionsTab> {
           expanded != resolved) {
         lines.add('Expanded: $expanded');
       }
-      if (user != null && user.isNotEmpty) lines.add('Server user: $user');
-      if (home != null && home.isNotEmpty) lines.add('Server home: $home');
+      if (user != null && user.isNotEmpty) lines.add('Computer user: $user');
+      if (home != null && home.isNotEmpty) lines.add('Computer home: $home');
       if (platform != null && platform.isNotEmpty) {
         lines.add('Platform: $platform');
       }
@@ -521,6 +677,9 @@ class _SessionsTabState extends State<SessionsTab> {
   /// make), recent paths collapse into a horizontal chip strip, and "Start
   /// new session here" is a single FilledButton CTA — so the user can either
   /// pick from past sessions or create a new one with one tap each.
+  // Kept temporarily as a compatibility fallback while the new full-screen
+  // launcher rolls out to older server versions.
+  // ignore: unused_element
   void _showCwdPicker(BuildContext context, {String? initialServerId}) {
     final provider = context.read<ChatProvider>();
     final hasMultipleServers = provider.serverConfigs.length > 1;
@@ -673,7 +832,7 @@ class _SessionsTabState extends State<SessionsTab> {
                   ConnectionStatus.connected;
               serverChipWidget = PopupMenuButton<String>(
                 initialValue: selectedServerId,
-                tooltip: 'Switch server',
+                tooltip: 'Switch computer',
                 position: PopupMenuPosition.under,
                 onSelected: (id) {
                   final previousDefault = _defaultCwdForServer(
@@ -850,7 +1009,7 @@ class _SessionsTabState extends State<SessionsTab> {
                           const SizedBox(width: 8),
                           IconButton(
                             icon: const Icon(Icons.account_tree_outlined),
-                            tooltip: 'Browse server filesystem',
+                            tooltip: 'Browse computer filesystem',
                             onPressed: () async {
                               final picked = await _showFolderBrowser(
                                 context,
@@ -1084,35 +1243,10 @@ class _SessionsTabState extends State<SessionsTab> {
                                               .withAlpha(128),
                                         ),
                                       ),
-                                      if (sessionBackend == 'codex') ...[
-                                        const SizedBox(width: 6),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 5,
-                                            vertical: 1,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: Theme.of(context)
-                                                .colorScheme
-                                                .tertiaryContainer
-                                                .withAlpha(170),
-                                            borderRadius: BorderRadius.circular(
-                                              4,
-                                            ),
-                                          ),
-                                          child: Text(
-                                            'CODEX',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              fontWeight: FontWeight.w600,
-                                              letterSpacing: 0.5,
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onTertiaryContainer,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
+                                      const SizedBox(width: 6),
+                                      _BackendBadge(
+                                        backend: sessionBackend ?? 'claude',
+                                      ),
                                     ],
                                   ),
                                   onTap: () {
@@ -1319,12 +1453,12 @@ class _SessionsTabState extends State<SessionsTab> {
   String _serverFilterLabel(ChatProvider provider) {
     if (_connectedOnlyFilter) return 'Connected only';
     final selected = _selectedServerFilterId;
-    if (selected == null) return 'All servers';
+    if (selected == null) return 'All computers';
     return provider.serverConfigs
             .where((config) => config.id == selected)
             .firstOrNull
             ?.name ??
-        'All servers';
+        'All computers';
   }
 
   bool _matchesSessionFilters(ChatProvider provider, Session session) {
@@ -1373,7 +1507,7 @@ class _SessionsTabState extends State<SessionsTab> {
             children: [
               ListTile(
                 leading: const Icon(Icons.all_inbox),
-                title: const Text('All servers'),
+                title: const Text('All computers'),
                 subtitle: Text('${sessions.length} sessions'),
                 selected:
                     _selectedServerFilterId == null && !_connectedOnlyFilter,
@@ -1507,6 +1641,10 @@ class _SessionsTabState extends State<SessionsTab> {
                       if (!_searchOpen) {
                         _searchQuery = '';
                         _searchController.clear();
+                        _globalSearchDebounce?.cancel();
+                        _globalSearchGeneration++;
+                        _globalSearchLoading = false;
+                        _globalSearchResults = const [];
                       }
                     });
                   },
@@ -1522,6 +1660,10 @@ class _SessionsTabState extends State<SessionsTab> {
                         _backendFilter = null;
                         _searchQuery = '';
                         _searchController.clear();
+                        _globalSearchDebounce?.cancel();
+                        _globalSearchGeneration++;
+                        _globalSearchLoading = false;
+                        _globalSearchResults = const [];
                       });
                     },
                   ),
@@ -1535,7 +1677,7 @@ class _SessionsTabState extends State<SessionsTab> {
                 controller: _searchController,
                 autofocus: true,
                 decoration: InputDecoration(
-                  hintText: 'Search title, path, preview, server...',
+                  hintText: 'Search every computer and session...',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _searchQuery.isEmpty
                       ? null
@@ -1545,6 +1687,10 @@ class _SessionsTabState extends State<SessionsTab> {
                             setState(() {
                               _searchQuery = '';
                               _searchController.clear();
+                              _globalSearchDebounce?.cancel();
+                              _globalSearchGeneration++;
+                              _globalSearchLoading = false;
+                              _globalSearchResults = const [];
                             });
                           },
                         ),
@@ -1553,7 +1699,7 @@ class _SessionsTabState extends State<SessionsTab> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onChanged: (value) => setState(() => _searchQuery = value),
+                onChanged: _handleSearchChanged,
               ),
             ),
           Divider(
@@ -1643,6 +1789,98 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
+  Widget _buildGlobalSearchResults(
+    BuildContext context,
+    ChatProvider provider,
+  ) {
+    final visible = _globalSearchResults.where((session) {
+      if (_selectedServerFilterId != null &&
+          session['_serverId'] != _selectedServerFilterId) {
+        return false;
+      }
+      if (_backendFilter != null &&
+          (session['backend'] ?? 'claude') != _backendFilter) {
+        return false;
+      }
+      return true;
+    }).toList();
+    if (_globalSearchLoading && visible.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (visible.isEmpty) {
+      return Center(
+        child: Text(
+          'No matching sessions on connected computers',
+          style: TextStyle(color: Theme.of(context).colorScheme.outline),
+        ),
+      );
+    }
+    return Column(
+      children: [
+        if (_globalSearchLoading) const LinearProgressIndicator(minHeight: 2),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.only(bottom: 80),
+            itemCount: visible.length,
+            separatorBuilder: (_, __) => const Divider(height: 1, indent: 56),
+            itemBuilder: (context, index) {
+              final session = visible[index];
+              final backend = session['backend']?.toString() ?? 'claude';
+              final title = session['title']?.toString().trim();
+              final preview = session['firstMessage']?.toString() ?? '';
+              final cwd = session['cwd']?.toString() ?? '';
+              final serverId = session['_serverId']?.toString() ?? '';
+              final serverName = session['_serverName']?.toString() ?? '';
+              return ListTile(
+                leading: CircleAvatar(
+                  child: Icon(
+                    backend == 'codex' ? Icons.code : Icons.psychology_alt,
+                    size: 18,
+                  ),
+                ),
+                title: Text(
+                  title != null && title.isNotEmpty ? title : preview,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text(
+                  [
+                    serverName,
+                    _backendLabel(backend),
+                    if (cwd.isNotEmpty) _projectLabelForCwd(cwd),
+                    _formatSessionTime(session['lastActive']?.toString()),
+                  ].where((part) => part.isNotEmpty).join(' · '),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => _openSession(
+                  context,
+                  sessionId: session['sessionId']?.toString(),
+                  cwd: cwd,
+                  serverId: serverId,
+                  backend: backend,
+                  sdkSession: session['tracked'] != true,
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _formatSessionTime(String? raw) {
+    final value = DateTime.tryParse(raw ?? '');
+    if (value == null) return '';
+    final age = DateTime.now().difference(value);
+    if (age.inMinutes < 1) return 'just now';
+    if (age.inHours < 1) return '${age.inMinutes}m ago';
+    if (age.inDays < 1) return '${age.inHours}h ago';
+    if (age.inDays < 30) return '${age.inDays}d ago';
+    return '${value.month}/${value.day}/${value.year}';
+  }
+
   Widget _buildSessionSectionHeader(
     BuildContext context,
     String title,
@@ -1709,49 +1947,18 @@ class _SessionsTabState extends State<SessionsTab> {
             children: [
               _buildUpdateBanner(context),
               _buildFilterChipBar(context, provider),
-              if (provider.sessions.isEmpty)
+              if (_searchQuery.trim().isNotEmpty)
+                Expanded(child: _buildGlobalSearchResults(context, provider))
+              else if (provider.sessions.isEmpty)
                 Expanded(child: _buildEmptyState(context))
               else
                 Expanded(child: _buildSectionedSessionList(context, provider)),
             ],
           ),
-          // Single entry point for new sessions: the CWD picker. The picker
-          // also includes backend selection when the chosen server supports
-          // both Claude and Codex, so it's a one-sheet flow.
-          floatingActionButton: Material(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            borderRadius: BorderRadius.circular(20),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(20),
-              onTap: () => _showCwdPicker(
-                context,
-                initialServerId: _serverIdForNewSession(provider),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 8,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.folder_open,
-                      size: 16,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Choose directory...',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: () => _showSessionActionMenu(context, provider),
+            icon: const Icon(Icons.add),
+            label: const Text('Session'),
           ),
         );
       },
@@ -1885,7 +2092,7 @@ class _SessionsTabState extends State<SessionsTab> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Choose a directory to start',
+            'Start a new session or resume an existing one',
             style: TextStyle(
               fontSize: 14,
               color: Theme.of(context).colorScheme.outline.withAlpha(178),
@@ -1963,7 +2170,7 @@ class _SessionsTabState extends State<SessionsTab> {
                 leading: const Icon(Icons.move_up_outlined),
                 title: const Text('Teleport Session'),
                 subtitle: const Text(
-                  'Move or clone to another server or harness',
+                  'Move or clone to another computer or harness',
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -2031,7 +2238,7 @@ class _SessionsTabState extends State<SessionsTab> {
                     session.id,
                   );
                   return effective.isNotEmpty
-                      ? 'Using server default'
+                      ? 'Using computer default'
                       : 'Not set';
                 }()),
                 onTap: () {
@@ -2106,7 +2313,7 @@ class _SessionsTabState extends State<SessionsTab> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'The source server must be connected to transfer this session',
+            'The source computer must be connected to transfer this session',
           ),
         ),
       );
@@ -2186,7 +2393,7 @@ class _SessionsTabState extends State<SessionsTab> {
               if (move && sameNativeTarget) {
                 setSheetState(
                   () => error =
-                      'A move on the same server must switch harnesses. '
+                      'A move on the same computer must switch harnesses. '
                       'Choose Clone to duplicate it instead.',
                 );
                 return;
@@ -2309,7 +2516,7 @@ class _SessionsTabState extends State<SessionsTab> {
                       key: ValueKey('teleport-server-$destinationServerId'),
                       initialValue: destinationServerId,
                       decoration: const InputDecoration(
-                        labelText: 'Destination server',
+                        labelText: 'Destination computer',
                         border: OutlineInputBorder(),
                       ),
                       items: connectedServers
@@ -2559,7 +2766,7 @@ class _SessionsTabState extends State<SessionsTab> {
           children: [
             if (serverDefault.isNotEmpty && sessionPrompt.isEmpty) ...[
               Text(
-                'Server default:',
+                'Computer default:',
                 style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
@@ -2586,7 +2793,7 @@ class _SessionsTabState extends State<SessionsTab> {
               ),
               const SizedBox(height: 12),
               Text(
-                'Override for this session (leave empty to use server default):',
+                'Override for this session (leave empty to use computer default):',
                 style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurface.withAlpha(128),
@@ -3170,31 +3377,10 @@ class _SessionsTabState extends State<SessionsTab> {
                               ),
                             ),
                           ],
-                          // Codex sessions get a small badge so mixed backend
-                          // lists are easy to scan.
-                          if (session.backend == 'codex') ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 1,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.tertiaryContainer
-                                    .withAlpha(170),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                'CODEX',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.5,
-                                  color: theme.colorScheme.onTertiaryContainer,
-                                ),
-                              ),
-                            ),
-                          ],
+                          // Always identify the harness so mixed and
+                          // single-backend lists use the same visual language.
+                          const SizedBox(width: 6),
+                          _BackendBadge(backend: session.backend ?? 'claude'),
                           if (delegated) ...[
                             const SizedBox(width: 6),
                             Container(
@@ -3252,10 +3438,44 @@ class _SessionsTabState extends State<SessionsTab> {
   void _showOfflineSessionSnack(BuildContext context, Session session) {
     final server = session.serverName.isNotEmpty
         ? session.serverName
-        : 'server';
+        : 'computer';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('$server is offline. Reconnect it to open this session.'),
+      ),
+    );
+  }
+}
+
+class _BackendBadge extends StatelessWidget {
+  final String backend;
+
+  const _BackendBadge({required this.backend});
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isCodex = backend == 'codex';
+    final background = isCodex
+        ? theme.colorScheme.tertiaryContainer
+        : theme.colorScheme.primaryContainer;
+    final foreground = isCodex
+        ? theme.colorScheme.onTertiaryContainer
+        : theme.colorScheme.onPrimaryContainer;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+      decoration: BoxDecoration(
+        color: background.withAlpha(170),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        isCodex ? 'CODEX' : 'CLAUDE',
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.5,
+          color: foreground,
+        ),
       ),
     );
   }

@@ -144,7 +144,7 @@ class _SecretManagerSheetState extends State<SecretManagerSheet> {
                       ),
                       DropdownMenuItem(
                         value: 'global',
-                        child: Text('This server'),
+                        child: Text('This computer'),
                       ),
                     ],
                     onChanged: existing == null
@@ -226,7 +226,7 @@ class _SecretManagerSheetState extends State<SecretManagerSheet> {
   }
 
   String _scopeLabel(String scope) => switch (scope) {
-    'global' => 'This server',
+    'global' => 'This computer',
     'project' => 'Current project',
     _ => 'Current session',
   };

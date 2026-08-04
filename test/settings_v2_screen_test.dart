@@ -132,12 +132,12 @@ void main() {
     expect(find.text('SocketAgent is up to date'), findsOneWidget);
 
     await tester.scrollUntilVisible(
-      find.text('Export Server Configs'),
+      find.text('Export Computers'),
       500,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Export Server Configs'), findsOneWidget);
-    expect(find.text('Import Server Configs'), findsOneWidget);
+    expect(find.text('Export Computers'), findsOneWidget);
+    expect(find.text('Import Computers'), findsOneWidget);
   });
 
   testWidgets('settings header downloads an available update directly', (

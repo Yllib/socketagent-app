@@ -137,7 +137,7 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
 
   Future<void> _saveViaWebSocket(Map<String, dynamic> payload) async {
     if (widget.serverConfig == null) {
-      throw Exception('No server selected');
+      throw Exception('No computer selected');
     }
     final connMgr = context.read<ChatProvider>().connMgr;
     final serverId = widget.serverConfig!.id;

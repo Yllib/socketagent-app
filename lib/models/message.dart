@@ -35,6 +35,7 @@ enum MessageType {
   codexCommand,
   htmlPlan,
   workReview,
+  runBoundary,
 }
 
 class ChatMessage {
@@ -208,6 +209,28 @@ class ChatMessage {
       toolName: command,
       toolInput: {'command': command, 'status': status, 'payload': payload},
       parentToolUseId: 'codex_slash_$command',
+    );
+  }
+
+  factory ChatMessage.runBoundary(Map<String, dynamic> entry) {
+    final runId = entry['runId']?.toString() ?? '';
+    return ChatMessage(
+      id: entry['entryId']?.toString().isNotEmpty == true
+          ? entry['entryId'].toString()
+          : 'run_boundary_$runId',
+      sender: MessageSender.system,
+      type: MessageType.runBoundary,
+      timestamp:
+          DateTime.tryParse(entry['runFinishedAt']?.toString() ?? '') ??
+          DateTime.tryParse(entry['timestamp']?.toString() ?? '') ??
+          DateTime.now(),
+      textContent: entry['runOutcome']?.toString() ?? 'completed',
+      toolName: 'run_boundary',
+      toolUseId: runId,
+      toolInput: Map<String, dynamic>.from(entry),
+      entryId: entry['entryId']?.toString(),
+      sessionSeq: (entry['sessionSeq'] as num?)?.toInt(),
+      revision: (entry['revision'] as num?)?.toInt() ?? 0,
     );
   }
 
@@ -496,6 +519,124 @@ class QuestionOption {
   }
 }
 
+class SessionRunCurrent {
+  final String runId;
+  final DateTime startedAt;
+
+  const SessionRunCurrent({required this.runId, required this.startedAt});
+
+  factory SessionRunCurrent.fromJson(Map<String, dynamic> json) =>
+      SessionRunCurrent(
+        runId: json['runId']?.toString() ?? '',
+        startedAt:
+            DateTime.tryParse(json['startedAt']?.toString() ?? '') ??
+            DateTime.now(),
+      );
+
+  Map<String, dynamic> toJson() => {
+    'runId': runId,
+    'startedAt': startedAt.toIso8601String(),
+  };
+}
+
+class SessionRunStats {
+  final SessionRunCurrent? current;
+  final int completedCount;
+  final int totalDurationMs;
+  final int? averageDurationMs;
+  final int? longestDurationMs;
+  final int? shortestDurationMs;
+  final DateTime? lastCompletedAt;
+  final List<SessionRunRecord> recentRuns;
+
+  const SessionRunStats({
+    this.current,
+    this.completedCount = 0,
+    this.totalDurationMs = 0,
+    this.averageDurationMs,
+    this.longestDurationMs,
+    this.shortestDurationMs,
+    this.lastCompletedAt,
+    this.recentRuns = const [],
+  });
+
+  factory SessionRunStats.fromJson(Map<String, dynamic> json) {
+    final rawCurrent = json['current'];
+    return SessionRunStats(
+      current: rawCurrent is Map
+          ? SessionRunCurrent.fromJson(Map<String, dynamic>.from(rawCurrent))
+          : null,
+      completedCount: (json['completedCount'] as num?)?.toInt() ?? 0,
+      totalDurationMs: (json['totalDurationMs'] as num?)?.toInt() ?? 0,
+      averageDurationMs: (json['averageDurationMs'] as num?)?.toInt(),
+      longestDurationMs: (json['longestDurationMs'] as num?)?.toInt(),
+      shortestDurationMs: (json['shortestDurationMs'] as num?)?.toInt(),
+      lastCompletedAt: DateTime.tryParse(
+        json['lastCompletedAt']?.toString() ?? '',
+      ),
+      recentRuns: (json['recentRuns'] as List? ?? const [])
+          .whereType<Map>()
+          .map(
+            (run) => SessionRunRecord.fromJson(Map<String, dynamic>.from(run)),
+          )
+          .toList(),
+    );
+  }
+
+  Map<String, dynamic> toJson() => {
+    if (current != null) 'current': current!.toJson(),
+    'completedCount': completedCount,
+    'totalDurationMs': totalDurationMs,
+    'averageDurationMs': averageDurationMs,
+    'longestDurationMs': longestDurationMs,
+    'shortestDurationMs': shortestDurationMs,
+    if (lastCompletedAt != null)
+      'lastCompletedAt': lastCompletedAt!.toIso8601String(),
+    'recentRuns': recentRuns.map((run) => run.toJson()).toList(),
+  };
+}
+
+class SessionRunRecord {
+  final String runId;
+  final int runNumber;
+  final DateTime startedAt;
+  final DateTime finishedAt;
+  final int durationMs;
+  final String outcome;
+
+  const SessionRunRecord({
+    required this.runId,
+    required this.runNumber,
+    required this.startedAt,
+    required this.finishedAt,
+    required this.durationMs,
+    required this.outcome,
+  });
+
+  factory SessionRunRecord.fromJson(Map<String, dynamic> json) =>
+      SessionRunRecord(
+        runId: json['runId']?.toString() ?? '',
+        runNumber: (json['runNumber'] as num?)?.toInt() ?? 0,
+        startedAt:
+            DateTime.tryParse(json['startedAt']?.toString() ?? '') ??
+            DateTime.now(),
+        finishedAt:
+            DateTime.tryParse(json['finishedAt']?.toString() ?? '') ??
+            DateTime.now(),
+        durationMs: (json['durationMs'] as num?)?.toInt() ?? 0,
+        outcome: json['outcome']?.toString() ?? 'completed',
+      );
+
+  Map<String, dynamic> toJson() => {
+    'runId': runId,
+    'runNumber': runNumber,
+    'startedAt': startedAt.toIso8601String(),
+    'finishedAt': finishedAt.toIso8601String(),
+    'durationMs': durationMs,
+    'outcome': outcome,
+  };
+}
+
 class Session {
   final String id;
   final String title;
@@ -506,6 +647,7 @@ class Session {
   final int turnCount;
   final bool running;
   final String? activeStartedAt;
+  final SessionRunStats? runStats;
   final String serverId;
   final String serverName;
   final int? serverColor;
@@ -528,6 +670,7 @@ class Session {
     this.turnCount = 0,
     this.running = false,
     this.activeStartedAt,
+    this.runStats,
     this.serverId = '',
     this.serverName = '',
     this.serverColor,
@@ -548,6 +691,11 @@ class Session {
       turnCount: (json['turnCount'] as num?)?.toInt() ?? 0,
       running: json['running'] == true,
       activeStartedAt: json['activeStartedAt'] as String?,
+      runStats: json['runStats'] is Map
+          ? SessionRunStats.fromJson(
+              Map<String, dynamic>.from(json['runStats'] as Map),
+            )
+          : null,
       serverId: json['serverId'] ?? '',
       serverName: json['serverName'] ?? '',
       serverColor: json['serverColor'] as int?,
@@ -568,6 +716,7 @@ class Session {
     'turnCount': turnCount,
     'running': running,
     'activeStartedAt': activeStartedAt,
+    if (runStats != null) 'runStats': runStats!.toJson(),
     'serverId': serverId,
     'serverName': serverName,
     'serverColor': serverColor,
@@ -587,6 +736,7 @@ class Session {
     int? turnCount,
     bool? running,
     String? activeStartedAt,
+    SessionRunStats? runStats,
     String? serverId,
     String? serverName,
     int? serverColor,
@@ -606,6 +756,7 @@ class Session {
       running: running ?? this.running,
       activeStartedAt:
           activeStartedAt ?? (running == false ? null : this.activeStartedAt),
+      runStats: runStats ?? this.runStats,
       serverId: serverId ?? this.serverId,
       serverName: serverName ?? this.serverName,
       serverColor: serverColor ?? this.serverColor,
@@ -631,6 +782,7 @@ class Session {
       turnCount: turnCount,
       running: running,
       activeStartedAt: activeStartedAt,
+      runStats: runStats,
       serverId: serverId,
       serverName: serverName,
       serverColor: serverColor,

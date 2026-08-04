@@ -727,7 +727,7 @@ class WorkReviewRepository extends ChangeNotifier {
     if (!sent) {
       _finishRequests.remove(requestId);
       _publishing.remove(key);
-      _errors[key] = 'Could not publish while the server is disconnected';
+      _errors[key] = 'Could not publish while the computer is disconnected';
       notifyListeners();
       return false;
     }
@@ -737,7 +737,7 @@ class WorkReviewRepository extends ChangeNotifier {
         _finishRequests.remove(requestId);
         _publishing.remove(key);
         _errors[key] =
-            'The server did not confirm that this review was published';
+            'The computer did not confirm that this review was published';
         notifyListeners();
         return false;
       },
@@ -834,7 +834,7 @@ class WorkReviewRepository extends ChangeNotifier {
       onTimeout: () {
         _lifecycleRequests.remove(requestId);
         _changingLifecycle.remove(key);
-        _errors[key] = 'The server did not confirm the review update';
+        _errors[key] = 'The computer did not confirm the review update';
         notifyListeners();
         return false;
       },

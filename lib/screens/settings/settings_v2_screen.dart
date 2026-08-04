@@ -10,11 +10,13 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
+import '../../services/notification_service.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../file_manager_screen.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
+import '../connect_computer_screen.dart';
 import '../ibs_auth_screen.dart';
 import '../outlook_auth_screen.dart';
 import '../pair_screen.dart';
@@ -199,7 +201,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     if (imported != null && imported > 0 && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Imported $imported server${imported == 1 ? '' : 's'}'),
+          content: Text(
+            'Imported $imported computer${imported == 1 ? '' : 's'}',
+          ),
         ),
       );
     }
@@ -251,20 +255,20 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                 ],
               ),
               _SettingsGroup(
-                title: 'Servers',
+                title: 'Computers',
                 action: IconButton(
-                  tooltip: 'Add server',
+                  tooltip: 'Add computer',
                   icon: const Icon(Icons.add_circle_outline, size: 22),
-                  onPressed: () => _showServerDialog(context, provider),
+                  onPressed: () => _openConnectComputer(context),
                 ),
                 children: configs.isEmpty
                     ? [
                         _NavTile(
                           icon: Icons.add_circle_outline,
-                          title: 'No servers configured',
-                          subtitle: 'Add a relay or direct server',
+                          title: 'No computers configured',
+                          subtitle: 'Scan a pairing code or connect directly',
                           trailing: Icons.chevron_right,
-                          onTap: () => _showServerDialog(context, provider),
+                          onTap: () => _openConnectComputer(context),
                         ),
                       ]
                     : [
@@ -291,7 +295,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                   _NavTile(
                     icon: Icons.auto_fix_high,
                     title: 'Skills, Plugins & Commands',
-                    subtitle: 'Configured per connected server',
+                    subtitle: 'Configured per connected computer',
                     trailing: Icons.chevron_right,
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const SkillsScreen()),
@@ -321,8 +325,8 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                 children: [
                   _NavTile(
                     icon: Icons.folder_open_outlined,
-                    title: 'Server Files',
-                    subtitle: 'Browse connected server file systems',
+                    title: 'Computer Files',
+                    subtitle: 'Browse connected computer file systems',
                     trailing: Icons.chevron_right,
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
@@ -354,7 +358,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                   ),
                   _NavTile(
                     icon: Icons.qr_code,
-                    title: 'Export Server Configs',
+                    title: 'Export Computers',
                     subtitle: 'Create an encrypted transfer QR code',
                     trailing: Icons.chevron_right,
                     onTap: () => Navigator.of(context).push(
@@ -365,7 +369,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                   ),
                   _NavTile(
                     icon: Icons.qr_code_scanner,
-                    title: 'Import Server Configs',
+                    title: 'Import Computers',
                     subtitle: 'Scan or paste an encrypted config export',
                     trailing: Icons.chevron_right,
                     onTap: _openConfigImport,
@@ -412,10 +416,10 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
       items.add(
         _AttentionItem(
           icon: Icons.dns_outlined,
-          title: 'No servers configured',
-          subtitle: 'Add or pair a SocketAgent server',
+          title: 'No computers configured',
+          subtitle: 'Scan a pairing code or connect directly',
           severity: _AttentionSeverity.warning,
-          onTap: () => _showServerDialog(context, provider),
+          onTap: () => _openConnectComputer(context),
         ),
       );
     }
@@ -425,7 +429,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           icon: Icons.cloud_off_outlined,
           title: 'Relay sign-in required',
           subtitle:
-              '${relayServers.length} relay server${relayServers.length == 1 ? '' : 's'} configured',
+              '${relayServers.length} relay computer${relayServers.length == 1 ? '' : 's'} configured',
           severity: _AttentionSeverity.error,
           onTap: () => Navigator.of(
             context,
@@ -438,12 +442,12 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
         _AttentionItem(
           icon: Icons.link_off,
           title:
-              '${expectedOffline.length} expected server${expectedOffline.length == 1 ? '' : 's'} offline',
+              '${expectedOffline.length} expected computer${expectedOffline.length == 1 ? '' : 's'} offline',
           subtitle: _serverNames(expectedOffline),
           severity: _AttentionSeverity.warning,
           onTap: () => _openServerList(
             context,
-            'Expected Servers Offline',
+            'Expected Computers Offline',
             expectedOffline,
           ),
         ),
@@ -557,8 +561,8 @@ class _SettingsV2ServerDetailScreenState
             .firstOrNull;
         if (config == null) {
           return Scaffold(
-            appBar: AppBar(title: const Text('Server')),
-            body: const Center(child: Text('Server not found')),
+            appBar: AppBar(title: const Text('Computer')),
+            body: const Center(child: Text('Computer not found')),
           );
         }
 
@@ -567,26 +571,28 @@ class _SettingsV2ServerDetailScreenState
         final health = provider.backendHealthForServer(config.id);
         final plugins = provider.serverPlugins(config.id);
         final runtime = provider.serverRuntimeInfo(config.id);
+        final pushRegistered = provider.isPushRegisteredForServer(config.id);
+        final pushDisabled = provider.isPushDisabledForServer(config.id);
 
         return Scaffold(
           appBar: AppBar(
             title: Text(config.name),
             actions: [
               IconButton(
-                tooltip: 'Refresh server settings',
+                tooltip: 'Refresh computer settings',
                 icon: const Icon(Icons.refresh),
                 onPressed: connected
                     ? () => provider.requestServerSettings(serverId: config.id)
                     : null,
               ),
               IconButton(
-                tooltip: 'Edit server',
+                tooltip: 'Edit computer',
                 icon: const Icon(Icons.edit_outlined),
                 onPressed: () =>
                     _showServerDialog(context, provider, existing: config),
               ),
               IconButton(
-                tooltip: 'Delete server',
+                tooltip: 'Delete computer',
                 icon: const Icon(Icons.delete_outline),
                 onPressed: () => _confirmDeleteServer(
                   context,
@@ -661,7 +667,7 @@ class _SettingsV2ServerDetailScreenState
                 children: [
                   _NavTile(
                     icon: Icons.system_update,
-                    title: 'Server updates',
+                    title: 'SocketAgent updates',
                     subtitle: _serverVersionSubtitle(runtime, connected),
                     trailing: connected ? Icons.chevron_right : null,
                     onTap: connected
@@ -689,7 +695,7 @@ class _SettingsV2ServerDetailScreenState
                           icon: Icons.health_and_safety_outlined,
                           title: 'No backend details yet',
                           subtitle: connected
-                              ? 'Refresh server settings'
+                              ? 'Refresh computer settings'
                               : 'Connect to load backend status',
                           trailing: connected ? Icons.refresh : null,
                           onTap: connected
@@ -712,32 +718,34 @@ class _SettingsV2ServerDetailScreenState
                 title: 'Notifications',
                 children: [
                   _DetailRow(
-                    icon: provider.isPushRegisteredForServer(config.id)
+                    icon: pushRegistered
                         ? Icons.notifications_active_outlined
+                        : pushDisabled
+                        ? Icons.notifications_off_outlined
                         : Icons.notifications_none,
                     title: 'This phone',
-                    subtitle: provider.isPushRegisteredForServer(config.id)
-                        ? 'Registered for server notifications'
+                    subtitle: pushRegistered
+                        ? 'Registered for computer notifications'
+                        : pushDisabled
+                        ? 'Notifications explicitly disabled for this computer'
                         : connected
-                        ? 'Not registered'
-                        : 'Server offline',
-                    trailing: provider.isPushRegisteredForServer(config.id)
-                        ? 'On'
-                        : 'Off',
+                        ? 'Automatic registration pending'
+                        : 'Computer offline',
+                    trailing: pushRegistered ? 'On' : 'Off',
                   ),
-                  if (connected &&
-                      !provider.isPushRegisteredForServer(config.id))
+                  if (connected && !pushRegistered)
                     _ButtonRow(
                       primaryLabel: _registeringPush
                           ? 'Registering'
-                          : 'Register Notifications',
+                          : pushDisabled
+                          ? 'Enable Notifications'
+                          : 'Retry Registration',
                       primaryIcon: Icons.notification_add_outlined,
                       onPrimary: _registeringPush
                           ? null
                           : () => _registerPush(provider, config),
                     )
-                  else if (connected &&
-                      provider.isPushRegisteredForServer(config.id))
+                  else if (connected && pushRegistered)
                     _ButtonRow(
                       primaryLabel: _registeringPush
                           ? 'Updating'
@@ -794,7 +802,7 @@ class _SettingsV2ServerDetailScreenState
                     icon: Icons.folder_outlined,
                     title: 'Default directory',
                     subtitle: config.defaultCwd.isEmpty
-                        ? 'Server default'
+                        ? 'Computer default'
                         : config.defaultCwd,
                   ),
                   _DetailRow(
@@ -846,7 +854,7 @@ class _SettingsV2ServerDetailScreenState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'This is the default for Claude sessions on this server. '
+                'This is the default for Claude sessions on this computer. '
                 'Leave it blank to let the Claude SDK choose for each model.',
               ),
               const SizedBox(height: 16),
@@ -1031,7 +1039,7 @@ class _Overview extends StatelessWidget {
               Expanded(
                 child: _MetricChip(
                   icon: Icons.dns_outlined,
-                  label: 'Servers',
+                  label: 'Computers',
                   value: '$connected online',
                   tone: expectedOffline > 0
                       ? _ChipTone.warning
@@ -1412,7 +1420,7 @@ Future<bool?> _confirmBackendReauth(
     builder: (dialogContext) => AlertDialog(
       title: Text('$backendName is already signed in'),
       content: Text(
-        'You can keep the current sign-in, or start a new $backendName sign-in and replace the existing authentication on this server.',
+        'You can keep the current sign-in, or start a new $backendName sign-in and replace the existing authentication on this computer.',
       ),
       actions: [
         TextButton(
@@ -1919,9 +1927,9 @@ class _RelayTile extends StatelessWidget {
           : Icons.cloud_off_outlined,
       title: 'Relay access',
       subtitle: relayCount == 0
-          ? 'No relay servers configured'
+          ? 'No relay computers configured'
           : provider.hasCachedRelayAccess
-          ? '$relayCount relay server${relayCount == 1 ? '' : 's'}'
+          ? '$relayCount relay computer${relayCount == 1 ? '' : 's'}'
           : 'Sign in required',
       trailing: provider.hasCachedRelayAccess ? 'Ready' : 'Off',
     );
@@ -2033,7 +2041,42 @@ class _BillingPortalScreen extends StatelessWidget {
   }
 }
 
-class _NotificationSummaryTile extends StatelessWidget {
+class _NotificationSummaryTile extends StatefulWidget {
+  @override
+  State<_NotificationSummaryTile> createState() =>
+      _NotificationSummaryTileState();
+}
+
+class _NotificationSummaryTileState extends State<_NotificationSummaryTile>
+    with WidgetsBindingObserver {
+  Future<bool>? _androidNotificationsEnabled;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshPermission();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _refreshPermission();
+  }
+
+  void _refreshPermission() {
+    if (!mounted) return;
+    setState(() {
+      _androidNotificationsEnabled = NotificationService()
+          .areNotificationsEnabled();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -2045,20 +2088,40 @@ class _NotificationSummaryTile extends StatelessWidget {
             .where((c) => provider.isPushRegisteredForServer(c.id))
             .length;
 
-        return _NavTile(
-          icon: Icons.notifications_none,
-          title: 'Server notifications',
-          subtitle: connected.isEmpty
-              ? 'No connected servers'
-              : '$registered of ${connected.length} connected servers registered',
-          trailing: connected.isEmpty ? null : Icons.chevron_right,
-          onTap: connected.isEmpty
-              ? null
-              : () => _openServerList(
-                  context,
-                  'Notification Registration',
-                  connected.toList(),
-                ),
+        return FutureBuilder<bool>(
+          future: _androidNotificationsEnabled,
+          builder: (context, snapshot) {
+            final permissionKnown = snapshot.hasData;
+            final permissionEnabled = snapshot.data ?? true;
+            return _NavTile(
+              icon: permissionKnown && !permissionEnabled
+                  ? Icons.notifications_off_outlined
+                  : Icons.notifications_none,
+              iconColor: permissionKnown && !permissionEnabled
+                  ? Colors.red
+                  : null,
+              title: 'Computer notifications',
+              subtitle: permissionKnown && !permissionEnabled
+                  ? 'Blocked by Android — tap to enable'
+                  : connected.isEmpty
+                  ? 'Android notifications on · no connected computers'
+                  : 'Android notifications on · $registered of ${connected.length} computers enrolled',
+              trailing: permissionKnown && !permissionEnabled
+                  ? Icons.settings_outlined
+                  : connected.isEmpty
+                  ? null
+                  : Icons.chevron_right,
+              onTap: permissionKnown && !permissionEnabled
+                  ? () => NotificationService().openNotificationSettings()
+                  : connected.isEmpty
+                  ? null
+                  : () => _openServerList(
+                      context,
+                      'Notification Registration',
+                      connected.toList(),
+                    ),
+            );
+          },
         );
       },
     );
@@ -2087,6 +2150,7 @@ class _NavTile extends StatelessWidget {
     required this.icon,
     required this.title,
     required this.subtitle,
+    this.iconColor,
     this.trailing,
     this.onTap,
   });
@@ -2094,13 +2158,14 @@ class _NavTile extends StatelessWidget {
   final IconData icon;
   final String title;
   final String subtitle;
+  final Color? iconColor;
   final IconData? trailing;
   final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: Icon(icon),
+      leading: Icon(icon, color: iconColor),
       title: Text(title),
       subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: trailing == null ? null : Icon(trailing),
@@ -2285,7 +2350,7 @@ List<Widget> _integrationTiles(BuildContext context, ChatProvider provider) {
         subtitle: _serverNames(outlookServers),
         trailing: Icons.chevron_right,
         onTap: () =>
-            _openServerList(context, 'Outlook Servers', outlookServers),
+            _openServerList(context, 'Outlook Computers', outlookServers),
       ),
     if (ibsServers.isNotEmpty)
       _NavTile(
@@ -2293,7 +2358,7 @@ List<Widget> _integrationTiles(BuildContext context, ChatProvider provider) {
         title: 'IBS',
         subtitle: _serverNames(ibsServers),
         trailing: Icons.chevron_right,
-        onTap: () => _openServerList(context, 'IBS Servers', ibsServers),
+        onTap: () => _openServerList(context, 'IBS Computers', ibsServers),
       ),
   ];
 }
@@ -2309,6 +2374,12 @@ List<ServerConfig> _serversWithPlugin(
 
 String _serverNames(List<ServerConfig> servers) {
   return servers.map((server) => server.name).join(', ');
+}
+
+void _openConnectComputer(BuildContext context) {
+  Navigator.of(
+    context,
+  ).push(MaterialPageRoute(builder: (_) => const ConnectComputerScreen()));
 }
 
 void _openServerList(
@@ -2406,7 +2477,7 @@ void _showServerDialog(
     context: context,
     builder: (dialogContext) => StatefulBuilder(
       builder: (dialogContext, setDialogState) => AlertDialog(
-        title: Text(existing == null ? 'Add Server' : 'Edit Server'),
+        title: Text(existing == null ? 'Add Computer' : 'Edit Computer'),
         content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -2415,7 +2486,7 @@ void _showServerDialog(
                 controller: nameCtrl,
                 decoration: const InputDecoration(
                   labelText: 'Name',
-                  hintText: 'Home Server',
+                  hintText: 'Home Computer',
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.label),
                 ),
@@ -2435,7 +2506,7 @@ void _showServerDialog(
                 contentPadding: EdgeInsets.zero,
                 value: expectedOnline,
                 title: const Text('Expected to stay online'),
-                subtitle: const Text('Warn when this server is unavailable'),
+                subtitle: const Text('Warn when this computer is unavailable'),
                 secondary: const Icon(Icons.power_settings_new_outlined),
                 onChanged: (value) =>
                     setDialogState(() => expectedOnline = value),
@@ -2452,7 +2523,7 @@ void _showServerDialog(
                       : null,
                   helperText: canEditSystemPrompt
                       ? null
-                      : 'Connect to this server to edit',
+                      : 'Connect to this computer to edit',
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.description),
                   alignLabelWithHint: true,
@@ -2587,7 +2658,7 @@ void _showServerDialog(
                   controller: pubkeyCtrl,
                   obscureText: !pubkeyVisible,
                   decoration: InputDecoration(
-                    labelText: 'Server Public Key',
+                    labelText: 'Computer Public Key',
                     hintText: 'Paste from pairing QR',
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.verified_user),
@@ -2645,8 +2716,8 @@ void _showServerDialog(
                   SnackBar(
                     content: Text(
                       useRelay
-                          ? 'Enter a name for the server'
-                          : 'Enter a host and server public key for direct connection',
+                          ? 'Enter a name for the computer'
+                          : 'Enter a host and computer public key for direct connection',
                     ),
                   ),
                 );
@@ -2714,8 +2785,8 @@ class _RelayPairingNote extends StatelessWidget {
         Expanded(
           child: Text(
             isPaired
-                ? 'Relay pairing is saved for this server.'
-                : 'After saving, scan the server QR code to pair relay.',
+                ? 'Relay pairing is saved for this computer.'
+                : 'After saving, scan the computer QR code to pair relay.',
             style: TextStyle(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
@@ -2924,8 +2995,8 @@ Future<void> _showVersionCheck(
                 padding: EdgeInsets.only(top: running != null ? 12 : 0),
                 child: Text(
                   info['gitAvailable'] == false
-                      ? 'This server was not installed from a git checkout, so in-app updates are unavailable.'
-                      : 'This server did not return git version details.',
+                      ? 'This computer was not installed from a git checkout, so in-app updates are unavailable.'
+                      : 'This computer did not return SocketAgent version details.',
                   style: TextStyle(
                     fontSize: 12,
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -2935,7 +3006,7 @@ Future<void> _showVersionCheck(
             if (runningStale) ...[
               const SizedBox(height: 12),
               const Text(
-                'The checkout is newer than the running server process. Restart/update this server to load the current code.',
+                'The checkout is newer than the running SocketAgent process. Restart or update this computer to load the current code.',
                 style: TextStyle(fontSize: 12, color: Colors.orange),
               ),
             ],
@@ -3045,7 +3116,7 @@ void _confirmDeleteServer(
   showDialog(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      title: const Text('Delete Server?'),
+      title: const Text('Delete Computer?'),
       content: Text('Remove "${config.name}" and its cached sessions?'),
       actions: [
         TextButton(
@@ -3116,7 +3187,7 @@ bool _sameCommitish(Object? left, Object? right) {
 }
 
 String _serverVersionSubtitle(Map<String, dynamic> runtime, bool connected) {
-  if (!connected) return 'Connect to check server version and updates';
+  if (!connected) return 'Connect to check SocketAgent version and updates';
   final build = ServerBuildInfo.fromRuntime(runtime);
   if (build.isEmpty) {
     return 'Check current version and available updates';

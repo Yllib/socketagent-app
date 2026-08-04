@@ -93,7 +93,7 @@ class _WorkReviewsScreenState extends State<WorkReviewsScreen> {
                   SizedBox(height: 120),
                   Icon(Icons.fact_check_outlined, size: 52),
                   SizedBox(height: 16),
-                  Center(child: Text('No work reviews on this server')),
+                  Center(child: Text('No work reviews on this computer')),
                 ],
               ),
             );

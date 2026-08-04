@@ -107,7 +107,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     if (serverId == null) {
       setState(() {
         _loading = false;
-        _error = 'No SocketAgent server configured';
+        _error = 'No computer connected';
       });
       return;
     }
@@ -189,12 +189,12 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(selected == null ? 'Server Files' : selected.name),
+            title: Text(selected == null ? 'Computer Files' : selected.name),
             actions: [
               if (servers.length > 1)
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.dns_outlined),
-                  tooltip: 'Server',
+                  tooltip: 'Computer',
                   onSelected: (id) {
                     setState(() {
                       _serverId = id;
@@ -394,9 +394,16 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       );
     }
 
-    if (_initialActionHandled || widget.initialAction != 'view') return;
+    if (_initialActionHandled ||
+        (widget.initialAction != 'view' && widget.initialAction != 'open')) {
+      return;
+    }
     _initialActionHandled = true;
     final entry = listing.entries[index];
+    if (widget.initialAction == 'open' && entry.isDirectory) {
+      _load(entry.path);
+      return;
+    }
     if (_canPreview(entry)) {
       _previewEntry(entry);
     } else {
