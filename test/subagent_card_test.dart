@@ -63,4 +63,42 @@ void main() {
     expect(find.text('Agent failed'), findsOneWidget);
     expect(find.byType(CircularProgressIndicator), findsNothing);
   });
+
+  testWidgets('delegated response expands from preview to full result', (
+    tester,
+  ) async {
+    final message = ChatMessage.toolCall(
+      tool: 'DelegatedAgentResult',
+      input: {
+        'description': 'Audit the parser',
+        'prompt': 'Inspect all session events',
+        'subagent_type': 'codex',
+        '_task_status': 'completed',
+        '_delegated_response': true,
+      },
+      toolUseId: 'delegated-agent-result:1:1',
+    )..toolOutput = 'A complete delegated response for the supervisor.';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SubAgentCard(
+            message: message,
+            childMessages: const [],
+            isRunning: false,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Subagent response'), findsOneWidget);
+    expect(find.text('Audit the parser'), findsOneWidget);
+    await tester.tap(find.text('Subagent response'));
+    await tester.pumpAndSettle();
+    expect(find.text('RESPONSE'), findsOneWidget);
+    expect(
+      find.text('A complete delegated response for the supervisor.'),
+      findsOneWidget,
+    );
+  });
 }

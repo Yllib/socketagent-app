@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
+import '../services/socketagent_link_router.dart';
 import 'tool_output_block.dart';
 import 'message_bubble.dart';
 import 'speak_card.dart';
@@ -61,6 +63,9 @@ class _SubAgentCardState extends State<SubAgentCard> {
         (widget.isRunning ? 'running' : 'completed');
   }
 
+  bool get _isDelegatedResponse =>
+      widget.message.toolInput?['_delegated_response'] == true;
+
   String get _progressSummary {
     return widget.message.toolInput?['_progress_summary']?.toString() ?? '';
   }
@@ -102,7 +107,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
     final hasChildren = widget.childMessages.isNotEmpty;
     final hasPrompt = _prompt.isNotEmpty;
     final hasResult = _resultOutput.isNotEmpty;
-    final hasExpandableContent = hasChildren || hasPrompt;
+    final hasExpandableContent = hasChildren || hasPrompt || hasResult;
     final green = widget.greenTheme;
     final failed = _taskStatus == 'failed' || _taskStatus == 'errored';
     final stopped = _taskStatus == 'stopped' || _taskStatus == 'interrupted';
@@ -116,9 +121,15 @@ class _SubAgentCardState extends State<SubAgentCard> {
     final statusLabel = widget.isRunning
         ? 'Sub Agent'
         : failed
-        ? 'Failed'
+        ? _isDelegatedResponse
+              ? 'Subagent failed'
+              : 'Failed'
         : stopped
-        ? 'Stopped'
+        ? _isDelegatedResponse
+              ? 'Subagent stopped'
+              : 'Stopped'
+        : _isDelegatedResponse
+        ? 'Subagent response'
         : 'Completed';
 
     return Container(
@@ -249,7 +260,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
               ),
             ),
           // Response section (always visible when completed with result)
-          if (isDone && hasResult)
+          if (isDone && hasResult && !_expanded)
             Container(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: Text(
@@ -283,6 +294,12 @@ class _SubAgentCardState extends State<SubAgentCard> {
                           label: 'PROMPT',
                           labelColor: const Color(0xFF89B4FA),
                           content: _prompt,
+                        ),
+                      if (hasResult)
+                        _buildSection(
+                          label: _isDelegatedResponse ? 'RESPONSE' : 'RESULT',
+                          labelColor: accentColor,
+                          content: _resultOutput,
                         ),
                       // Child messages
                       ...widget.childMessages.map(
@@ -322,12 +339,27 @@ class _SubAgentCardState extends State<SubAgentCard> {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            content,
-            style: GoogleFonts.jetBrainsMono(
-              fontSize: 10,
-              color: const Color(0xFFCDD6F4),
-              height: 1.4,
+          MarkdownBody(
+            data: SocketAgentLinkRouter.prepareMarkdown(content),
+            selectable: true,
+            onTapLink: (text, href, title) {
+              SocketAgentLinkRouter.open(
+                context,
+                href,
+                sourceServerId: widget.sourceServerId,
+              );
+            },
+            styleSheet: MarkdownStyleSheet(
+              p: GoogleFonts.jetBrainsMono(
+                fontSize: 10,
+                color: const Color(0xFFCDD6F4),
+                height: 1.4,
+              ),
+              code: GoogleFonts.jetBrainsMono(
+                fontSize: 10,
+                color: const Color(0xFFF5C2E7),
+                backgroundColor: const Color(0xFF181825),
+              ),
             ),
           ),
         ],

@@ -1302,6 +1302,15 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         if (CodexActivityCard.supports(msg)) {
           return CodexActivityCard(message: msg);
         }
+        if (msg.toolName == 'DelegatedAgentResult') {
+          return SubAgentCard(
+            message: msg,
+            childMessages: const [],
+            isRunning: false,
+            greenTheme: msg.toolInput?['_task_status'] == 'completed',
+            sourceServerId: widget.serverId,
+          );
+        }
         // Task tool calls get a dedicated SubAgentCard
         if ((msg.toolName == 'Task' || msg.toolName == 'Agent') &&
             msg.toolUseId != null &&
