@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -13,7 +12,6 @@ import '../connect_computer_screen.dart';
 import '../paywall_screen.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
-import '../outlook_auth_screen.dart';
 
 class ServersScreen extends StatefulWidget {
   const ServersScreen({super.key});
@@ -1118,12 +1116,12 @@ class _ServersScreenState extends State<ServersScreen> {
                 leading: const Icon(Icons.mail_lock),
                 title: const Text('Outlook Sign-In'),
                 subtitle: const Text(
-                  'Refresh email tokens',
+                  'Refresh Outlook Web session',
                   style: TextStyle(fontSize: 12),
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
-                  _startOutlookAuth(context, provider, config);
+                  _showPrivateIntegrationHelp(context, config);
                 },
               ),
             if (!isConnected)
@@ -1482,34 +1480,27 @@ class _ServersScreenState extends State<ServersScreen> {
     });
   }
 
-  Future<void> _startOutlookAuth(
+  Future<void> _showPrivateIntegrationHelp(
     BuildContext context,
-    ChatProvider provider,
     ServerConfig config,
   ) async {
-    final result = await Navigator.of(context).push<Map<String, dynamic>>(
-      MaterialPageRoute(builder: (_) => const OutlookAuthScreen()),
-    );
-
-    if (result == null || !mounted) return;
-
-    // Generate an authRequestId and send tokens as an answer to this specific server
-    final authRequestId =
-        'outlook_auth_${DateTime.now().millisecondsSinceEpoch}_manual';
-    provider.connMgr.sendToServer(config.id, {
-      'type': 'answer',
-      'questionId': authRequestId,
-      'answers': {'tokens': jsonEncode(result)},
-    });
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Outlook tokens sent to ${config.name}'),
-          backgroundColor: Colors.green,
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Outlook sign-in'),
+        content: Text(
+          'Open a session on ${config.name} and ask the agent to connect or '
+          'reconnect Outlook. The computer will send a protected, '
+          'host-specific authorization card to that session.',
         ),
-      );
-    }
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showVersionCheck(

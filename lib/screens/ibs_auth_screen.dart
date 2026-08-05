@@ -3,12 +3,17 @@ import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/window_security_service.dart';
 
-/// WebView screen that loads IBS (ibs.johnsoncontrols.com) and captures
-/// session cookies after the user completes Microsoft SSO authentication.
-/// Unlike OutlookAuthScreen which intercepts XHR/fetch for OAuth tokens,
-/// this screen uses the WebView cookie manager to extract browser cookies.
+/// WebView screen that loads the server-approved IBS page and captures cookies
+/// only for the exact HTTPS origins supplied with the authorization request.
 class IBSAuthScreen extends StatefulWidget {
-  const IBSAuthScreen({super.key});
+  final String startUrl;
+  final List<String> captureOrigins;
+
+  const IBSAuthScreen({
+    super.key,
+    required this.startUrl,
+    required this.captureOrigins,
+  });
 
   @override
   State<IBSAuthScreen> createState() => _IBSAuthScreenState();
@@ -20,10 +25,16 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
 
   bool _authenticated = false;
   bool _loading = true;
+  late final Set<String> _captureOrigins;
 
   @override
   void initState() {
     super.initState();
+    _captureOrigins = widget.captureOrigins
+        .map(Uri.parse)
+        .where((uri) => uri.scheme == 'https' && uri.host.isNotEmpty)
+        .map((uri) => uri.origin)
+        .toSet();
     // Enable FLAG_SECURE to prevent screenshots during SSO auth
     WindowSecurityService.enableScreenshotProtection();
     // Clear existing cookies so we get a fresh SSO login
@@ -35,30 +46,29 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
         'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
         '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       )
-      ..setNavigationDelegate(NavigationDelegate(
-        onPageStarted: (url) {
-          setState(() {
-            _loading = true;
-          });
-        },
-        onPageFinished: (url) {
-          setState(() {
-            _loading = false;
-            // Detect successful auth: URL is back on ibs.johnsoncontrols.com
-            if (url.contains('ibs.johnsoncontrols.com') &&
-                !url.contains('login.microsoftonline.com')) {
-              _authenticated = true;
-            }
-          });
-        },
-        onNavigationRequest: (request) {
-          // Allow all navigation (SSO redirects)
-          return NavigationDecision.navigate;
-        },
-      ))
-      ..loadRequest(
-        Uri.parse('https://ibs.johnsoncontrols.com/iis-fl/app/indexPage'),
-      );
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageStarted: (url) {
+            setState(() {
+              _loading = true;
+            });
+          },
+          onPageFinished: (url) {
+            setState(() {
+              _loading = false;
+              final pageUri = Uri.tryParse(url);
+              if (pageUri != null && _captureOrigins.contains(pageUri.origin)) {
+                _authenticated = true;
+              }
+            });
+          },
+          onNavigationRequest: (request) {
+            // Allow all navigation (SSO redirects)
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(widget.startUrl));
   }
 
   static const _channel = MethodChannel('com.socketagent.app/intent');
@@ -68,17 +78,11 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
 
     // Use Android's native CookieManager via platform channel
     // This captures ALL cookies including httpOnly ones
-    final domains = [
-      'https://ibs.johnsoncontrols.com',
-      'https://login.microsoftonline.com',
-    ];
-
-    for (final url in domains) {
+    for (final url in _captureOrigins) {
       try {
-        final cookieString = await _channel.invokeMethod<String>(
-          'getCookies',
-          {'url': url},
-        );
+        final cookieString = await _channel.invokeMethod<String>('getCookies', {
+          'url': url,
+        });
         if (cookieString != null && cookieString.isNotEmpty) {
           final domain = Uri.parse(url).host;
           final pairs = cookieString.split('; ');
@@ -94,12 +98,16 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
           }
         }
       } catch (e) {
-        debugPrint('[IBSAuth] Error getting cookies for $url: $e');
+        debugPrint(
+          '[IBSAuth] Cookie capture failed for an approved origin: ${e.runtimeType}',
+        );
       }
     }
 
     if (mounted) {
-      debugPrint('[IBSAuth] Captured ${cookies.length} cookies (native CookieManager)');
+      debugPrint(
+        '[IBSAuth] Captured ${cookies.length} cookies (native CookieManager)',
+      );
       Navigator.of(context).pop(cookies);
     }
   }
@@ -134,8 +142,7 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
       ),
       body: Column(
         children: [
-          if (_loading)
-            const LinearProgressIndicator(),
+          if (_loading) const LinearProgressIndicator(),
           if (_authenticated)
             Container(
               width: double.infinity,
@@ -143,7 +150,11 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
               color: Colors.green.shade50,
               child: Row(
                 children: [
-                  Icon(Icons.check_circle, size: 16, color: Colors.green.shade700),
+                  Icon(
+                    Icons.check_circle,
+                    size: 16,
+                    color: Colors.green.shade700,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     'Authenticated — tap Save & Close',
@@ -156,9 +167,7 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
                 ],
               ),
             ),
-          Expanded(
-            child: WebViewWidget(controller: _controller),
-          ),
+          Expanded(child: WebViewWidget(controller: _controller)),
         ],
       ),
     );

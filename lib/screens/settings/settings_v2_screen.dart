@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,8 +16,6 @@ import '../file_manager_screen.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
 import '../connect_computer_screen.dart';
-import '../ibs_auth_screen.dart';
-import '../outlook_auth_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
 import '../paywall_screen.dart';
@@ -767,11 +764,14 @@ class _SettingsV2ServerDetailScreenState
                         icon: Icons.mail_lock_outlined,
                         title: 'Outlook Sign-In',
                         subtitle: connected
-                            ? 'Refresh email tokens'
-                            : 'Connect to refresh email tokens',
+                            ? 'Refresh Outlook Web session'
+                            : 'Connect Outlook Web session',
                         trailing: connected ? Icons.open_in_new : null,
                         onTap: connected
-                            ? () => _startOutlookAuth(provider, config)
+                            ? () => _showPrivateIntegrationHelp(
+                                config,
+                                integration: 'Outlook',
+                              )
                             : null,
                       ),
                     if (plugins.contains('ibs-auth'))
@@ -783,7 +783,10 @@ class _SettingsV2ServerDetailScreenState
                             : 'Connect to refresh IBS session',
                         trailing: connected ? Icons.open_in_new : null,
                         onTap: connected
-                            ? () => _startIBSAuth(provider, config)
+                            ? () => _showPrivateIntegrationHelp(
+                                config,
+                                integration: 'IBS',
+                              )
                             : null,
                       ),
                   ],
@@ -944,53 +947,25 @@ class _SettingsV2ServerDetailScreenState
     );
   }
 
-  Future<void> _startOutlookAuth(
-    ChatProvider provider,
-    ServerConfig config,
-  ) async {
-    final result = await Navigator.of(context).push<Map<String, dynamic>>(
-      MaterialPageRoute(builder: (_) => const OutlookAuthScreen()),
-    );
-
-    if (result == null || !mounted) return;
-
-    final authRequestId =
-        'outlook_auth_${DateTime.now().millisecondsSinceEpoch}_manual';
-    provider.connMgr.sendToServer(config.id, {
-      'type': 'answer',
-      'questionId': authRequestId,
-      'answers': {'tokens': jsonEncode(result)},
-    });
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Outlook tokens sent to ${config.name}'),
-        backgroundColor: Colors.green,
-      ),
-    );
-  }
-
-  Future<void> _startIBSAuth(ChatProvider provider, ServerConfig config) async {
-    final result = await Navigator.of(context).push<List<Map<String, String>>>(
-      MaterialPageRoute(builder: (_) => const IBSAuthScreen()),
-    );
-
-    if (result == null || result.isEmpty || !mounted) return;
-
-    final authRequestId =
-        'ibs_auth_${DateTime.now().millisecondsSinceEpoch}_manual';
-    provider.connMgr.sendToServer(config.id, {
-      'type': 'answer',
-      'questionId': authRequestId,
-      'answers': {'cookies': jsonEncode(result)},
-    });
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('IBS cookies sent to ${config.name}'),
-        backgroundColor: Colors.green,
+  Future<void> _showPrivateIntegrationHelp(
+    ServerConfig config, {
+    required String integration,
+  }) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('$integration sign-in'),
+        content: Text(
+          'Open a session on ${config.name} and ask the agent to connect or '
+          'reconnect $integration. The computer will then send a protected, '
+          'host-specific authorization card to that session.',
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('Got it'),
+          ),
+        ],
       ),
     );
   }

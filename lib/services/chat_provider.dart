@@ -5642,7 +5642,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (authRequestId.isEmpty) return;
 
     _rememberAuthRequestRoute(authRequestId, msg, serverId);
-    _messages.add(ChatMessage.outlookAuth(authRequestId: authRequestId));
+    final startUrl = msg['startUrl'] as String?;
+    final rawOrigins = msg['captureOrigins'];
+    final captureOrigins = rawOrigins is List
+        ? rawOrigins.whereType<String>().toList(growable: false)
+        : <String>[];
+    _messages.add(
+      ChatMessage.outlookAuth(
+        authRequestId: authRequestId,
+        startUrl: startUrl,
+        captureOrigins: captureOrigins,
+      ),
+    );
     notifyListeners();
   }
 
@@ -5707,7 +5718,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (authRequestId.isEmpty) return;
 
     _rememberAuthRequestRoute(authRequestId, msg, serverId);
-    _messages.add(ChatMessage.ibsAuth(authRequestId: authRequestId));
+    final startUrl = msg['startUrl'] as String?;
+    final rawOrigins = msg['captureOrigins'];
+    final captureOrigins = rawOrigins is List
+        ? rawOrigins.whereType<String>().toList(growable: false)
+        : <String>[];
+    _messages.add(
+      ChatMessage.ibsAuth(
+        authRequestId: authRequestId,
+        startUrl: startUrl,
+        captureOrigins: captureOrigins,
+      ),
+    );
     notifyListeners();
   }
 
@@ -8870,7 +8892,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ).firstMatch(content);
             if (ibsAuthMatch != null) {
               final authRequestId = ibsAuthMatch.group(1) ?? '';
-              loaded.add(ChatMessage.ibsAuth(authRequestId: authRequestId));
+              final rawAuthRequest = entry['authRequest'];
+              final authRequest = rawAuthRequest is Map
+                  ? Map<String, dynamic>.from(rawAuthRequest)
+                  : const <String, dynamic>{};
+              final startUrl =
+                  authRequest['kind'] == 'ibs' &&
+                      authRequest['requestId'] == authRequestId
+                  ? authRequest['startUrl'] as String?
+                  : null;
+              final rawOrigins = authRequest['captureOrigins'];
+              final captureOrigins = rawOrigins is List
+                  ? rawOrigins.whereType<String>().toList(growable: false)
+                  : <String>[];
+              loaded.add(
+                ChatMessage.ibsAuth(
+                  authRequestId: authRequestId,
+                  startUrl: startUrl,
+                  captureOrigins: captureOrigins,
+                ),
+              );
+              if (startUrl != null && captureOrigins.isNotEmpty) {
+                if (serverId != null && serverId.isNotEmpty) {
+                  _authRequestServers[authRequestId] = serverId;
+                }
+                if (historySessionId != null && historySessionId.isNotEmpty) {
+                  _authRequestSessions[authRequestId] = historySessionId;
+                }
+              }
               break;
             }
             // Detect IBS auth result from history — mark the matching card answered
@@ -8956,7 +9005,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ).firstMatch(content);
             if (outlookAuthMatch != null) {
               final authRequestId = outlookAuthMatch.group(1) ?? '';
-              loaded.add(ChatMessage.outlookAuth(authRequestId: authRequestId));
+              final rawAuthRequest = entry['authRequest'];
+              final authRequest = rawAuthRequest is Map
+                  ? Map<String, dynamic>.from(rawAuthRequest)
+                  : const <String, dynamic>{};
+              final startUrl =
+                  authRequest['kind'] == 'outlook' &&
+                      authRequest['requestId'] == authRequestId
+                  ? authRequest['startUrl'] as String?
+                  : null;
+              final rawOrigins = authRequest['captureOrigins'];
+              final captureOrigins = rawOrigins is List
+                  ? rawOrigins.whereType<String>().toList(growable: false)
+                  : <String>[];
+              loaded.add(
+                ChatMessage.outlookAuth(
+                  authRequestId: authRequestId,
+                  startUrl: startUrl,
+                  captureOrigins: captureOrigins,
+                ),
+              );
+              if (startUrl != null && captureOrigins.isNotEmpty) {
+                if (serverId != null && serverId.isNotEmpty) {
+                  _authRequestServers[authRequestId] = serverId;
+                }
+                if (historySessionId != null && historySessionId.isNotEmpty) {
+                  _authRequestSessions[authRequestId] = historySessionId;
+                }
+              }
               break;
             }
             // Detect Outlook auth result from history

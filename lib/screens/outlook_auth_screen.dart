@@ -1,12 +1,22 @@
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+
 import '../services/window_security_service.dart';
 
-/// WebView screen that loads Outlook Web and captures OAuth tokens
-/// by injecting JavaScript to hook XHR and fetch requests.
+/// Protected WebView that captures only the exact approved OWA service
+/// requests needed to reproduce FindFolder and FindItem. Passwords, MFA,
+/// cookies, page bodies, and broad OAuth responses are never collected.
 class OutlookAuthScreen extends StatefulWidget {
-  const OutlookAuthScreen({super.key});
+  final String startUrl;
+  final List<String> captureOrigins;
+
+  const OutlookAuthScreen({
+    super.key,
+    required this.startUrl,
+    required this.captureOrigins,
+  });
 
   @override
   State<OutlookAuthScreen> createState() => _OutlookAuthScreenState();
@@ -14,186 +24,183 @@ class OutlookAuthScreen extends StatefulWidget {
 
 class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
   late final WebViewController _controller;
+  late final Set<String> _captureOrigins;
+  bool _loading = true;
+  String? _authorization;
+  String _contentType = 'application/json';
+  String? _findFolderTemplate;
+  String? _findItemTemplate;
 
-  final List<Map<String, dynamic>> _accessTokens = [];
-  final List<Map<String, dynamic>> _refreshTokens = [];
-  String? _clientId;
-  String? _tenantId;
-  bool _hasCapturedTokens = false;
+  bool get _ready =>
+      _authorization != null &&
+      _findFolderTemplate != null &&
+      _findItemTemplate != null;
 
   @override
   void initState() {
     super.initState();
-    // Enable FLAG_SECURE to prevent screenshots during OAuth
+    _captureOrigins = widget.captureOrigins
+        .map(Uri.tryParse)
+        .whereType<Uri>()
+        .where((uri) => uri.scheme == 'https' && uri.host.isNotEmpty)
+        .map((uri) => uri.origin)
+        .toSet();
     WindowSecurityService.enableScreenshotProtection();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      )
       ..addJavaScriptChannel(
-        'TokenCapture',
-        onMessageReceived: _onTokenCaptured,
+        'OutlookSession',
+        onMessageReceived: (message) => _handleCapture(message.message),
       )
       ..setNavigationDelegate(
-        NavigationDelegate(onPageFinished: (_) => _injectTokenCapture()),
+        NavigationDelegate(
+          onPageStarted: (_) {
+            if (mounted) setState(() => _loading = true);
+          },
+          onPageFinished: (url) async {
+            if (mounted) setState(() => _loading = false);
+            final uri = Uri.tryParse(url);
+            if (uri != null && _captureOrigins.contains(uri.origin)) {
+              await _controller.runJavaScript(_captureScript(uri.origin));
+            }
+          },
+          onNavigationRequest: (_) => NavigationDecision.navigate,
+        ),
       )
-      ..loadRequest(Uri.parse('https://webmail.jci.com'));
+      ..loadRequest(Uri.parse(widget.startUrl));
   }
 
-  /// Inject JS to hook XHR and fetch to capture OAuth tokens
-  Future<void> _injectTokenCapture() async {
-    await _controller.runJavaScript(_tokenCaptureJs);
-  }
-
-  void _onTokenCaptured(JavaScriptMessage message) {
+  String _captureScript(String approvedOrigin) {
+    final encodedOrigin = jsonEncode(approvedOrigin);
+    return '''
+(() => {
+  if (window.__socketAgentOwaCaptureInstalled) return;
+  window.__socketAgentOwaCaptureInstalled = true;
+  const approvedOrigin = $encodedOrigin;
+  const normalize = (source) => {
+    const result = {};
     try {
-      final data = jsonDecode(message.message) as Map<String, dynamic>;
-      final type = data['type'] as String?;
-
-      if (type == 'token_response') {
-        final accessToken = data['access_token'] as String?;
-        final scope = data['scope'] as String? ?? '';
-        final expiresIn = data['expires_in'] as int? ?? 3600;
-        final refreshToken = data['refresh_token'] as String?;
-        final clientId = data['client_id'] as String?;
-
-        if (accessToken != null && accessToken.isNotEmpty) {
-          _accessTokens.add({
-            'token': accessToken,
-            'scopes': scope,
-            'expiresIn': expiresIn,
-            'capturedAt': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-          });
-        }
-
-        if (refreshToken != null && refreshToken.isNotEmpty) {
-          _refreshTokens.add({
-            'token': refreshToken,
-            'clientId': clientId ?? _clientId ?? '',
-          });
-        }
-
-        if (clientId != null) _clientId = clientId;
-
-        setState(() => _hasCapturedTokens = _accessTokens.isNotEmpty);
-      } else if (type == 'bearer_token') {
-        final token = data['token'] as String?;
-        final scopes = data['scopes'] as String? ?? '';
-        if (token != null && token.isNotEmpty) {
-          // Deduplicate
-          if (!_accessTokens.any((t) => t['token'] == token)) {
-            _accessTokens.add({
-              'token': token,
-              'scopes': scopes,
-              'expiresIn': 3600,
-              'capturedAt': DateTime.now().millisecondsSinceEpoch ~/ 1000,
-            });
-            setState(() => _hasCapturedTokens = true);
-          }
-        }
-      } else if (type == 'auth_params') {
-        if (data['client_id'] != null) _clientId = data['client_id'] as String;
-        if (data['tenant_id'] != null) _tenantId = data['tenant_id'] as String;
+      if (source instanceof Headers) {
+        source.forEach((value, key) => result[String(key).toLowerCase()] = String(value));
+      } else if (Array.isArray(source)) {
+        source.forEach((pair) => {
+          if (Array.isArray(pair) && pair.length >= 2) result[String(pair[0]).toLowerCase()] = String(pair[1]);
+        });
+      } else if (source && typeof source === 'object') {
+        Object.keys(source).forEach((key) => result[String(key).toLowerCase()] = String(source[key]));
       }
-    } catch (e) {
-      debugPrint('[OutlookAuth] Error parsing token: $e');
+    } catch (_) {}
+    return result;
+  };
+  const capture = (rawUrl, rawHeaders) => {
+    try {
+      const url = new URL(String(rawUrl || ''), location.href);
+      if (url.origin !== approvedOrigin || url.pathname !== '/owa/service.svc') return;
+      const headers = normalize(rawHeaders);
+      const action = url.searchParams.get('action') || headers.action || '';
+      if (action !== 'FindFolder' && action !== 'FindItem') return;
+      const authorization = headers.authorization || '';
+      const payload = headers['x-owa-urlpostdata'] || '';
+      if (!authorization.startsWith('Bearer ') || !payload || payload.length > 1000000) return;
+      OutlookSession.postMessage(JSON.stringify({
+        origin: url.origin,
+        action: action,
+        authorization: authorization,
+        contentType: headers['content-type'] || 'application/json',
+        payload: payload
+      }));
+    } catch (_) {}
+  };
+
+  const originalOpen = XMLHttpRequest.prototype.open;
+  const originalSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
+  const originalSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.open = function(method, url) {
+    this.__saOwaUrl = url;
+    this.__saOwaHeaders = {};
+    return originalOpen.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
+    try { this.__saOwaHeaders[String(name).toLowerCase()] = String(value); } catch (_) {}
+    return originalSetRequestHeader.apply(this, arguments);
+  };
+  XMLHttpRequest.prototype.send = function() {
+    capture(this.__saOwaUrl, this.__saOwaHeaders);
+    return originalSend.apply(this, arguments);
+  };
+
+  const originalFetch = window.fetch;
+  window.fetch = function(input, init) {
+    try {
+      const request = input instanceof Request ? input : null;
+      const headers = normalize(request ? request.headers : null);
+      Object.assign(headers, normalize(init && init.headers));
+      capture(request ? request.url : input, headers);
+    } catch (_) {}
+    return originalFetch.apply(this, arguments);
+  };
+})();
+''';
+  }
+
+  void _handleCapture(String raw) {
+    try {
+      if (raw.length > 1_100_000) return;
+      final value = jsonDecode(raw);
+      if (value is! Map<String, dynamic>) return;
+      final origin = value['origin'] as String? ?? '';
+      final action = value['action'] as String? ?? '';
+      final authorization = value['authorization'] as String? ?? '';
+      final contentType = value['contentType'] as String? ?? '';
+      final payload = value['payload'] as String? ?? '';
+      if (!_captureOrigins.contains(origin) ||
+          !authorization.startsWith('Bearer ') ||
+          authorization.length > 16384 ||
+          payload.isEmpty ||
+          payload.length > 1000000 ||
+          !contentType.toLowerCase().startsWith('application/json')) {
+        return;
+      }
+      setState(() {
+        _authorization = authorization;
+        _contentType = contentType;
+        if (action == 'FindFolder') _findFolderTemplate = payload;
+        if (action == 'FindItem') _findItemTemplate = payload;
+      });
+    } catch (_) {
+      // Deliberately omit payloads and credential values from diagnostics.
     }
   }
 
   void _saveAndClose() {
-    final tokenData = {
-      'accessTokens': _accessTokens,
-      'refreshTokens': _refreshTokens,
-      'clientId': _clientId ?? '89bee1f7-5e6e-4d8a-9f3d-ecd601259da7',
-      'tenantId': _tenantId ?? 'organizations',
-    };
-    Navigator.of(context).pop(tokenData);
+    if (!_ready) return;
+    Navigator.of(context).pop({
+      'origin': _captureOrigins.single,
+      'authorization': _authorization,
+      'contentType': _contentType,
+      'findFolderTemplate': _findFolderTemplate,
+      'findItemTemplate': _findItemTemplate,
+    });
   }
-
-  /// Decode a JWT token's payload to extract claims (scopes, audience, etc.)
-  Map<String, dynamic>? _decodeJwt(String token) {
-    try {
-      final parts = token.split('.');
-      if (parts.length != 3) return null;
-      // Base64url decode the payload
-      var payload = parts[1];
-      // Add padding if needed
-      switch (payload.length % 4) {
-        case 2:
-          payload += '==';
-          break;
-        case 3:
-          payload += '=';
-          break;
-      }
-      final decoded = utf8.decode(base64Url.decode(payload));
-      return jsonDecode(decoded) as Map<String, dynamic>;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Get scope list for a token — from OAuth response or JWT payload
-  List<String> _getTokenScopeList(Map<String, dynamic> tokenInfo) {
-    // First check the captured scopes from OAuth response
-    final oauthScopes = tokenInfo['scopes'] as String? ?? '';
-    if (oauthScopes.isNotEmpty) {
-      return oauthScopes.split(' ').where((s) => s.isNotEmpty).toList();
-    }
-    // Fall back to decoding the JWT
-    final token = tokenInfo['token'] as String? ?? '';
-    final claims = _decodeJwt(token);
-    if (claims == null) return ['(unknown)'];
-    final scp = claims['scp'] as String?;
-    if (scp != null && scp.isNotEmpty) {
-      return scp.split(' ').where((s) => s.isNotEmpty).toList();
-    }
-    final roles = claims['roles'] as List?;
-    if (roles != null && roles.isNotEmpty) {
-      return roles.map((r) => r.toString()).toList();
-    }
-    return ['(no scopes)'];
-  }
-
-  /// Get the audience (aud) claim from a JWT, shortened
-  String _getTokenAudience(Map<String, dynamic> tokenInfo) {
-    final token = tokenInfo['token'] as String? ?? '';
-    final claims = _decodeJwt(token);
-    final aud = claims?['aud'] as String? ?? '(unknown)';
-    // Strip https:// prefix for readability
-    return aud.replaceFirst(RegExp(r'^https?://'), '');
-  }
-
-  /// Build grouped token data: audience → { tokens, scopes (union), expiresIn list }
-  Map<String, Map<String, dynamic>> _buildAudienceGroups() {
-    final groups = <String, Map<String, dynamic>>{};
-    for (int i = 0; i < _accessTokens.length; i++) {
-      final aud = _getTokenAudience(_accessTokens[i]);
-      final scopes = _getTokenScopeList(_accessTokens[i]);
-      final expiresIn = _accessTokens[i]['expiresIn'] as int? ?? 0;
-      if (!groups.containsKey(aud)) {
-        groups[aud] = {
-          'scopes': <String>{},
-          'tokenCount': 0,
-          'expiresIn': <int>[],
-        };
-      }
-      (groups[aud]!['scopes'] as Set<String>).addAll(scopes);
-      groups[aud]!['tokenCount'] = (groups[aud]!['tokenCount'] as int) + 1;
-      (groups[aud]!['expiresIn'] as List<int>).add(expiresIn);
-    }
-    return groups;
-  }
-
-  bool _tokenDetailsExpanded = false;
 
   @override
   void dispose() {
-    // Re-enable screenshots when leaving OAuth screen
     WindowSecurityService.disableScreenshotProtection();
     super.dispose();
+  }
+
+  Widget _status(String label, bool complete) {
+    return Row(
+      children: [
+        Icon(
+          complete ? Icons.check_circle : Icons.radio_button_unchecked,
+          size: 17,
+          color: complete ? Colors.green.shade700 : Colors.grey.shade600,
+        ),
+        const SizedBox(width: 7),
+        Text(label, style: const TextStyle(fontSize: 13)),
+      ],
+    );
   }
 
   @override
@@ -206,7 +213,7 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
           onPressed: () => Navigator.of(context).pop(null),
         ),
         actions: [
-          if (_hasCapturedTokens)
+          if (_ready)
             TextButton.icon(
               onPressed: _saveAndClose,
               icon: Icon(Icons.check, color: Colors.green.shade400),
@@ -219,418 +226,38 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
       ),
       body: Column(
         children: [
-          if (_hasCapturedTokens)
-            Container(
-              width: double.infinity,
-              color: Colors.green.shade50,
-              child: Column(
-                children: [
-                  InkWell(
-                    onTap: () => setState(
-                      () => _tokenDetailsExpanded = !_tokenDetailsExpanded,
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.check_circle,
-                            size: 16,
-                            color: Colors.green.shade700,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '${_accessTokens.length} access token(s), ${_refreshTokens.length} refresh token(s)',
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: Colors.green.shade700,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                          ),
-                          Icon(
-                            _tokenDetailsExpanded
-                                ? Icons.expand_less
-                                : Icons.expand_more,
-                            size: 20,
-                            color: Colors.green.shade700,
-                          ),
-                        ],
-                      ),
-                    ),
+          if (_loading) const LinearProgressIndicator(),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            color: _ready ? Colors.green.shade50 : Colors.blueGrey.shade50,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _ready
+                      ? 'Required Outlook session requests captured securely.'
+                      : 'Sign in normally, open Inbox, then switch folders once if needed.',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
                   ),
-                  if (_tokenDetailsExpanded)
-                    Builder(
-                      builder: (context) {
-                        final groups = _buildAudienceGroups();
-                        final hasMailScope = _accessTokens.any(
-                          (t) => (_getTokenScopeList(
-                            t,
-                          )).any((s) => s.toLowerCase().contains('mail')),
-                        );
-                        final hasDriveScope = _accessTokens.any(
-                          (t) => (_getTokenScopeList(t)).any((s) {
-                            final lower = s.toLowerCase();
-                            return lower.contains('files') ||
-                                lower.contains('sites');
-                          }),
-                        );
-                        bool isHighlightedScope(String scope) {
-                          final lower = scope.toLowerCase();
-                          return lower.contains('mail') ||
-                              lower.contains('files') ||
-                              lower.contains('sites');
-                        }
-
-                        Color scopeBg(String scope) {
-                          final lower = scope.toLowerCase();
-                          if (lower.contains('mail')) {
-                            return Colors.blue.shade100;
-                          }
-                          if (lower.contains('files') ||
-                              lower.contains('sites')) {
-                            return Colors.purple.shade50;
-                          }
-                          return Colors.green.shade50;
-                        }
-
-                        Color scopeBorder(String scope) {
-                          final lower = scope.toLowerCase();
-                          if (lower.contains('mail')) {
-                            return Colors.blue.shade300;
-                          }
-                          if (lower.contains('files') ||
-                              lower.contains('sites')) {
-                            return Colors.purple.shade200;
-                          }
-                          return Colors.green.shade200;
-                        }
-
-                        Color scopeText(String scope) {
-                          final lower = scope.toLowerCase();
-                          if (lower.contains('mail')) {
-                            return Colors.blue.shade900;
-                          }
-                          if (lower.contains('files') ||
-                              lower.contains('sites')) {
-                            return Colors.purple.shade900;
-                          }
-                          return Colors.green.shade900;
-                        }
-
-                        return Container(
-                          width: double.infinity,
-                          constraints: const BoxConstraints(maxHeight: 300),
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                for (final warning in [
-                                  if (!hasMailScope)
-                                    'No Mail scopes found — email access may fail',
-                                  if (!hasDriveScope)
-                                    'No Files/Sites scopes found — OneDrive/SharePoint access may fail',
-                                ])
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8,
-                                      vertical: 4,
-                                    ),
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    decoration: BoxDecoration(
-                                      color: Colors.orange.shade100,
-                                      borderRadius: BorderRadius.circular(6),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Icon(
-                                          Icons.warning_amber,
-                                          size: 14,
-                                          color: Colors.orange.shade800,
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Expanded(
-                                          child: Text(
-                                            warning,
-                                            style: TextStyle(
-                                              fontSize: 11,
-                                              color: Colors.orange.shade900,
-                                              fontWeight: FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                for (final entry in groups.entries) ...[
-                                  Container(
-                                    width: double.infinity,
-                                    margin: const EdgeInsets.only(bottom: 8),
-                                    padding: const EdgeInsets.all(8),
-                                    decoration: BoxDecoration(
-                                      color: Colors.green.shade100,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.language,
-                                              size: 12,
-                                              color: Colors.green.shade800,
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                entry.key,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  fontWeight: FontWeight.w700,
-                                                  color: Colors.green.shade900,
-                                                ),
-                                              ),
-                                            ),
-                                            Text(
-                                              '${entry.value['tokenCount']} token(s)',
-                                              style: TextStyle(
-                                                fontSize: 10,
-                                                color: Colors.green.shade700,
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 2,
-                                            bottom: 4,
-                                          ),
-                                          child: Text(
-                                            'expires: ${(entry.value['expiresIn'] as List<int>).map((e) => e >= 3600 ? '${(e / 3600).toStringAsFixed(1)}h' : '${e}s').join(', ')}',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.green.shade700,
-                                            ),
-                                          ),
-                                        ),
-                                        Wrap(
-                                          spacing: 4,
-                                          runSpacing: 3,
-                                          children: [
-                                            for (final scope
-                                                in (entry.value['scopes']
-                                                        as Set<String>)
-                                                    .toList()
-                                                  ..sort())
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 5,
-                                                      vertical: 2,
-                                                    ),
-                                                decoration: BoxDecoration(
-                                                  color: scopeBg(scope),
-                                                  borderRadius:
-                                                      BorderRadius.circular(4),
-                                                  border: Border.all(
-                                                    color: scopeBorder(scope),
-                                                    width: 0.5,
-                                                  ),
-                                                ),
-                                                child: Text(
-                                                  scope,
-                                                  style: TextStyle(
-                                                    fontSize: 9,
-                                                    color: scopeText(scope),
-                                                    fontWeight:
-                                                        isHighlightedScope(
-                                                          scope,
-                                                        )
-                                                        ? FontWeight.w600
-                                                        : FontWeight.normal,
-                                                  ),
-                                                ),
-                                              ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 7),
+                _status('Folder access captured', _findFolderTemplate != null),
+                const SizedBox(height: 3),
+                _status('Message access captured', _findItemTemplate != null),
+                const SizedBox(height: 5),
+                const Text(
+                  'Passwords, MFA codes, cookies, and message content are not collected.',
+                  style: TextStyle(fontSize: 11),
+                ),
+              ],
             ),
+          ),
           Expanded(child: WebViewWidget(controller: _controller)),
         ],
       ),
     );
   }
 }
-
-/// JavaScript to inject into pages to capture OAuth tokens.
-/// Hooks XMLHttpRequest and fetch to intercept token responses and Bearer headers.
-const _tokenCaptureJs = r'''
-(function() {
-  if (window.__tokenCaptureInjected) return;
-  window.__tokenCaptureInjected = true;
-
-  // --- Hook XMLHttpRequest ---
-  var origOpen = XMLHttpRequest.prototype.open;
-  var origSend = XMLHttpRequest.prototype.send;
-  var origSetRequestHeader = XMLHttpRequest.prototype.setRequestHeader;
-
-  XMLHttpRequest.prototype.open = function(method, url) {
-    this._captureUrl = url;
-    this._captureMethod = method;
-
-    // Capture client_id from OAuth authorize URLs
-    if (typeof url === 'string' && url.includes('oauth2/v2.0/authorize') && url.includes('client_id=')) {
-      try {
-        var params = new URL(url).searchParams;
-        var cid = params.get('client_id');
-        var urlParts = url.match(/\/([^\/]+)\/oauth2/);
-        var tid = urlParts ? urlParts[1] : null;
-        if (cid) {
-          TokenCapture.postMessage(JSON.stringify({
-            type: 'auth_params',
-            client_id: cid,
-            tenant_id: tid
-          }));
-        }
-      } catch(e) {}
-    }
-    return origOpen.apply(this, arguments);
-  };
-
-  // Hook setRequestHeader to capture Bearer tokens from XHR requests
-  XMLHttpRequest.prototype.setRequestHeader = function(name, value) {
-    if (name && name.toLowerCase() === 'authorization' && value && value.startsWith('Bearer ')) {
-      var url = this._captureUrl || '';
-      if (url.match(/outlook\.office|graph\.microsoft|substrate\.office/)) {
-        var token = value.substring(7);
-        TokenCapture.postMessage(JSON.stringify({
-          type: 'bearer_token',
-          token: token,
-          scopes: ''
-        }));
-      }
-    }
-    return origSetRequestHeader.apply(this, arguments);
-  };
-
-  XMLHttpRequest.prototype.send = function() {
-    var xhr = this;
-    var origOnLoad = xhr.onload;
-    var origOnReady = xhr.onreadystatechange;
-
-    function checkResponse() {
-      if (xhr.readyState !== 4) return;
-      var url = xhr._captureUrl || '';
-
-      // Capture token responses
-      if (url.includes('oauth2/v2.0/token') || url.includes('oauth2/token')) {
-        try {
-          var body = JSON.parse(xhr.responseText);
-          if (body.access_token) {
-            TokenCapture.postMessage(JSON.stringify({
-              type: 'token_response',
-              access_token: body.access_token,
-              scope: body.scope || '',
-              expires_in: body.expires_in || 3600,
-              refresh_token: body.refresh_token || null,
-              client_id: body.client_id || null
-            }));
-          }
-        } catch(e) {}
-      }
-    }
-
-    xhr.onload = function() {
-      checkResponse();
-      if (origOnLoad) origOnLoad.apply(this, arguments);
-    };
-
-    var origReady = xhr.onreadystatechange;
-    xhr.onreadystatechange = function() {
-      checkResponse();
-      if (origReady) origReady.apply(this, arguments);
-    };
-
-    return origSend.apply(this, arguments);
-  };
-
-  // --- Hook fetch ---
-  var origFetch = window.fetch;
-  window.fetch = function(input, init) {
-    var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-
-    // Capture client_id from OAuth authorize URLs
-    if (url.includes('oauth2/v2.0/authorize') && url.includes('client_id=')) {
-      try {
-        var params = new URL(url).searchParams;
-        var cid = params.get('client_id');
-        var urlParts = url.match(/\/([^\/]+)\/oauth2/);
-        var tid = urlParts ? urlParts[1] : null;
-        if (cid) {
-          TokenCapture.postMessage(JSON.stringify({
-            type: 'auth_params',
-            client_id: cid,
-            tenant_id: tid
-          }));
-        }
-      } catch(e) {}
-    }
-
-    // Capture Bearer tokens from outgoing request headers
-    if (url.match(/outlook\.office|graph\.microsoft|substrate\.office/)) {
-      var headers = (init && init.headers) || {};
-      var auth = null;
-      if (headers instanceof Headers) {
-        auth = headers.get('Authorization') || headers.get('authorization');
-      } else if (typeof headers === 'object') {
-        auth = headers['Authorization'] || headers['authorization'];
-      }
-      if (auth && auth.startsWith('Bearer ')) {
-        var token = auth.substring(7);
-        TokenCapture.postMessage(JSON.stringify({
-          type: 'bearer_token',
-          token: token,
-          scopes: ''
-        }));
-      }
-    }
-
-    return origFetch.apply(this, arguments).then(function(response) {
-      // Capture token responses
-      if (url.includes('oauth2/v2.0/token') || url.includes('oauth2/token')) {
-        response.clone().json().then(function(body) {
-          if (body.access_token) {
-            TokenCapture.postMessage(JSON.stringify({
-              type: 'token_response',
-              access_token: body.access_token,
-              scope: body.scope || '',
-              expires_in: body.expires_in || 3600,
-              refresh_token: body.refresh_token || null,
-              client_id: body.client_id || null
-            }));
-          }
-        }).catch(function() {});
-      }
-      return response;
-    });
-  };
-})();
-''';

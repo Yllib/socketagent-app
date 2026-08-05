@@ -5,7 +5,8 @@ import '../screens/outlook_auth_screen.dart';
 
 class OutlookAuthCard extends StatelessWidget {
   final ChatMessage message;
-  final void Function(String authRequestId, Map<String, String> answers) onAnswer;
+  final void Function(String authRequestId, Map<String, String> answers)
+  onAnswer;
 
   const OutlookAuthCard({
     super.key,
@@ -48,8 +49,11 @@ class OutlookAuthCard extends StatelessWidget {
                   ),
                   if (isCompleted) ...[
                     const SizedBox(width: 8),
-                    Icon(Icons.check_circle,
-                        size: 18, color: Colors.green.shade400),
+                    Icon(
+                      Icons.check_circle,
+                      size: 18,
+                      color: Colors.green.shade400,
+                    ),
                   ],
                 ],
               ),
@@ -85,15 +89,63 @@ class OutlookAuthCard extends StatelessWidget {
     final authRequestId = message.authRequestId;
     if (authRequestId == null) return;
 
+    final startUrl = message.authStartUrl;
+    final captureOrigins = message.authCaptureOrigins ?? const <String>[];
+    final startUri = startUrl == null ? null : Uri.tryParse(startUrl);
+    final allowedOrigins = captureOrigins
+        .map(Uri.tryParse)
+        .whereType<Uri>()
+        .where((uri) => uri.scheme == 'https' && uri.host.isNotEmpty)
+        .map((uri) => uri.origin)
+        .toSet();
+    if (startUri == null ||
+        startUri.scheme != 'https' ||
+        startUri.userInfo.isNotEmpty ||
+        !allowedOrigins.contains(startUri.origin) ||
+        allowedOrigins.length != 1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Request a new Outlook sign-in card from the server.'),
+        ),
+      );
+      return;
+    }
+
+    final approved = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Open protected Outlook sign-in?'),
+        content: Text(
+          'SocketAgent will open ${startUri.host} and capture only the '
+          'approved Outlook Web folder/message request metadata needed by '
+          'this computer. Passwords, MFA codes, cookies, and message content '
+          'are not collected.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    if (approved != true || !context.mounted) return;
+
     final result = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
-        builder: (_) => const OutlookAuthScreen(),
+        builder: (_) => OutlookAuthScreen(
+          startUrl: startUri.toString(),
+          captureOrigins: allowedOrigins.toList(growable: false),
+        ),
       ),
     );
 
     if (result != null && context.mounted) {
-      // Send tokens back as an answer (JSON-encoded)
-      onAnswer(authRequestId, {'tokens': jsonEncode(result)});
+      onAnswer(authRequestId, {'owaSession': jsonEncode(result)});
     }
   }
 }

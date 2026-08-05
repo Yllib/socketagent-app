@@ -73,8 +73,11 @@ class ChatMessage {
   // Email preview fields (for send confirmation)
   final Map<String, String>? emailPreview;
 
-  // Outlook auth fields
+  // Private integration auth fields. The server supplies only allowlisted
+  // navigation/capture locations; no credential values are retained here.
   final String? authRequestId;
+  final String? authStartUrl;
+  final List<String>? authCaptureOrigins;
 
   // Auth card expiry (superseded by a newer auth card)
   bool expired;
@@ -128,6 +131,8 @@ class ChatMessage {
     this.emailPreview,
     this.expired = false,
     this.authRequestId,
+    this.authStartUrl,
+    this.authCaptureOrigins,
     this.parentToolUseId,
     this.originToolUseId,
     this.uuid,
@@ -409,23 +414,35 @@ class ChatMessage {
     );
   }
 
-  factory ChatMessage.outlookAuth({required String authRequestId}) {
+  factory ChatMessage.outlookAuth({
+    required String authRequestId,
+    String? startUrl,
+    List<String>? captureOrigins,
+  }) {
     return ChatMessage(
       id: 'outlook_auth_$authRequestId',
       sender: MessageSender.system,
       type: MessageType.outlookAuth,
       timestamp: DateTime.now(),
       authRequestId: authRequestId,
+      authStartUrl: startUrl,
+      authCaptureOrigins: captureOrigins,
     );
   }
 
-  factory ChatMessage.ibsAuth({required String authRequestId}) {
+  factory ChatMessage.ibsAuth({
+    required String authRequestId,
+    String? startUrl,
+    List<String>? captureOrigins,
+  }) {
     return ChatMessage(
       id: 'ibs_auth_$authRequestId',
       sender: MessageSender.system,
       type: MessageType.ibsAuth,
       timestamp: DateTime.now(),
       authRequestId: authRequestId,
+      authStartUrl: startUrl,
+      authCaptureOrigins: captureOrigins,
     );
   }
 
