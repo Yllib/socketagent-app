@@ -183,6 +183,8 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
     });
   }
 
+  void _cancelAndClose() => Navigator.of(context).pop(null);
+
   @override
   void dispose() {
     WindowSecurityService.disableScreenshotProtection();
@@ -210,7 +212,8 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
         title: const Text('Outlook Sign-In'),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(null),
+          tooltip: 'Cancel sign-in',
+          onPressed: _cancelAndClose,
         ),
         actions: [
           if (_ready)
@@ -257,6 +260,14 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
           ),
           Expanded(child: WebViewWidget(controller: _controller)),
         ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: OutlinedButton.icon(
+          onPressed: _cancelAndClose,
+          icon: const Icon(Icons.close),
+          label: const Text('Cancel sign-in'),
+        ),
       ),
     );
   }

@@ -133,7 +133,14 @@ class OutlookAuthCard extends StatelessWidget {
         ],
       ),
     );
-    if (approved != true || !context.mounted) return;
+    if (approved != true) {
+      onAnswer(authRequestId, const {'cancelled': 'true'});
+      return;
+    }
+    if (!context.mounted) {
+      onAnswer(authRequestId, const {'cancelled': 'true'});
+      return;
+    }
 
     final result = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
@@ -144,8 +151,10 @@ class OutlookAuthCard extends StatelessWidget {
       ),
     );
 
-    if (result != null && context.mounted) {
-      onAnswer(authRequestId, {'owaSession': jsonEncode(result)});
+    if (result == null) {
+      onAnswer(authRequestId, const {'cancelled': 'true'});
+      return;
     }
+    onAnswer(authRequestId, {'owaSession': jsonEncode(result)});
   }
 }

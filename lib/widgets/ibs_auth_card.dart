@@ -127,7 +127,14 @@ class IBSAuthCard extends StatelessWidget {
         ],
       ),
     );
-    if (approved != true || !context.mounted) return;
+    if (approved != true) {
+      onAnswer(authRequestId, const {'cancelled': 'true'});
+      return;
+    }
+    if (!context.mounted) {
+      onAnswer(authRequestId, const {'cancelled': 'true'});
+      return;
+    }
 
     final result = await Navigator.of(context).push<List<Map<String, String>>>(
       MaterialPageRoute(
@@ -138,9 +145,11 @@ class IBSAuthCard extends StatelessWidget {
       ),
     );
 
-    if (result != null && context.mounted) {
-      // Send cookies back as an answer (JSON-encoded)
-      onAnswer(authRequestId, {'cookies': jsonEncode(result)});
+    if (result == null) {
+      onAnswer(authRequestId, const {'cancelled': 'true'});
+      return;
     }
+    // Send cookies back as an answer (JSON-encoded)
+    onAnswer(authRequestId, {'cookies': jsonEncode(result)});
   }
 }

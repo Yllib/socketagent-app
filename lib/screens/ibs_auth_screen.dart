@@ -112,6 +112,8 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
     }
   }
 
+  void _cancelAndClose() => Navigator.of(context).pop(null);
+
   @override
   void dispose() {
     // Re-enable screenshots when leaving auth screen
@@ -126,7 +128,8 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
         title: const Text('IBS Sign-In'),
         leading: IconButton(
           icon: const Icon(Icons.close),
-          onPressed: () => Navigator.of(context).pop(null),
+          tooltip: 'Cancel sign-in',
+          onPressed: _cancelAndClose,
         ),
         actions: [
           if (_authenticated)
@@ -169,6 +172,14 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
             ),
           Expanded(child: WebViewWidget(controller: _controller)),
         ],
+      ),
+      bottomNavigationBar: SafeArea(
+        minimum: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+        child: OutlinedButton.icon(
+          onPressed: _cancelAndClose,
+          icon: const Icon(Icons.close),
+          label: const Text('Cancel sign-in'),
+        ),
       ),
     );
   }
