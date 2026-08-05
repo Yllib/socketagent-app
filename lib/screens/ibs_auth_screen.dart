@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import '../services/desktop_web_user_agent.dart';
 import '../services/window_security_service.dart';
 
 /// WebView screen that loads the server-approved IBS page and captures cookies
@@ -42,10 +45,6 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
 
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent(
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-        '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      )
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageStarted: (url) {
@@ -67,8 +66,17 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
             return NavigationDecision.navigate;
           },
         ),
-      )
-      ..loadRequest(Uri.parse(widget.startUrl));
+      );
+    unawaited(_loadDesktopSite());
+  }
+
+  Future<void> _loadDesktopSite() async {
+    String? currentUserAgent;
+    try {
+      currentUserAgent = await _controller.getUserAgent();
+    } catch (_) {}
+    await _controller.setUserAgent(desktopWebUserAgent(currentUserAgent));
+    await _controller.loadRequest(Uri.parse(widget.startUrl));
   }
 
   static const _channel = MethodChannel('com.socketagent.app/intent');

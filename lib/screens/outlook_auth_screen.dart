@@ -1,8 +1,10 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import '../services/desktop_web_user_agent.dart';
 import '../services/window_security_service.dart';
 
 /// Protected WebView that captures only the exact approved OWA service
@@ -66,8 +68,17 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
           },
           onNavigationRequest: (_) => NavigationDecision.navigate,
         ),
-      )
-      ..loadRequest(Uri.parse(widget.startUrl));
+      );
+    unawaited(_loadDesktopSite());
+  }
+
+  Future<void> _loadDesktopSite() async {
+    String? currentUserAgent;
+    try {
+      currentUserAgent = await _controller.getUserAgent();
+    } catch (_) {}
+    await _controller.setUserAgent(desktopWebUserAgent(currentUserAgent));
+    await _controller.loadRequest(Uri.parse(widget.startUrl));
   }
 
   String _captureScript(String approvedOrigin) {
