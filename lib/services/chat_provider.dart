@@ -5735,12 +5735,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Submit IBS auth cookies as an answer (reuses the answer WebSocket flow)
   void submitIBSAuth(String authRequestId, Map<String, String> answers) {
-    // Mark the card as completed
+    // Submission is not success. Keep the card pending until the private
+    // integration reports that its server-side validation completed.
     final idx = _messages.indexWhere(
       (m) => m.type == MessageType.ibsAuth && m.authRequestId == authRequestId,
     );
     if (idx >= 0) {
-      _messages[idx].answered = true;
+      _messages[idx].isPending = true;
     }
     _sendAuthAnswer(authRequestId, answers);
     notifyListeners();
@@ -5755,16 +5756,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final message =
         msg['message'] as String? ??
         (success ? 'IBS auth completed' : 'IBS auth failed');
-    _messages.add(
-      ChatMessage(
-        id: 'ibs_auth_result_${DateTime.now().microsecondsSinceEpoch}',
-        sender: MessageSender.system,
-        type: MessageType.taskNotification,
-        timestamp: DateTime.now(),
-        textContent: message,
-        toolName: success ? 'ibs_auth_success' : 'ibs_auth_failure',
-      ),
+    final idx = _messages.lastIndexWhere(
+      (m) => m.type == MessageType.ibsAuth && m.authRequestId == authRequestId,
     );
+    if (idx >= 0) {
+      _messages[idx].isPending = false;
+      _messages[idx].answered = true;
+      _messages[idx].answers = {
+        'status': success ? 'success' : 'failure',
+        'message': message,
+      };
+    } else {
+      _messages.add(
+        ChatMessage(
+          id: 'ibs_auth_result_${DateTime.now().microsecondsSinceEpoch}',
+          sender: MessageSender.system,
+          type: MessageType.taskNotification,
+          timestamp: DateTime.now(),
+          textContent: message,
+          toolName: success ? 'ibs_auth_success' : 'ibs_auth_failure',
+        ),
+      );
+    }
     notifyListeners();
   }
 
@@ -8929,24 +8942,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (ibsResultMatch != null) {
               final success = ibsResultMatch.group(1) == 'success';
               final message = ibsResultMatch.group(3) ?? '';
-              // Find the most recent unanswered IBS auth card and mark it done
+              // Apply the durable validation result to the original card.
+              var matchedCard = false;
               for (int i = loaded.length - 1; i >= 0; i--) {
                 if (loaded[i].type == MessageType.ibsAuth &&
                     !loaded[i].answered) {
                   loaded[i].answered = true;
+                  loaded[i].isPending = false;
+                  loaded[i].answers = {
+                    'status': success ? 'success' : 'failure',
+                    'message': message,
+                  };
+                  matchedCard = true;
                   break;
                 }
               }
-              loaded.add(
-                ChatMessage(
-                  id: 'ibs_result_${DateTime.now().microsecondsSinceEpoch}_$offset',
-                  sender: MessageSender.system,
-                  type: MessageType.taskNotification,
-                  timestamp: DateTime.now(),
-                  textContent: message,
-                  toolName: success ? 'ibs_auth_success' : 'ibs_auth_failure',
-                ),
-              );
+              if (!matchedCard) {
+                loaded.add(
+                  ChatMessage(
+                    id: 'ibs_result_${DateTime.now().microsecondsSinceEpoch}_$offset',
+                    sender: MessageSender.system,
+                    type: MessageType.taskNotification,
+                    timestamp: DateTime.now(),
+                    textContent: message,
+                    toolName: success ? 'ibs_auth_success' : 'ibs_auth_failure',
+                  ),
+                );
+              }
               break;
             }
             // Detect Claude auth card from history

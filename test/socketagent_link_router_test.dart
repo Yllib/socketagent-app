@@ -66,6 +66,13 @@ socketagent://file/view?path=%2Ftmp%2Fb.txt
       );
     });
 
+    test('leaves application routes with query parameters as code', () {
+      const source =
+          'The QR opens `/join?code=…` and submits `/join?code=…` automatically.';
+
+      expect(SocketAgentLinkRouter.prepareMarkdown(source), source);
+    });
+
     test('turns standalone and labeled plain paths into links', () {
       const source = '''
 /home/billy/project/report.md:17

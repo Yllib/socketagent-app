@@ -13,6 +13,11 @@ class IBSAuthCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isCompleted = message.answered;
+    final isPending = message.isPending;
+    final status = message.answers?['status'];
+    final succeeded = isCompleted && status == 'success';
+    final failed = isCompleted && status == 'failure';
+    final resultMessage = message.answers?['message'];
     final theme = Theme.of(context);
 
     return Container(
@@ -43,7 +48,7 @@ class IBSAuthCard extends StatelessWidget {
                       color: theme.colorScheme.onSecondaryContainer,
                     ),
                   ),
-                  if (isCompleted) ...[
+                  if (succeeded) ...[
                     const SizedBox(width: 8),
                     Icon(
                       Icons.check_circle,
@@ -51,19 +56,35 @@ class IBSAuthCard extends StatelessWidget {
                       color: Colors.green.shade400,
                     ),
                   ],
+                  if (failed) ...[
+                    const SizedBox(width: 8),
+                    Icon(Icons.error, size: 18, color: theme.colorScheme.error),
+                  ],
+                  if (isPending) ...[
+                    const SizedBox(width: 8),
+                    const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ],
                 ],
               ),
               const SizedBox(height: 8),
               Text(
-                isCompleted
-                    ? 'Authentication complete.'
+                isPending
+                    ? 'Validating My Sheet access with the server…'
+                    : succeeded
+                    ? (resultMessage ?? 'IBS and My Sheet are ready.')
+                    : failed
+                    ? (resultMessage ?? 'IBS authorization failed.')
                     : 'Your IBS session has expired. Sign in to continue.',
                 style: TextStyle(
                   fontSize: 14,
                   color: theme.colorScheme.onSecondaryContainer.withAlpha(200),
                 ),
               ),
-              if (!isCompleted) ...[
+              if (!isCompleted && !isPending) ...[
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,
@@ -136,7 +157,7 @@ class IBSAuthCard extends StatelessWidget {
       return;
     }
 
-    final result = await Navigator.of(context).push<List<Map<String, String>>>(
+    final result = await Navigator.of(context).push<Map<String, dynamic>>(
       MaterialPageRoute(
         builder: (_) => IBSAuthScreen(
           startUrl: startUri.toString(),
@@ -149,7 +170,8 @@ class IBSAuthCard extends StatelessWidget {
       onAnswer(authRequestId, const {'cancelled': 'true'});
       return;
     }
-    // Send cookies back as an answer (JSON-encoded)
+    // Send the exact-origin cookies plus the minimal My Sheet navigation
+    // fields back as one E2E-encrypted answer.
     onAnswer(authRequestId, {'cookies': jsonEncode(result)});
   }
 }

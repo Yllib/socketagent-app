@@ -131,6 +131,11 @@ class SocketAgentLinkRouter {
       return null;
     }
 
+    // Absolute application routes can look like Unix paths inside prose, but
+    // a query string identifies a route/URL rather than a workspace file.
+    // Leave examples such as `/join?code=…` as literal Markdown code.
+    if (target.startsWith('/') && target.contains('?')) return null;
+
     int? line;
     int? column;
     final locationMatch = RegExp(r':(\d+)(?::(\d+))?$').firstMatch(target);
@@ -152,7 +157,16 @@ class SocketAgentLinkRouter {
 
     String? path;
     if (target.startsWith('/')) {
-      path = Uri.decodeFull(target);
+      // User/agent text is not guaranteed to contain valid URI escapes. A
+      // malformed percent sequence must never take down the entire message
+      // bubble and become Flutter's giant gray release-mode ErrorWidget.
+      try {
+        path = Uri.decodeFull(target);
+      } on FormatException {
+        path = target;
+      } on ArgumentError {
+        path = target;
+      }
     } else if (RegExp(r'^[A-Za-z]:[\\/]').hasMatch(target)) {
       path = target.replaceAll('\\', '/');
     } else {
