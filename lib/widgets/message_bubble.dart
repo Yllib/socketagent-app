@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import '../services/socketagent_link_router.dart';
 
 class MessageBubble extends StatelessWidget {
+  static const _nativeChannel = MethodChannel('com.socketagent.app/intent');
+
   final ChatMessage message;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractPending;
+  final ValueChanged<String>? onReadAloud;
   final String? sourceServerId;
 
   const MessageBubble({
@@ -17,6 +21,7 @@ class MessageBubble extends StatelessWidget {
     this.onRewindConversation,
     this.onBranch,
     this.onRetractPending,
+    this.onReadAloud,
     this.sourceServerId,
   });
 
@@ -33,6 +38,7 @@ class MessageBubble extends StatelessWidget {
         isUser &&
         message.uuid != null &&
         (onRewindConversation != null || onBranch != null);
+    final hasMessageActions = !isUser && message.textContent.trim().isNotEmpty;
 
     final isPending = isUser && message.isPending;
     final priorityLabel = message.injectionPriority;
@@ -54,6 +60,7 @@ class MessageBubble extends StatelessWidget {
             isPending,
             priorityLabel,
             hasActions,
+            hasMessageActions,
           ),
           if (isUploading)
             _buildUploadIndicator(context, theme, isUser, uploadProgress),
@@ -70,12 +77,18 @@ class MessageBubble extends StatelessWidget {
     bool isPending,
     String? priorityLabel,
     bool hasActions,
+    bool hasMessageActions,
   ) {
     return Stack(
       clipBehavior: Clip.none,
       children: [
         GestureDetector(
-          onLongPress: hasActions ? () => _showRewindSheet(context) : null,
+          key: ValueKey<String>('message-bubble-actions-${message.id}'),
+          onLongPress: hasActions
+              ? () => _showRewindSheet(context)
+              : hasMessageActions
+              ? () => _showMessageActions(context)
+              : null,
           child: Opacity(
             opacity: isPending ? 0.5 : 1.0,
             child: Container(
@@ -109,97 +122,103 @@ class MessageBubble extends StatelessWidget {
                       message.textContent,
                       style: TextStyle(color: textColor, fontSize: 15),
                     )
-                  : MarkdownBody(
-                      data: SocketAgentLinkRouter.prepareMarkdown(
-                        message.textContent,
-                      ),
-                      selectable: true,
-                      onTapLink: (text, href, title) {
-                        SocketAgentLinkRouter.open(
-                          context,
-                          href,
-                          sourceServerId: sourceServerId,
-                        );
-                      },
-                      styleSheet: MarkdownStyleSheet(
-                        p: TextStyle(
-                          color: textColor,
-                          fontSize: 15,
-                          height: 1.4,
+                  : SelectionArea(
+                      // MarkdownBody's selectable mode creates one independent
+                      // SelectableText per block. A single SelectionArea around
+                      // ordinary rich text lets selection span paragraphs,
+                      // lists, headings, and code blocks as one message.
+                      child: MarkdownBody(
+                        data: SocketAgentLinkRouter.prepareMarkdown(
+                          message.textContent,
                         ),
-                        h1: TextStyle(
-                          color: textColor,
-                          fontSize: 22,
-                          fontWeight: FontWeight.bold,
-                          height: 1.4,
-                        ),
-                        h2: TextStyle(
-                          color: textColor,
-                          fontSize: 19,
-                          fontWeight: FontWeight.bold,
-                          height: 1.4,
-                        ),
-                        h3: TextStyle(
-                          color: textColor,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          height: 1.4,
-                        ),
-                        strong: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        em: TextStyle(
-                          color: textColor,
-                          fontStyle: FontStyle.italic,
-                        ),
-                        code: GoogleFonts.jetBrainsMono(
-                          color: const Color(0xFFCDD6F4),
-                          backgroundColor: const Color(0xFF1E1E2E),
-                          fontSize: 13,
-                        ),
-                        codeblockDecoration: BoxDecoration(
-                          color: const Color(0xFF1E1E2E),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: const Color(0xFF313244),
-                            width: 1,
+                        selectable: false,
+                        onTapLink: (text, href, title) {
+                          SocketAgentLinkRouter.open(
+                            context,
+                            href,
+                            sourceServerId: sourceServerId,
+                          );
+                        },
+                        styleSheet: MarkdownStyleSheet(
+                          p: TextStyle(
+                            color: textColor,
+                            fontSize: 15,
+                            height: 1.4,
                           ),
-                        ),
-                        codeblockPadding: const EdgeInsets.all(12),
-                        codeblockAlign: WrapAlignment.start,
-                        blockquoteDecoration: BoxDecoration(
-                          border: Border(
-                            left: BorderSide(
-                              color: theme.colorScheme.primary,
-                              width: 3,
+                          h1: TextStyle(
+                            color: textColor,
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            height: 1.4,
+                          ),
+                          h2: TextStyle(
+                            color: textColor,
+                            fontSize: 19,
+                            fontWeight: FontWeight.bold,
+                            height: 1.4,
+                          ),
+                          h3: TextStyle(
+                            color: textColor,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            height: 1.4,
+                          ),
+                          strong: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          em: TextStyle(
+                            color: textColor,
+                            fontStyle: FontStyle.italic,
+                          ),
+                          code: GoogleFonts.jetBrainsMono(
+                            color: const Color(0xFFCDD6F4),
+                            backgroundColor: const Color(0xFF1E1E2E),
+                            fontSize: 13,
+                          ),
+                          codeblockDecoration: BoxDecoration(
+                            color: const Color(0xFF1E1E2E),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: const Color(0xFF313244),
+                              width: 1,
                             ),
                           ),
-                        ),
-                        blockquotePadding: const EdgeInsets.only(left: 12),
-                        a: TextStyle(
-                          color: const Color(0xFF89B4FA),
-                          decoration: TextDecoration.underline,
-                        ),
-                        listBullet: TextStyle(color: textColor, fontSize: 15),
-                        tableHead: TextStyle(
-                          color: textColor,
-                          fontWeight: FontWeight.bold,
-                        ),
-                        tableBody: TextStyle(color: textColor),
-                        tableBorder: TableBorder.all(
-                          color: textColor.withAlpha(51),
-                          width: 1,
-                        ),
-                        tableCellsPadding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        horizontalRuleDecoration: BoxDecoration(
-                          border: Border(
-                            top: BorderSide(
-                              color: textColor.withAlpha(51),
-                              width: 1,
+                          codeblockPadding: const EdgeInsets.all(12),
+                          codeblockAlign: WrapAlignment.start,
+                          blockquoteDecoration: BoxDecoration(
+                            border: Border(
+                              left: BorderSide(
+                                color: theme.colorScheme.primary,
+                                width: 3,
+                              ),
+                            ),
+                          ),
+                          blockquotePadding: const EdgeInsets.only(left: 12),
+                          a: TextStyle(
+                            color: const Color(0xFF89B4FA),
+                            decoration: TextDecoration.underline,
+                          ),
+                          listBullet: TextStyle(color: textColor, fontSize: 15),
+                          tableHead: TextStyle(
+                            color: textColor,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          tableBody: TextStyle(color: textColor),
+                          tableBorder: TableBorder.all(
+                            color: textColor.withAlpha(51),
+                            width: 1,
+                          ),
+                          tableCellsPadding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          horizontalRuleDecoration: BoxDecoration(
+                            border: Border(
+                              top: BorderSide(
+                                color: textColor.withAlpha(51),
+                                width: 1,
+                              ),
                             ),
                           ),
                         ),
@@ -254,6 +273,143 @@ class MessageBubble extends StatelessWidget {
           ),
       ],
     );
+  }
+
+  void _showMessageActions(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 32,
+              height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withAlpha(80),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            ListTile(
+              key: const ValueKey<String>('copy-message-plain'),
+              leading: const Icon(Icons.content_copy_outlined),
+              title: const Text('Copy as plain text'),
+              subtitle: const Text('Copy without Markdown formatting'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await Clipboard.setData(
+                  ClipboardData(text: _plainText(message.textContent)),
+                );
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(const SnackBar(content: Text('Message copied')));
+              },
+            ),
+            ListTile(
+              key: const ValueKey<String>('copy-message-markdown'),
+              leading: const Icon(Icons.code_outlined),
+              title: const Text('Copy as Markdown'),
+              subtitle: const Text('Copy the original formatting source'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                await Clipboard.setData(
+                  ClipboardData(text: message.textContent),
+                );
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Markdown copied')),
+                );
+              },
+            ),
+            ListTile(
+              key: const ValueKey<String>('share-message'),
+              leading: const Icon(Icons.share_outlined),
+              title: const Text('Share'),
+              subtitle: const Text('Share plain text with another app'),
+              onTap: () async {
+                Navigator.pop(sheetContext);
+                try {
+                  await _nativeChannel.invokeMethod<void>('shareText', {
+                    'text': _plainText(message.textContent),
+                    'subject': 'SocketAgent message',
+                    'chooserTitle': 'Share message',
+                  });
+                } on PlatformException catch (error) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        error.message ?? 'Unable to share this message',
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
+            if (onReadAloud != null)
+              ListTile(
+                key: const ValueKey<String>('read-whole-message'),
+                leading: const Icon(Icons.volume_up_outlined),
+                title: const Text('Read aloud'),
+                subtitle: const Text('Use your selected text-to-speech voice'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  onReadAloud!(_plainText(message.textContent));
+                },
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _plainText(String markdown) {
+    return markdown
+        .replaceAllMapped(
+          RegExp(r'!\[([^\]]*)\]\([^)]*\)'),
+          (match) => match.group(1) ?? '',
+        )
+        .replaceAllMapped(
+          RegExp(r'\[([^\]]+)\]\([^)]*\)'),
+          (match) => match.group(1) ?? '',
+        )
+        .replaceAll(RegExp(r'^\s*```[^\n]*', multiLine: true), '')
+        .replaceAll(RegExp(r'^\s*```\s*$', multiLine: true), '')
+        .replaceAll(
+          RegExp(r'^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+', multiLine: true),
+          '',
+        )
+        .replaceAllMapped(
+          RegExp(r'\*\*([\s\S]+?)\*\*'),
+          (match) => match.group(1) ?? '',
+        )
+        .replaceAllMapped(
+          RegExp(r'__([\s\S]+?)__'),
+          (match) => match.group(1) ?? '',
+        )
+        .replaceAllMapped(
+          RegExp(r'~~([\s\S]+?)~~'),
+          (match) => match.group(1) ?? '',
+        )
+        .replaceAllMapped(
+          RegExp(r'`([^`\n]+)`'),
+          (match) => match.group(1) ?? '',
+        )
+        .replaceAllMapped(
+          RegExp(r'(^|\s)\*([^*\n]+)\*(?=\s|[.,!?;:]|$)', multiLine: true),
+          (match) => '${match.group(1) ?? ''}${match.group(2) ?? ''}',
+        )
+        .replaceAllMapped(
+          RegExp(r'(^|\s)_([^_\n]+)_(?=\s|[.,!?;:]|$)', multiLine: true),
+          (match) => '${match.group(1) ?? ''}${match.group(2) ?? ''}',
+        )
+        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
+        .trim();
   }
 
   Widget _buildUploadIndicator(

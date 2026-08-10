@@ -62,6 +62,7 @@ class ChatView extends StatefulWidget {
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractQueuedMessage;
+  final ValueChanged<String>? onReadAloud;
   final bool rawMode;
   final List<SdkItem> rawItems;
   // For SubAgentCard: tracked subagent tasks and full message list for child lookup
@@ -99,6 +100,7 @@ class ChatView extends StatefulWidget {
     this.onRewindConversation,
     this.onBranch,
     this.onRetractQueuedMessage,
+    this.onReadAloud,
     this.rawMode = false,
     this.rawItems = const [],
     this.subagentTasks = const {},
@@ -1251,6 +1253,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           onRewindConversation: widget.onRewindConversation,
           onBranch: widget.onBranch,
           onRetractPending: widget.onRetractQueuedMessage,
+          onReadAloud: widget.onReadAloud,
         );
       case MessageType.toolCall:
         if (msg.toolName == 'Workflow') {
@@ -1309,6 +1312,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             isRunning: false,
             greenTheme: msg.toolInput?['_task_status'] == 'completed',
             sourceServerId: widget.serverId,
+            onReadAloud: widget.onReadAloud,
           );
         }
         // Task tool calls get a dedicated SubAgentCard
@@ -1328,6 +1332,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             isRunning: isRunning,
             scrollKey: _taskKeys[rowKey],
             sourceServerId: widget.serverId,
+            onReadAloud: widget.onReadAloud,
           );
         }
         // Backgrounded bash — register key for scroll-to
@@ -1360,7 +1365,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           availableSecrets: widget.availableSecrets,
         );
       case MessageType.result:
-        return MessageBubble(message: msg, sourceServerId: widget.serverId);
+        return MessageBubble(
+          message: msg,
+          sourceServerId: widget.serverId,
+          onReadAloud: widget.onReadAloud,
+        );
       case MessageType.error:
         return _buildErrorWidget(msg);
       case MessageType.taskNotification:
@@ -1812,6 +1821,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             isRunning: false,
             greenTheme: true,
             sourceServerId: widget.serverId,
+            onReadAloud: widget.onReadAloud,
           );
         }
       }

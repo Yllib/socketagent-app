@@ -7,7 +7,8 @@ import 'package:just_audio/just_audio.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'tts_engine.dart';
-import 'kokoro_server_engine.dart' show kokoroVoices, kokoroV10ExtraVoices;
+import 'kokoro_server_engine.dart'
+    show kokoroVoices, kokoroV10ExtraVoices, buildTtsLeadInWav;
 import 'kokoro_model_manager.dart';
 
 /// Convert Float32List audio samples to WAV bytes (16-bit PCM mono).
@@ -56,6 +57,26 @@ Uint8List _float32ToWav(Float32List samples, int sampleRate) {
   }
 
   return buffer.buffer.asUint8List();
+}
+
+/// Preserve technical tokens that Sherpa's Kokoro frontend would otherwise
+/// split at sentence punctuation. Kokoro always synthesizes one sentence at a
+/// time internally, so an IPv4 address must reach it with spoken separators.
+@visibleForTesting
+String normalizeOnDeviceTtsText(String text) {
+  final ipv4 = RegExp(
+    r'(^|[^\d])((?:\d{1,3}\.){3}\d{1,3})(?::(\d{1,5}))?(?!\d|\.\d)',
+    multiLine: true,
+  );
+  return text.replaceAllMapped(ipv4, (match) {
+    final prefix = match.group(1) ?? '';
+    final address = match.group(2)!;
+    final octets = address.split('.').map(int.parse).toList();
+    if (octets.any((octet) => octet > 255)) return match.group(0)!;
+    final port = match.group(3);
+    final spokenAddress = octets.join(' dot ');
+    return '$prefix$spokenAddress${port == null ? '' : ' port $port'}';
+  });
 }
 
 /// StreamAudioSource for playing WAV bytes from memory via just_audio.
@@ -252,6 +273,10 @@ void _ttsIsolateEntry(_IsolateInit init) {
 class KokoroDeviceEngine extends TtsEngine {
   final KokoroModelManager _modelManager;
   final AudioPlayer _player = AudioPlayer();
+  final ValueNotifier<TtsPlaybackState> _playbackState = ValueNotifier(
+    const TtsPlaybackState(),
+  );
+  final List<StreamSubscription<dynamic>> _playerSubscriptions = [];
   bool _isSpeaking = false;
   bool _isModelReady = false;
   String? _modelDir;
@@ -266,9 +291,35 @@ class KokoroDeviceEngine extends TtsEngine {
   bool _isolateReady = false;
 
   StreamController<dynamic>? _chunkController;
+  StreamSubscription<dynamic>? _activeChunkSubscription;
+  Completer<void>? _generationCompleter;
   int _genId = 0;
 
-  KokoroDeviceEngine(this._modelManager);
+  KokoroDeviceEngine(this._modelManager) {
+    _playerSubscriptions.add(
+      _player.playerStateStream.listen((state) {
+        _isSpeaking = state.playing;
+        final current = _playbackState.value;
+        if (!current.visible) return;
+        if (state.processingState == ProcessingState.completed) {
+          _emitPlayerState(
+            status: TtsPlaybackStatus.completed,
+            forceProgress: 1,
+          );
+        } else if (state.playing) {
+          _emitPlayerState(status: TtsPlaybackStatus.playing);
+        } else if (current.status == TtsPlaybackStatus.playing) {
+          _emitPlayerState(status: TtsPlaybackStatus.paused);
+        }
+      }),
+    );
+    _playerSubscriptions.add(
+      _player.positionStream.listen((_) => _emitPlayerState()),
+    );
+    _playerSubscriptions.add(
+      _player.sequenceStateStream.listen((_) => _emitPlayerState()),
+    );
+  }
 
   @override
   bool get isSpeaking => _isSpeaking;
@@ -279,6 +330,9 @@ class KokoroDeviceEngine extends TtsEngine {
 
   @override
   TtsEngineVoice? get selectedVoice => _selectedVoice;
+
+  @override
+  ValueListenable<TtsPlaybackState> get playbackState => _playbackState;
 
   bool get isModelLoaded => _isModelReady;
 
@@ -339,18 +393,23 @@ class KokoroDeviceEngine extends TtsEngine {
 
   @override
   Future<void> speak(String text) async {
+    if (text.trim().isEmpty) return;
+    await stop();
+    _playbackState.value = TtsPlaybackState(
+      status: TtsPlaybackStatus.loading,
+      text: text,
+    );
     if (!_isModelReady) {
       await initialize();
     }
     if (!_isolateReady) await _spawnIsolate();
     if (!_isolateReady) {
       debugPrint('[KokoroDevice] Cannot speak — not ready');
+      _playbackState.value = _playbackState.value.copyWith(
+        status: TtsPlaybackStatus.error,
+        error: 'The on-device speech model is not ready.',
+      );
       return;
-    }
-
-    // Stop any in-progress speech before starting new
-    if (_isSpeaking) {
-      await stop();
     }
 
     final voiceMap = _isV10 ? _voiceIdsV10 : _voiceIdsV019;
@@ -364,42 +423,46 @@ class KokoroDeviceEngine extends TtsEngine {
 
       _chunkController = StreamController<dynamic>.broadcast();
       final completer = Completer<void>();
+      _generationCompleter = completer;
 
       // Increment generation ID — stale chunks from a previous generation
       // will be ignored since they carry the old genId.
       _genId++;
       final currentGenId = _genId;
 
-      // Split by paragraph boundaries and process each separately.
-      // Within each paragraph, full prosody/inflection is preserved.
-      // The isolate pipelines: generating paragraph N+1 while the player
-      // is still speaking paragraph N, eliminating inter-paragraph gaps.
-      final paragraphs = text.split(RegExp(r'\n\s*\n'));
+      // Give Sherpa one complete frontend input. Kokoro itself still emits
+      // sentence-sized callbacks, but the app must not introduce additional
+      // paragraph boundaries. Technical punctuation such as IPv4 dots is
+      // normalized first so it cannot be mistaken for sentence endings.
+      final synthesisText = normalizeOnDeviceTtsText(text);
       _isolateSendPort!.send(
-        _GenerateRequest(paragraphs, sid, 1.0, currentGenId),
+        _GenerateRequest([synthesisText], sid, 1.0, currentGenId),
       );
 
-      var genDone = false;
       var playbackStarted = false;
       final bufferedChunks = <_WavAudioSource>[];
+      var playerMutation = Future<void>.value();
 
-      // Start playback once we have enough buffered audio.
-      Future<void> startPlayback() async {
+      // Start on the first sentence chunk. The model still receives the full
+      // paragraph for semantic/prosodic context; only playback is streamed.
+      void startPlayback() {
         if (playbackStarted) return;
         if (bufferedChunks.isEmpty) return;
-        if (bufferedChunks.length < 2 && !genDone) return;
 
         playbackStarted = true;
-        debugPrint(
-          '[KokoroDevice] Starting playback with ${bufferedChunks.length} buffered chunks',
-        );
-
-        // setAudioSources replaces any existing source and preloads by default.
-        // Returns only when audio is fully loaded (processingState == ready).
-        // Minimizing async operations here avoids event loop interleaving with
-        // UI rebuilds from concurrent text streaming, which can cause clipping.
-        await _player.setAudioSources(List.from(bufferedChunks));
-        _player.play();
+        final initialSources = List<_WavAudioSource>.from(bufferedChunks);
+        bufferedChunks.clear();
+        playerMutation = playerMutation.then((_) async {
+          debugPrint(
+            '[KokoroDevice] Starting playback with ${initialSources.length} buffered chunks',
+          );
+          await _player.setAudioSources([
+            _WavAudioSource(buildTtsLeadInWav()),
+            ...initialSources,
+          ]);
+          _emitPlayerState(status: TtsPlaybackStatus.playing);
+          unawaited(_player.play());
+        });
       }
 
       final sub = _chunkController!.stream.listen((message) {
@@ -417,15 +480,18 @@ class KokoroDeviceEngine extends TtsEngine {
             bufferedChunks.add(source);
             startPlayback();
           } else {
-            // Playback already started — append to the live playlist
-            _player.addAudioSource(source).then((_) async {
+            // Serialize playlist mutations. A second generated chunk can arrive
+            // while setAudioSources is still preparing the first one; mutating
+            // just_audio concurrently can discard the queue or fail silently.
+            playerMutation = playerMutation.then((_) async {
+              await _player.addAudioSource(source);
               if (_player.processingState == ProcessingState.completed) {
                 // Player ran out of chunks and stopped — seek to the new chunk
                 // and resume playback.
                 final count = _player.sequence.length;
                 if (count > 0) {
                   await _player.seek(Duration.zero, index: count - 1);
-                  _player.play();
+                  unawaited(_player.play());
                 }
               }
             });
@@ -433,21 +499,26 @@ class KokoroDeviceEngine extends TtsEngine {
         } else if (message is _GenDone) {
           if (message.genId != currentGenId) return;
           debugPrint('[KokoroDevice] Generation complete');
-          genDone = true;
           startPlayback();
           if (!completer.isCompleted) completer.complete();
         } else if (message is String && message.startsWith('error:')) {
           debugPrint('[KokoroDevice] Error: $message');
-          genDone = true;
           startPlayback();
           if (!completer.isCompleted) completer.complete();
         }
       });
+      _activeChunkSubscription = sub;
 
       // Wait for generation to finish
       await completer.future;
+      if (currentGenId != _genId) return;
+      await playerMutation;
       await sub.cancel();
-      _chunkController?.close();
+      _activeChunkSubscription = null;
+      _generationCompleter = null;
+      if (_chunkController?.isClosed == false) {
+        await _chunkController?.close();
+      }
       _chunkController = null;
 
       // Wait for playback to finish (player may still be playing the last chunks)
@@ -462,7 +533,43 @@ class KokoroDeviceEngine extends TtsEngine {
     } catch (e) {
       debugPrint('[KokoroDevice] speak error: $e');
       _isSpeaking = false;
+      if (_playbackState.value.visible) {
+        _playbackState.value = _playbackState.value.copyWith(
+          status: TtsPlaybackStatus.error,
+          error: e.toString(),
+        );
+      }
     }
+  }
+
+  @override
+  Future<void> pause() async {
+    await _player.pause();
+    _emitPlayerState(status: TtsPlaybackStatus.paused);
+  }
+
+  @override
+  Future<void> resume() async {
+    if (!_playbackState.value.visible) return;
+    if (_player.processingState == ProcessingState.completed) {
+      await _player.seek(Duration.zero, index: 0);
+    }
+    _emitPlayerState(status: TtsPlaybackStatus.playing);
+    unawaited(_player.play());
+  }
+
+  @override
+  Future<void> restart() async {
+    if (!_playbackState.value.visible || _player.sequence.isEmpty) return;
+    await _player.seek(Duration.zero, index: 0);
+    _emitPlayerState(status: TtsPlaybackStatus.playing, forceProgress: 0);
+    unawaited(_player.play());
+  }
+
+  @override
+  Future<void> seekToFraction(double fraction) async {
+    await _seekPlaylist(fraction.clamp(0.0, 1.0));
+    _emitPlayerState();
   }
 
   @override
@@ -471,11 +578,20 @@ class KokoroDeviceEngine extends TtsEngine {
     // to the isolate so it aborts at the next sentence callback.
     _genId++;
     _isolateSendPort?.send(_genId);
+    if (_generationCompleter?.isCompleted == false) {
+      _generationCompleter?.complete();
+    }
+    _generationCompleter = null;
+    await _activeChunkSubscription?.cancel();
+    _activeChunkSubscription = null;
     await _player.stop();
     await _player.clearAudioSources();
-    _chunkController?.close();
+    if (_chunkController?.isClosed == false) {
+      await _chunkController?.close();
+    }
     _chunkController = null;
     _isSpeaking = false;
+    _playbackState.value = const TtsPlaybackState();
   }
 
   @override
@@ -485,7 +601,10 @@ class KokoroDeviceEngine extends TtsEngine {
 
   @override
   Future<void> restoreVoice(String voiceId) async {
-    final match = kokoroVoices.where((v) => v.id == voiceId);
+    final match = [
+      ...kokoroVoices,
+      ...kokoroV10ExtraVoices,
+    ].where((voice) => voice.id == voiceId);
     if (match.isNotEmpty) {
       _selectedVoice = match.first;
     }
@@ -516,8 +635,62 @@ class KokoroDeviceEngine extends TtsEngine {
   @override
   void dispose() {
     _shutdownIsolate();
+    for (final subscription in _playerSubscriptions) {
+      subscription.cancel();
+    }
     _player.dispose();
+    _playbackState.dispose();
     _isModelReady = false;
     _modelDir = null;
+  }
+
+  Duration _totalDuration() => _player.sequence.fold(
+    Duration.zero,
+    (total, source) => total + (source.duration ?? Duration.zero),
+  );
+
+  Duration _absolutePosition() {
+    final index = _player.currentIndex ?? 0;
+    var position = _player.position;
+    for (var i = 0; i < index && i < _player.sequence.length; i++) {
+      position += _player.sequence[i].duration ?? Duration.zero;
+    }
+    return position;
+  }
+
+  void _emitPlayerState({TtsPlaybackStatus? status, double? forceProgress}) {
+    final current = _playbackState.value;
+    if (!current.visible) return;
+    final duration = _totalDuration();
+    final position = _absolutePosition();
+    final progress =
+        forceProgress ??
+        (duration.inMilliseconds <= 0
+            ? current.progress
+            : position.inMilliseconds / duration.inMilliseconds);
+    _playbackState.value = current.copyWith(
+      status: status,
+      position: position,
+      duration: duration,
+      progress: progress,
+      clearError: true,
+    );
+  }
+
+  Future<void> _seekPlaylist(double fraction) async {
+    if (_player.sequence.isEmpty) return;
+    final total = _totalDuration();
+    if (total == Duration.zero) return;
+    var target = Duration(
+      milliseconds: (total.inMilliseconds * fraction).round(),
+    );
+    for (var i = 0; i < _player.sequence.length; i++) {
+      final itemDuration = _player.sequence[i].duration ?? Duration.zero;
+      if (target <= itemDuration || i == _player.sequence.length - 1) {
+        await _player.seek(target, index: i);
+        return;
+      }
+      target -= itemDuration;
+    }
   }
 }

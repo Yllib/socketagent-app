@@ -1,5 +1,6 @@
 // ignore_for_file: experimental_member_use
 
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -171,11 +172,44 @@ class _WavAudioSource extends StreamAudioSource {
   }
 }
 
+/// A brief silent lead-in gives Android/Bluetooth audio routing time to become
+/// audible, preventing the first spoken words from being clipped.
+Uint8List buildTtsLeadInWav({int milliseconds = 220, int sampleRate = 24000}) {
+  final sampleCount = (sampleRate * milliseconds / 1000).round();
+  final dataSize = sampleCount * 2;
+  final buffer = ByteData(44 + dataSize);
+  void ascii(int offset, String value) {
+    for (var i = 0; i < value.length; i++) {
+      buffer.setUint8(offset + i, value.codeUnitAt(i));
+    }
+  }
+
+  ascii(0, 'RIFF');
+  buffer.setUint32(4, 36 + dataSize, Endian.little);
+  ascii(8, 'WAVE');
+  ascii(12, 'fmt ');
+  buffer.setUint32(16, 16, Endian.little);
+  buffer.setUint16(20, 1, Endian.little);
+  buffer.setUint16(22, 1, Endian.little);
+  buffer.setUint32(24, sampleRate, Endian.little);
+  buffer.setUint32(28, sampleRate * 2, Endian.little);
+  buffer.setUint16(32, 2, Endian.little);
+  buffer.setUint16(34, 16, Endian.little);
+  ascii(36, 'data');
+  buffer.setUint32(40, dataSize, Endian.little);
+  return buffer.buffer.asUint8List();
+}
+
 /// TTS engine that delegates audio generation to the server.
 /// The server generates Kokoro WAV and sends it back via WebSocket.
 class KokoroServerEngine extends TtsEngine {
   final AudioPlayer _player = AudioPlayer();
+  final ValueNotifier<TtsPlaybackState> _playbackState = ValueNotifier(
+    const TtsPlaybackState(),
+  );
+  final List<StreamSubscription<dynamic>> _playerSubscriptions = [];
   bool _isSpeaking = false;
+  bool _initialized = false;
   TtsEngineVoice _selectedVoice = kokoroVoices[0];
 
   /// Callback to send messages to server (set by ChatProvider)
@@ -191,28 +225,74 @@ class KokoroServerEngine extends TtsEngine {
   TtsEngineVoice? get selectedVoice => _selectedVoice;
 
   @override
+  ValueListenable<TtsPlaybackState> get playbackState => _playbackState;
+
+  @override
   Future<void> initialize() async {
-    _player.playerStateStream.listen((state) {
-      _isSpeaking = state.playing;
-    });
+    if (_initialized) return;
+    _initialized = true;
+    _playerSubscriptions.add(
+      _player.playerStateStream.listen((state) {
+        _isSpeaking = state.playing;
+        final current = _playbackState.value;
+        if (!current.visible) return;
+        if (state.processingState == ProcessingState.completed) {
+          _emitPlayerState(
+            status: TtsPlaybackStatus.completed,
+            forceProgress: 1,
+          );
+        } else if (state.playing) {
+          _emitPlayerState(status: TtsPlaybackStatus.playing);
+        } else if (current.status == TtsPlaybackStatus.playing) {
+          _emitPlayerState(status: TtsPlaybackStatus.paused);
+        }
+      }),
+    );
+    _playerSubscriptions.add(
+      _player.positionStream.listen((_) => _emitPlayerState()),
+    );
+    _playerSubscriptions.add(
+      _player.sequenceStateStream.listen((_) => _emitPlayerState()),
+    );
   }
 
   /// Play audio data received from the server (base64-encoded WAV).
-  Future<void> playAudioData(String base64Wav) async {
+  Future<void> playAudioData(String base64Wav, {String? text}) async {
     try {
+      await initialize();
+      if (text != null && text.isNotEmpty && !_playbackState.value.visible) {
+        expectAudio(text);
+      }
       final bytes = base64Decode(base64Wav);
       _isSpeaking = true;
-      await _player.setAudioSource(_WavAudioSource(Uint8List.fromList(bytes)));
-      await _player.play();
-      _isSpeaking = false;
+      await _player.setAudioSources([
+        _WavAudioSource(buildTtsLeadInWav()),
+        _WavAudioSource(Uint8List.fromList(bytes)),
+      ]);
+      _emitPlayerState(status: TtsPlaybackStatus.playing);
+      unawaited(_player.play());
     } catch (e) {
       debugPrint('[KokoroServerEngine] playAudioData error: $e');
       _isSpeaking = false;
+      _playbackState.value = _playbackState.value.copyWith(
+        status: TtsPlaybackStatus.error,
+        error: e.toString(),
+      );
     }
+  }
+
+  void expectAudio(String text) {
+    _playbackState.value = TtsPlaybackState(
+      status: TtsPlaybackStatus.loading,
+      text: text,
+    );
   }
 
   @override
   Future<void> speak(String text) async {
+    await initialize();
+    await stop();
+    expectAudio(text);
     // For replay: request audio generation from the server
     sendToServer?.call({
       'type': 'request_tts_audio',
@@ -223,9 +303,41 @@ class KokoroServerEngine extends TtsEngine {
   }
 
   @override
+  Future<void> pause() async {
+    await _player.pause();
+    _emitPlayerState(status: TtsPlaybackStatus.paused);
+  }
+
+  @override
+  Future<void> resume() async {
+    if (!_playbackState.value.visible) return;
+    if (_player.processingState == ProcessingState.completed) {
+      await _player.seek(Duration.zero, index: 0);
+    }
+    _emitPlayerState(status: TtsPlaybackStatus.playing);
+    unawaited(_player.play());
+  }
+
+  @override
+  Future<void> restart() async {
+    if (!_playbackState.value.visible || _player.sequence.isEmpty) return;
+    await _player.seek(Duration.zero, index: 0);
+    _emitPlayerState(status: TtsPlaybackStatus.playing, forceProgress: 0);
+    unawaited(_player.play());
+  }
+
+  @override
+  Future<void> seekToFraction(double fraction) async {
+    await _seekPlaylist(fraction.clamp(0.0, 1.0));
+    _emitPlayerState();
+  }
+
+  @override
   Future<void> stop() async {
     await _player.stop();
+    await _player.clearAudioSources();
     _isSpeaking = false;
+    _playbackState.value = const TtsPlaybackState();
   }
 
   @override
@@ -243,6 +355,60 @@ class KokoroServerEngine extends TtsEngine {
 
   @override
   void dispose() {
+    for (final subscription in _playerSubscriptions) {
+      subscription.cancel();
+    }
     _player.dispose();
+    _playbackState.dispose();
+  }
+
+  Duration _totalDuration() => _player.sequence.fold(
+    Duration.zero,
+    (total, source) => total + (source.duration ?? Duration.zero),
+  );
+
+  Duration _absolutePosition() {
+    final index = _player.currentIndex ?? 0;
+    var position = _player.position;
+    for (var i = 0; i < index && i < _player.sequence.length; i++) {
+      position += _player.sequence[i].duration ?? Duration.zero;
+    }
+    return position;
+  }
+
+  void _emitPlayerState({TtsPlaybackStatus? status, double? forceProgress}) {
+    final current = _playbackState.value;
+    if (!current.visible) return;
+    final duration = _totalDuration();
+    final position = _absolutePosition();
+    final progress =
+        forceProgress ??
+        (duration.inMilliseconds <= 0
+            ? current.progress
+            : position.inMilliseconds / duration.inMilliseconds);
+    _playbackState.value = current.copyWith(
+      status: status,
+      position: position,
+      duration: duration,
+      progress: progress,
+      clearError: true,
+    );
+  }
+
+  Future<void> _seekPlaylist(double fraction) async {
+    if (_player.sequence.isEmpty) return;
+    final total = _totalDuration();
+    if (total == Duration.zero) return;
+    var target = Duration(
+      milliseconds: (total.inMilliseconds * fraction).round(),
+    );
+    for (var i = 0; i < _player.sequence.length; i++) {
+      final itemDuration = _player.sequence[i].duration ?? Duration.zero;
+      if (target <= itemDuration || i == _player.sequence.length - 1) {
+        await _player.seek(target, index: i);
+        return;
+      }
+      target -= itemDuration;
+    }
   }
 }

@@ -16,6 +16,7 @@ import '../widgets/active_tasks_pane.dart';
 import '../widgets/voice_button.dart';
 import '../widgets/secret_manager_sheet.dart';
 import '../widgets/html_plan_manager_sheet.dart';
+import '../widgets/tts_playback_bar.dart';
 import '../services/work_review_repository.dart';
 import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
@@ -736,6 +737,16 @@ class HomeScreenState extends State<HomeScreen> {
                   if (provider.activeSessionId != null ||
                       provider.isPendingNewSession)
                     _buildControlChips(provider),
+                  if (provider.ttsPlaybackState.visible)
+                    TtsPlaybackBar(
+                      state: provider.ttsPlaybackState,
+                      onPause: () => unawaited(provider.pauseReplaySpeak()),
+                      onResume: () => unawaited(provider.resumeReplaySpeak()),
+                      onRestart: () => unawaited(provider.restartReplaySpeak()),
+                      onSeek: (fraction) =>
+                          unawaited(provider.seekReplaySpeak(fraction)),
+                      onClose: () => unawaited(provider.closeReplaySpeak()),
+                    ),
                   if (provider.weeklyRateLimit != null)
                     _buildRateLimitBanner(provider.weeklyRateLimit!),
                   if (provider.isRefreshingHistory)
@@ -794,6 +805,7 @@ class HomeScreenState extends State<HomeScreen> {
                         provider.saveDraft(text.trim());
                         _focusNode.requestFocus();
                       },
+                      onReadAloud: provider.replaySpeak,
                       rawMode: provider.rawMode,
                       rawItems: provider.rawItems,
                       subagentTasks: provider.subagentTasks,
@@ -819,6 +831,7 @@ class HomeScreenState extends State<HomeScreen> {
                       },
                       onDismissSubagent: provider.dismissSubagent,
                       onDismissWorkflow: provider.dismissWorkflow,
+                      onReadAloud: provider.replaySpeak,
                     ),
                   _buildInputBar(provider),
                 ],

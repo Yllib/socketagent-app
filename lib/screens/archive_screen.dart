@@ -1023,9 +1023,14 @@ class _ArchiveChatMessageTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final onReadAloud = context.read<ChatProvider>().replaySpeak;
     switch (message.type) {
       case MessageType.text:
-        return MessageBubble(message: message, sourceServerId: sourceServerId);
+        return MessageBubble(
+          message: message,
+          sourceServerId: sourceServerId,
+          onReadAloud: onReadAloud,
+        );
       case MessageType.toolCall:
         if (message.toolName == 'Speak') return SpeakCard(message: message);
         if (message.toolName == 'SendFile') return FileCard(message: message);
@@ -1046,10 +1051,18 @@ class _ArchiveChatMessageTile extends StatelessWidget {
         if (message.toolName == 'manual') {
           return NotificationReceiptCard(message: message);
         }
-        return MessageBubble(message: message, sourceServerId: sourceServerId);
+        return MessageBubble(
+          message: message,
+          sourceServerId: sourceServerId,
+          onReadAloud: onReadAloud,
+        );
       default:
         if (message.textContent.trim().isEmpty) return const SizedBox.shrink();
-        return MessageBubble(message: message, sourceServerId: sourceServerId);
+        return MessageBubble(
+          message: message,
+          sourceServerId: sourceServerId,
+          onReadAloud: onReadAloud,
+        );
     }
   }
 }

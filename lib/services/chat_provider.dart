@@ -474,7 +474,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _asrModelManager,
   );
   final TtsService _tts = TtsService();
-  final SystemTtsEngine _systemEngine = SystemTtsEngine();
+  late final SystemTtsEngine _systemEngine;
   final KokoroServerEngine _kokoroServerEngine = KokoroServerEngine();
   final KokoroModelManager _kokoroModelManager = KokoroModelManager();
   late KokoroDeviceEngine _kokoroDeviceEngine;
@@ -1744,6 +1744,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   TtsVoice? get selectedTtsVoice => _tts.selectedVoice;
   TtsEngineMode get ttsEngineMode => _ttsEngineMode;
   TtsEngine get activeTtsEngine => _activeTtsEngine;
+  TtsPlaybackState get ttsPlaybackState {
+    final engineState = _activeTtsEngine.playbackState.value;
+    if (engineState.visible) return engineState;
+    final pendingText = _replaySpeakingText;
+    if (pendingText != null && pendingText.isNotEmpty) {
+      return TtsPlaybackState(
+        status: TtsPlaybackStatus.loading,
+        text: pendingText,
+      );
+    }
+    return engineState;
+  }
+
   KokoroModelManager get kokoroModelManager => _kokoroModelManager;
   KokoroDeviceEngine get kokoroDeviceEngine => _kokoroDeviceEngine;
   List<TtsEngineVoice> get ttsEngineVoices => _activeTtsEngine.availableVoices;
@@ -1841,8 +1854,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> get mcpServers => _mcpServers;
 
   ChatProvider() {
-    _activeTtsEngine = _systemEngine;
+    _systemEngine = SystemTtsEngine(_tts);
     _kokoroDeviceEngine = KokoroDeviceEngine(_kokoroModelManager);
+    _activeTtsEngine = _systemEngine;
+    _systemEngine.playbackState.addListener(_onTtsPlaybackChanged);
+    _kokoroServerEngine.playbackState.addListener(_onTtsPlaybackChanged);
+    _kokoroDeviceEngine.playbackState.addListener(_onTtsPlaybackChanged);
     _kokoroServerEngine.sendToServer = (msg) => _connMgr.send(msg);
     WidgetsBinding.instance.addObserver(this);
     PushNotificationService.onTokenRefresh = _handlePushTokenRefresh;
@@ -1857,6 +1874,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _loadSettings();
     _setupListeners();
     unawaited(AdbBridgeService.instance.restoreLocalAdbConnection());
+  }
+
+  void _onTtsPlaybackChanged() {
+    if (!_activeTtsEngine.playbackState.value.visible) {
+      _replaySpeakingText = null;
+    }
+    notifyListeners();
   }
 
   @override
@@ -2066,26 +2090,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       )
       ..retainAll(_serverConfigs.map((c) => c.id).toSet());
 
-    // Initialize ConnectionManager with server configs (per-server relay)
-    _connMgr.setSubscriberToken(_subscriberToken);
-    await _connMgr.setServers(_serverConfigs);
-    _restorePendingHardStops(prefs);
-    await _registerPushNotifications();
-    _lastServerStartedAt = prefs.getString('server_started_at');
-    _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
-        .toSet();
-    _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
-    // Recent CWDs are now server-side — loaded via get_recent_cwds on connect
+    // Restore the lightweight TTS preferences before connecting so the first
+    // server sync carries the correct values. Loading voices and warming the
+    // native speech engine happens later and must never delay networking.
     _ttsEnabled = prefs.getBool('tts_enabled') ?? false;
-    // Eagerly initialize STT so model is loaded before user presses mic
-    _speech.initialize();
-    // Always eagerly initialize TTS so it's warm before any speak message arrives
     final savedVoice = prefs.getString('tts_voice');
-    await _tts.initialize();
-    if (savedVoice != null) {
-      await _tts.restoreVoice(savedVoice);
-    }
-    // Restore TTS engine mode
+    _tts.prepareVoice(savedVoice);
     final savedEngine = prefs.getString('tts_engine_mode');
     if (savedEngine != null) {
       try {
@@ -2105,14 +2115,40 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _activeTtsEngine = _kokoroDeviceEngine;
         break;
     }
-    // Restore Kokoro voice
     final savedKokoroVoice = prefs.getString('kokoro_voice');
     if (savedKokoroVoice != null) {
-      _kokoroServerEngine.restoreVoice(savedKokoroVoice);
-      _kokoroDeviceEngine.restoreVoice(savedKokoroVoice);
+      await _kokoroServerEngine.restoreVoice(savedKokoroVoice);
+      await _kokoroDeviceEngine.restoreVoice(savedKokoroVoice);
+    }
+
+    // Initialize ConnectionManager with server configs (per-server relay)
+    _connMgr.setSubscriberToken(_subscriberToken);
+    await _connMgr.setServers(_serverConfigs);
+    _connMgr.connectAll();
+
+    // Connection readiness ends here. Push registration, speech-engine
+    // warm-up, draft loading, and other local setup are independent work. The
+    // launcher is already waiting on this completer and can connect every
+    // configured computer while the remaining initialization continues.
+    if (!_settingsLoaded.isCompleted) {
+      _settingsLoaded.complete();
+    }
+    notifyListeners();
+
+    _restorePendingHardStops(prefs);
+    await _registerPushNotifications();
+    _lastServerStartedAt = prefs.getString('server_started_at');
+    _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
+        .toSet();
+    _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
+    // Eagerly initialize STT so model is loaded before user presses mic
+    _speech.initialize();
+    // Always eagerly initialize TTS so it's warm before any speak message arrives
+    await _tts.initialize();
+    if (savedVoice != null) {
+      await _tts.restoreVoice(savedVoice);
     }
     await _loadDrafts();
-    _settingsLoaded.complete();
     notifyListeners();
   }
 
@@ -4179,11 +4215,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final text = msg['text'] as String? ?? '';
           if (_ttsEnabled && text.isNotEmpty) {
             if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
-              // Don't speak locally — audio will arrive via tts_audio message
+              // Audio generated by the server arrives separately. Publish a
+              // loading state now so the wait is visible to the user.
+              _kokoroServerEngine.expectAudio(text);
             } else if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
-              _kokoroDeviceEngine.speak(text);
+              unawaited(_kokoroDeviceEngine.speak(text));
             } else {
-              _tts.speak(text);
+              unawaited(_systemEngine.speak(text));
             }
           }
           if (text.isNotEmpty) {
@@ -4214,10 +4252,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'tts_audio':
           final audioData = msg['audioData'] as String? ?? '';
-          if (_ttsEnabled &&
+          if ((_ttsEnabled ||
+                  _kokoroServerEngine.playbackState.value.visible) &&
               audioData.isNotEmpty &&
               _ttsEngineMode == TtsEngineMode.kokoroServer) {
-            _kokoroServerEngine.playAudioData(audioData);
+            unawaited(
+              _kokoroServerEngine.playAudioData(
+                audioData,
+                text: msg['text'] as String?,
+              ),
+            );
           }
           break;
         case 'file':
@@ -14265,8 +14309,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> setTtsEngineMode(TtsEngineMode mode) async {
     _ttsEngineMode = mode;
     // Stop any current speech
-    _tts.stop();
-    _kokoroServerEngine.stop();
+    await _systemEngine.stop();
+    await _kokoroServerEngine.stop();
+    await _kokoroDeviceEngine.stop();
     switch (mode) {
       case TtsEngineMode.system:
         _activeTtsEngine = _systemEngine;
@@ -14454,36 +14499,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String? _replaySpeakingText;
-  String? get replaySpeakingText => _replaySpeakingText;
+  String? get replaySpeakingText =>
+      ttsPlaybackState.visible ? ttsPlaybackState.text : _replaySpeakingText;
 
   Future<void> replaySpeak(String text) async {
     if (text.trim().isEmpty) return;
     _replaySpeakingText = text;
     notifyListeners();
     try {
-      if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
-        await _kokoroServerEngine.speak(text);
-      } else if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
-        await _kokoroDeviceEngine.speak(text);
-      } else {
-        await _tts.speak(text);
-      }
-    } finally {
+      await _activeTtsEngine.speak(text);
+    } catch (error, stackTrace) {
+      debugPrint('[TTS] Read aloud failed: $error\n$stackTrace');
       _replaySpeakingText = null;
       notifyListeners();
     }
   }
 
-  Future<void> stopReplaySpeak() async {
-    if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
-      await _kokoroDeviceEngine.stop();
-    } else if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
-      _kokoroServerEngine.stop();
-    } else {
-      _tts.stop();
-    }
+  Future<void> pauseReplaySpeak() => _activeTtsEngine.pause();
+
+  Future<void> resumeReplaySpeak() => _activeTtsEngine.resume();
+
+  Future<void> restartReplaySpeak() => _activeTtsEngine.restart();
+
+  Future<void> seekReplaySpeak(double fraction) =>
+      _activeTtsEngine.seekToFraction(fraction);
+
+  Future<void> closeReplaySpeak() async {
+    await _activeTtsEngine.stop();
     _replaySpeakingText = null;
     notifyListeners();
+  }
+
+  Future<void> stopReplaySpeak() async {
+    await closeReplaySpeak();
   }
 
   /// Get local path for a downloaded file, or null if not yet downloaded
@@ -15760,6 +15808,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _connMgr.dispose();
     _speech.dispose();
+    _systemEngine.playbackState.removeListener(_onTtsPlaybackChanged);
+    _kokoroServerEngine.playbackState.removeListener(_onTtsPlaybackChanged);
+    _kokoroDeviceEngine.playbackState.removeListener(_onTtsPlaybackChanged);
+    _kokoroServerEngine.dispose();
+    _kokoroDeviceEngine.dispose();
     _tts.dispose();
     _subscriptionRequiredController.close();
     _backendAuthRequiredController.close();

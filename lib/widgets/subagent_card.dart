@@ -18,6 +18,7 @@ class SubAgentCard extends StatefulWidget {
   final GlobalKey? scrollKey;
   final bool greenTheme; // completion card styling
   final String? sourceServerId;
+  final ValueChanged<String>? onReadAloud;
 
   const SubAgentCard({
     super.key,
@@ -27,6 +28,7 @@ class SubAgentCard extends StatefulWidget {
     this.scrollKey,
     this.greenTheme = false,
     this.sourceServerId,
+    this.onReadAloud,
   });
 
   @override
@@ -373,6 +375,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
         return MessageBubble(
           message: msg,
           sourceServerId: widget.sourceServerId,
+          onReadAloud: widget.onReadAloud,
         );
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') return SpeakCard(message: msg);

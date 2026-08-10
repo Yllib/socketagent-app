@@ -267,6 +267,26 @@ class MainActivity : FlutterActivity() {
                         result.error("SHARE_HTML_ERROR", e.message, null)
                     }
                 }
+                "shareText" -> {
+                    val text = call.argument<String>("text") ?: ""
+                    val subject = call.argument<String>("subject") ?: "SocketAgent message"
+                    val chooserTitle = call.argument<String>("chooserTitle") ?: "Share message"
+                    if (text.isBlank()) {
+                        result.error("SHARE_TEXT_INVALID", "The message is empty", null)
+                    } else {
+                        try {
+                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_SUBJECT, subject)
+                                putExtra(Intent.EXTRA_TEXT, text)
+                            }
+                            startActivity(Intent.createChooser(sendIntent, chooserTitle))
+                            result.success(true)
+                        } catch (e: Exception) {
+                            result.error("SHARE_TEXT_ERROR", e.message, null)
+                        }
+                    }
+                }
                 else -> result.notImplemented()
             }
         }

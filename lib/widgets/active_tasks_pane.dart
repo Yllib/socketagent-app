@@ -19,6 +19,7 @@ class ActiveTasksPane extends StatefulWidget {
   final void Function(String toolUseId)? onScrollToTask;
   final void Function(String toolUseId)? onDismissSubagent;
   final void Function(String taskId)? onDismissWorkflow;
+  final ValueChanged<String>? onReadAloud;
 
   const ActiveTasksPane({
     super.key,
@@ -31,6 +32,7 @@ class ActiveTasksPane extends StatefulWidget {
     this.onScrollToTask,
     this.onDismissSubagent,
     this.onDismissWorkflow,
+    this.onReadAloud,
   });
 
   @override
@@ -716,6 +718,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
         return MessageBubble(
           message: msg,
           sourceServerId: widget.sourceServerId,
+          onReadAloud: widget.onReadAloud,
         );
       case MessageType.toolCall:
         if (msg.toolName == 'Speak') return SpeakCard(message: msg);
