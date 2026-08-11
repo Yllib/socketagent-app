@@ -212,6 +212,33 @@ void main() {
     );
   });
 
+  test('idle tool replay cannot move an old card to the chat tail', () {
+    expect(
+      shouldMaterializeToolReplayInTranscript(
+        isReplay: true,
+        hasExistingCard: false,
+        sessionActive: false,
+      ),
+      isFalse,
+    );
+    expect(
+      shouldMaterializeToolReplayInTranscript(
+        isReplay: true,
+        hasExistingCard: true,
+        sessionActive: false,
+      ),
+      isTrue,
+    );
+    expect(
+      shouldMaterializeToolReplayInTranscript(
+        isReplay: true,
+        hasExistingCard: false,
+        sessionActive: true,
+      ),
+      isTrue,
+    );
+  });
+
   test('sparse subagent history cannot erase live assignment metadata', () {
     final merged = mergeSubagentTaskState(
       const {

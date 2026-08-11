@@ -746,6 +746,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, int> _sdkSessionRequestLimits = {};
   final Map<String, Completer<FileManagerListing>> _fileManagerListCompleters =
       {};
+  final Map<String, Completer<FileManagerEntry>> _fileManagerStatCompleters =
+      {};
   final Map<String, Completer<Map<String, dynamic>>>
   _fileManagerProtectedCompleters = {};
   final Map<String, Completer<Map<String, dynamic>>>
@@ -3810,6 +3812,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'subscription_required',
       'directory_listing',
       'file_manager_list_result',
+      'file_manager_stat_result',
       'file_manager_protected_result',
       'file_manager_operation_result',
       'file_manager_text_result',
@@ -4366,6 +4369,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               } else {
                 completer.completeError(
                   Exception(msg['error'] as String? ?? 'Failed to list files'),
+                );
+              }
+            }
+            break;
+          }
+        case 'file_manager_stat_result':
+          {
+            final requestId = msg['requestId'] as String? ?? '';
+            final completer = _fileManagerStatCompleters.remove(requestId);
+            if (completer != null && !completer.isCompleted) {
+              if (msg['ok'] == true && msg['entry'] is Map) {
+                completer.complete(
+                  FileManagerEntry.fromJson(
+                    Map<String, dynamic>.from(msg['entry'] as Map),
+                  ),
+                );
+              } else {
+                completer.completeError(
+                  Exception(
+                    msg['error'] as String? ?? 'Failed to inspect file',
+                  ),
                 );
               }
             }
@@ -6258,12 +6282,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (replacesSyntheticSendFile) {
       existingIndex = syntheticSendFileIndex;
     }
-    final materializeInTranscript =
-        !isSubagentTool ||
-        shouldMaterializeSubagentReplayInTranscript(
-          isReplay: msg['replay'] == true,
-          hasExistingCard: existingIndex >= 0,
-        );
+    final isReplay = msg['replay'] == true;
+    final materializeInTranscript = isSubagentTool
+        ? shouldMaterializeSubagentReplayInTranscript(
+            isReplay: isReplay,
+            hasExistingCard: existingIndex >= 0,
+          )
+        : shouldMaterializeToolReplayInTranscript(
+            isReplay: isReplay,
+            hasExistingCard: existingIndex >= 0,
+            sessionActive: _isProcessing,
+          );
     // Retransmission is the same transcript event. Only a genuinely new tool
     // call closes the preceding assistant stream.
     if (existingIndex < 0 && materializeInTranscript) {
@@ -6314,7 +6343,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // event. Do not resurrect a spinner for work the server says is over.
     if (!_isProcessing &&
         !toolMsg.isBackgrounded &&
-        !(isSubagentTool && msg['replay'] == true)) {
+        !(isSubagentTool && isReplay)) {
       toolMsg.toolOutput ??= '';
       toolMsg.toolStreaming = false;
     }
@@ -6324,7 +6353,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final desc = input['description'] as String? ?? 'Sub agent task';
       final previous = _subagentTasks[toolUseId];
       final inferredStatus =
-          msg['replay'] == true && isActiveSubagentStatus(previous?['status'])
+          isReplay && isActiveSubagentStatus(previous?['status'])
           ? previous!['status']
           : toolMsg.toolStreaming
           ? 'running'
@@ -12603,6 +12632,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String dirPath, {
     String? serverId,
     bool includeHidden = false,
+    int? offset,
+    int? limit,
+    String? anchorPath,
   }) {
     final requestId = DateTime.now().microsecondsSinceEpoch.toString();
     final completer = Completer<FileManagerListing>();
@@ -12612,6 +12644,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'requestId': requestId,
       'path': dirPath,
       'includeHidden': includeHidden,
+      if (offset != null) 'offset': offset,
+      if (limit != null) 'limit': limit,
+      if (anchorPath != null && anchorPath.isNotEmpty) 'anchorPath': anchorPath,
     };
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
@@ -12623,6 +12658,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       onTimeout: () {
         _fileManagerListCompleters.remove(requestId);
         throw TimeoutException('Timed out listing files');
+      },
+    );
+  }
+
+  Future<FileManagerEntry> statFileManagerPath({
+    required String path,
+    String? serverId,
+  }) {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<FileManagerEntry>();
+    _fileManagerStatCompleters[requestId] = completer;
+    final msg = {
+      'type': 'file_manager_stat',
+      'requestId': requestId,
+      'path': path,
+    };
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, msg);
+    } else {
+      _ws.send(msg);
+    }
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _fileManagerStatCompleters.remove(requestId);
+        throw TimeoutException('Timed out inspecting file');
       },
     );
   }

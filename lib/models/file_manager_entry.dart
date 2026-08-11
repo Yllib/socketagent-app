@@ -99,12 +99,22 @@ class FileManagerListing {
   final String? parentPath;
   final List<FileManagerEntry> entries;
   final List<FileManagerRoot> roots;
+  final int offset;
+  final int? limit;
+  final int? totalCount;
+  final int? nextOffset;
+  final bool hasMore;
 
   const FileManagerListing({
     required this.path,
     required this.entries,
     required this.roots,
     this.parentPath,
+    this.offset = 0,
+    this.limit,
+    this.totalCount,
+    this.nextOffset,
+    this.hasMore = false,
   });
 
   factory FileManagerListing.fromJson(Map<String, dynamic> json) {
@@ -124,6 +134,11 @@ class FileManagerListing {
             (root) => FileManagerRoot.fromJson(Map<String, dynamic>.from(root)),
           )
           .toList(),
+      offset: (json['offset'] as num?)?.toInt() ?? 0,
+      limit: (json['limit'] as num?)?.toInt(),
+      totalCount: (json['totalCount'] as num?)?.toInt(),
+      nextOffset: (json['nextOffset'] as num?)?.toInt(),
+      hasMore: json['hasMore'] == true,
     );
   }
 }

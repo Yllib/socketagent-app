@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
+import 'bash_command_view.dart';
 import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
 
@@ -255,12 +256,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return '';
   }
 
-  /// For Bash, format the command with line breaks at && and ;
-  String get _bashFormatted {
-    final cmd = widget.message.toolInput?['command'] as String? ?? '';
-    // Split on && and ; but keep the delimiter at the start of the next line
-    return cmd.replaceAll(' && ', '\n&& ').replaceAll('; ', '\n; ');
-  }
+  String get _bashCommand =>
+      widget.message.toolInput?['command'] as String? ?? '';
 
   /// Short single-line summary for Bash header when collapsed
   String get _bashSummary {
@@ -268,11 +265,16 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     if (input == null) return '';
     // Use description if available, otherwise first segment of command
     final desc = input['description'] as String?;
-    if (desc != null && desc.isNotEmpty) return desc;
-    final cmd = input['command'] as String? ?? '';
-    // Take first command segment (before && or ;)
-    final firstSeg = cmd.split(RegExp(r'\s*&&\s*|\s*;\s*')).first;
-    return firstSeg;
+    if (desc != null && desc.isNotEmpty) {
+      // Some harnesses repeat the exact wrapped command as the description.
+      // Treat that as a command, not as a human-readable summary.
+      if (desc == input['command'] ||
+          RegExp(r'(?:^|/)\b(?:bash|sh)\s+-[A-Za-z]*c').hasMatch(desc)) {
+        return shellCommandSummary(desc);
+      }
+      return desc;
+    }
+    return shellCommandSummary(input['command'] as String? ?? '');
   }
 
   String? get _editDiff {
@@ -495,14 +497,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     ),
                     const SizedBox(height: 7),
                   ],
-                  SelectableText(
-                    _bashFormatted,
-                    style: GoogleFonts.jetBrainsMono(
-                      fontSize: 11,
-                      color: const Color(0xFFF9E2AF),
-                      height: 1.4,
-                    ),
-                  ),
+                  BashCommandView(command: _bashCommand),
                 ],
               ),
             ),

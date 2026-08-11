@@ -287,22 +287,10 @@ class SocketAgentLinkRouter {
         );
         return;
       case 'view':
-        _openFileManager(
-          context,
-          _parentPath(filePath),
-          serverId,
-          highlightPath: filePath,
-          initialAction: 'view',
-        );
+        _openFileManager(context, filePath, serverId, directPath: filePath);
         return;
       case 'open':
-        _openFileManager(
-          context,
-          _parentPath(filePath),
-          serverId,
-          highlightPath: filePath,
-          initialAction: 'open',
-        );
+        _openFileManager(context, filePath, serverId, directPath: filePath);
         return;
       default:
         _showError(context, 'Unsupported file link action: $action');
@@ -315,12 +303,14 @@ class SocketAgentLinkRouter {
     String? serverId, {
     String? highlightPath,
     String? initialAction,
+    String? directPath,
   }) {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => FileManagerScreen(
           serverId: serverId,
           initialPath: path,
+          directPath: directPath,
           highlightPath: highlightPath,
           initialAction: initialAction,
         ),

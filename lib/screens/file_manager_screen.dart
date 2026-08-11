@@ -22,6 +22,7 @@ enum _FilePreviewKind { text, markdown, html, code, image, pdf }
 class FileManagerScreen extends StatefulWidget {
   final String? serverId;
   final String? initialPath;
+  final String? directPath;
   final String? highlightPath;
   final String? initialAction;
 
@@ -29,6 +30,7 @@ class FileManagerScreen extends StatefulWidget {
     super.key,
     this.serverId,
     this.initialPath,
+    this.directPath,
     this.highlightPath,
     this.initialAction,
   });
@@ -38,22 +40,26 @@ class FileManagerScreen extends StatefulWidget {
 }
 
 class _FileManagerScreenState extends State<FileManagerScreen> {
+  static const int _pageSize = 200;
   String? _serverId;
   String _currentPath = '';
   FileManagerListing? _listing;
   bool _includeHidden = false;
   bool _loading = true;
+  bool _loadingMore = false;
   String? _error;
   String _filter = '';
   final TextEditingController _filterController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   bool _initialActionHandled = false;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _serverId = widget.serverId;
     _currentPath = widget.initialPath ?? '';
+    _scrollController.addListener(_handleScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadInitialPath());
   }
 
@@ -67,6 +73,10 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
   Future<void> _loadInitialPath() async {
     final provider = context.read<ChatProvider>();
     final serverId = _effectiveServerId(provider);
+    if (widget.directPath?.isNotEmpty == true) {
+      await _openDirectPath(widget.directPath!);
+      return;
+    }
     if ((widget.initialPath == null || widget.initialPath!.isEmpty) &&
         serverId != null) {
       final prefs = await SharedPreferences.getInstance();
@@ -76,7 +86,58 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       }
     }
     if (mounted) {
-      await _load(_currentPath);
+      await _load(_currentPath, anchorPath: widget.highlightPath);
+    }
+  }
+
+  void _handleScroll() {
+    if (!_scrollController.hasClients) return;
+    if (_scrollController.position.extentAfter < 480) {
+      _loadMore();
+    }
+  }
+
+  Future<void> _openDirectPath(String filePath) async {
+    final provider = context.read<ChatProvider>();
+    final serverId = _effectiveServerId(provider);
+    if (serverId == null) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'No computer connected';
+        });
+      }
+      return;
+    }
+    setState(() {
+      _serverId = serverId;
+      _currentPath = filePath;
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final entry = await provider.statFileManagerPath(
+        path: filePath,
+        serverId: serverId,
+      );
+      if (!mounted) return;
+      if (entry.isDirectory) {
+        await _load(entry.path);
+        return;
+      }
+      setState(() => _loading = false);
+      if (_canPreview(entry)) {
+        await _previewEntry(entry);
+      } else {
+        await _showFileActions(entry);
+      }
+      if (mounted) Navigator.of(context).maybePop();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
     }
   }
 
@@ -101,7 +162,12 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     return servers.first.id;
   }
 
-  Future<void> _load([String? path]) async {
+  Future<void> _load(
+    String? path, {
+    bool append = false,
+    bool prepend = false,
+    String? anchorPath,
+  }) async {
     final provider = context.read<ChatProvider>();
     final serverId = _effectiveServerId(provider);
     if (serverId == null) {
@@ -112,36 +178,108 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       return;
     }
 
+    final generation = append || prepend ? _loadGeneration : ++_loadGeneration;
+    final requestedPath = path ?? _currentPath;
+    final current = _listing;
+    final requestedOffset = append
+        ? current?.nextOffset
+        : prepend
+        ? ((current?.offset ?? 0) - _pageSize).clamp(0, 1 << 31)
+        : null;
     setState(() {
       _serverId = serverId;
-      _loading = true;
-      _error = null;
+      if (append || prepend) {
+        _loadingMore = true;
+      } else {
+        _loading = true;
+        _error = null;
+      }
     });
 
     try {
       final listing = await provider.listFileManagerDirectory(
-        path ?? _currentPath,
+        requestedPath,
         serverId: serverId,
         includeHidden: _includeHidden,
+        offset: requestedOffset,
+        limit: _pageSize,
+        anchorPath: anchorPath,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
+      final oldPixels = prepend && _scrollController.hasClients
+          ? _scrollController.position.pixels
+          : null;
+      final oldMaxExtent = prepend && _scrollController.hasClients
+          ? _scrollController.position.maxScrollExtent
+          : null;
+      final combined = (append || prepend) && current?.path == listing.path
+          ? _mergeListings(current!, listing, prepend: prepend)
+          : listing;
       setState(() {
-        _listing = listing;
-        _currentPath = listing.path;
+        _listing = combined;
+        _currentPath = combined.path;
         _loading = false;
+        _loadingMore = false;
       });
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _revealHighlightedEntry(listing);
+        if (!mounted) return;
+        if (prepend && oldPixels != null && oldMaxExtent != null) {
+          final addedExtent =
+              _scrollController.position.maxScrollExtent - oldMaxExtent;
+          _scrollController.jumpTo(oldPixels + addedExtent);
+        } else {
+          _revealHighlightedEntry(combined);
+        }
       });
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('file_manager_last_path_$serverId', listing.path);
+      await prefs.setString('file_manager_last_path_$serverId', combined.path);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _error = e.toString();
         _loading = false;
+        _loadingMore = false;
       });
     }
+  }
+
+  FileManagerListing _mergeListings(
+    FileManagerListing current,
+    FileManagerListing page, {
+    required bool prepend,
+  }) {
+    final byPath = <String, FileManagerEntry>{};
+    final source = prepend
+        ? [...page.entries, ...current.entries]
+        : [...current.entries, ...page.entries];
+    for (final entry in source) {
+      byPath.putIfAbsent(entry.path, () => entry);
+    }
+    return FileManagerListing(
+      path: current.path,
+      parentPath: current.parentPath,
+      entries: byPath.values.toList(growable: false),
+      roots: current.roots,
+      offset: prepend ? page.offset : current.offset,
+      limit: current.limit ?? page.limit,
+      totalCount: page.totalCount ?? current.totalCount,
+      nextOffset: prepend ? current.nextOffset : page.nextOffset,
+      hasMore: prepend ? current.hasMore : page.hasMore,
+    );
+  }
+
+  Future<void> _loadMore() async {
+    final listing = _listing;
+    if (_loading || _loadingMore || listing == null || !listing.hasMore) return;
+    await _load(listing.path, append: true);
+  }
+
+  Future<void> _loadPrevious() async {
+    final listing = _listing;
+    if (_loading || _loadingMore || listing == null || listing.offset <= 0) {
+      return;
+    }
+    await _load(listing.path, prepend: true);
   }
 
   Future<void> _setProtected(
@@ -295,7 +433,9 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: () => _load(_currentPath),
+                onPressed: () => widget.directPath?.isNotEmpty == true
+                    ? _openDirectPath(widget.directPath!)
+                    : _load(_currentPath),
                 icon: const Icon(Icons.refresh, size: 18),
                 label: const Text('Retry'),
               ),
@@ -330,7 +470,11 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       child: ListView.builder(
         controller: _scrollController,
         physics: const AlwaysScrollableScrollPhysics(),
-        itemCount: rows.length + (listing.parentPath != null ? 1 : 0),
+        itemCount:
+            rows.length +
+            (listing.parentPath != null ? 1 : 0) +
+            (listing.offset > 0 ? 1 : 0) +
+            (listing.hasMore ? 1 : 0),
         itemBuilder: (context, index) {
           if (listing.parentPath != null && index == 0) {
             return ListTile(
@@ -343,7 +487,35 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
               onTap: () => _load(listing.parentPath),
             );
           }
-          final entryIndex = index - (listing.parentPath != null ? 1 : 0);
+          var rowIndex = index - (listing.parentPath != null ? 1 : 0);
+          if (listing.offset > 0) {
+            if (rowIndex == 0) {
+              return ListTile(
+                leading: _loadingMore
+                    ? const SizedBox.square(
+                        dimension: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.expand_less),
+                title: const Text('Load earlier files'),
+                onTap: _loadingMore ? null : _loadPrevious,
+              );
+            }
+            rowIndex--;
+          }
+          if (rowIndex >= rows.length) {
+            return ListTile(
+              leading: _loadingMore
+                  ? const SizedBox.square(
+                      dimension: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.expand_more),
+              title: const Text('Load more files'),
+              onTap: _loadingMore ? null : _loadMore,
+            );
+          }
+          final entryIndex = rowIndex;
           final entry = rows[entryIndex];
           final fileId = provider.getFileId(entry.path);
           return _FileEntryTile(
@@ -381,7 +553,10 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     );
     if (index < 0) return;
 
-    final visualIndex = index + (listing.parentPath != null ? 1 : 0);
+    final visualIndex =
+        index +
+        (listing.parentPath != null ? 1 : 0) +
+        (listing.offset > 0 ? 1 : 0);
     if (_scrollController.hasClients) {
       final offset = (visualIndex * 72.0 - 96).clamp(
         0.0,

@@ -169,6 +169,17 @@ bool shouldMaterializeSubagentReplayInTranscript({
   return !isReplay || hasExistingCard;
 }
 
+/// Completed/idle replay is recovery metadata, not a new transcript event.
+/// If its original card is outside the loaded window, history owns its
+/// position; appending it would make an old tool jump to the bottom.
+bool shouldMaterializeToolReplayInTranscript({
+  required bool isReplay,
+  required bool hasExistingCard,
+  required bool sessionActive,
+}) {
+  return !isReplay || hasExistingCard || sessionActive;
+}
+
 /// Merge subagent state without allowing a sparse replay/history page to erase
 /// richer metadata already supplied by the live active-subagent snapshot.
 Map<String, dynamic> mergeSubagentTaskState(
