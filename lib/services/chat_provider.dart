@@ -9959,14 +9959,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Reconcile the full visible live transcript. ChatMessage timestamps
       // can originate on the server, so comparing them with the local receipt
       // time loses completed tool/text events that raced this snapshot.
-      loaded = reconcileLiveTranscriptWithSnapshot(loaded, liveBeforeSnapshot);
+      loaded = reconcileLiveTranscriptWithSnapshot(
+        loaded,
+        liveBeforeSnapshot,
+        protectedUserMessageIds: _pendingLocalUserMessageIds,
+      );
       final localPendingUserPrompts = _messages
           .where(_isPendingLocalUserPrompt)
           .where((m) => !_hasEquivalentUserMessage(loaded, m))
           .toList();
       for (final m in _messages.where(_isPendingLocalUserPrompt)) {
         if (_hasEquivalentUserMessage(loaded, m)) {
-          _pendingLocalUserMessageIds.remove(m.id);
+          // Keep the message ID protected for the lifetime of this open
+          // session. A later bounded reconnect snapshot may omit a prompt
+          // that an earlier response contained; only the cached prompt body
+          // has finished its acknowledgement lifecycle here.
           _pendingCacheUserPromptContent.remove(m.id);
         }
       }

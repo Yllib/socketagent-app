@@ -407,8 +407,9 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
 /// card already on screen, while any newer persisted content is folded into it.
 List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
   Iterable<ChatMessage> snapshotMessages,
-  Iterable<ChatMessage> liveCandidates,
-) {
+  Iterable<ChatMessage> liveCandidates, {
+  Set<String> protectedUserMessageIds = const <String>{},
+}) {
   final reconciled = snapshotMessages.toList();
   final liveList = liveCandidates.toList();
   final positionedSnapshotMessages = reconciled.where(
@@ -437,6 +438,8 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
         live.sender == MessageSender.user &&
         (live.type == MessageType.text ||
             live.type == MessageType.skillInvocation);
+    final isProtectedUserPrompt =
+        isUserPrompt && protectedUserMessageIds.contains(live.id);
     final isPositionedAfterSnapshot =
         isUserPrompt &&
         newestSnapshotSequence != null &&
@@ -445,7 +448,11 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     final isLiveUserTail =
         isPositionedAfterSnapshot ||
         (newestLiveOverlap >= 0 && i > newestLiveOverlap && isUserPrompt);
-    if (!_isLiveTranscriptMessage(live) && !isLiveUserTail) continue;
+    if (!_isLiveTranscriptMessage(live) &&
+        !isLiveUserTail &&
+        !isProtectedUserPrompt) {
+      continue;
+    }
     final stableKey = _stableLiveKey(live);
     var matchIndex = -1;
     if (stableKey != null) {
@@ -474,7 +481,11 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     final belongsToUnmatchedLiveTail = newestLiveOverlap >= 0
         ? i > newestLiveOverlap
         : reconciled.isEmpty || _isExplicitlyActiveLiveMessage(live);
-    if (!belongsToUnmatchedLiveTail && !isLiveUserTail) continue;
+    if (!belongsToUnmatchedLiveTail &&
+        !isLiveUserTail &&
+        !isProtectedUserPrompt) {
+      continue;
+    }
     if ((live.type == MessageType.question ||
             live.type == MessageType.secureInput) &&
         live.answered) {

@@ -582,4 +582,52 @@ void main() {
       expect(reconciled, [same(staleSnapshot), same(currentPrompt)]);
     },
   );
+
+  test('a locally sent prompt survives consecutive bounded snapshots', () {
+    final currentPrompt = ChatMessage.userText('fix the agreement')
+      ..uuid = 'current-user'
+      ..entryId = 'entry-41'
+      ..sessionSeq = 41;
+    final replyAfterPrompt = ChatMessage.assistantText('session')
+      ..textContent = 'working'
+      ..entryId = 'entry-42'
+      ..sessionSeq = 42;
+    final firstSnapshotPrompt = ChatMessage.userText('fix the agreement')
+      ..uuid = 'current-user'
+      ..entryId = 'entry-41'
+      ..sessionSeq = 41;
+    final firstSnapshotReply = ChatMessage.assistantText('session')
+      ..textContent = 'working'
+      ..entryId = 'entry-42'
+      ..sessionSeq = 42;
+
+    final firstReconciliation = reconcileLiveTranscriptWithSnapshot(
+      [firstSnapshotPrompt, firstSnapshotReply],
+      [currentPrompt, replyAfterPrompt],
+      protectedUserMessageIds: {currentPrompt.id},
+    );
+    expect(firstReconciliation, contains(same(currentPrompt)));
+
+    final laterSnapshotReply = ChatMessage.assistantText('session')
+      ..textContent = 'working'
+      ..entryId = 'entry-42'
+      ..sessionSeq = 42;
+    final laterTool =
+        ChatMessage.toolCall(
+            tool: 'Bash',
+            input: const {'command': 'test'},
+            toolUseId: 'tool-43',
+          )
+          ..entryId = 'entry-43'
+          ..sessionSeq = 43;
+
+    final secondReconciliation = reconcileLiveTranscriptWithSnapshot(
+      [laterSnapshotReply, laterTool],
+      firstReconciliation,
+      protectedUserMessageIds: {currentPrompt.id},
+    );
+
+    expect(secondReconciliation, contains(same(currentPrompt)));
+    expect(secondReconciliation, contains(same(replyAfterPrompt)));
+  });
 }
