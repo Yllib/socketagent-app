@@ -10,6 +10,7 @@ import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/notification_service.dart';
+import '../../services/private_integration_auth_flow.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../file_manager_screen.dart';
@@ -768,9 +769,11 @@ class _SettingsV2ServerDetailScreenState
                             : 'Connect Outlook Web session',
                         trailing: connected ? Icons.open_in_new : null,
                         onTap: connected
-                            ? () => _showPrivateIntegrationHelp(
-                                config,
-                                integration: 'Outlook',
+                            ? () => runPrivateIntegrationAuthFlow(
+                                context: context,
+                                provider: provider,
+                                computer: config,
+                                integration: 'outlook-auth',
                               )
                             : null,
                       ),
@@ -783,9 +786,11 @@ class _SettingsV2ServerDetailScreenState
                             : 'Connect to refresh IBS session',
                         trailing: connected ? Icons.open_in_new : null,
                         onTap: connected
-                            ? () => _showPrivateIntegrationHelp(
-                                config,
-                                integration: 'IBS',
+                            ? () => runPrivateIntegrationAuthFlow(
+                                context: context,
+                                provider: provider,
+                                computer: config,
+                                integration: 'ibs-auth',
                               )
                             : null,
                       ),
@@ -943,29 +948,6 @@ class _SettingsV2ServerDetailScreenState
               : 'Could not unenroll notifications for ${config.name}',
         ),
         backgroundColor: ok ? Colors.green : Colors.red,
-      ),
-    );
-  }
-
-  Future<void> _showPrivateIntegrationHelp(
-    ServerConfig config, {
-    required String integration,
-  }) async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('$integration sign-in'),
-        content: Text(
-          'Open a session on ${config.name} and ask the agent to connect or '
-          'reconnect $integration. The computer will then send a protected, '
-          'host-specific authorization card to that session.',
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Got it'),
-          ),
-        ],
       ),
     );
   }

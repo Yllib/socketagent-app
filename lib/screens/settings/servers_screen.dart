@@ -7,6 +7,7 @@ import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/websocket_service.dart';
 import '../../services/window_security_service.dart';
+import '../../services/private_integration_auth_flow.dart';
 import '../pair_screen.dart';
 import '../connect_computer_screen.dart';
 import '../paywall_screen.dart';
@@ -1001,6 +1002,7 @@ class _ServersScreenState extends State<ServersScreen> {
         provider.connMgr.statusOf(config.id) == ConnectionStatus.connected;
     final plugins = provider.serverPlugins(config.id);
     final hasOutlookAuth = plugins.contains('outlook-auth');
+    final hasIbsAuth = plugins.contains('ibs-auth');
     final pushRegistered = provider.isPushRegisteredForServer(config.id);
     final pushDisabled = provider.isPushDisabledForServer(config.id);
     final pushRegistering = _registeringPushServerIds.contains(config.id);
@@ -1121,7 +1123,30 @@ class _ServersScreenState extends State<ServersScreen> {
                 ),
                 onTap: () {
                   Navigator.pop(ctx);
-                  _showPrivateIntegrationHelp(context, config);
+                  runPrivateIntegrationAuthFlow(
+                    context: context,
+                    provider: provider,
+                    computer: config,
+                    integration: 'outlook-auth',
+                  );
+                },
+              ),
+            if (isConnected && hasIbsAuth)
+              ListTile(
+                leading: const Icon(Icons.business_center_outlined),
+                title: const Text('IBS Sign-In'),
+                subtitle: const Text(
+                  'Refresh IBS session cookies',
+                  style: TextStyle(fontSize: 12),
+                ),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  runPrivateIntegrationAuthFlow(
+                    context: context,
+                    provider: provider,
+                    computer: config,
+                    integration: 'ibs-auth',
+                  );
                 },
               ),
             if (!isConnected)
@@ -1478,29 +1503,6 @@ class _ServersScreenState extends State<ServersScreen> {
       pollTimer.cancel();
       claudeAuthCodeCtrl.dispose();
     });
-  }
-
-  Future<void> _showPrivateIntegrationHelp(
-    BuildContext context,
-    ServerConfig config,
-  ) async {
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Outlook sign-in'),
-        content: Text(
-          'Open a session on ${config.name} and ask the agent to connect or '
-          'reconnect Outlook. The computer will send a protected, '
-          'host-specific authorization card to that session.',
-        ),
-        actions: [
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Got it'),
-          ),
-        ],
-      ),
-    );
   }
 
   void _showVersionCheck(

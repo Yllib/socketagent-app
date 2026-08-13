@@ -26,6 +26,7 @@ import '../models/scheduled_task_update.dart';
 import '../models/task_display.dart';
 import '../models/session_notification_policy.dart';
 import '../models/harness_rate_limit.dart';
+import '../models/private_integration_auth.dart';
 import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
@@ -541,6 +542,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _filePathToId = {}; // serverPath → latest fileId
   final Map<String, String> _authRequestServers = {};
   final Map<String, String> _authRequestSessions = {};
+  final Map<String, Completer<PrivateIntegrationAuthChallenge>>
+  _privateAuthChallengeCompleters = {};
+  final Map<String, Completer<PrivateIntegrationAuthOutcome>>
+  _privateAuthOutcomeCompleters = {};
+  final Set<String> _directPrivateAuthRequestIds = {};
   String? _activeSessionId;
   String? _activeSessionServerId;
   NotificationTranscriptFocus? _notificationTranscriptFocus;
@@ -3858,6 +3864,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'push_token_registered',
       'push_token_unregistered',
       'push_registration_status',
+      'private_integration_auth_result',
       'abort_ack',
       'scheduled_task_notification',
       'reminder',
@@ -5411,6 +5418,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'outlook_auth_result':
           _handleOutlookAuthResult(msg);
           break;
+        case 'private_integration_auth_result':
+          _handlePrivateIntegrationAuthStartResult(msg);
+          break;
         case 'tool_summary':
           _handleToolSummary(msg);
           break;
@@ -5715,6 +5725,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final captureOrigins = rawOrigins is List
         ? rawOrigins.whereType<String>().toList(growable: false)
         : <String>[];
+    final directRequestId = msg['directRequestId'] as String? ?? '';
+    if (directRequestId.isNotEmpty) {
+      _completePrivateIntegrationAuthChallenge(
+        directRequestId,
+        integration: 'outlook-auth',
+        authRequestId: authRequestId,
+        startUrl: startUrl,
+        captureOrigins: captureOrigins,
+      );
+      return;
+    }
     _messages.add(
       ChatMessage.outlookAuth(
         authRequestId: authRequestId,
@@ -5741,6 +5762,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleOutlookAuthResult(Map<String, dynamic> msg) {
     final authRequestId = msg['authRequestId'] as String? ?? '';
+    final isDirect = _directPrivateAuthRequestIds.remove(authRequestId);
     if (authRequestId.isNotEmpty) {
       _clearAuthRequestRoute(authRequestId);
     }
@@ -5748,6 +5770,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final message =
         msg['message'] as String? ??
         (success ? 'Outlook auth completed' : 'Outlook auth failed');
+    final directCompleter = _privateAuthOutcomeCompleters.remove(authRequestId);
+    if (directCompleter != null || isDirect) {
+      if (directCompleter != null && !directCompleter.isCompleted) {
+        directCompleter.complete(
+          PrivateIntegrationAuthOutcome(success: success, message: message),
+        );
+      }
+      return;
+    }
     _messages.add(
       ChatMessage(
         id: 'outlook_auth_result_${DateTime.now().microsecondsSinceEpoch}',
@@ -5791,6 +5822,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final captureOrigins = rawOrigins is List
         ? rawOrigins.whereType<String>().toList(growable: false)
         : <String>[];
+    final directRequestId = msg['directRequestId'] as String? ?? '';
+    if (directRequestId.isNotEmpty) {
+      _completePrivateIntegrationAuthChallenge(
+        directRequestId,
+        integration: 'ibs-auth',
+        authRequestId: authRequestId,
+        startUrl: startUrl,
+        captureOrigins: captureOrigins,
+      );
+      return;
+    }
     _messages.add(
       ChatMessage.ibsAuth(
         authRequestId: authRequestId,
@@ -5817,6 +5859,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleIBSAuthResult(Map<String, dynamic> msg) {
     final authRequestId = msg['authRequestId'] as String? ?? '';
+    final isDirect = _directPrivateAuthRequestIds.remove(authRequestId);
     if (authRequestId.isNotEmpty) {
       _clearAuthRequestRoute(authRequestId);
     }
@@ -5824,6 +5867,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final message =
         msg['message'] as String? ??
         (success ? 'IBS auth completed' : 'IBS auth failed');
+    final directCompleter = _privateAuthOutcomeCompleters.remove(authRequestId);
+    if (directCompleter != null || isDirect) {
+      if (directCompleter != null && !directCompleter.isCompleted) {
+        directCompleter.complete(
+          PrivateIntegrationAuthOutcome(success: success, message: message),
+        );
+      }
+      return;
+    }
     final idx = _messages.lastIndexWhere(
       (m) => m.type == MessageType.ibsAuth && m.authRequestId == authRequestId,
     );
@@ -5847,6 +5899,95 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     notifyListeners();
+  }
+
+  Future<PrivateIntegrationAuthChallenge> requestPrivateIntegrationAuth({
+    required String serverId,
+    required String integration,
+  }) {
+    if (integration != 'outlook-auth' && integration != 'ibs-auth') {
+      return Future.error('Unsupported private integration: $integration');
+    }
+    final requestId =
+        'private_auth_${DateTime.now().microsecondsSinceEpoch}_${_historyRequestSequence++}';
+    final completer = Completer<PrivateIntegrationAuthChallenge>();
+    _privateAuthChallengeCompleters[requestId] = completer;
+    final sent = _connMgr.sendToServer(serverId, {
+      'type': 'private_integration_auth_request',
+      'requestId': requestId,
+      'integration': integration,
+    });
+    if (!sent) {
+      _privateAuthChallengeCompleters.remove(requestId);
+      return Future.error('Computer is not connected.');
+    }
+    return completer.future.timeout(
+      const Duration(seconds: 12),
+      onTimeout: () {
+        _privateAuthChallengeCompleters.remove(requestId);
+        throw TimeoutException('The computer did not open the sign-in flow.');
+      },
+    );
+  }
+
+  void _completePrivateIntegrationAuthChallenge(
+    String directRequestId, {
+    required String integration,
+    required String authRequestId,
+    required String? startUrl,
+    required List<String> captureOrigins,
+  }) {
+    final completer = _privateAuthChallengeCompleters.remove(directRequestId);
+    if (completer == null || completer.isCompleted) return;
+    if (startUrl == null || startUrl.isEmpty || captureOrigins.isEmpty) {
+      completer.completeError('The computer returned incomplete sign-in data.');
+      return;
+    }
+    _directPrivateAuthRequestIds.add(authRequestId);
+    completer.complete(
+      PrivateIntegrationAuthChallenge(
+        integration: integration,
+        authRequestId: authRequestId,
+        startUrl: startUrl,
+        captureOrigins: captureOrigins,
+      ),
+    );
+  }
+
+  void _handlePrivateIntegrationAuthStartResult(Map<String, dynamic> msg) {
+    if (msg['started'] == true) return;
+    final requestId = msg['requestId'] as String? ?? '';
+    final completer = _privateAuthChallengeCompleters.remove(requestId);
+    if (completer != null && !completer.isCompleted) {
+      completer.completeError(
+        msg['error']?.toString() ?? 'Could not start private sign-in.',
+      );
+    }
+  }
+
+  Future<PrivateIntegrationAuthOutcome> completePrivateIntegrationAuth(
+    PrivateIntegrationAuthChallenge challenge,
+    Map<String, dynamic> result,
+  ) {
+    final completer = Completer<PrivateIntegrationAuthOutcome>();
+    _privateAuthOutcomeCompleters[challenge.authRequestId] = completer;
+    _sendAuthAnswer(challenge.authRequestId, {
+      if (challenge.integration == 'ibs-auth')
+        'cookies': jsonEncode(result)
+      else
+        'owaSession': jsonEncode(result),
+    });
+    return completer.future.timeout(
+      const Duration(seconds: 30),
+      onTimeout: () {
+        _privateAuthOutcomeCompleters.remove(challenge.authRequestId);
+        throw TimeoutException('The computer did not validate the sign-in.');
+      },
+    );
+  }
+
+  void cancelPrivateIntegrationAuth(PrivateIntegrationAuthChallenge challenge) {
+    _sendAuthAnswer(challenge.authRequestId, const {'cancelled': 'true'});
   }
 
   // Regex to match <task-notification>...</task-notification> blocks
