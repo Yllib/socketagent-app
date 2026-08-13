@@ -10,6 +10,26 @@ void main() {
     expect(liveMessageMatchesParent(root, null), isTrue);
   });
 
+  test('history reconciliation restores the persisted event timestamp', () {
+    final message = ChatMessage.toolCall(
+      tool: 'Bash',
+      input: {'command': 'npm test'},
+      toolUseId: 'tool-1',
+    );
+
+    applyTranscriptPosition(message, {
+      'timestamp': '2026-08-13T17:04:05.250Z',
+      'entryId': 'entry-1',
+      'sessionSeq': 12,
+      'revision': 2,
+    });
+
+    expect(message.timestamp.toUtc(), DateTime.utc(2026, 8, 13, 17, 4, 5, 250));
+    expect(message.entryId, 'entry-1');
+    expect(message.sessionSeq, 12);
+    expect(message.revision, 2);
+  });
+
   test('completed thinking metadata survives history reconciliation', () {
     final live = ChatMessage.thinking()
       ..entryId = 'thinking-1'

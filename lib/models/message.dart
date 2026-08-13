@@ -42,7 +42,9 @@ class ChatMessage {
   final String id;
   final MessageSender sender;
   final MessageType type;
-  final DateTime timestamp;
+  // Live cards begin with their local arrival time. History reconciliation
+  // replaces it with the authoritative persisted transcript timestamp.
+  DateTime timestamp;
 
   // Text content (for text, result, error types)
   String textContent;

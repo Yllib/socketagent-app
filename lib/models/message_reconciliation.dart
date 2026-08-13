@@ -69,6 +69,11 @@ bool liveMessageMatchesParent(ChatMessage? message, String? parentToolUseId) {
 }
 
 void applyTranscriptPosition(ChatMessage message, Map<String, dynamic> source) {
+  final timestamp = source['timestamp'];
+  if (timestamp is String && timestamp.isNotEmpty) {
+    final parsed = DateTime.tryParse(timestamp);
+    if (parsed != null) message.timestamp = parsed.toLocal();
+  }
   final entryId = source['entryId'];
   if (entryId is String && entryId.isNotEmpty) message.entryId = entryId;
   final sessionSeq = source['sessionSeq'];
