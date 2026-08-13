@@ -1410,8 +1410,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
   String _condensedDetails(CondensedWorkMetrics metrics) {
     final parts = <String>[];
-    if (metrics.elapsed >= const Duration(seconds: 1)) {
-      parts.add('${_formatElapsed(metrics.elapsed)} elapsed');
+    if (metrics.elapsed > Duration.zero) {
+      parts.add(
+        metrics.elapsed < const Duration(seconds: 1)
+            ? '<1s elapsed'
+            : '${_formatElapsed(metrics.elapsed)} elapsed',
+      );
     }
     if (metrics.thinkingDuration >= const Duration(seconds: 1)) {
       parts.add('${_formatElapsed(metrics.thinkingDuration)} thinking');

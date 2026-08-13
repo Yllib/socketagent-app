@@ -102,4 +102,22 @@ void main() {
       -1,
     );
   });
+
+  test('exact tool identity enriches a completed canonical card', () {
+    final completed = ChatMessage.toolCall(
+      tool: 'SendFile',
+      input: {'file_path': '/tmp/build.apk'},
+      toolUseId: 'exact-call',
+    )..toolStreaming = false;
+
+    expect(
+      findSendFileAvailabilityCard(
+        [completed],
+        filePath: '/tmp/build.apk',
+        fileId: 'delivery-1',
+        toolUseId: 'exact-call',
+      ),
+      0,
+    );
+  });
 }

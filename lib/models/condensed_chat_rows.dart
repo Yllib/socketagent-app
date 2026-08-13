@@ -48,6 +48,7 @@ class CondensedWorkMetrics {
 
   factory CondensedWorkMetrics.fromMessages(
     List<ChatMessage> messages, {
+    DateTime? completedAt,
     DateTime? liveNow,
   }) {
     final toolUses = <String>{};
@@ -90,9 +91,15 @@ class CondensedWorkMetrics {
       final span = messages.last.timestamp.difference(messages.first.timestamp);
       if (!span.isNegative) elapsed = span;
     }
+    if (completedAt != null && messages.isNotEmpty) {
+      final completedSpan = completedAt.difference(messages.first.timestamp);
+      if (!completedSpan.isNegative) {
+        elapsed = completedSpan;
+      }
+    }
     if (liveNow != null && messages.isNotEmpty) {
       final liveSpan = liveNow.difference(messages.first.timestamp);
-      if (!liveSpan.isNegative && liveSpan > elapsed) elapsed = liveSpan;
+      if (!liveSpan.isNegative) elapsed = liveSpan;
     }
 
     return CondensedWorkMetrics(
@@ -162,7 +169,11 @@ List<CondensedChatRow> buildCondensedChatRows(
   final pending = <ChatMessage>[];
   String? previousVisibleKey;
 
-  void flush({String? nextVisibleKey, bool live = false}) {
+  void flush({
+    String? nextVisibleKey,
+    DateTime? completedAt,
+    bool live = false,
+  }) {
     // The ordinary processing indicator owns the run's working state. A
     // condensed row exists only when there is real internal activity to show.
     if (pending.isEmpty) return;
@@ -180,6 +191,7 @@ List<CondensedChatRow> buildCondensedChatRows(
         messages: workMessages,
         metrics: CondensedWorkMetrics.fromMessages(
           workMessages,
+          completedAt: completedAt,
           liveNow: live ? (now ?? DateTime.now()) : null,
         ),
         isLive: live || workMessages.any((message) => message.toolStreaming),
@@ -191,7 +203,10 @@ List<CondensedChatRow> buildCondensedChatRows(
   for (final message in messages) {
     final key = messageKey(message);
     if (isCondensedConversationMessage(message)) {
-      flush(nextVisibleKey: key);
+      // The next visible message is the durable endpoint of the preceding
+      // activity block. Its persisted timestamp keeps the elapsed duration
+      // stable after live processing ends and across history reloads.
+      flush(nextVisibleKey: key, completedAt: message.timestamp);
       rows.add(CondensedVisibleRow(message: message, keySeed: key));
       previousVisibleKey = key;
     } else {

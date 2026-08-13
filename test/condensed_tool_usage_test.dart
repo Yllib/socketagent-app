@@ -61,7 +61,30 @@ void main() {
     expect(work.metrics.thinkingBlocks, 1);
     expect(work.metrics.thinkingTokens, 137000);
     expect(work.metrics.thinkingDuration, const Duration(seconds: 42));
+    expect(work.metrics.elapsed, const Duration(seconds: 3));
     expect(rows[2], isA<CondensedVisibleRow>());
+  });
+
+  test('retains a completed single-tool block duration from the next message', () {
+    final user = _text('user-1', MessageSender.user, 'Run it', 0);
+    final tool = _tool('tool-1', 'Bash', 2);
+    final agent = _text(
+      'agent-1',
+      MessageSender.assistant,
+      'Finished.',
+      9,
+    );
+
+    final rows = buildCondensedChatRows(
+      [user, tool, agent],
+      messageKey: _key,
+      isProcessing: false,
+    );
+
+    final work = rows[1] as CondensedWorkRow;
+    expect(work.metrics.toolUses, 1);
+    expect(work.metrics.elapsed, const Duration(seconds: 7));
+    expect(work.isLive, isFalse);
   });
 
   test('keeps a live work row anchored while technical events append', () {

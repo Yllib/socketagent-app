@@ -3986,6 +3986,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (type == 'tool_call' ||
             type == 'tool_result' ||
             type == 'user_message_uuid' ||
+            type == 'file' ||
             type == 'html_plan' ||
             type == 'work_review_card' ||
             type == 'monitor_output' ||
@@ -5743,6 +5744,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (type == 'tool_call' ||
             type == 'tool_result' ||
             type == 'user_message_uuid' ||
+            type == 'file' ||
             type == 'html_plan' ||
             type == 'work_review_card' ||
             type == 'text' ||
@@ -14945,6 +14947,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _messages,
         filePath: filePath,
         fileId: fileId,
+        toolUseId: msg['toolUseId']?.toString(),
       );
       if (targetCardIndex >= 0) {
         mergeSendFileTransportMetadata(_messages[targetCardIndex].toolInput!, {

@@ -54,12 +54,17 @@ int findSendFileAvailabilityCard(
   List<ChatMessage> messages, {
   required String filePath,
   required String fileId,
+  String? toolUseId,
 }) {
+  final exactToolUseId = toolUseId?.trim() ?? '';
   return messages.lastIndexWhere((message) {
     if (message.type != MessageType.toolCall ||
         message.toolName != 'SendFile' ||
         message.toolInput?['file_path'] != filePath) {
       return false;
+    }
+    if (exactToolUseId.isNotEmpty) {
+      return message.toolUseId == exactToolUseId;
     }
     final embeddedId = message.toolInput?['_file_id']?.toString() ?? '';
     return embeddedId == fileId ||
