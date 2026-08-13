@@ -87,6 +87,70 @@ void main() {
     expect(nextRevision, isNot(first));
   });
 
+  test('user prompt acknowledgement identity ignores transport retry ids', () {
+    final first = acknowledgedSessionEventKey({
+      'type': 'user_message_uuid',
+      'sessionId': 'session-1',
+      'entryId': 'history-12',
+      'uuid': 'user-12',
+      'deliveryId': 'delivery-1',
+    });
+    final retry = acknowledgedSessionEventKey({
+      'type': 'user_message_uuid',
+      'sessionId': 'session-1',
+      'entryId': 'history-12',
+      'uuid': 'user-12',
+      'deliveryId': 'delivery-2',
+    });
+
+    expect(retry, first);
+  });
+
+  test('duplicate live run completions collapse by stable run identity', () {
+    final first = ChatMessage.runBoundary({
+      'entryId': 'boundary-entry-1',
+      'sessionSeq': 80,
+      'revision': 1,
+      'runId': 'run-358',
+      'runNumber': 358,
+      'runDurationMs': 777000,
+    });
+    final retry = ChatMessage.runBoundary({
+      'entryId': 'boundary-entry-1',
+      'sessionSeq': 80,
+      'revision': 1,
+      'runId': 'run-358',
+      'runNumber': 358,
+      'runDurationMs': 777000,
+    });
+
+    final deduped = dedupeStableTranscriptMessages([first, retry]);
+
+    expect(deduped, hasLength(1));
+    expect(deduped.single.toolUseId, 'run-358');
+  });
+
+  test('run identity wins when replay uses a different boundary entry id', () {
+    final live = ChatMessage.runBoundary({
+      'entryId': 'temporary-live-boundary',
+      'runId': 'run-358',
+      'runNumber': 358,
+    });
+    final persisted = ChatMessage.runBoundary({
+      'entryId': 'durable-boundary',
+      'sessionSeq': 80,
+      'revision': 2,
+      'runId': 'run-358',
+      'runNumber': 358,
+    });
+
+    final deduped = dedupeStableTranscriptMessages([live, persisted]);
+
+    expect(deduped, hasLength(1));
+    expect(deduped.single.entryId, 'durable-boundary');
+    expect(deduped.single.revision, 2);
+  });
+
   test('missing secure-input history status remains actionable', () {
     expect(secureInputHistoryStatus(null, null), 'pending');
   });

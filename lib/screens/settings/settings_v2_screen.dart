@@ -319,6 +319,20 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                 ],
               ),
               _SettingsGroup(
+                title: 'Chat & Display',
+                children: [
+                  SwitchListTile(
+                    secondary: const Icon(Icons.view_stream_outlined),
+                    title: const Text('Condensed Tool Usage'),
+                    subtitle: const Text(
+                      'Collapse internal work between conversation messages',
+                    ),
+                    value: provider.condensedToolUsage,
+                    onChanged: provider.setCondensedToolUsage,
+                  ),
+                ],
+              ),
+              _SettingsGroup(
                 title: 'Files & Security',
                 children: [
                   _NavTile(

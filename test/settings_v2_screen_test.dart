@@ -236,4 +236,28 @@ void main() {
     expect(updateService.installCount, 0);
     expect(updateService.checkCount, 1);
   });
+
+  testWidgets('Condensed Tool Usage is persisted from Chat & Display', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService();
+    addTearDown(provider.dispose);
+    addTearDown(updateService.dispose);
+
+    await pumpSettings(tester, provider, updateService);
+    await tester.scrollUntilVisible(
+      find.text('Condensed Tool Usage'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    expect(provider.condensedToolUsage, isFalse);
+    await tester.tap(find.text('Condensed Tool Usage'));
+    await tester.pump();
+
+    expect(provider.condensedToolUsage, isTrue);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('condensed_tool_usage'), isTrue);
+  });
 }

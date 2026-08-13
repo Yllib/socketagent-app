@@ -369,6 +369,18 @@ class _RunningSessionInfo {
   final bool suppressOngoingNotification;
 }
 
+class _PendingPromptDispatch {
+  const _PendingPromptDispatch({
+    required this.messageId,
+    required this.serverId,
+    required this.payload,
+  });
+
+  final String messageId;
+  final String serverId;
+  final Map<String, dynamic> payload;
+}
+
 class _DownloadProgressNotification {
   const _DownloadProgressNotification({
     required this.fileId,
@@ -459,13 +471,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _ws;
   }
 
-  void _sendToActiveSessionServer(Map<String, dynamic> message) {
+  bool _sendToActiveSessionServer(Map<String, dynamic> message) {
     final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
     if (serverId != null && serverId.isNotEmpty) {
-      _connMgr.sendToServer(serverId, message);
-    } else {
-      _ws.send(message);
+      return _connMgr.sendToServer(serverId, message);
     }
+    return _ws.send(message);
   }
 
   /// Dummy WebSocketService for when no server is active (avoids null crashes).
@@ -595,6 +606,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _pushToTalk = false;
   bool _isProcessing = false;
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
+  final Map<String, _PendingPromptDispatch> _pendingPromptDispatches = {};
   DateTime? _currentPromptStartedAt;
   Timer? _promptRuntimeTimer;
   Timer? _initialHistoryTimeout;
@@ -626,6 +638,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   int _historyWindowRevision = 0;
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
   String? _initialHistoryRequestId;
+  bool _initialHistoryRequestDispatched = false;
   String? _olderHistoryRequestId;
   int _historyRequestSequence = 0;
   final Map<String, DateTime> _historyOpenTraceStartedAt = {};
@@ -717,6 +730,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _authToken = '';
   String _defaultCwd = '';
   bool _autoVoiceOnAssist = true;
+  bool _condensedToolUsage = false;
 
   // Multi-server
   List<ServerConfig> _serverConfigs = [];
@@ -858,10 +872,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         );
         _isProcessing = true;
         _startPromptRuntime(startedAt: stats.current!.startedAt, replace: true);
-      } else if (!_hasPendingHardStop(
-        sessionId,
-        serverId: serverId ?? _activeSessionServerId,
-      )) {
+      } else if (!_awaitingPromptStart &&
+          !_hasPendingHardStop(
+            sessionId,
+            serverId: serverId ?? _activeSessionServerId,
+          )) {
         _markSessionIdle(
           sessionId,
           serverId: serverId ?? _activeSessionServerId,
@@ -871,6 +886,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
   }
+
+  bool get _awaitingPromptStart => _isProcessing && _processingSetAt != null;
 
   // Session notifications
   bool isNotifEnabled(String sessionId) =>
@@ -1774,6 +1791,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String get authToken => _authToken;
   String get defaultCwd => _defaultCwd;
   bool get autoVoiceOnAssist => _autoVoiceOnAssist;
+  bool get condensedToolUsage => _condensedToolUsage;
   WebSocketService get ws => _ws;
   ConnectionManager get connMgr => _connMgr;
   List<ServerConfig> get serverConfigs => _serverConfigs;
@@ -2012,6 +2030,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _serverPort = prefs.getInt('server_port') ?? 8085;
     _defaultCwd = prefs.getString('default_cwd') ?? '';
     _autoVoiceOnAssist = prefs.getBool('auto_voice_on_assist') ?? true;
+    _condensedToolUsage = prefs.getBool('condensed_tool_usage') ?? false;
     _pushToTalk = prefs.getBool('push_to_talk') ?? false;
 
     // Load sensitive credentials from SecureStorage
@@ -2186,6 +2205,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('auto_voice_on_assist', value);
     notifyListeners();
+  }
+
+  Future<void> setCondensedToolUsage(bool value) async {
+    if (_condensedToolUsage == value) return;
+    _condensedToolUsage = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('condensed_tool_usage', value);
   }
 
   // ── Multi-server CRUD ──
@@ -2917,8 +2944,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Auto-sync state on every (re)connect for this server
       if (update.status == ConnectionStatus.connected) {
         _retryPendingAbortForServer(update.serverId);
+        _retryPendingPromptsForServer(update.serverId);
         _syncStateToServer(serverId: update.serverId);
         unawaited(_syncPushRegistrationForServer(update.serverId));
+      } else if (update.serverId == _activeSessionServerId) {
+        // A request written to a socket that subsequently disconnected is no
+        // longer in flight. Reuse its correlation ID after reconnect instead
+        // of creating a second competing resume request.
+        _initialHistoryRequestDispatched = false;
       }
     });
 
@@ -2990,21 +3023,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSessionId != null &&
         serverId != null &&
         serverId == _connMgr.activeServerId) {
-      final historyRequestId = _beginInitialHistoryRequest(_activeSessionId!);
+      final historyRequestId =
+          _initialHistoryRequestId ??
+          _beginInitialHistoryRequest(_activeSessionId!);
       final cachedSnapshot = _transcriptCache.peek(serverId, _activeSessionId!);
       final checkpoint = _transcriptCache.resumeCheckpoint(cachedSnapshot);
-      _connMgr.sendToServer(serverId, {
-        'type': 'resume_session',
-        'sessionId': _activeSessionId,
-        'historyRequestId': historyRequestId,
-        'openTraceId': historyRequestId,
-        if (checkpoint != null) ...{
-          'knownSessionSeq': checkpoint.latestSessionSeq,
-          'knownHistoryOffset': checkpoint.historyOffset,
-          'knownHistoryEntryCount': checkpoint.entryCount,
-        },
-      });
+      if (!_initialHistoryRequestDispatched) {
+        final sent = _connMgr.sendToServer(serverId, {
+          'type': 'resume_session',
+          'sessionId': _activeSessionId,
+          'historyRequestId': historyRequestId,
+          'openTraceId': historyRequestId,
+          if (checkpoint != null) ...{
+            'knownSessionSeq': checkpoint.latestSessionSeq,
+            'knownHistoryOffset': checkpoint.historyOffset,
+            'knownHistoryEntryCount': checkpoint.entryCount,
+          },
+        });
+        if (sent) {
+          _markInitialHistoryRequestDispatched(
+            historyRequestId,
+            _activeSessionId!,
+          );
+        }
+      }
       _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
+    }
+  }
+
+  void _retryPendingPromptsForServer(String serverId) {
+    for (final pending in _pendingPromptDispatches.values.toList()) {
+      if (pending.serverId != serverId) continue;
+      _connMgr.sendToServer(serverId, pending.payload);
     }
   }
 
@@ -3865,6 +3915,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'push_token_unregistered',
       'push_registration_status',
       'private_integration_auth_result',
+      'prompt_received',
+      'prompt_failed',
       'abort_ack',
       'scheduled_task_notification',
       'reminder',
@@ -3933,6 +3985,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         deliverySessionId.isNotEmpty &&
         (type == 'tool_call' ||
             type == 'tool_result' ||
+            type == 'user_message_uuid' ||
             type == 'html_plan' ||
             type == 'work_review_card' ||
             type == 'monitor_output' ||
@@ -4669,7 +4722,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             final logicalRunActive = activeSessionRunStats?.current != null;
             if (logicalRunActive) {
               _isProcessing = true;
-            } else {
+            } else if (!_awaitingPromptStart) {
               _markSessionIdle(
                 stateSessionId,
                 serverId: serverId ?? _connMgr.activeServerId,
@@ -4770,11 +4823,56 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           }
           break;
+        case 'prompt_received':
+          final receivedMessageId = msg['messageId']?.toString() ?? '';
+          if (receivedMessageId.isNotEmpty) {
+            _pendingPromptDispatches.remove(receivedMessageId);
+            final idx = _messages.indexWhere(
+              (message) => message.id == receivedMessageId,
+            );
+            if (idx >= 0 &&
+                _messages[idx].injectionPriority == null &&
+                _messages[idx].uploadProgress == null) {
+              _messages[idx].isPending = false;
+            }
+            notifyListeners();
+          }
+          break;
+        case 'prompt_failed':
+          final failedMessageId = msg['messageId']?.toString() ?? '';
+          final failedSessionId = msg['sessionId']?.toString() ?? '';
+          final failureReason =
+              msg['message']?.toString() ?? 'The prompt could not be started';
+          var visibleMessageIndex = -1;
+          if (failedMessageId.isNotEmpty) {
+            _pendingPromptDispatches.remove(failedMessageId);
+            _pendingLocalUserMessageIds.remove(failedMessageId);
+            _pendingCacheUserPromptContent.remove(failedMessageId);
+            visibleMessageIndex = _messages.indexWhere(
+              (message) => message.id == failedMessageId,
+            );
+            if (visibleMessageIndex >= 0) {
+              _messages[visibleMessageIndex].isPending = false;
+            }
+          }
+          final belongsToVisibleSession =
+              visibleMessageIndex >= 0 ||
+              (failedSessionId.isNotEmpty &&
+                  failedSessionId == _activeSessionId);
+          if (belongsToVisibleSession) {
+            _isProcessing = false;
+            _processingSetAt = null;
+            _stopPromptRuntime();
+            _messages.add(ChatMessage.error(failureReason));
+            notifyListeners();
+          }
+          break;
         case 'injection_failed':
           final failedMsgId = msg['messageId'] as String? ?? '';
           final reason = msg['message'] as String? ?? 'Message was not sent';
           var removed = false;
           if (failedMsgId.isNotEmpty) {
+            _pendingPromptDispatches.remove(failedMsgId);
             final idx = _messages.indexWhere(
               (m) => m.id == failedMsgId && m.isPending,
             );
@@ -4860,9 +4958,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _activeSessionId,
             serverId: serverId,
           );
-          _isProcessing =
+          final statusSaysRunning =
               msg['running'] == true || serverSaysCompacting || awaitingAbort;
-          if (!_isProcessing) {
+          if (!statusSaysRunning && _awaitingPromptStart) {
+            // This status belongs to the resume snapshot that preceded the
+            // newly submitted prompt. Keep the optimistic run alive until the
+            // server explicitly starts or rejects that prompt.
+          } else {
+            _isProcessing = statusSaysRunning;
+          }
+          if (!_isProcessing && !_awaitingPromptStart) {
             _markSessionIdle(
               _activeSessionId,
               serverId: _connMgr.activeServerId,
@@ -4874,7 +4979,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _messages,
               activeBackgroundTaskIds: _activeBackgroundTaskIds(),
             );
-          } else {
+          } else if (statusSaysRunning) {
             _markSessionRunning(
               _activeSessionId,
               serverId: _connMgr.activeServerId,
@@ -5039,17 +5144,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             serverSaysRunning = msg['running'] == true;
           }
           serverSaysRunning = serverSaysRunning || serverSaysCompacting;
-          // Don't let status_sync clear processing during the grace period after
-          // sendPrompt() — the server may not have started the SDK query yet.
+          // A heartbeat describing the moment before prompt acceptance must
+          // never cancel the prompt the user just submitted. Explicit
+          // prompt_failed/result events terminate this state instead of a
+          // wall-clock guess.
           if (!serverSaysRunning && _isProcessing && _processingSetAt != null) {
-            final elapsed = DateTime.now().difference(_processingSetAt!);
-            if (elapsed.inSeconds < 15) {
-              // Keep _isProcessing true — server hasn't caught up yet
-            } else {
-              _isProcessing = false;
-              _processingSetAt = null;
-              _stopPromptRuntime();
-            }
+            // Keep _isProcessing true — server has not acknowledged start yet.
           } else {
             _isProcessing = serverSaysRunning;
             if (serverSaysRunning) _processingSetAt = null; // server confirmed
@@ -5113,10 +5213,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _initialHistoryTimeout = null;
           }
           _messages.add(ChatMessage.error(msg['message'] ?? 'Unknown error'));
-          _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
-          _isProcessing = false;
-          _stopPromptRuntime();
-          settleIdleToolCards(_messages);
+          final errorSessionId = msg['sessionId']?.toString() ?? '';
+          // Unscoped errors are frequently produced by file, settings, auth,
+          // or history operations. They are not evidence that the visible
+          // agent run stopped. Prompt failures have their own correlated event.
+          if (errorSessionId.isNotEmpty &&
+              errorSessionId == _activeSessionId &&
+              !_awaitingPromptStart) {
+            _markSessionIdle(
+              _activeSessionId,
+              serverId: serverId ?? _activeSessionServerId,
+            );
+            _isProcessing = false;
+            _stopPromptRuntime();
+            settleIdleToolCards(_messages);
+          }
           notifyListeners();
           break;
         case 'claude_auth':
@@ -5631,6 +5742,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sessionId.isNotEmpty &&
         (type == 'tool_call' ||
             type == 'tool_result' ||
+            type == 'user_message_uuid' ||
             type == 'html_plan' ||
             type == 'work_review_card' ||
             type == 'text' ||
@@ -8609,6 +8721,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (clientMessageId != null && clientMessageId.isNotEmpty) {
       final idx = _messages.indexWhere((m) => m.id == clientMessageId);
       if (idx >= 0) {
+        _pendingPromptDispatches.remove(clientMessageId);
         _messages[idx].uuid = uuid;
         applyTranscriptPosition(_messages[idx], msg);
         _messages = orderByTranscriptPosition(_messages);
@@ -8621,6 +8734,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _pendingInjectedMessageCount--;
           _messages[idx].isPending = false;
           _messages[idx].injectionPriority = null;
+        } else if (_messages[idx].injectionPriority == null &&
+            _messages[idx].uploadProgress == null) {
+          _messages[idx].isPending = false;
         }
         notifyListeners();
         return;
@@ -8633,9 +8749,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           (m.type == MessageType.text ||
               m.type == MessageType.skillInvocation) &&
           m.uuid == null) {
+        _pendingPromptDispatches.remove(m.id);
         m.uuid = uuid;
         applyTranscriptPosition(m, msg);
         _messages = orderByTranscriptPosition(_messages);
+        if (m.injectionPriority == null && m.uploadProgress == null) {
+          m.isPending = false;
+        }
         notifyListeners();
         return;
       }
@@ -8811,6 +8931,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _initialHistoryTimeout?.cancel();
       _initialHistoryTimeout = null;
       _initialHistoryRequestId = null;
+      _initialHistoryRequestDispatched = false;
       _olderHistoryRequestId = null;
       _isLoadingMore = false;
     } else if (decision.kind == SessionHistoryKind.older) {
@@ -10065,7 +10186,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       for (final msg in loaded) {
         if ((msg.sender == MessageSender.user ||
                 msg.sender == MessageSender.assistant) &&
-            msg.type == MessageType.text) {
+            msg.type == MessageType.text &&
+            msg.entryId == null &&
+            msg.uuid == null) {
           final normalizedText = _normalizeHistoryText(msg.textContent);
           final isDupe =
               _messages.reversed
@@ -10156,7 +10279,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ..clear()
         ..addAll(historyWorkflowTasks);
     }
-    _messages = orderByTranscriptPosition(_messages);
+    _messages = orderByTranscriptPosition(
+      dedupeStableTranscriptMessages(_messages),
+    );
     _recountPendingInjectedMessages();
     // Fallback: if server didn't include 'todos' field (old server compat),
     // sync _todos from the last todos_update in history for dedup.
@@ -10277,10 +10402,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               msg.sender == MessageSender.assistant) &&
           msg.type == MessageType.text) {
         final normalized = _normalizeHistoryText(msg.textContent);
-        if (normalized.isNotEmpty && deduped.isNotEmpty) {
+        if (msg.entryId == null &&
+            msg.uuid == null &&
+            normalized.isNotEmpty &&
+            deduped.isNotEmpty) {
           final previous = deduped.last;
           if (previous.sender == msg.sender &&
               previous.type == MessageType.text &&
+              previous.entryId == null &&
+              previous.uuid == null &&
               previous.parentToolUseId == msg.parentToolUseId &&
               _normalizeHistoryText(previous.textContent) == normalized) {
             continue;
@@ -10467,6 +10597,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         : text;
     final userMsg = _buildUserDisplayMessage(displayText);
     _pendingLocalUserMessageIds.add(userMsg.id);
+    // Every prompt remains visibly pending until the server acknowledges that
+    // it accepted this exact message ID. A successful socket write is not a
+    // delivery receipt and reconnects may occur between the two.
+    userMsg.isPending = true;
     // Mark as pending if injecting with non-immediate priority OR if we're
     // about to spend time uploading. The bubble renders pending state with
     // reduced opacity + a progress indicator while the file streams up.
@@ -10601,7 +10735,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     _pendingCacheUserPromptContent[userMsg.id] = prompt;
     final useCodexFastMode = _activeSessionBackend == 'codex' && _codexFastMode;
-    _sendToActiveSessionServer({
+    final promptPayload = <String, dynamic>{
       'type': 'prompt',
       'text': prompt,
       if (_activeSessionId != null) 'sessionId': _activeSessionId,
@@ -10629,13 +10763,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             'codexCollaborationMode': _codexCollaborationMode,
           },
         },
-    });
+    };
+    final promptServerId =
+        _activeSessionServerId ?? _connMgr.activeServerId ?? '';
+    _pendingPromptDispatches[userMsg.id] = _PendingPromptDispatch(
+      messageId: userMsg.id,
+      serverId: promptServerId,
+      payload: promptPayload,
+    );
+    _sendToActiveSessionServer(promptPayload);
 
-    // Upload + dispatch done — bubble is officially "sent" now (unless it's
-    // queued behind a running query, in which case keep the pending state).
-    if (hasAttachmentsForSend && userMsg.injectionPriority == null) {
-      userMsg.isPending = false;
-    }
+    // Upload is complete, but the bubble stays pending until prompt_received.
+    userMsg.uploadProgress = null;
     notifyListeners();
   }
 
@@ -12491,52 +12630,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     _ensurePendingHardStopCard(sessionId, serverId: resolvedServerId);
+    final resumeMessage = <String, dynamic>{
+      'type': 'resume_session',
+      'sessionId': sessionId,
+      if (session != null) 'cwd': session.cwd,
+      if (session?.backend != null) 'backend': session!.backend,
+      'historyRequestId': historyRequestId,
+      'openTraceId': historyRequestId,
+      if (checkpoint != null) ...{
+        'knownSessionSeq': checkpoint.latestSessionSeq,
+        'knownHistoryOffset': checkpoint.historyOffset,
+        'knownHistoryEntryCount': checkpoint.entryCount,
+      },
+    };
+    bool resumeSent;
     if (targetServerId != null && targetServerId.isNotEmpty) {
       _activeSessionServerId = targetServerId;
       _connMgr.activeServerId = targetServerId;
-      _connMgr.sendToServer(targetServerId, {
-        'type': 'resume_session',
-        'sessionId': sessionId,
-        if (session != null) 'cwd': session.cwd,
-        if (session?.backend != null) 'backend': session!.backend,
-        'historyRequestId': historyRequestId,
-        'openTraceId': historyRequestId,
-        if (checkpoint != null) ...{
-          'knownSessionSeq': checkpoint.latestSessionSeq,
-          'knownHistoryOffset': checkpoint.historyOffset,
-          'knownHistoryEntryCount': checkpoint.entryCount,
-        },
-      });
+      resumeSent = _connMgr.sendToServer(targetServerId, resumeMessage);
       _connMgr.sendToServer(targetServerId, {'type': 'get_status_sync'});
     } else {
-      if (session != null) {
-        _connMgr.send({
-          'type': 'resume_session',
-          'sessionId': sessionId,
-          'cwd': session.cwd,
-          if (session.backend != null) 'backend': session.backend,
-          'historyRequestId': historyRequestId,
-          'openTraceId': historyRequestId,
-          if (checkpoint != null) ...{
-            'knownSessionSeq': checkpoint.latestSessionSeq,
-            'knownHistoryOffset': checkpoint.historyOffset,
-            'knownHistoryEntryCount': checkpoint.entryCount,
-          },
-        });
-      } else {
-        _connMgr.send({
-          'type': 'resume_session',
-          'sessionId': sessionId,
-          'historyRequestId': historyRequestId,
-          'openTraceId': historyRequestId,
-          if (checkpoint != null) ...{
-            'knownSessionSeq': checkpoint.latestSessionSeq,
-            'knownHistoryOffset': checkpoint.historyOffset,
-            'knownHistoryEntryCount': checkpoint.entryCount,
-          },
-        });
-      }
+      resumeSent = _connMgr.send(resumeMessage);
       _connMgr.send({'type': 'get_status_sync'});
+    }
+    if (resumeSent) {
+      _markInitialHistoryRequestDispatched(historyRequestId, sessionId);
     }
 
     notifyListeners();
@@ -12639,7 +12757,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final requestId = _newHistoryRequestId('initial', sessionId);
     _historyOpenTraceStartedAt[requestId] = DateTime.now();
     _initialHistoryRequestId = requestId;
+    _initialHistoryRequestDispatched = false;
     _olderHistoryRequestId = null;
+    _initialHistoryTimeout?.cancel();
+    _initialHistoryTimeout = null;
+    return requestId;
+  }
+
+  void _markInitialHistoryRequestDispatched(
+    String requestId,
+    String sessionId,
+  ) {
+    if (_initialHistoryRequestId != requestId ||
+        _activeSessionId != sessionId) {
+      return;
+    }
+    _initialHistoryRequestDispatched = true;
     _initialHistoryTimeout?.cancel();
     _initialHistoryTimeout = Timer(const Duration(seconds: 10), () {
       if (_initialHistoryRequestId != requestId ||
@@ -12648,6 +12781,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       if (_isRefreshingHistory && !_isLoadingHistory) {
         _initialHistoryRequestId = null;
+        _initialHistoryRequestDispatched = false;
         _isRefreshingHistory = false;
         _historyOpenTraceStartedAt.remove(requestId);
         notifyListeners();
@@ -12655,10 +12789,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       if (!_isLoadingHistory) {
         _initialHistoryRequestId = null;
+        _initialHistoryRequestDispatched = false;
         _historyOpenTraceStartedAt.remove(requestId);
         return;
       }
       _isLoadingHistory = false;
+      _initialHistoryRequestDispatched = false;
       _historyOpenTraceStartedAt.remove(requestId);
       _messages.add(
         ChatMessage.error(
@@ -12667,7 +12803,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
       notifyListeners();
     });
-    return requestId;
   }
 
   /// Check if a path exists on the server. Returns true if it exists.

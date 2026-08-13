@@ -760,6 +760,7 @@ class HomeScreenState extends State<HomeScreen> {
                           '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
                       isProcessing: provider.isProcessing,
                       followLatest: _followLatest,
+                      condensedToolUsage: provider.condensedToolUsage,
                       onFollowLatestChanged: (follow) {
                         if (_followLatest != follow) {
                           setState(() => _followLatest = follow);

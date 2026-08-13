@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import '../models/message.dart';
+import '../models/condensed_chat_rows.dart';
 import '../models/raw_event.dart';
 import '../services/socketagent_link_router.dart';
 import 'message_bubble.dart';
@@ -38,6 +39,7 @@ class ChatView extends StatefulWidget {
   final String? serverId;
   final bool isProcessing;
   final bool followLatest;
+  final bool condensedToolUsage;
   final ValueChanged<bool>? onFollowLatestChanged;
   final Duration? processingElapsed;
   final bool isCompacting;
@@ -77,6 +79,7 @@ class ChatView extends StatefulWidget {
     this.serverId,
     required this.isProcessing,
     this.followLatest = true,
+    this.condensedToolUsage = false,
     this.onFollowLatestChanged,
     this.processingElapsed,
     this.isCompacting = false,
@@ -287,6 +290,7 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
 class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   late final _AutoFollowScrollController _scrollController;
   final Set<String> _expandedImageCardIds = {};
+  final Map<String, Set<String>> _expandedCondensedRowsBySession = {};
   final Map<String, GlobalKey> _messageRowKeys = {};
   final Map<String, GlobalKey> _taskKeys = {};
   final Map<String, String> _taskRowKeyByToolUseId = {};
@@ -416,7 +420,42 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         duration: const Duration(milliseconds: 300),
         curve: Curves.easeOut,
       );
+      return;
     }
+    if (!widget.condensedToolUsage) return;
+    final row = _renderRows(widget.messages).where((candidate) {
+      final content = candidate.content;
+      return content is CondensedWorkRow &&
+          content.messages.any((message) => message.toolUseId == toolUseId);
+    }).firstOrNull;
+    if (row == null || row.content is! CondensedWorkRow) return;
+    _expandedCondensedRows.add(row.rowKey);
+    setState(() {});
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final context = _messageRowKeys[row.rowKey]?.currentContext;
+      if (context != null) {
+        Scrollable.ensureVisible(
+          context,
+          alignment: 0.25,
+          duration: const Duration(milliseconds: 250),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  Set<String> get _expandedCondensedRows => _expandedCondensedRowsBySession
+      .putIfAbsent(widget.sessionStorageKey ?? '', () => <String>{});
+
+  bool _rowMatchesTranscriptTarget(CondensedChatRow row) {
+    if (row case CondensedVisibleRow(:final message)) {
+      return _matchesTranscriptTarget(message);
+    }
+    if (row case CondensedWorkRow(:final messages)) {
+      return messages.any(_matchesTranscriptTarget);
+    }
+    return false;
   }
 
   String _transcriptTargetIdentity() =>
@@ -458,7 +497,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       }
       final rows = _renderRows(widget.messages);
       final messageIndex = rows.indexWhere(
-        (row) => _matchesTranscriptTarget(row.message),
+        (row) => _rowMatchesTranscriptTarget(row.content),
       );
       if (messageIndex < 0) {
         if (widget.hasMoreHistory &&
@@ -602,21 +641,23 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             _messageRowKey(oldWidget.messages.last);
   }
 
-  List<({ChatMessage message, String rowKey})> _renderRows(
+  List<({CondensedChatRow content, String rowKey})> _renderRows(
     Iterable<ChatMessage> messages,
   ) {
     final occurrences = <String, int>{};
+    final rows = buildCondensedChatRows(
+      messages.where((message) => message.type != MessageType.codexPlan),
+      messageKey: _messageRowKey,
+      enabled: widget.condensedToolUsage,
+      isProcessing: widget.isProcessing,
+    );
     return [
-      for (final message in messages)
-        (message: message, rowKey: _collisionSafeRowKey(message, occurrences)),
+      for (final row in rows)
+        (content: row, rowKey: _collisionSafeRowKey(row.keySeed, occurrences)),
     ];
   }
 
-  String _collisionSafeRowKey(
-    ChatMessage message,
-    Map<String, int> occurrences,
-  ) {
-    final base = _messageRowKey(message);
+  String _collisionSafeRowKey(String base, Map<String, int> occurrences) {
     final occurrence = occurrences.update(
       base,
       (current) => current + 1,
@@ -746,6 +787,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     if (widget.followLatest &&
         (widget.isProcessing ||
             oldWidget.isProcessing ||
+            widget.condensedToolUsage != oldWidget.condensedToolUsage ||
             widget.messages.length != oldWidget.messages.length)) {
       _followToBottom();
     }
@@ -1062,7 +1104,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final chatSurfaceColor = Theme.of(context).colorScheme.surface;
-    if (widget.isLoadingHistory) {
+    if (widget.isLoadingHistory && widget.messages.isEmpty) {
       return ColoredBox(
         key: const ValueKey('chat-surface'),
         color: chatSurfaceColor,
@@ -1205,7 +1247,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                           }
                           if (messageIndex < visibleRows.length) {
                             final row = visibleRows[messageIndex];
-                            return _buildMessageWidget(row.message, row.rowKey);
+                            return _buildRenderRow(row.content, row.rowKey);
                           }
                           return _buildThinkingIndicator(context);
                         },
@@ -1221,14 +1263,182 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildMessageWidget(ChatMessage msg, String rowKey) {
+  Widget _buildRenderRow(CondensedChatRow row, String rowKey) {
     return KeyedSubtree(
       key: _messageSliverKey(rowKey),
       child: KeyedSubtree(
         key: _messageRowKeys.putIfAbsent(rowKey, () => GlobalKey()),
-        child: _buildMessageContent(msg, rowKey),
+        child: switch (row) {
+          CondensedVisibleRow(:final message) => _buildMessageContent(
+            message,
+            rowKey,
+          ),
+          CondensedWorkRow() => _buildCondensedWorkRow(row, rowKey),
+        },
       ),
     );
+  }
+
+  Widget _buildCondensedWorkRow(CondensedWorkRow row, String rowKey) {
+    final expanded = _expandedCondensedRows.contains(rowKey);
+    final theme = Theme.of(context);
+    final summary = _condensedSummary(row.metrics);
+    final details = _condensedDetails(row.metrics);
+
+    return Container(
+      key: ValueKey<String>('condensed-work:$rowKey'),
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerLow,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: theme.colorScheme.outlineVariant),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Semantics(
+            button: true,
+            expanded: expanded,
+            label: '$summary. $details',
+            child: InkWell(
+              key: ValueKey<String>('condensed-work-toggle:$rowKey'),
+              onTap: () {
+                setState(() {
+                  if (expanded) {
+                    _expandedCondensedRows.remove(rowKey);
+                  } else {
+                    _expandedCondensedRows.add(rowKey);
+                  }
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 9,
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      expanded ? Icons.expand_more : Icons.chevron_right,
+                      size: 19,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.view_stream_outlined,
+                      size: 16,
+                      color: theme.colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            summary,
+                            key: ValueKey<String>(
+                              'condensed-work-summary:$rowKey',
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          if (details.isNotEmpty)
+                            Text(
+                              details,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          if (expanded && row.messages.isNotEmpty) ...[
+            Divider(height: 1, color: theme.colorScheme.outlineVariant),
+            for (var index = 0; index < row.messages.length; index++)
+              _buildCondensedChild(
+                row.messages[index],
+                '$rowKey:child:$index:${_messageRowKey(row.messages[index])}',
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCondensedChild(ChatMessage message, String rowKey) {
+    return KeyedSubtree(
+      key: ValueKey<String>('condensed-child:$rowKey'),
+      child: _buildMessageContent(message, rowKey),
+    );
+  }
+
+  String _condensedSummary(CondensedWorkMetrics metrics) {
+    final parts = <String>[];
+    if (metrics.toolUses > 0) {
+      parts.add(
+        '${metrics.toolUses} tool ${metrics.toolUses == 1 ? 'use' : 'uses'}',
+      );
+    }
+    if (metrics.thinkingTokens > 0) {
+      parts.add(
+        '${_formatCompactCount(metrics.thinkingTokens)} thought tokens',
+      );
+    } else if (metrics.thinkingBlocks > 0) {
+      parts.add(
+        '${metrics.thinkingBlocks} ${metrics.thinkingBlocks == 1 ? 'thought' : 'thoughts'}',
+      );
+    }
+    if (parts.isEmpty) {
+      final count = metrics.internalEvents;
+      parts.add('$count internal ${count == 1 ? 'event' : 'events'}');
+    }
+    return parts.join(' · ');
+  }
+
+  String _condensedDetails(CondensedWorkMetrics metrics) {
+    final parts = <String>[];
+    if (metrics.elapsed >= const Duration(seconds: 1)) {
+      parts.add('${_formatElapsed(metrics.elapsed)} elapsed');
+    }
+    if (metrics.thinkingDuration >= const Duration(seconds: 1)) {
+      parts.add('${_formatElapsed(metrics.thinkingDuration)} thinking');
+    }
+    if (metrics.subagents > 0) {
+      parts.add(
+        '${metrics.subagents} ${metrics.subagents == 1 ? 'subagent' : 'subagents'}',
+      );
+    }
+    if (metrics.failures > 0) {
+      parts.add(
+        '${metrics.failures} ${metrics.failures == 1 ? 'failure' : 'failures'}',
+      );
+    }
+    return parts.join(' · ');
+  }
+
+  String _formatCompactCount(int value) {
+    if (value >= 1000000) {
+      final millions = value / 1000000;
+      return '${millions.toStringAsFixed(millions >= 10 ? 0 : 1)}m';
+    }
+    if (value >= 1000) {
+      final thousands = value / 1000;
+      return '${thousands.toStringAsFixed(thousands >= 10 ? 0 : 1)}k';
+    }
+    return value.toString();
   }
 
   Key _messageSliverKey(String rowKey) =>

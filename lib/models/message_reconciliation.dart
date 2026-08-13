@@ -19,6 +19,13 @@ String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
     return '$type:$sessionId:$toolUseId:${output.length}:${output.hashCode}';
   }
 
+  if (type == 'user_message_uuid') {
+    final entryId = message['entryId'] as String? ?? '';
+    final uuid = message['uuid'] as String? ?? '';
+    if (entryId.isEmpty && uuid.isEmpty) return null;
+    return '$type:$sessionId:$entryId:$uuid';
+  }
+
   if (type == 'html_plan') {
     final planId = message['planId'] as String? ?? '';
     final updatedAt = message['updatedAt'] as String? ?? '';
@@ -272,6 +279,11 @@ List<ChatMessage> pendingInteractionsMissingFromSnapshot(
 }
 
 String? _stableLiveKey(ChatMessage message) {
+  if (message.type == MessageType.runBoundary &&
+      message.toolUseId != null &&
+      message.toolUseId!.isNotEmpty) {
+    return 'run:${message.toolUseId}';
+  }
   if (message.entryId != null && message.entryId!.isNotEmpty) {
     return 'entry:${message.entryId}';
   }
@@ -283,6 +295,38 @@ String? _stableLiveKey(ChatMessage message) {
     return 'tool:${message.toolUseId}';
   }
   return null;
+}
+
+/// Collapses only events with an authoritative transcript identity. This is
+/// deliberately narrower than content deduplication: two identical assistant
+/// replies remain two replies, while a retried run boundary or durable history
+/// row can occupy only one transcript position.
+List<ChatMessage> dedupeStableTranscriptMessages(
+  Iterable<ChatMessage> messages,
+) {
+  final deduped = <ChatMessage>[];
+  final indexByIdentity = <String, int>{};
+  for (final message in messages) {
+    final identity = _stableLiveKey(message);
+    if (identity == null) {
+      deduped.add(message);
+      continue;
+    }
+    final existingIndex = indexByIdentity[identity];
+    if (existingIndex == null) {
+      indexByIdentity[identity] = deduped.length;
+      deduped.add(message);
+      continue;
+    }
+    final existing = deduped[existingIndex];
+    if (message.revision >= existing.revision) {
+      _mergeSnapshotStateIntoLive(message, existing);
+      deduped[existingIndex] = message;
+    } else {
+      _mergeSnapshotStateIntoLive(existing, message);
+    }
+  }
+  return deduped;
 }
 
 bool _isLiveTranscriptMessage(ChatMessage message) {
