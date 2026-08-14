@@ -125,6 +125,7 @@ bool isCondensedConversationMessage(ChatMessage message) {
     case MessageType.outlookAuth:
     case MessageType.ibsAuth:
     case MessageType.claudeAuth:
+    case MessageType.backendAuth:
     case MessageType.elicitationUrl:
     case MessageType.skillInvocation:
     case MessageType.codexPlan:

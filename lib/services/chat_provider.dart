@@ -11960,6 +11960,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (serverId == null || serverId.isEmpty) return;
     final backend = msg['backend'] as String? ?? 'codex';
     final backendName = backend == 'codex' ? 'Codex' : 'Backend';
+    final authScope = msg['authScope']?.toString() ?? 'openai';
+    final targetSessionId = msg['sessionId']?.toString();
+    final mcpServerName = msg['mcpServerName']?.toString();
     final message =
         msg['message'] as String? ??
         '$backendName authentication is invalid or expired.';
@@ -11988,20 +11991,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final key = _backendInstallKey(serverId, backend);
     final state = _backendInstallStates[key];
-    if (state?.running != true && backend == 'codex') {
+    if (authScope == 'openai' && state?.running != true && backend == 'codex') {
       authenticateBackend(serverId, backend: backend);
     }
 
-    _messages.add(
-      ChatMessage.error(
-        '$message I started Codex sign-in for this computer. Open Settings > Computers > Backend Status to enter the device code.',
-      ),
-    );
-    _isProcessing = false;
-    _stopPromptRuntime();
+    final belongsToVisibleSession =
+        (targetSessionId == null ||
+            targetSessionId.isEmpty ||
+            targetSessionId == _activeSessionId) &&
+        (_activeSessionServerId == null || _activeSessionServerId == serverId);
+    if (belongsToVisibleSession) {
+      final card = ChatMessage.backendAuth(
+        serverId: serverId,
+        backend: backend,
+        authScope: authScope,
+        message: message,
+        sessionId: targetSessionId,
+        mcpServerName: mcpServerName,
+      );
+      if (!_messages.any((existing) => existing.id == card.id)) {
+        _messages.add(card);
+      }
+    }
+    if (belongsToVisibleSession) {
+      _isProcessing = false;
+      _stopPromptRuntime();
+    }
     _backendAuthRequiredController.add({
       'serverId': serverId,
       'backend': backend,
+      'authScope': authScope,
+      if (mcpServerName != null && mcpServerName.isNotEmpty)
+        'mcpServerName': mcpServerName,
       'message': message,
     });
     requestServerSettings(serverId: serverId);
@@ -12572,18 +12593,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _handleCodexGoalState(
-    Map<String, dynamic> msg,
-    String? serverId,
-  ) {
+  void _handleCodexGoalState(Map<String, dynamic> msg, String? serverId) {
     final requestId = msg['requestId']?.toString();
     final sessionId = msg['sessionId']?.toString() ?? '';
     final resolvedServerId = serverId ?? activeSessionServerId;
     final completer = requestId == null
         ? null
         : _codexGoalCompleters.remove(requestId);
-    if (sessionId.isEmpty || resolvedServerId == null || resolvedServerId.isEmpty) {
-      completer?.completeError(StateError('Goal response was missing its session or computer'));
+    if (sessionId.isEmpty ||
+        resolvedServerId == null ||
+        resolvedServerId.isEmpty) {
+      completer?.completeError(
+        StateError('Goal response was missing its session or computer'),
+      );
       return;
     }
 
@@ -12631,11 +12653,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         sessionId.isEmpty ||
         serverId == null ||
         serverId.isEmpty) {
-      return Future.error(StateError('Open a Codex session to manage its goal'));
+      return Future.error(
+        StateError('Open a Codex session to manage its goal'),
+      );
     }
     final advertisedVersion = _serverCodexGoalVersions[serverId];
     if (advertisedVersion != null && advertisedVersion < 1) {
-      return Future.error(StateError('Update this computer to manage Codex goals'));
+      return Future.error(
+        StateError('Update this computer to manage Codex goals'),
+      );
     }
 
     final requestId =
@@ -12733,7 +12759,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? get _activeCodexGoalKey {
     final sessionId = _activeSessionId;
     final serverId = activeSessionServerId;
-    if (sessionId == null || sessionId.isEmpty || serverId == null || serverId.isEmpty) {
+    if (sessionId == null ||
+        sessionId.isEmpty ||
+        serverId == null ||
+        serverId.isEmpty) {
       return null;
     }
     return '$serverId::$sessionId';

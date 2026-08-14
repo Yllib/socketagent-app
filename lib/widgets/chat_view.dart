@@ -16,6 +16,7 @@ import 'reminder_card.dart';
 import 'outlook_auth_card.dart';
 import 'ibs_auth_card.dart';
 import 'claude_auth_card.dart';
+import 'backend_auth_card.dart';
 import 'raw_event_card.dart';
 import 'subagent_card.dart';
 import 'thinking_card.dart';
@@ -1596,6 +1597,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         return IBSAuthCard(message: msg, onAnswer: widget.onAnswer);
       case MessageType.claudeAuth:
         return ClaudeAuthCard(message: msg);
+      case MessageType.backendAuth:
+        return BackendAuthCard(message: msg);
       case MessageType.toolSummary:
         return _buildToolSummary(msg);
       case MessageType.thinking:

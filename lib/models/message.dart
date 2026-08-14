@@ -26,6 +26,7 @@ enum MessageType {
   outlookAuth,
   ibsAuth,
   claudeAuth,
+  backendAuth,
   toolSummary,
   thinking,
   elicitationUrl,
@@ -386,6 +387,35 @@ class ChatMessage {
       type: MessageType.error,
       timestamp: DateTime.now(),
       textContent: message,
+    );
+  }
+
+  factory ChatMessage.backendAuth({
+    required String serverId,
+    required String backend,
+    required String authScope,
+    required String message,
+    String? sessionId,
+    String? mcpServerName,
+  }) {
+    final target = sessionId == null || sessionId.isEmpty
+        ? 'global'
+        : sessionId;
+    return ChatMessage(
+      id: 'backend_auth_${serverId}_${backend}_${authScope}_$target',
+      sender: MessageSender.system,
+      type: MessageType.backendAuth,
+      timestamp: DateTime.now(),
+      textContent: message,
+      toolName: backend,
+      toolInput: {
+        '_serverId': serverId,
+        'backend': backend,
+        'authScope': authScope,
+        if (sessionId != null && sessionId.isNotEmpty) 'sessionId': sessionId,
+        if (mcpServerName != null && mcpServerName.isNotEmpty)
+          'mcpServerName': mcpServerName,
+      },
     );
   }
 

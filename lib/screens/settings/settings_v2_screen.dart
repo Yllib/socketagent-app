@@ -1266,7 +1266,7 @@ class _BackendDetailTile extends StatelessWidget {
 
         final canRun = connected;
         void showRunningOperation() {
-          _showBackendOperationDialog(
+          showBackendOperationDialog(
             context,
             provider,
             serverId,
@@ -1290,7 +1290,7 @@ class _BackendDetailTile extends StatelessWidget {
             backend: backend,
             force: force == true,
           );
-          _showBackendOperationDialog(
+          showBackendOperationDialog(
             context,
             provider,
             serverId,
@@ -1305,7 +1305,7 @@ class _BackendDetailTile extends StatelessWidget {
             return;
           }
           provider.repairBackend(serverId, backend: backend, reinstall: true);
-          _showBackendOperationDialog(
+          showBackendOperationDialog(
             context,
             provider,
             serverId,
@@ -1659,7 +1659,7 @@ Widget _buildBackendOutputBlock(BuildContext context, List<String> output) {
   );
 }
 
-void _showBackendOperationDialog(
+void showBackendOperationDialog(
   BuildContext context,
   ChatProvider provider,
   String serverId,

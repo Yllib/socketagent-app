@@ -64,16 +64,31 @@ class MainShellScreenState extends State<MainShellScreen>
         event,
       ) {
         if (!mounted) return;
-        final backend = event['backend']?.toString() == 'codex'
-            ? 'Codex'
+        final isMcp = event['authScope']?.toString() == 'mcp';
+        final backend = isMcp
+            ? (event['mcpServerName']?.toString() ?? 'Connected app')
+            : event['backend']?.toString() == 'codex'
+            ? 'OpenAI'
             : 'Backend';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('$backend sign-in required'),
             action: SnackBarAction(
-              label: 'Settings',
+              label: isMcp ? 'Settings' : 'Sign in',
               onPressed: () {
-                if (mounted) setState(() => _currentIndex = 2);
+                if (!mounted) return;
+                final serverId = event['serverId']?.toString() ?? '';
+                if (!isMcp && serverId.isNotEmpty) {
+                  showBackendOperationDialog(
+                    context,
+                    provider,
+                    serverId,
+                    'codex',
+                    fallbackOperation: 'auth',
+                  );
+                  return;
+                }
+                setState(() => _currentIndex = 2);
               },
             ),
           ),
