@@ -17,6 +17,7 @@ import '../widgets/voice_button.dart';
 import '../widgets/secret_manager_sheet.dart';
 import '../widgets/html_plan_manager_sheet.dart';
 import '../widgets/tts_playback_bar.dart';
+import '../widgets/codex_goal_manager_sheet.dart';
 import '../services/work_review_repository.dart';
 import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
@@ -1094,6 +1095,11 @@ class HomeScreenState extends State<HomeScreen> {
               if (mounted) _showHtmlPlanManager(provider);
             });
             break;
+          case 'manage_codex_goal':
+            Future.microtask(() {
+              if (mounted) showCodexGoalManagerSheet(context, provider);
+            });
+            break;
           case 'session_analytics':
             Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SessionAnalyticsScreen()),
@@ -1126,6 +1132,12 @@ class HomeScreenState extends State<HomeScreen> {
               if (provider.ttsEngineMode == TtsEngineMode.kokoroServer ||
                   provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
                 _showKokoroVoicePicker(context, provider);
+              } else if (provider.ttsEngineMode == TtsEngineMode.elevenLabs) {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                    builder: (_) => const VoiceSpeechScreen(),
+                  ),
+                );
               } else {
                 _showVoicePicker(context, provider);
               }
@@ -1266,6 +1278,36 @@ class HomeScreenState extends State<HomeScreen> {
             ],
           ),
         ),
+        if (showCodexMode)
+          PopupMenuItem(
+            value: 'manage_codex_goal',
+            enabled: provider.activeSessionId != null &&
+                provider.activeServerSupportsCodexGoals,
+            child: Row(
+              children: [
+                const Icon(Icons.flag_outlined, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Goal'),
+                      Text(
+                        !provider.activeServerSupportsCodexGoals
+                            ? 'Requires an updated computer'
+                            : provider.activeCodexGoal == null
+                            ? 'View, start, stop, or clear'
+                            : '${provider.activeCodexGoal!.status.wireValue} · manage durable goal',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 20),
+              ],
+            ),
+          ),
         PopupMenuItem(
           value: 'session_analytics',
           enabled: provider.activeSessionId != null,
@@ -1748,6 +1790,9 @@ class HomeScreenState extends State<HomeScreen> {
     if (provider.ttsEngineMode == TtsEngineMode.kokoroServer ||
         provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
       return provider.selectedTtsEngineVoice?.name ?? 'Default voice';
+    }
+    if (provider.ttsEngineMode == TtsEngineMode.elevenLabs) {
+      return provider.selectedTtsEngineVoice?.name ?? 'ElevenLabs voice';
     }
     return provider.selectedTtsVoice?.name ?? 'System voice';
   }

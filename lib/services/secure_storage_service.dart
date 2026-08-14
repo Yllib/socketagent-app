@@ -39,6 +39,14 @@ class SecureStorageService {
   Future<void> setServerConfigs(String json) =>
       _storage.write(key: 'server_configs', value: json);
 
+  /// User-provided ElevenLabs key for on-device BYOK TTS requests.
+  Future<String?> getElevenLabsApiKey() =>
+      _storage.read(key: 'elevenlabs_api_key');
+  Future<void> setElevenLabsApiKey(String value) =>
+      _storage.write(key: 'elevenlabs_api_key', value: value);
+  Future<void> deleteElevenLabsApiKey() =>
+      _storage.delete(key: 'elevenlabs_api_key');
+
   // ────────── NaCl Keys (E2E Encryption) ──────────
 
   /// NaCl secret key (base64) for relay E2E encryption

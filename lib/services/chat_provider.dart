@@ -27,6 +27,7 @@ import '../models/task_display.dart';
 import '../models/session_notification_policy.dart';
 import '../models/harness_rate_limit.dart';
 import '../models/private_integration_auth.dart';
+import '../models/codex_goal.dart';
 import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
@@ -39,6 +40,7 @@ import 'system_tts_engine.dart';
 import 'kokoro_server_engine.dart';
 import 'kokoro_device_engine.dart';
 import 'kokoro_model_manager.dart';
+import 'elevenlabs_tts_engine.dart';
 import 'notification_service.dart';
 import 'push_notification_service.dart';
 import 'relay_push_service.dart';
@@ -490,7 +492,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final KokoroServerEngine _kokoroServerEngine = KokoroServerEngine();
   final KokoroModelManager _kokoroModelManager = KokoroModelManager();
   late KokoroDeviceEngine _kokoroDeviceEngine;
+  final ElevenLabsTtsEngine _elevenLabsEngine = ElevenLabsTtsEngine();
   TtsEngineMode _ttsEngineMode = TtsEngineMode.system;
+  bool _elevenLabsEnabled = false;
+  ElevenLabsModel _elevenLabsModel = ElevenLabsModel.flashV25;
+  bool _elevenLabsVoicesLoading = false;
+  String? _elevenLabsVoicesError;
   late TtsEngine _activeTtsEngine;
   final NotificationService _notifications = NotificationService();
   final CryptoService _crypto = CryptoService();
@@ -740,6 +747,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<String>> _serverPlugins = {};
   final Map<String, int> _serverSecretManagementVersions = {};
   final Map<String, int> _serverSessionTransferVersions = {};
+  final Map<String, int> _serverCodexGoalVersions = {};
+  final Map<String, CodexGoal?> _codexGoals = {};
+  final Set<String> _loadedCodexGoals = {};
+  final Set<String> _loadingCodexGoals = {};
+  final Map<String, String> _codexGoalErrors = {};
+  final Map<String, Completer<CodexGoal?>> _codexGoalCompleters = {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -1768,6 +1781,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<TtsVoice> get ttsVoices => _tts.availableVoices;
   TtsVoice? get selectedTtsVoice => _tts.selectedVoice;
   TtsEngineMode get ttsEngineMode => _ttsEngineMode;
+  bool get elevenLabsEnabled => _elevenLabsEnabled;
+  bool get hasElevenLabsApiKey => _elevenLabsEngine.hasApiKey;
+  ElevenLabsModel get elevenLabsModel => _elevenLabsModel;
+  List<TtsEngineVoice> get elevenLabsVoices =>
+      _elevenLabsEngine.availableVoices;
+  TtsEngineVoice? get selectedElevenLabsVoice =>
+      _elevenLabsEngine.selectedVoice;
+  bool get elevenLabsVoicesLoading => _elevenLabsVoicesLoading;
+  String? get elevenLabsVoicesError => _elevenLabsVoicesError;
   TtsEngine get activeTtsEngine => _activeTtsEngine;
   TtsPlaybackState get ttsPlaybackState {
     final engineState = _activeTtsEngine.playbackState.value;
@@ -1886,6 +1908,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _systemEngine.playbackState.addListener(_onTtsPlaybackChanged);
     _kokoroServerEngine.playbackState.addListener(_onTtsPlaybackChanged);
     _kokoroDeviceEngine.playbackState.addListener(_onTtsPlaybackChanged);
+    _elevenLabsEngine.playbackState.addListener(_onTtsPlaybackChanged);
     _kokoroServerEngine.sendToServer = (msg) => _connMgr.send(msg);
     WidgetsBinding.instance.addObserver(this);
     PushNotificationService.onTokenRefresh = _handlePushTokenRefresh;
@@ -2141,6 +2164,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case TtsEngineMode.kokoroDevice:
         _activeTtsEngine = _kokoroDeviceEngine;
         break;
+      case TtsEngineMode.elevenLabs:
+        _activeTtsEngine = _elevenLabsEngine;
+        break;
+    }
+    _elevenLabsEnabled = prefs.getBool('elevenlabs_enabled') ?? false;
+    final savedElevenLabsModel = prefs.getString('elevenlabs_model');
+    if (savedElevenLabsModel != null) {
+      _elevenLabsModel = ElevenLabsModel.values.firstWhere(
+        (model) => model.name == savedElevenLabsModel,
+        orElse: () => ElevenLabsModel.flashV25,
+      );
+    }
+    _elevenLabsEngine.setModel(_elevenLabsModel);
+    final elevenLabsKey = await _secureStorage.getElevenLabsApiKey();
+    _elevenLabsEngine.setApiKey(elevenLabsKey ?? '');
+    final savedElevenLabsVoice = prefs.getString('elevenlabs_voice');
+    if (savedElevenLabsVoice != null) {
+      await _elevenLabsEngine.restoreVoice(savedElevenLabsVoice);
+    }
+    if (_ttsEngineMode == TtsEngineMode.elevenLabs &&
+        (!_elevenLabsEnabled || !_elevenLabsEngine.hasApiKey)) {
+      _ttsEngineMode = TtsEngineMode.system;
+      _activeTtsEngine = _systemEngine;
     }
     final savedKokoroVoice = prefs.getString('kokoro_voice');
     if (savedKokoroVoice != null) {
@@ -3885,6 +3931,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'archive_restore_failed',
       'archive_deleted',
       'server_capabilities',
+      'codex_goal_state',
       'secret_inventory',
       'html_plan_list',
       'html_plan_operation_result',
@@ -4132,6 +4179,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _serverSessionTransferVersions[serverId] = sessionTransfer is Map
                   ? (sessionTransfer['version'] as num?)?.toInt() ?? 0
                   : 0;
+              final codexGoals = msg['codexGoals'];
+              _serverCodexGoalVersions[serverId] = codexGoals is Map
+                  ? (codexGoals['version'] as num?)?.toInt() ?? 0
+                  : 0;
               _captureCodexDriverSettings(msg, serverId);
               unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
               notifyListeners();
@@ -4284,6 +4335,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _kokoroServerEngine.expectAudio(text);
             } else if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
               unawaited(_kokoroDeviceEngine.speak(text));
+            } else if (_ttsEngineMode == TtsEngineMode.elevenLabs) {
+              unawaited(() async {
+                try {
+                  await _elevenLabsEngine.speak(text);
+                } catch (error) {
+                  debugPrint('[ElevenLabs] Speak failed: $error');
+                }
+              }());
             } else {
               unawaited(_systemEngine.speak(text));
             }
@@ -4939,6 +4998,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             ),
           );
           notifyListeners();
+          break;
+        case 'codex_goal_state':
+          _handleCodexGoalState(msg, serverId);
           break;
         case 'permission_mode_changed':
           final mode = msg['permissionMode'] as String?;
@@ -12510,6 +12572,133 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _handleCodexGoalState(
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) {
+    final requestId = msg['requestId']?.toString();
+    final sessionId = msg['sessionId']?.toString() ?? '';
+    final resolvedServerId = serverId ?? activeSessionServerId;
+    final completer = requestId == null
+        ? null
+        : _codexGoalCompleters.remove(requestId);
+    if (sessionId.isEmpty || resolvedServerId == null || resolvedServerId.isEmpty) {
+      completer?.completeError(StateError('Goal response was missing its session or computer'));
+      return;
+    }
+
+    final key = '$resolvedServerId::$sessionId';
+    if (requestId != null) _loadingCodexGoals.remove(key);
+    if (msg['ok'] != true) {
+      final error = msg['error']?.toString() ?? 'Goal operation failed';
+      _codexGoalErrors[key] = error;
+      completer?.completeError(StateError(error));
+      notifyListeners();
+      return;
+    }
+
+    CodexGoal? goal;
+    final rawGoal = msg['goal'];
+    try {
+      if (rawGoal is Map) {
+        goal = CodexGoal.fromJson(Map<String, dynamic>.from(rawGoal));
+      }
+    } catch (error) {
+      final message = 'Invalid goal state: $error';
+      _codexGoalErrors[key] = message;
+      completer?.completeError(StateError(message));
+      notifyListeners();
+      return;
+    }
+    _codexGoals[key] = goal;
+    _loadedCodexGoals.add(key);
+    _codexGoalErrors.remove(key);
+    completer?.complete(goal);
+    notifyListeners();
+  }
+
+  Future<CodexGoal?> _sendCodexGoalRequest(
+    String type, {
+    String? objective,
+    CodexGoalStatus? status,
+    int? tokenBudget,
+    bool includeTokenBudget = false,
+  }) {
+    final sessionId = _activeSessionId;
+    final serverId = activeSessionServerId;
+    if (_activeSessionBackend != 'codex' ||
+        sessionId == null ||
+        sessionId.isEmpty ||
+        serverId == null ||
+        serverId.isEmpty) {
+      return Future.error(StateError('Open a Codex session to manage its goal'));
+    }
+    final advertisedVersion = _serverCodexGoalVersions[serverId];
+    if (advertisedVersion != null && advertisedVersion < 1) {
+      return Future.error(StateError('Update this computer to manage Codex goals'));
+    }
+
+    final requestId =
+        'codex_goal_${DateTime.now().microsecondsSinceEpoch}_${_codexGoalCompleters.length}';
+    final key = '$serverId::$sessionId';
+    final completer = Completer<CodexGoal?>();
+    _codexGoalCompleters[requestId] = completer;
+    _loadingCodexGoals.add(key);
+    _codexGoalErrors.remove(key);
+    final sent = _connMgr.sendToServer(serverId, {
+      'type': type,
+      'requestId': requestId,
+      'sessionId': sessionId,
+      if (objective != null) 'objective': objective,
+      if (status != null) 'status': status.wireValue,
+      if (includeTokenBudget) 'tokenBudget': tokenBudget,
+    });
+    if (!sent) {
+      _codexGoalCompleters.remove(requestId);
+      _loadingCodexGoals.remove(key);
+      const message = 'This computer is not connected';
+      _codexGoalErrors[key] = message;
+      notifyListeners();
+      return Future.error(StateError(message));
+    }
+    notifyListeners();
+    return completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        _codexGoalCompleters.remove(requestId);
+        _loadingCodexGoals.remove(key);
+        const message = 'Goal request timed out';
+        _codexGoalErrors[key] = message;
+        notifyListeners();
+        throw TimeoutException(message);
+      },
+    );
+  }
+
+  Future<CodexGoal?> refreshCodexGoal() =>
+      _sendCodexGoalRequest('codex_goal_get');
+
+  Future<CodexGoal> updateCodexGoal({
+    String? objective,
+    CodexGoalStatus? status,
+    int? tokenBudget,
+    bool includeTokenBudget = false,
+  }) async {
+    final goal = await _sendCodexGoalRequest(
+      'codex_goal_set',
+      objective: objective,
+      status: status,
+      tokenBudget: tokenBudget,
+      includeTokenBudget: includeTokenBudget,
+    );
+    if (goal == null) throw StateError('Codex did not return the updated goal');
+    return goal;
+  }
+
+  Future<void> clearCodexGoal() async {
+    await _sendCodexGoalRequest('codex_goal_clear');
+  }
+
   Future<Map<String, dynamic>?> requestCodexStatus() {
     _pendingCodexStatus?.complete(null);
     final completer = Completer<Map<String, dynamic>?>();
@@ -12541,6 +12730,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String? get activeSessionBackend => _activeSessionBackend;
+  String? get _activeCodexGoalKey {
+    final sessionId = _activeSessionId;
+    final serverId = activeSessionServerId;
+    if (sessionId == null || sessionId.isEmpty || serverId == null || serverId.isEmpty) {
+      return null;
+    }
+    return '$serverId::$sessionId';
+  }
+
+  CodexGoal? get activeCodexGoal {
+    final key = _activeCodexGoalKey;
+    return key == null ? null : _codexGoals[key];
+  }
+
+  bool get activeCodexGoalLoaded {
+    final key = _activeCodexGoalKey;
+    return key != null && _loadedCodexGoals.contains(key);
+  }
+
+  bool get activeCodexGoalLoading {
+    final key = _activeCodexGoalKey;
+    return key != null && _loadingCodexGoals.contains(key);
+  }
+
+  String? get activeCodexGoalError {
+    final key = _activeCodexGoalKey;
+    return key == null ? null : _codexGoalErrors[key];
+  }
+
+  bool get activeServerSupportsCodexGoals {
+    final serverId = activeSessionServerId;
+    return serverId != null && (_serverCodexGoalVersions[serverId] ?? 0) >= 1;
+  }
 
   void resumeSession(String sessionId, {String? serverId}) {
     _messages = [];
@@ -14212,6 +14434,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _tts.stop();
       _kokoroServerEngine.stop();
       _kokoroDeviceEngine.stop();
+      _elevenLabsEngine.stop();
     }
     notifyListeners();
     SharedPreferences.getInstance().then((prefs) {
@@ -14624,6 +14847,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> initTtsVoices() async {
     await _tts.initialize();
     await _kokoroServerEngine.initialize();
+    await _elevenLabsEngine.initialize();
+    if (_elevenLabsEngine.hasApiKey) {
+      unawaited(() async {
+        try {
+          await refreshElevenLabsVoices();
+        } catch (error) {
+          debugPrint('[ElevenLabs] Voice refresh failed: $error');
+        }
+      }());
+    }
     // Always pre-load on-device engine so isolate is warm when needed
     _kokoroDeviceEngine.initialize();
     // Restore saved voice
@@ -14653,11 +14886,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> setTtsEngineMode(TtsEngineMode mode) async {
+    if (mode == TtsEngineMode.elevenLabs &&
+        (!_elevenLabsEnabled || !_elevenLabsEngine.hasApiKey)) {
+      throw StateError('Add an ElevenLabs API key and enable it first.');
+    }
     _ttsEngineMode = mode;
     // Stop any current speech
     await _systemEngine.stop();
     await _kokoroServerEngine.stop();
     await _kokoroDeviceEngine.stop();
+    await _elevenLabsEngine.stop();
     switch (mode) {
       case TtsEngineMode.system:
         _activeTtsEngine = _systemEngine;
@@ -14668,6 +14906,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case TtsEngineMode.kokoroDevice:
         _activeTtsEngine = _kokoroDeviceEngine;
         _kokoroDeviceEngine.initialize();
+        break;
+      case TtsEngineMode.elevenLabs:
+        _activeTtsEngine = _elevenLabsEngine;
+        await _elevenLabsEngine.initialize();
         break;
     }
     // Sync to server
@@ -14684,6 +14926,76 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('tts_engine_mode', mode.name);
+  }
+
+  Future<void> setElevenLabsApiKey(String value) async {
+    final key = value.trim();
+    if (key.isEmpty) {
+      throw ArgumentError('API key cannot be empty.');
+    }
+    final previousKey = await _secureStorage.getElevenLabsApiKey() ?? '';
+    _elevenLabsEngine.setApiKey(key);
+    try {
+      await refreshElevenLabsVoices();
+    } catch (_) {
+      _elevenLabsEngine.setApiKey(previousKey);
+      rethrow;
+    }
+    await _secureStorage.setElevenLabsApiKey(key);
+    notifyListeners();
+  }
+
+  Future<void> deleteElevenLabsApiKey() async {
+    await _secureStorage.deleteElevenLabsApiKey();
+    _elevenLabsEngine.setApiKey('');
+    await setElevenLabsEnabled(false);
+  }
+
+  Future<void> setElevenLabsEnabled(bool enabled) async {
+    if (enabled && !_elevenLabsEngine.hasApiKey) {
+      throw StateError('Enter your ElevenLabs API key first.');
+    }
+    _elevenLabsEnabled = enabled;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('elevenlabs_enabled', enabled);
+    if (enabled) {
+      await setTtsEngineMode(TtsEngineMode.elevenLabs);
+    } else if (_ttsEngineMode == TtsEngineMode.elevenLabs) {
+      await setTtsEngineMode(TtsEngineMode.system);
+    } else {
+      notifyListeners();
+    }
+  }
+
+  Future<void> setElevenLabsModel(ElevenLabsModel model) async {
+    _elevenLabsModel = model;
+    _elevenLabsEngine.setModel(model);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('elevenlabs_model', model.name);
+    notifyListeners();
+  }
+
+  Future<void> refreshElevenLabsVoices() async {
+    if (!_elevenLabsEngine.hasApiKey || _elevenLabsVoicesLoading) return;
+    _elevenLabsVoicesLoading = true;
+    _elevenLabsVoicesError = null;
+    notifyListeners();
+    try {
+      await _elevenLabsEngine.loadVoices();
+    } catch (error) {
+      _elevenLabsVoicesError = error.toString().replaceFirst('Exception: ', '');
+      rethrow;
+    } finally {
+      _elevenLabsVoicesLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> setElevenLabsVoice(TtsEngineVoice voice) async {
+    await _elevenLabsEngine.setVoice(voice);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('elevenlabs_voice', voice.id);
+    notifyListeners();
   }
 
   Future<void> setKokoroVoice(TtsEngineVoice voice) async {
@@ -16150,6 +16462,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _adbCommandCompleters.clear();
+    for (final completer in _codexGoalCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('SocketAgent app is closing.'));
+      }
+    }
+    _codexGoalCompleters.clear();
     for (final requestId in _phoneAdbFileTransfers.keys.toList()) {
       _failPhoneAdbTransfer(requestId, 'SocketAgent app is closing.');
     }
@@ -16158,8 +16476,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _systemEngine.playbackState.removeListener(_onTtsPlaybackChanged);
     _kokoroServerEngine.playbackState.removeListener(_onTtsPlaybackChanged);
     _kokoroDeviceEngine.playbackState.removeListener(_onTtsPlaybackChanged);
+    _elevenLabsEngine.playbackState.removeListener(_onTtsPlaybackChanged);
     _kokoroServerEngine.dispose();
     _kokoroDeviceEngine.dispose();
+    _elevenLabsEngine.dispose();
     _tts.dispose();
     _subscriptionRequiredController.close();
     _backendAuthRequiredController.close();

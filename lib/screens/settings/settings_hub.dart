@@ -156,6 +156,9 @@ class SettingsHub extends StatelessWidget {
       case TtsEngineMode.kokoroDevice:
         engine = 'Kokoro (On-Device)';
         break;
+      case TtsEngineMode.elevenLabs:
+        engine = 'ElevenLabs ${provider.elevenLabsModel.label}';
+        break;
     }
     final voice = provider.selectedTtsEngineVoice;
     if (voice != null) {

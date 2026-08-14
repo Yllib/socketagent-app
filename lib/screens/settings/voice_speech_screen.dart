@@ -92,11 +92,26 @@ class VoiceSpeechScreen extends StatelessWidget {
                   value: TtsEngineMode.kokoroDevice,
                   child: Text('Kokoro (On-Device)'),
                 ),
+                DropdownMenuItem(
+                  value: TtsEngineMode.elevenLabs,
+                  child: Text('ElevenLabs'),
+                ),
               ],
-              onChanged: (mode) {
-                if (mode != null) provider.setTtsEngineMode(mode);
+              onChanged: (mode) async {
+                if (mode == null) return;
+                try {
+                  await provider.setTtsEngineMode(mode);
+                } catch (error) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('$error')),
+                    );
+                  }
+                }
               },
             ),
+            const SizedBox(height: 12),
+            _ElevenLabsSettings(provider: provider),
             if (provider.ttsEngineMode == TtsEngineMode.kokoroDevice) ...[
               const SizedBox(height: 12),
               _buildKokoroModelSection(context, provider),
@@ -315,6 +330,213 @@ class VoiceSpeechScreen extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ElevenLabsSettings extends StatefulWidget {
+  const _ElevenLabsSettings({required this.provider});
+
+  final ChatProvider provider;
+
+  @override
+  State<_ElevenLabsSettings> createState() => _ElevenLabsSettingsState();
+}
+
+class _ElevenLabsSettingsState extends State<_ElevenLabsSettings> {
+  final TextEditingController _keyController = TextEditingController();
+  bool _saving = false;
+
+  @override
+  void dispose() {
+    _keyController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _saveKey() async {
+    final key = _keyController.text.trim();
+    if (key.isEmpty || _saving) return;
+    setState(() => _saving = true);
+    try {
+      await widget.provider.setElevenLabsApiKey(key);
+      _keyController.clear();
+      if (mounted) FocusScope.of(context).unfocus();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ElevenLabs API key saved')),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$error')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _setEnabled(bool enabled) async {
+    try {
+      await widget.provider.setElevenLabsEnabled(enabled);
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$error')),
+        );
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final provider = widget.provider;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 1),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('ElevenLabs'),
+          value: provider.elevenLabsEnabled,
+          onChanged: _setEnabled,
+        ),
+        if (provider.hasElevenLabsApiKey)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.green, size: 18),
+                SizedBox(width: 8),
+                Text('API key saved'),
+              ],
+            ),
+          ),
+        TextField(
+          controller: _keyController,
+          obscureText: true,
+          autocorrect: false,
+          enableSuggestions: false,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) => _saveKey(),
+          decoration: InputDecoration(
+            labelText: 'API key',
+            hintText: provider.hasElevenLabsApiKey
+                ? 'Enter a new key to replace it'
+                : 'Enter API key',
+            border: const OutlineInputBorder(),
+            suffixIcon: _saving
+                ? const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                : IconButton(
+                    tooltip: 'Save API key',
+                    onPressed: _saveKey,
+                    icon: const Icon(Icons.save_outlined),
+                  ),
+          ),
+        ),
+        if (provider.hasElevenLabsApiKey)
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: provider.deleteElevenLabsApiKey,
+              child: const Text('Remove'),
+            ),
+          )
+        else
+          const SizedBox(height: 12),
+        SegmentedButton<ElevenLabsModel>(
+          segments: ElevenLabsModel.values
+              .map(
+                (model) => ButtonSegment<ElevenLabsModel>(
+                  value: model,
+                  label: Text(model.label),
+                ),
+              )
+              .toList(),
+          selected: {provider.elevenLabsModel},
+          showSelectedIcon: false,
+          onSelectionChanged: (selection) {
+            provider.setElevenLabsModel(selection.first);
+          },
+        ),
+        if (provider.hasElevenLabsApiKey) ...[
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'Voice',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                ),
+              ),
+              if (provider.elevenLabsVoicesLoading)
+                const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: 'Refresh voices',
+                  onPressed: () async {
+                    try {
+                      await provider.refreshElevenLabsVoices();
+                    } catch (_) {}
+                  },
+                  icon: const Icon(Icons.refresh, size: 20),
+                ),
+            ],
+          ),
+          DropdownButtonFormField<TtsEngineVoice>(
+            key: ValueKey(
+              '${provider.selectedElevenLabsVoice?.id}:'
+              '${provider.elevenLabsVoices.length}',
+            ),
+            initialValue: provider.selectedElevenLabsVoice,
+            isExpanded: true,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              contentPadding: EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
+            ),
+            items: provider.elevenLabsVoices
+                .map(
+                  (voice) => DropdownMenuItem<TtsEngineVoice>(
+                    value: voice,
+                    child: Text(
+                      voice.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (voice) {
+              if (voice != null) provider.setElevenLabsVoice(voice);
+            },
+          ),
+          if (provider.elevenLabsVoicesError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                provider.elevenLabsVoicesError!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ),
+            ),
+        ],
+      ],
     );
   }
 }

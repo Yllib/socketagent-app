@@ -1,6 +1,16 @@
 import 'package:flutter/foundation.dart';
 
-enum TtsEngineMode { system, kokoroServer, kokoroDevice }
+enum TtsEngineMode { system, kokoroServer, kokoroDevice, elevenLabs }
+
+enum ElevenLabsModel {
+  flashV25('eleven_flash_v2_5', 'Flash v2.5'),
+  v3('eleven_v3', 'Eleven v3');
+
+  const ElevenLabsModel(this.modelId, this.label);
+
+  final String modelId;
+  final String label;
+}
 
 enum TtsPlaybackStatus { idle, loading, playing, paused, completed, error }
 
@@ -52,7 +62,7 @@ class TtsEngineVoice {
   final String id;
   final String name;
   final String? locale;
-  final String engine; // "system" or "kokoro"
+  final String engine; // "system", "kokoro", or "elevenlabs"
 
   const TtsEngineVoice({
     required this.id,
