@@ -59,7 +59,13 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
           )) {
         continue;
       }
-      for (final key in const ['fileId', 'fileName', 'fileSize']) {
+      for (final key in const [
+        'fileId',
+        'fileName',
+        'fileSize',
+        'fileVersion',
+        'fileDeliveryPath',
+      ]) {
         canonical[key] ??= synthetic[key];
       }
       removedIndexes.add(syntheticIndex);

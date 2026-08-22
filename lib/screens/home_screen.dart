@@ -21,6 +21,7 @@ import '../widgets/codex_goal_manager_sheet.dart';
 import '../services/work_review_repository.dart';
 import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
+import 'session_memory_screen.dart';
 
 class _BarSegment {
   final String label;
@@ -747,6 +748,15 @@ class HomeScreenState extends State<HomeScreen> {
                       onSeek: (fraction) =>
                           unawaited(provider.seekReplaySpeak(fraction)),
                       onClose: () => unawaited(provider.closeReplaySpeak()),
+                      speed: provider.ttsEngineMode == TtsEngineMode.elevenLabs
+                          ? provider.elevenLabsSpeechRate
+                          : null,
+                      onSpeedChanged:
+                          provider.ttsEngineMode == TtsEngineMode.elevenLabs
+                          ? (speed) => unawaited(
+                              provider.setElevenLabsSpeechRate(speed),
+                            )
+                          : null,
                     ),
                   if (provider.weeklyRateLimit != null)
                     _buildRateLimitBanner(provider.weeklyRateLimit!),
@@ -1105,6 +1115,11 @@ class HomeScreenState extends State<HomeScreen> {
               MaterialPageRoute(builder: (_) => const SessionAnalyticsScreen()),
             );
             break;
+          case 'session_memory':
+            Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SessionMemoryScreen()),
+            );
+            break;
           case 'work_reviews':
             if (serverId != null) {
               final config = provider.serverConfigs
@@ -1133,11 +1148,7 @@ class HomeScreenState extends State<HomeScreen> {
                   provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
                 _showKokoroVoicePicker(context, provider);
               } else if (provider.ttsEngineMode == TtsEngineMode.elevenLabs) {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const VoiceSpeechScreen(),
-                  ),
-                );
+                unawaited(_showElevenLabsVoicePicker(context, provider));
               } else {
                 _showVoicePicker(context, provider);
               }
@@ -1299,6 +1310,34 @@ class HomeScreenState extends State<HomeScreen> {
                             : provider.activeCodexGoal == null
                             ? 'View, start, stop, or clear'
                             : '${provider.activeCodexGoal!.status.wireValue} · manage durable goal',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+                const Icon(Icons.chevron_right, size: 20),
+              ],
+            ),
+          ),
+        if (showCodexMode)
+          PopupMenuItem(
+            value: 'session_memory',
+            enabled: provider.activeSessionId != null &&
+                provider.activeServerSupportsSessionMemory,
+            child: Row(
+              children: [
+                const Icon(Icons.memory_outlined, size: 18),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text('Session memory'),
+                      Text(
+                        provider.activeServerSupportsSessionMemory
+                            ? 'Durable facts and context rollover'
+                            : 'Requires an updated computer',
                         style: const TextStyle(fontSize: 11),
                       ),
                     ],
@@ -2996,6 +3035,131 @@ class HomeScreenState extends State<HomeScreen> {
         );
       },
     );
+  }
+
+  Future<void> _showElevenLabsVoicePicker(
+    BuildContext context,
+    ChatProvider provider,
+  ) async {
+    if (!provider.hasElevenLabsApiKey) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const VoiceSpeechScreen()),
+      );
+      return;
+    }
+    if (provider.elevenLabsVoices.length <= 1 &&
+        !provider.elevenLabsVoicesLoading) {
+      try {
+        await provider.refreshElevenLabsVoices();
+      } catch (_) {}
+    }
+    if (!context.mounted) return;
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => AnimatedBuilder(
+        animation: provider,
+        builder: (_, __) => DraggableScrollableSheet(
+          initialChildSize: 0.55,
+          minChildSize: 0.3,
+          maxChildSize: 0.85,
+          expand: false,
+          builder: (_, scrollController) {
+            final voices = provider.elevenLabsVoices;
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'ElevenLabs Voice',
+                    style: Theme.of(sheetContext).textTheme.titleMedium,
+                  ),
+                ),
+                const Divider(height: 1),
+                Expanded(
+                  child: ListView.builder(
+                    controller: scrollController,
+                    itemCount: voices.length,
+                    itemBuilder: (_, index) {
+                      final voice = voices[index];
+                      final selected =
+                          provider.selectedElevenLabsVoice?.id == voice.id;
+                      final loading =
+                          provider.elevenLabsPreviewLoadingVoiceId == voice.id;
+                      return ListTile(
+                        title: Text(
+                          voice.name,
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: selected
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                          ),
+                        ),
+                        trailing: loading
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : selected
+                            ? Icon(
+                                Icons.check,
+                                color: Theme.of(
+                                  sheetContext,
+                                ).colorScheme.primary,
+                              )
+                            : null,
+                        onTap: () {
+                          provider.setElevenLabsVoice(voice);
+                          Navigator.pop(sheetContext);
+                        },
+                        onLongPress: () => unawaited(
+                          _previewElevenLabsVoice(
+                            sheetContext,
+                            provider,
+                            voice,
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Text(
+                    'Long-press a voice to preview',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(
+                        sheetContext,
+                      ).colorScheme.onSurface.withAlpha(128),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+    await provider.stopElevenLabsVoicePreview();
+  }
+
+  Future<void> _previewElevenLabsVoice(
+    BuildContext context,
+    ChatProvider provider,
+    TtsEngineVoice voice,
+  ) async {
+    try {
+      await provider.previewElevenLabsVoice(voice);
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error'.replaceFirst('Exception: ', ''))),
+      );
+    }
   }
 
   /// Derive a friendly model name from the model ID value.

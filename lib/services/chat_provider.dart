@@ -28,6 +28,7 @@ import '../models/session_notification_policy.dart';
 import '../models/harness_rate_limit.dart';
 import '../models/private_integration_auth.dart';
 import '../models/codex_goal.dart';
+import '../models/session_memory.dart';
 import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
@@ -497,6 +498,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _elevenLabsEnabled = false;
   ElevenLabsModel _elevenLabsModel = ElevenLabsModel.flashV25;
   bool _elevenLabsVoicesLoading = false;
+  String? _elevenLabsPreviewLoadingVoiceId;
   String? _elevenLabsVoicesError;
   late TtsEngine _activeTtsEngine;
   final NotificationService _notifications = NotificationService();
@@ -748,11 +750,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, int> _serverSecretManagementVersions = {};
   final Map<String, int> _serverSessionTransferVersions = {};
   final Map<String, int> _serverCodexGoalVersions = {};
+  final Map<String, int> _serverSessionMemoryVersions = {};
   final Map<String, CodexGoal?> _codexGoals = {};
   final Set<String> _loadedCodexGoals = {};
   final Set<String> _loadingCodexGoals = {};
   final Map<String, String> _codexGoalErrors = {};
   final Map<String, Completer<CodexGoal?>> _codexGoalCompleters = {};
+  final Map<String, SessionMemoryState> _sessionMemories = {};
+  final Set<String> _loadingSessionMemories = {};
+  final Map<String, String> _sessionMemoryErrors = {};
+  final Map<String, Completer<SessionMemoryState>>
+  _sessionMemoryCompleters = {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -1784,6 +1792,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get elevenLabsEnabled => _elevenLabsEnabled;
   bool get hasElevenLabsApiKey => _elevenLabsEngine.hasApiKey;
   ElevenLabsModel get elevenLabsModel => _elevenLabsModel;
+  double get elevenLabsSpeechRate => _elevenLabsEngine.speechRate;
+  String? get elevenLabsPreviewLoadingVoiceId =>
+      _elevenLabsPreviewLoadingVoiceId;
   List<TtsEngineVoice> get elevenLabsVoices =>
       _elevenLabsEngine.availableVoices;
   TtsEngineVoice? get selectedElevenLabsVoice =>
@@ -2177,6 +2188,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     _elevenLabsEngine.setModel(_elevenLabsModel);
+    await _elevenLabsEngine.setSpeechRate(
+      prefs.getDouble('elevenlabs_speech_rate') ?? 1.0,
+    );
     final elevenLabsKey = await _secureStorage.getElevenLabsApiKey();
     _elevenLabsEngine.setApiKey(elevenLabsKey ?? '');
     final savedElevenLabsVoice = prefs.getString('elevenlabs_voice');
@@ -4183,6 +4197,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _serverCodexGoalVersions[serverId] = codexGoals is Map
                   ? (codexGoals['version'] as num?)?.toInt() ?? 0
                   : 0;
+              final sessionMemory = msg['sessionMemory'];
+              _serverSessionMemoryVersions[serverId] = sessionMemory is Map
+                  ? (sessionMemory['version'] as num?)?.toInt() ?? 0
+                  : 0;
               _captureCodexDriverSettings(msg, serverId);
               unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
               notifyListeners();
@@ -5001,6 +5019,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'codex_goal_state':
           _handleCodexGoalState(msg, serverId);
+          break;
+        case 'session_memory_state':
+          _handleSessionMemoryState(msg, serverId);
+          break;
+        case 'session_memory_error':
+          _handleSessionMemoryError(msg, serverId);
           break;
         case 'permission_mode_changed':
           final mode = msg['permissionMode'] as String?;
@@ -9901,7 +9925,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   entry['fileName'] as String? ?? filePath.split('/').last;
               final historyFileSize = (entry['fileSize'] as num?)?.toInt();
               final historyFileVersion = entry['fileVersion']?.toString();
-              _serverFiles[historyFileId] = filePath;
+              final historyDownloadPath = resolveHistoricalSendFileDownloadPath(
+                entry,
+                filePath,
+              );
+              _serverFiles[historyFileId] = historyDownloadPath;
               _serverFileNames[historyFileId] = historyFileName;
               if (historyFileSize != null && historyFileSize > 0) {
                 _serverFileSizes[historyFileId] = historyFileSize;
@@ -12793,6 +12821,184 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return serverId != null && (_serverCodexGoalVersions[serverId] ?? 0) >= 1;
   }
 
+  bool get activeServerSupportsSessionMemory {
+    final serverId = activeSessionServerId;
+    return serverId != null &&
+        (_serverSessionMemoryVersions[serverId] ?? 0) >= 1;
+  }
+
+  String? get _activeSessionMemoryKey {
+    final sessionId = _activeSessionId;
+    final serverId = activeSessionServerId;
+    if (sessionId == null ||
+        sessionId.isEmpty ||
+        serverId == null ||
+        serverId.isEmpty) {
+      return null;
+    }
+    return '$serverId::$sessionId';
+  }
+
+  SessionMemoryState? get activeSessionMemory {
+    final key = _activeSessionMemoryKey;
+    return key == null ? null : _sessionMemories[key];
+  }
+
+  bool get activeSessionMemoryLoading {
+    final key = _activeSessionMemoryKey;
+    return key != null && _loadingSessionMemories.contains(key);
+  }
+
+  String? get activeSessionMemoryError {
+    final key = _activeSessionMemoryKey;
+    return key == null ? null : _sessionMemoryErrors[key];
+  }
+
+  void _handleSessionMemoryState(
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) {
+    final requestId = msg['requestId']?.toString();
+    final sessionId = msg['sessionId']?.toString() ?? '';
+    final resolvedServerId = serverId ?? activeSessionServerId;
+    final completer = requestId == null
+        ? null
+        : _sessionMemoryCompleters.remove(requestId);
+    if (sessionId.isEmpty || resolvedServerId == null) {
+      completer?.completeError(StateError('Memory response was incomplete'));
+      return;
+    }
+    try {
+      final state = SessionMemoryState.fromJson(
+        Map<String, dynamic>.from(msg['state'] as Map? ?? const {}),
+      );
+      final key = '$resolvedServerId::$sessionId';
+      _sessionMemories[key] = state;
+      _loadingSessionMemories.remove(key);
+      _sessionMemoryErrors.remove(key);
+      completer?.complete(state);
+      notifyListeners();
+    } catch (error) {
+      completer?.completeError(error);
+    }
+  }
+
+  void _handleSessionMemoryError(
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) {
+    final requestId = msg['requestId']?.toString();
+    final sessionId = msg['sessionId']?.toString() ?? _activeSessionId ?? '';
+    final resolvedServerId = serverId ?? activeSessionServerId;
+    final message = msg['message']?.toString() ?? 'Session memory failed';
+    final completer = requestId == null
+        ? null
+        : _sessionMemoryCompleters.remove(requestId);
+    if (resolvedServerId != null && sessionId.isNotEmpty) {
+      final key = '$resolvedServerId::$sessionId';
+      _loadingSessionMemories.remove(key);
+      _sessionMemoryErrors[key] = message;
+    }
+    completer?.completeError(StateError(message));
+    notifyListeners();
+  }
+
+  Future<SessionMemoryState> _sendSessionMemoryRequest(
+    String type, {
+    Map<String, dynamic> values = const {},
+  }) {
+    final sessionId = _activeSessionId;
+    final serverId = activeSessionServerId;
+    if (sessionId == null ||
+        sessionId.isEmpty ||
+        serverId == null ||
+        serverId.isEmpty) {
+      return Future.error(StateError('Open a session to manage its memory'));
+    }
+    final requestId =
+        'session_memory_${DateTime.now().microsecondsSinceEpoch}_${_sessionMemoryCompleters.length}';
+    final key = '$serverId::$sessionId';
+    final completer = Completer<SessionMemoryState>();
+    _sessionMemoryCompleters[requestId] = completer;
+    _loadingSessionMemories.add(key);
+    _sessionMemoryErrors.remove(key);
+    final sent = _connMgr.sendToServer(serverId, {
+      'type': type,
+      'requestId': requestId,
+      'sessionId': sessionId,
+      ...values,
+    });
+    if (!sent) {
+      _sessionMemoryCompleters.remove(requestId);
+      _loadingSessionMemories.remove(key);
+      const message = 'This computer is not connected';
+      _sessionMemoryErrors[key] = message;
+      notifyListeners();
+      return Future.error(StateError(message));
+    }
+    notifyListeners();
+    return completer.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        _sessionMemoryCompleters.remove(requestId);
+        _loadingSessionMemories.remove(key);
+        const message = 'Session memory request timed out';
+        _sessionMemoryErrors[key] = message;
+        notifyListeners();
+        throw TimeoutException(message);
+      },
+    );
+  }
+
+  Future<SessionMemoryState> refreshSessionMemory() =>
+      _sendSessionMemoryRequest('get_session_memory');
+
+  Future<SessionMemoryState> upsertSessionMemory({
+    String? entryId,
+    required SessionMemoryKind kind,
+    required String text,
+    required bool pinned,
+    String status = 'active',
+    int? sourceSessionSeq,
+    String? sourceEntryId,
+  }) => _sendSessionMemoryRequest(
+    'upsert_session_memory',
+    values: {
+      if (entryId != null) 'entryId': entryId,
+      'kind': kind.wireValue,
+      'text': text,
+      'pinned': pinned,
+      'status': status,
+      if (sourceSessionSeq != null) 'sourceSessionSeq': sourceSessionSeq,
+      if (sourceEntryId != null) 'sourceEntryId': sourceEntryId,
+    },
+  );
+
+  Future<SessionMemoryState> deleteSessionMemory(String entryId) =>
+      _sendSessionMemoryRequest(
+        'delete_session_memory',
+        values: {'entryId': entryId},
+      );
+
+  Future<SessionMemoryState> updateSessionMemorySettings({
+    bool? autoRollover,
+    int? maxCompactions,
+    int? maxPostCompactionTokens,
+    int? recentRuns,
+  }) => _sendSessionMemoryRequest(
+    'set_session_memory_settings',
+    values: {
+      if (autoRollover != null) 'autoRollover': autoRollover,
+      if (maxCompactions != null) 'maxCompactions': maxCompactions,
+      if (maxPostCompactionTokens != null)
+        'maxPostCompactionTokens': maxPostCompactionTokens,
+      if (recentRuns != null) 'recentRuns': recentRuns,
+    },
+  );
+
+  Future<SessionMemoryState> requestSessionMemoryRollover() =>
+      _sendSessionMemoryRequest('rollover_session_memory');
+
   void resumeSession(String sessionId, {String? serverId}) {
     _messages = [];
     _pendingInjectedMessageCount = 0;
@@ -15004,6 +15210,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  Future<void> setElevenLabsSpeechRate(double rate) async {
+    await _elevenLabsEngine.setSpeechRate(rate);
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(
+      'elevenlabs_speech_rate',
+      _elevenLabsEngine.speechRate,
+    );
+  }
+
   Future<void> refreshElevenLabsVoices() async {
     if (!_elevenLabsEngine.hasApiKey || _elevenLabsVoicesLoading) return;
     _elevenLabsVoicesLoading = true;
@@ -15025,6 +15241,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('elevenlabs_voice', voice.id);
     notifyListeners();
+  }
+
+  Future<void> previewElevenLabsVoice(TtsEngineVoice voice) async {
+    _elevenLabsPreviewLoadingVoiceId = voice.id;
+    notifyListeners();
+    try {
+      await _elevenLabsEngine.previewVoice(voice);
+    } finally {
+      if (_elevenLabsPreviewLoadingVoiceId == voice.id) {
+        _elevenLabsPreviewLoadingVoiceId = null;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> stopElevenLabsVoicePreview() async {
+    _elevenLabsPreviewLoadingVoiceId = null;
+    notifyListeners();
+    await _elevenLabsEngine.stopPreview();
   }
 
   Future<void> setKokoroVoice(TtsEngineVoice voice) async {
@@ -15251,10 +15486,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     fileName = fileName.split('/').last.split('\\').last.replaceAll('..', '');
     if (fileName.isEmpty) fileName = 'file';
     final filePath = msg['filePath'] as String? ?? '';
+    final downloadPath = resolveLiveSendFileDownloadPath(msg);
     final fileSize = (msg['fileSize'] as num?)?.toInt();
     final fileVersion = msg['fileVersion'] as String?;
     if (filePath.isNotEmpty && fileId.isNotEmpty) {
-      _serverFiles[fileId] = filePath;
+      _serverFiles[fileId] = downloadPath;
       _serverFileNames[fileId] = fileName;
       if (fileSize != null && fileSize > 0) {
         _serverFileSizes[fileId] = fileSize;
@@ -16497,6 +16733,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _codexGoalCompleters.clear();
+    for (final completer in _sessionMemoryCompleters.values) {
+      if (!completer.isCompleted) {
+        completer.completeError(StateError('SocketAgent app is closing.'));
+      }
+    }
+    _sessionMemoryCompleters.clear();
     for (final requestId in _phoneAdbFileTransfers.keys.toList()) {
       _failPhoneAdbTransfer(requestId, 'SocketAgent app is closing.');
     }

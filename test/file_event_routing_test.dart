@@ -3,6 +3,37 @@ import 'package:app/models/message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('live SendFile keeps its display path but downloads its snapshot', () {
+    final message = <String, dynamic>{
+      'filePath': '/workspace/build/app-release.apk',
+      'downloadPath': '/data/send-files/send_123/app-release.apk',
+    };
+
+    expect(
+      resolveLiveSendFileDownloadPath(message),
+      '/data/send-files/send_123/app-release.apk',
+    );
+  });
+
+  test('historical SendFile restores its immutable delivery path', () {
+    expect(
+      resolveHistoricalSendFileDownloadPath(
+        <String, dynamic>{
+          'fileDeliveryPath': '/data/send-files/send_123/app-release.apk',
+        },
+        '/workspace/build/app-release.apk',
+      ),
+      '/data/send-files/send_123/app-release.apk',
+    );
+    expect(
+      resolveHistoricalSendFileDownloadPath(
+        <String, dynamic>{},
+        '/workspace/legacy.apk',
+      ),
+      '/workspace/legacy.apk',
+    );
+  });
+
   test('download routing preserves the file owning server', () {
     expect(
       resolveDownloadServerId('server-mac', 'server-active'),

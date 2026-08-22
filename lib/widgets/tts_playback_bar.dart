@@ -9,6 +9,8 @@ class TtsPlaybackBar extends StatefulWidget {
   final VoidCallback onRestart;
   final ValueChanged<double> onSeek;
   final VoidCallback onClose;
+  final double? speed;
+  final ValueChanged<double>? onSpeedChanged;
 
   const TtsPlaybackBar({
     super.key,
@@ -18,6 +20,8 @@ class TtsPlaybackBar extends StatefulWidget {
     required this.onRestart,
     required this.onSeek,
     required this.onClose,
+    this.speed,
+    this.onSpeedChanged,
   });
 
   @override
@@ -123,6 +127,29 @@ class _TtsPlaybackBarState extends State<TtsPlaybackBar> {
                     ],
                   ),
                 ),
+                if (widget.speed != null && widget.onSpeedChanged != null)
+                  PopupMenuButton<double>(
+                    key: const ValueKey<String>('tts-speed'),
+                    tooltip: 'Speaking speed',
+                    onSelected: widget.onSpeedChanged,
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(value: 0.7, child: Text('0.70×')),
+                      PopupMenuItem(value: 0.85, child: Text('0.85×')),
+                      PopupMenuItem(value: 1.0, child: Text('1.00×')),
+                      PopupMenuItem(value: 1.1, child: Text('1.10×')),
+                      PopupMenuItem(value: 1.2, child: Text('1.20×')),
+                    ],
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 12,
+                      ),
+                      child: Text(
+                        '${widget.speed!.toStringAsFixed(2)}×',
+                        style: theme.textTheme.labelMedium,
+                      ),
+                    ),
+                  ),
                 IconButton(
                   key: const ValueKey<String>('tts-close'),
                   visualDensity: VisualDensity.compact,

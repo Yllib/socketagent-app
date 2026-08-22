@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -998,7 +997,7 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
     if (canEmbed && (target?.kind != 'html_plan' || inlineHtml != null)) {
       final controller = WebViewController()
         ..setJavaScriptMode(
-          target?.kind == 'html'
+          target?.kind == 'html' || target?.kind == 'html_plan'
               ? JavaScriptMode.disabled
               : JavaScriptMode.unrestricted,
         )
@@ -1008,19 +1007,22 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
             onProgress: (progress) {
               if (mounted) setState(() => _progress = progress);
             },
-            onPageFinished: (_) async {
-              if (target?.kind != 'html_plan') return;
-              final anchor = target!.uri.replaceFirst(RegExp(r'^#'), '');
-              await _webController?.runJavaScript(
-                'document.getElementById(${jsonEncode(anchor)})?.scrollIntoView({block:"start"});',
-              );
-            },
           ),
         );
       if ((target?.kind == 'html' || target?.kind == 'html_plan') &&
           inlineHtml != null) {
+        final anchor = target?.kind == 'html_plan'
+            ? target!.uri.replaceFirst(RegExp(r'^#'), '').trim()
+            : '';
         controller.loadHtmlString(
           HtmlPlanExportService.buildViewerDocument(inlineHtml),
+          baseUrl: anchor.isEmpty
+              ? null
+              : Uri(
+                  scheme: 'https',
+                  host: 'html-plan.socketagent.invalid',
+                  fragment: anchor,
+                ).toString(),
         );
       } else {
         controller.loadRequest(Uri.parse(target!.uri));

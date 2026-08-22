@@ -39,36 +39,27 @@ void main() {
     );
   });
 
-  test(
-    'HTML plan export is self-contained and uses a safe revision filename',
-    () {
-      final document = HtmlPlanExportService.buildDocument(
-        title: 'Release & rollout',
-        html: '<h1>Ready</h1>',
-        revision: 4,
-      );
-      expect(
-        document,
-        contains('<title>Release &amp; rollout — revision 4</title>'),
-      );
-      expect(document, contains('<h1>Ready</h1>'));
-      expect(
-        HtmlPlanExportService.safeFileName('Release / rollout!', 4),
-        'release-rollout-revision-4.html',
-      );
-    },
-  );
-
-  test('HTML plan viewer defaults to a browser-like light document', () {
-    final document = HtmlPlanExportService.buildViewerDocument(
-      '<h1 style="color:#222">Readable</h1>',
+  test('HTML plan export is exact and uses a safe revision filename', () {
+    const html = '<!doctype html>\n<html><body><h1>Ready</h1></body></html>';
+    final document = HtmlPlanExportService.buildDocument(
+      title: 'Release & rollout',
+      html: html,
+      revision: 4,
     );
+    expect(document, html);
+    expect(
+      HtmlPlanExportService.safeFileName('Release / rollout!', 4),
+      'release-rollout-revision-4.html',
+    );
+  });
 
-    expect(document, contains(':root { color-scheme: light; }'));
-    expect(document, contains('background: #ffffff; color: #000000;'));
-    expect(document, isNot(contains('#111318')));
-    expect(document, isNot(contains('color-scheme: dark')));
-    expect(document, contains('<h1 style="color:#222">Readable</h1>'));
+  test('HTML plan viewer does not rewrite submitted markup', () {
+    const html = '''<!doctype html>
+<html><head><meta charset="utf-8"><script>window.test = true;</script></head>
+<body><a href="https://example.com"><img src="data:image/png;base64,AAAA"></a></body></html>''';
+    final document = HtmlPlanExportService.buildViewerDocument(html);
+
+    expect(document, html);
   });
 
   test('plan creation is labeled as the original, not revision one', () {
@@ -89,7 +80,7 @@ void main() {
         html: '<p>Created</p>',
         revision: 0,
       ),
-      contains('<title>Original plan — original</title>'),
+      '<p>Created</p>',
     );
   });
 }

@@ -12,6 +12,8 @@ void main() {
     VoidCallback? onRestart,
     ValueChanged<double>? onSeek,
     VoidCallback? onClose,
+    double? speed,
+    ValueChanged<double>? onSpeedChanged,
   }) {
     return tester.pumpWidget(
       MaterialApp(
@@ -23,6 +25,8 @@ void main() {
             onRestart: onRestart ?? () {},
             onSeek: onSeek ?? (_) {},
             onClose: onClose ?? () {},
+            speed: speed,
+            onSpeedChanged: onSpeedChanged,
           ),
         ),
       ),
@@ -130,5 +134,25 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('tts-play-pause')));
     expect(restarts, 1);
     expect(resumes, 1);
+  });
+
+  testWidgets('offers ElevenLabs speaking speed presets', (tester) async {
+    double? selectedSpeed;
+    await pumpBar(
+      tester,
+      const TtsPlaybackState(
+        status: TtsPlaybackStatus.playing,
+        text: 'Speech with adjustable speed.',
+      ),
+      speed: 1.0,
+      onSpeedChanged: (value) => selectedSpeed = value,
+    );
+
+    expect(find.text('1.00×'), findsOne);
+    await tester.tap(find.byKey(const ValueKey<String>('tts-speed')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1.20×'));
+
+    expect(selectedSpeed, 1.2);
   });
 }

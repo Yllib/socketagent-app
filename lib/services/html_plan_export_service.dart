@@ -8,46 +8,9 @@ import 'package:path_provider/path_provider.dart';
 class HtmlPlanExportService {
   static const _channel = MethodChannel('com.socketagent.app/intent');
 
-  static String buildViewerDocument(String source) {
-    final safe = source
-        .replaceAll(
-          RegExp(r'<script\b[^>]*>[\s\S]*?</script\s*>', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(r'<iframe\b[^>]*>[\s\S]*?</iframe\s*>', caseSensitive: false),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'''\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)''',
-            caseSensitive: false,
-          ),
-          '',
-        )
-        .replaceAll(
-          RegExp(
-            r'''\s(?:href|src|srcdoc|action|formaction)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)''',
-            caseSensitive: false,
-          ),
-          '',
-        );
-    return '''<!doctype html>
-<html><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=5">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:">
-<style>
-:root { color-scheme: light; }
-* { box-sizing: border-box; }
-html, body { min-height: 100%; background: #ffffff; color: #000000; }
-body { margin: 0; padding: 20px; font: 16px/1.55 system-ui, -apple-system, sans-serif; overflow-wrap: anywhere; }
-pre, code { font-family: ui-monospace, SFMono-Regular, monospace; }
-pre { overflow-x: auto; }
-table { max-width: 100%; border-collapse: collapse; display: block; overflow-x: auto; }
-img { max-width: 100%; height: auto; }
-</style></head><body>$safe</body></html>''';
-  }
+  /// The HTML plan tool is a pass-through. Isolation is enforced by the
+  /// WebView configuration, never by silently rewriting the agent's document.
+  static String buildViewerDocument(String source) => source;
 
   static String safeFileName(String title, int revision) {
     final safe = title
@@ -64,23 +27,7 @@ img { max-width: 100%; height: auto; }
     required String title,
     required String html,
     required int revision,
-  }) {
-    final escapedTitle = const HtmlEscape(
-      HtmlEscapeMode.element,
-    ).convert(title);
-    final versionLabel = revision == 0 ? 'original' : 'revision $revision';
-    return '''<!doctype html>
-<html>
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>$escapedTitle — $versionLabel</title>
-</head>
-<body>
-$html
-</body>
-</html>''';
-  }
+  }) => html;
 
   static Future<String?> export({
     required String title,

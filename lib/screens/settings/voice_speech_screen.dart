@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/chat_provider.dart';
@@ -349,6 +351,7 @@ class _ElevenLabsSettingsState extends State<_ElevenLabsSettings> {
 
   @override
   void dispose() {
+    unawaited(widget.provider.stopElevenLabsVoicePreview());
     _keyController.dispose();
     super.dispose();
   }
@@ -386,6 +389,17 @@ class _ElevenLabsSettingsState extends State<_ElevenLabsSettings> {
           SnackBar(content: Text('$error')),
         );
       }
+    }
+  }
+
+  Future<void> _previewVoice(TtsEngineVoice voice) async {
+    try {
+      await widget.provider.previewElevenLabsVoice(voice);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$error'.replaceFirst('Exception: ', ''))),
+      );
     }
   }
 
@@ -466,6 +480,28 @@ class _ElevenLabsSettingsState extends State<_ElevenLabsSettings> {
             provider.setElevenLabsModel(selection.first);
           },
         ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            const Expanded(
+              child: Text(
+                'Speaking speed',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              ),
+            ),
+            Text('${provider.elevenLabsSpeechRate.toStringAsFixed(2)}×'),
+          ],
+        ),
+        Slider(
+          value: provider.elevenLabsSpeechRate,
+          min: 0.7,
+          max: 1.2,
+          divisions: 10,
+          label: '${provider.elevenLabsSpeechRate.toStringAsFixed(2)}×',
+          onChanged: (value) {
+            provider.setElevenLabsSpeechRate(value);
+          },
+        ),
         if (provider.hasElevenLabsApiKey) ...[
           const SizedBox(height: 12),
           Row(
@@ -512,10 +548,34 @@ class _ElevenLabsSettingsState extends State<_ElevenLabsSettings> {
                 .map(
                   (voice) => DropdownMenuItem<TtsEngineVoice>(
                     value: voice,
-                    child: Text(
-                      voice.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onLongPress: () => _previewVoice(voice),
+                      child: SizedBox(
+                        width: double.infinity,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                voice.name,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            if (provider.elevenLabsPreviewLoadingVoiceId ==
+                                voice.id)
+                              const Padding(
+                                padding: EdgeInsets.only(left: 8),
+                                child: SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
                     ),
                   ),
                 )
@@ -523,6 +583,13 @@ class _ElevenLabsSettingsState extends State<_ElevenLabsSettings> {
             onChanged: (voice) {
               if (voice != null) provider.setElevenLabsVoice(voice);
             },
+          ),
+          const Padding(
+            padding: EdgeInsets.only(top: 6),
+            child: Text(
+              'Long-press a voice name to preview it',
+              style: TextStyle(fontSize: 12),
+            ),
           ),
           if (provider.elevenLabsVoicesError != null)
             Padding(

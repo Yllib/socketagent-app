@@ -2,6 +2,20 @@ import 'message.dart';
 
 const _fileMetadataKeys = {'_file_id', '_file_name', '_file_size'};
 
+String resolveLiveSendFileDownloadPath(Map<String, dynamic> message) {
+  final downloadPath = message['downloadPath']?.toString().trim() ?? '';
+  if (downloadPath.isNotEmpty) return downloadPath;
+  return message['filePath']?.toString() ?? '';
+}
+
+String resolveHistoricalSendFileDownloadPath(
+  Map<String, dynamic> entry,
+  String originalPath,
+) {
+  final deliveryPath = entry['fileDeliveryPath']?.toString().trim() ?? '';
+  return deliveryPath.isNotEmpty ? deliveryPath : originalPath;
+}
+
 String? resolveDownloadServerId(
   String? recordedServerId,
   String? activeServerId,

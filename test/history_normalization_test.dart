@@ -19,6 +19,8 @@ void main() {
         'fileId': 'file-1',
         'fileName': 'app.apk',
         'fileSize': 42,
+        'fileVersion': 'v1',
+        'fileDeliveryPath': '/data/send-files/file-1/app.apk',
         'timestamp': '2026-07-15T12:00:00.010Z',
       },
       {
@@ -32,6 +34,10 @@ void main() {
     expect(normalized, hasLength(2));
     expect(normalized.first['toolUseId'], 'exec-1');
     expect(normalized.first['fileId'], 'file-1');
+    expect(
+      normalized.first['fileDeliveryPath'],
+      '/data/send-files/file-1/app.apk',
+    );
     expect(normalized.last['toolUseId'], 'exec-1');
   });
 
