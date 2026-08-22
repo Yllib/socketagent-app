@@ -12,10 +12,12 @@ void main() {
       'messagePreview': '',
       'replacedSessionIds': ['old-one', 'old-two'],
       'compactionsSinceRollover': 11,
+      'freshThreadPending': true,
     });
 
     expect(session.replacedSessionIds, ['old-one', 'old-two']);
     expect(session.compactionsSinceRollover, 11);
+    expect(session.freshThreadPending, isTrue);
   });
 
   test('session run statistics round-trip from the server payload', () {

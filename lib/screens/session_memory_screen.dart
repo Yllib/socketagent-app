@@ -149,12 +149,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
                   color: theme.colorScheme.tertiary,
                 ),
                 const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Your next prompt will start a fresh Codex thread. '
-                    '${state.rolloverReason ?? ''}',
-                  ),
-                ),
+                Expanded(child: Text('Fresh thread ready')),
               ],
             ),
           ),
@@ -331,8 +326,8 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
             icon: const Icon(Icons.change_circle_outlined),
             label: Text(
               state.rolloverPending
-                  ? 'Fresh thread queued'
-                  : 'Start fresh thread on next prompt',
+                  ? 'Fresh thread ready'
+                  : 'Start fresh thread',
             ),
           ),
         ),
@@ -463,8 +458,8 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
       builder: (context) => AlertDialog(
         title: const Text('Start a fresh Codex thread?'),
         content: const Text(
-          'The next prompt will start a fresh native thread with durable memory '
-          'and recent runs. The visible session history stays intact.',
+          'This session will continue in a fresh native thread with durable '
+          'memory and recent runs. The visible session history stays intact.',
         ),
         actions: [
           TextButton(

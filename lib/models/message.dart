@@ -710,6 +710,7 @@ class Session {
   final String? codexDriver;
   final List<String> replacedSessionIds;
   final int compactionsSinceRollover;
+  final bool freshThreadPending;
 
   /// Immediate SocketAgent session that spawned this full delegated session.
   final String? delegatedBySessionId;
@@ -733,6 +734,7 @@ class Session {
     this.codexDriver,
     this.replacedSessionIds = const [],
     this.compactionsSinceRollover = 0,
+    this.freshThreadPending = false,
     this.delegatedBySessionId,
     this.delegationId,
   });
@@ -764,6 +766,7 @@ class Session {
           .toList(growable: false),
       compactionsSinceRollover:
           (json['compactionsSinceRollover'] as num?)?.toInt() ?? 0,
+      freshThreadPending: json['freshThreadPending'] == true,
       delegatedBySessionId: json['delegatedBySessionId'] as String?,
       delegationId: json['delegationId'] as String?,
     );
@@ -787,6 +790,7 @@ class Session {
     'codexDriver': codexDriver,
     if (replacedSessionIds.isNotEmpty) 'replacedSessionIds': replacedSessionIds,
     'compactionsSinceRollover': compactionsSinceRollover,
+    'freshThreadPending': freshThreadPending,
     'delegatedBySessionId': delegatedBySessionId,
     'delegationId': delegationId,
   };
@@ -809,6 +813,7 @@ class Session {
     String? codexDriver,
     List<String>? replacedSessionIds,
     int? compactionsSinceRollover,
+    bool? freshThreadPending,
     String? delegatedBySessionId,
     String? delegationId,
   }) {
@@ -832,6 +837,7 @@ class Session {
       replacedSessionIds: replacedSessionIds ?? this.replacedSessionIds,
       compactionsSinceRollover:
           compactionsSinceRollover ?? this.compactionsSinceRollover,
+      freshThreadPending: freshThreadPending ?? this.freshThreadPending,
       delegatedBySessionId: delegatedBySessionId ?? this.delegatedBySessionId,
       delegationId: delegationId ?? this.delegationId,
     );
@@ -860,6 +866,7 @@ class Session {
       codexDriver: codexDriver,
       replacedSessionIds: replacedSessionIds,
       compactionsSinceRollover: compactionsSinceRollover,
+      freshThreadPending: freshThreadPending,
       delegatedBySessionId: delegatedBySessionId,
       delegationId: delegationId,
     );

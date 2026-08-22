@@ -3975,6 +3975,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'archive_deleted',
       'server_capabilities',
       'codex_goal_state',
+      'session_memory_state',
+      'session_memory_error',
       'secret_inventory',
       'html_plan_list',
       'html_plan_operation_result',
@@ -13099,11 +13101,48 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<SessionMemoryState> requestSessionMemoryRollover({
     String? sessionId,
     String? serverId,
-  }) => _sendSessionMemoryRequest(
-    'rollover_session_memory',
-    targetSessionId: sessionId,
-    targetServerId: serverId,
-  );
+  }) async {
+    final targetSessionId = sessionId ?? _activeSessionId;
+    final targetServerId = serverId ?? activeSessionServerId;
+    if (targetSessionId != null && targetServerId != null) {
+      _setFreshThreadPending(targetServerId, targetSessionId, true);
+    }
+    try {
+      return await _sendSessionMemoryRequest(
+        'rollover_session_memory',
+        targetSessionId: sessionId,
+        targetServerId: serverId,
+      );
+    } catch (_) {
+      if (targetSessionId != null && targetServerId != null) {
+        _setFreshThreadPending(targetServerId, targetSessionId, false);
+      }
+      rethrow;
+    }
+  }
+
+  void _setFreshThreadPending(String serverId, String sessionId, bool pending) {
+    final serverSessions = _perServerSessions[serverId];
+    if (serverSessions != null) {
+      _perServerSessions[serverId] = [
+        for (final session in serverSessions)
+          if (session.id == sessionId)
+            session.copyWith(freshThreadPending: pending)
+          else
+            session,
+      ];
+      _rebuildSessionList();
+    } else {
+      _sessions = [
+        for (final session in _sessions)
+          if (session.id == sessionId)
+            session.copyWith(freshThreadPending: pending)
+          else
+            session,
+      ];
+    }
+    notifyListeners();
+  }
 
   void resumeSession(String sessionId, {String? serverId}) {
     _messages = [];

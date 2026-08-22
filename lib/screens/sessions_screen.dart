@@ -2179,15 +2179,27 @@ class _SessionsTabState extends State<SessionsTab> {
               ),
               if (session.backend == 'codex') ...[
                 ListTile(
-                  leading: const Icon(Icons.change_circle_outlined),
-                  title: const Text('Start Fresh Thread'),
-                  subtitle: const Text(
-                    'Carry memory and recent runs into your next prompt',
+                  leading: Icon(
+                    session.freshThreadPending
+                        ? Icons.check_circle_outline
+                        : Icons.change_circle_outlined,
                   ),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _confirmStartFreshThread(context, session);
-                  },
+                  title: Text(
+                    session.freshThreadPending
+                        ? 'Fresh Thread Ready'
+                        : 'Start Fresh Thread',
+                  ),
+                  subtitle: Text(
+                    session.freshThreadPending
+                        ? 'This session is ready to continue'
+                        : 'Carry memory and recent runs forward',
+                  ),
+                  onTap: session.freshThreadPending
+                      ? null
+                      : () {
+                          Navigator.pop(ctx);
+                          _confirmStartFreshThread(context, session);
+                        },
                 ),
                 ListTile(
                   leading: const Icon(Icons.compress),
@@ -3007,8 +3019,8 @@ class _SessionsTabState extends State<SessionsTab> {
       builder: (ctx) => AlertDialog(
         title: const Text('Start a Fresh Thread?'),
         content: const Text(
-          'Your next prompt will open a fresh Codex thread with durable memory '
-          'and recent runs. The session name, pin, and visible history stay intact.',
+          'This session will continue in a fresh Codex thread with durable '
+          'memory and recent runs. Its name, pin, and visible history stay intact.',
         ),
         actions: [
           TextButton(
@@ -3030,11 +3042,9 @@ class _SessionsTabState extends State<SessionsTab> {
         serverId: session.serverId,
       );
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Fresh thread queued for this session\'s next prompt'),
-        ),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Fresh thread ready')));
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -3463,6 +3473,38 @@ class _SessionsTabState extends State<SessionsTab> {
                         ],
                       ),
                       if (session.backend == 'codex' &&
+                          session.freshThreadPending) ...[
+                        const SizedBox(height: 7),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: theme.colorScheme.primary.withAlpha(150),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.check_circle_outline,
+                                size: 16,
+                                color: theme.colorScheme.primary,
+                              ),
+                              const SizedBox(width: 7),
+                              Text(
+                                'Fresh thread ready',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: theme.colorScheme.primary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ] else if (session.backend == 'codex' &&
                           session.compactionsSinceRollover > 10) ...[
                         const SizedBox(height: 7),
                         Container(
