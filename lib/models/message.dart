@@ -708,6 +708,8 @@ class Session {
   // codex backend existed — treat absent as claude everywhere downstream.
   final String? backend;
   final String? codexDriver;
+  final List<String> replacedSessionIds;
+  final int compactionsSinceRollover;
 
   /// Immediate SocketAgent session that spawned this full delegated session.
   final String? delegatedBySessionId;
@@ -729,6 +731,8 @@ class Session {
     this.serverColor,
     this.backend,
     this.codexDriver,
+    this.replacedSessionIds = const [],
+    this.compactionsSinceRollover = 0,
     this.delegatedBySessionId,
     this.delegationId,
   });
@@ -754,6 +758,12 @@ class Session {
       serverColor: json['serverColor'] as int?,
       backend: json['backend'] as String?,
       codexDriver: json['codexDriver'] as String?,
+      replacedSessionIds: (json['replacedSessionIds'] as List? ?? const [])
+          .map((id) => id.toString())
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false),
+      compactionsSinceRollover:
+          (json['compactionsSinceRollover'] as num?)?.toInt() ?? 0,
       delegatedBySessionId: json['delegatedBySessionId'] as String?,
       delegationId: json['delegationId'] as String?,
     );
@@ -775,6 +785,8 @@ class Session {
     'serverColor': serverColor,
     'backend': backend,
     'codexDriver': codexDriver,
+    if (replacedSessionIds.isNotEmpty) 'replacedSessionIds': replacedSessionIds,
+    'compactionsSinceRollover': compactionsSinceRollover,
     'delegatedBySessionId': delegatedBySessionId,
     'delegationId': delegationId,
   };
@@ -795,6 +807,8 @@ class Session {
     int? serverColor,
     String? backend,
     String? codexDriver,
+    List<String>? replacedSessionIds,
+    int? compactionsSinceRollover,
     String? delegatedBySessionId,
     String? delegationId,
   }) {
@@ -815,6 +829,9 @@ class Session {
       serverColor: serverColor ?? this.serverColor,
       backend: backend ?? this.backend,
       codexDriver: codexDriver ?? this.codexDriver,
+      replacedSessionIds: replacedSessionIds ?? this.replacedSessionIds,
+      compactionsSinceRollover:
+          compactionsSinceRollover ?? this.compactionsSinceRollover,
       delegatedBySessionId: delegatedBySessionId ?? this.delegatedBySessionId,
       delegationId: delegationId ?? this.delegationId,
     );
@@ -841,6 +858,8 @@ class Session {
       serverColor: serverColor,
       backend: backend,
       codexDriver: codexDriver,
+      replacedSessionIds: replacedSessionIds,
+      compactionsSinceRollover: compactionsSinceRollover,
       delegatedBySessionId: delegatedBySessionId,
       delegationId: delegationId,
     );

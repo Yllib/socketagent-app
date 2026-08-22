@@ -2,6 +2,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app/models/message.dart';
 
 void main() {
+  test('session parses rollover lineage and current compaction count', () {
+    final session = Session.fromJson({
+      'id': 'new',
+      'title': 'Socketagent',
+      'cwd': '/tmp',
+      'createdAt': '2026-08-22T00:00:00.000Z',
+      'lastActive': '2026-08-22T00:00:00.000Z',
+      'messagePreview': '',
+      'replacedSessionIds': ['old-one', 'old-two'],
+      'compactionsSinceRollover': 11,
+    });
+
+    expect(session.replacedSessionIds, ['old-one', 'old-two']);
+    expect(session.compactionsSinceRollover, 11);
+  });
+
   test('session run statistics round-trip from the server payload', () {
     final session = Session.fromJson({
       'id': 'session-1',

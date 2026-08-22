@@ -53,6 +53,7 @@ import 'tool_event_reconciler.dart';
 import 'session_transcript_cache.dart';
 import 'hard_stop_target.dart';
 import 'session_live_state.dart';
+import 'session_identity_remap.dart';
 
 const _codexAgentControlTypes = {
   'wait',
@@ -761,8 +762,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, SessionMemoryState> _sessionMemories = {};
   final Set<String> _loadingSessionMemories = {};
   final Map<String, String> _sessionMemoryErrors = {};
-  final Map<String, Completer<SessionMemoryState>>
-  _sessionMemoryCompleters = {};
+  final Map<String, Completer<SessionMemoryState>> _sessionMemoryCompleters =
+      {};
 
   // Subscription
   String _subscriberEmail = '';
@@ -942,11 +943,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _notifMutedSessions.add(sessionId);
     }
+    _persistMutedSessions();
+    _syncOngoingSessionNotifications();
+    notifyListeners();
+  }
+
+  void _persistMutedSessions() {
     SharedPreferences.getInstance().then((prefs) {
       prefs.setStringList('notif_muted_sessions', _notifMutedSessions.toList());
     });
-    _syncOngoingSessionNotifications();
-    notifyListeners();
   }
 
   // Session pinning
@@ -965,10 +970,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _pinnedSessionIds.add(sessionId);
     }
+    _persistPinnedSessions();
+    notifyListeners();
+  }
+
+  void _persistPinnedSessions() {
     SharedPreferences.getInstance().then((prefs) {
       prefs.setStringList('pinned_sessions', _pinnedSessionIds.toList());
     });
-    notifyListeners();
   }
 
   void setViewingSession(
@@ -8971,6 +8980,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleSessionCreated(Map<String, dynamic> msg, String? serverId) {
     final sessionId = msg['sessionId'] as String?;
     final replacesSessionId = msg['replacesSessionId'] as String?;
+    String? previousTitle;
     final backend = normalizeHarnessBackend(msg['backend']?.toString());
     if (backend != null) _activeSessionBackend = backend;
     if (sessionId != null && sessionId.isNotEmpty) {
@@ -8978,12 +8988,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ? serverId
           : _activeSessionServerId ?? _connMgr.activeServerId;
       if (replacesSessionId != null && replacesSessionId.isNotEmpty) {
-        _locallyClearedSessions.remove(replacesSessionId);
-        _sessionLiveState.remap(sessionServerId, replacesSessionId, sessionId);
-        if (_viewingSessionId == replacesSessionId) {
-          _viewingSessionId = sessionId;
-          _viewingServerId = sessionServerId;
+        previousTitle = _sessions
+            .where(
+              (session) =>
+                  session.id == replacesSessionId &&
+                  (sessionServerId == null ||
+                      session.serverId == sessionServerId),
+            )
+            .firstOrNull
+            ?.title;
+        if (_activeSessionId == replacesSessionId) {
+          previousTitle = replacementSessionTitle(
+            previousTitle,
+            _activeSessionTitle,
+          );
         }
+        _remapSessionIdentity(sessionServerId, replacesSessionId, sessionId);
       }
       _activeSessionId = sessionId;
       if (serverId != null && serverId.isNotEmpty) {
@@ -9006,13 +9026,53 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _loadPrepends();
     }
     _activeSessionCwd = msg['cwd'] as String?;
-    _activeSessionTitle = msg['title'] as String?;
+    _activeSessionTitle = replacementSessionTitle(
+      previousTitle,
+      msg['title'] as String?,
+    );
     // Server echoes the backend on the second session_created (the one with
     // the real id). Capture it so the chat header label is right immediately.
     final permissionMode = msg['permissionMode'] as String?;
     if (permissionMode != null) _permissionMode = permissionMode;
     _requestActiveCodexMetadata();
     notifyListeners();
+  }
+
+  void _remapSessionIdentity(String? serverId, String oldId, String newId) {
+    if (oldId.isEmpty || newId.isEmpty || oldId == newId) return;
+
+    final pinChanged = moveSessionSetMember(_pinnedSessionIds, oldId, newId);
+    final muteChanged = moveSessionSetMember(_notifMutedSessions, oldId, newId);
+    final draftChanged = moveSessionMapEntry(_sessionDrafts, oldId, newId);
+    moveSessionMapEntry(_sessionDisallowedTools, oldId, newId);
+    moveSessionMapEntry(_sessionSystemPrompts, oldId, newId);
+    moveSessionMapEntry(_sessionCodexFastModes, oldId, newId);
+    moveSessionMapEntry(_sessionClaudeAutoCompact, oldId, newId);
+    moveSessionMapEntry(_sessionClaudeAutoCompactWindows, oldId, newId);
+    _locallyClearedSessions.remove(oldId);
+
+    if (serverId != null && serverId.isNotEmpty) {
+      final oldKey = '$serverId::$oldId';
+      final newKey = '$serverId::$newId';
+      moveSessionMapEntry(_sessionMemories, oldKey, newKey);
+      moveSessionMapEntry(_sessionMemoryErrors, oldKey, newKey);
+      moveSessionSetMember(_loadingSessionMemories, oldKey, newKey);
+      moveSessionMapEntry(_codexGoals, oldKey, newKey);
+      moveSessionMapEntry(_codexGoalErrors, oldKey, newKey);
+      moveSessionSetMember(_loadedCodexGoals, oldKey, newKey);
+      moveSessionSetMember(_loadingCodexGoals, oldKey, newKey);
+    }
+
+    _sessionLiveState.remap(serverId, oldId, newId);
+    if (_activeSessionId == oldId) _activeSessionId = newId;
+    if (_viewingSessionId == oldId) {
+      _viewingSessionId = newId;
+      _viewingServerId = serverId;
+    }
+
+    if (pinChanged) _persistPinnedSessions();
+    if (muteChanged) _persistMutedSessions();
+    if (draftChanged) _persistDrafts();
   }
 
   void _handleSessionHistory(
@@ -10676,6 +10736,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         )
         .where((s) => !_isSessionArchiveHidden(serverId, s.id))
         .toList();
+
+    for (final session in sessions) {
+      for (final replacedId in session.replacedSessionIds) {
+        _remapSessionIdentity(session.serverId, replacedId, session.id);
+      }
+      if (_activeSessionId == session.id && session.title.isNotEmpty) {
+        _activeSessionTitle = session.title;
+      }
+    }
 
     if (serverId != null) {
       // Store per-server and rebuild merged list
@@ -12889,10 +12958,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return key == null ? null : _sessionMemoryErrors[key];
   }
 
-  void _handleSessionMemoryState(
-    Map<String, dynamic> msg,
-    String? serverId,
-  ) {
+  void _handleSessionMemoryState(Map<String, dynamic> msg, String? serverId) {
     final requestId = msg['requestId']?.toString();
     final sessionId = msg['sessionId']?.toString() ?? '';
     final resolvedServerId = serverId ?? activeSessionServerId;
@@ -12918,10 +12984,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _handleSessionMemoryError(
-    Map<String, dynamic> msg,
-    String? serverId,
-  ) {
+  void _handleSessionMemoryError(Map<String, dynamic> msg, String? serverId) {
     final requestId = msg['requestId']?.toString();
     final sessionId = msg['sessionId']?.toString() ?? _activeSessionId ?? '';
     final resolvedServerId = serverId ?? activeSessionServerId;
@@ -12941,9 +13004,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<SessionMemoryState> _sendSessionMemoryRequest(
     String type, {
     Map<String, dynamic> values = const {},
+    String? targetSessionId,
+    String? targetServerId,
   }) {
-    final sessionId = _activeSessionId;
-    final serverId = activeSessionServerId;
+    final sessionId = targetSessionId ?? _activeSessionId;
+    final serverId = targetServerId ?? activeSessionServerId;
     if (sessionId == null ||
         sessionId.isEmpty ||
         serverId == null ||
@@ -13031,8 +13096,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     },
   );
 
-  Future<SessionMemoryState> requestSessionMemoryRollover() =>
-      _sendSessionMemoryRequest('rollover_session_memory');
+  Future<SessionMemoryState> requestSessionMemoryRollover({
+    String? sessionId,
+    String? serverId,
+  }) => _sendSessionMemoryRequest(
+    'rollover_session_memory',
+    targetSessionId: sessionId,
+    targetServerId: serverId,
+  );
 
   void resumeSession(String sessionId, {String? serverId}) {
     _messages = [];

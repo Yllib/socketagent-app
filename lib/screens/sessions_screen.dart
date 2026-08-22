@@ -2179,6 +2179,17 @@ class _SessionsTabState extends State<SessionsTab> {
               ),
               if (session.backend == 'codex') ...[
                 ListTile(
+                  leading: const Icon(Icons.change_circle_outlined),
+                  title: const Text('Start Fresh Thread'),
+                  subtitle: const Text(
+                    'Carry memory and recent runs into your next prompt',
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _confirmStartFreshThread(context, session);
+                  },
+                ),
+                ListTile(
                   leading: const Icon(Icons.compress),
                   title: const Text('Compact Thread'),
                   subtitle: const Text('Ask Codex to compact this thread'),
@@ -2987,6 +2998,51 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
+  Future<void> _confirmStartFreshThread(
+    BuildContext context,
+    Session session,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Start a Fresh Thread?'),
+        content: const Text(
+          'Your next prompt will open a fresh Codex thread with durable memory '
+          'and recent runs. The session name, pin, and visible history stay intact.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Start Fresh'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !context.mounted) return;
+
+    try {
+      await context.read<ChatProvider>().requestSessionMemoryRollover(
+        sessionId: session.id,
+        serverId: session.serverId,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Fresh thread queued for this session\'s next prompt'),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not queue fresh thread: $error')),
+      );
+    }
+  }
+
   Future<void> _forkSession(BuildContext context, Session session) async {
     if (!await _requireSubscription()) return;
     if (!context.mounted) return;
@@ -3406,6 +3462,42 @@ class _SessionsTabState extends State<SessionsTab> {
                           ],
                         ],
                       ),
+                      if (session.backend == 'codex' &&
+                          session.compactionsSinceRollover > 10) ...[
+                        const SizedBox(height: 7),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: theme.colorScheme.tertiary.withAlpha(150),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.warning_amber_outlined,
+                                size: 16,
+                                color: theme.colorScheme.tertiary,
+                              ),
+                              const SizedBox(width: 7),
+                              Expanded(
+                                child: Text(
+                                  '${session.compactionsSinceRollover} compactions. '
+                                  'Start a fresh thread from the session menu.',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.tertiary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

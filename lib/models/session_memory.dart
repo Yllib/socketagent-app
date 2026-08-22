@@ -76,8 +76,8 @@ class SessionMemorySettings {
 
   factory SessionMemorySettings.fromJson(Map<String, dynamic> json) {
     return SessionMemorySettings(
-      autoRollover: json['autoRollover'] != false,
-      maxCompactions: (json['maxCompactions'] as num?)?.toInt() ?? 3,
+      autoRollover: false,
+      maxCompactions: (json['maxCompactions'] as num?)?.toInt() ?? 10,
       maxPostCompactionTokens:
           (json['maxPostCompactionTokens'] as num?)?.toInt() ?? 90000,
       recentRuns: (json['recentRuns'] as num?)?.toInt() ?? 3,
@@ -160,29 +160,32 @@ class SessionMemoryState {
       sessionId: json['sessionId']?.toString() ?? '',
       entries: rawEntries
           .whereType<Map>()
-          .map((entry) => SessionMemoryEntry.fromJson(
-                Map<String, dynamic>.from(entry),
-              ))
+          .map(
+            (entry) =>
+                SessionMemoryEntry.fromJson(Map<String, dynamic>.from(entry)),
+          )
           .toList(growable: false),
       settings: SessionMemorySettings.fromJson(
         Map<String, dynamic>.from(json['settings'] as Map? ?? const {}),
       ),
       epochs: rawEpochs
           .whereType<Map>()
-          .map((epoch) => SessionMemoryEpoch.fromJson(
-                Map<String, dynamic>.from(epoch),
-              ))
+          .map(
+            (epoch) =>
+                SessionMemoryEpoch.fromJson(Map<String, dynamic>.from(epoch)),
+          )
           .toList(growable: false),
       currentTokens: (json['currentTokens'] as num?)?.toInt() ?? 0,
       contextWindow: (json['contextWindow'] as num?)?.toInt() ?? 0,
       compactionsSinceRollover:
           (json['compactionsSinceRollover'] as num?)?.toInt() ?? 0,
-      lastCompactionAt:
-          DateTime.tryParse(json['lastCompactionAt']?.toString() ?? ''),
-      lastCompactionPreTokens:
-          (json['lastCompactionPreTokens'] as num?)?.toInt(),
-      lastPostCompactionTokens:
-          (json['lastPostCompactionTokens'] as num?)?.toInt(),
+      lastCompactionAt: DateTime.tryParse(
+        json['lastCompactionAt']?.toString() ?? '',
+      ),
+      lastCompactionPreTokens: (json['lastCompactionPreTokens'] as num?)
+          ?.toInt(),
+      lastPostCompactionTokens: (json['lastPostCompactionTokens'] as num?)
+          ?.toInt(),
       awaitingPostCompactionMeasurement:
           json['awaitingPostCompactionMeasurement'] == true,
       rolloverPending: json['rolloverPending'] == true,

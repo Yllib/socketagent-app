@@ -18,7 +18,9 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
   void initState() {
     super.initState();
     unawaited(
-      Future.microtask(() => context.read<ChatProvider>().refreshSessionMemory()),
+      Future.microtask(
+        () => context.read<ChatProvider>().refreshSessionMemory(),
+      ),
     );
   }
 
@@ -31,7 +33,8 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
   String _time(DateTime value) {
     final local = value.toLocal();
     final now = DateTime.now();
-    final sameDay = local.year == now.year &&
+    final sameDay =
+        local.year == now.year &&
         local.month == now.month &&
         local.day == now.day;
     final minute = local.minute.toString().padLeft(2, '0');
@@ -112,10 +115,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
         Row(
           children: [
             Expanded(
-              child: Text(
-                'Working context',
-                style: theme.textTheme.titleSmall,
-              ),
+              child: Text('Working context', style: theme.textTheme.titleSmall),
             ),
             Text(
               '${_count(state.currentTokens)} / ${_count(state.contextWindow)}',
@@ -128,8 +128,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
         const SizedBox(height: 8),
         Text(
           'Epoch ${currentEpoch?.number ?? 1} · '
-          '${state.compactionsSinceRollover} of '
-          '${state.settings.maxCompactions} compactions',
+          '${state.compactionsSinceRollover} compactions',
           style: theme.textTheme.bodySmall?.copyWith(
             color: theme.colorScheme.onSurfaceVariant,
           ),
@@ -152,7 +151,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'The next user prompt will start a fresh Codex thread. '
+                    'Your next prompt will start a fresh Codex thread. '
                     '${state.rolloverReason ?? ''}',
                   ),
                 ),
@@ -232,10 +231,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
     );
   }
 
-  Widget _threadHistoryTab(
-    BuildContext context,
-    SessionMemoryState state,
-  ) {
+  Widget _threadHistoryTab(BuildContext context, SessionMemoryState state) {
     final theme = Theme.of(context);
     final epochs = state.epochs.reversed.toList(growable: false);
     return ListView.separated(
@@ -312,50 +308,6 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
     return ListView(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 32),
       children: [
-        SwitchListTile(
-          title: const Text('Automatic rollover'),
-          subtitle: const Text(
-            'Start a fresh Codex thread when the current one becomes expensive.',
-          ),
-          value: settings.autoRollover,
-          onChanged: (value) => unawaited(
-            provider.updateSessionMemorySettings(autoRollover: value),
-          ),
-        ),
-        const Divider(height: 1),
-        ListTile(
-          title: const Text('Compactions per thread'),
-          subtitle: const Text('Rollover happens before the next user prompt.'),
-          trailing: Text('${settings.maxCompactions}'),
-          onTap: () => _chooseNumber(
-            context,
-            title: 'Compactions per thread',
-            values: List.generate(10, (index) => index + 1),
-            selected: settings.maxCompactions,
-            onSelected: (value) => provider.updateSessionMemorySettings(
-              maxCompactions: value,
-            ),
-          ),
-        ),
-        const Divider(height: 1),
-        ListTile(
-          title: const Text('Post-compaction token limit'),
-          subtitle: const Text(
-            'Rollover if context stays this large immediately after compaction.',
-          ),
-          trailing: Text(_count(settings.maxPostCompactionTokens)),
-          onTap: () => _chooseNumber(
-            context,
-            title: 'Post-compaction token limit',
-            values: const [50000, 70000, 90000, 110000, 130000, 160000],
-            selected: settings.maxPostCompactionTokens,
-            label: _count,
-            onSelected: (value) => provider.updateSessionMemorySettings(
-              maxPostCompactionTokens: value,
-            ),
-          ),
-        ),
-        const Divider(height: 1),
         ListTile(
           title: const Text('Recent runs carried forward'),
           subtitle: const Text('Older history stays searchable with Remember.'),
@@ -365,9 +317,8 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
             title: 'Recent runs carried forward',
             values: List.generate(6, (index) => index + 1),
             selected: settings.recentRuns,
-            onSelected: (value) => provider.updateSessionMemorySettings(
-              recentRuns: value,
-            ),
+            onSelected: (value) =>
+                provider.updateSessionMemorySettings(recentRuns: value),
           ),
         ),
         const SizedBox(height: 24),
@@ -380,8 +331,8 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
             icon: const Icon(Icons.change_circle_outlined),
             label: Text(
               state.rolloverPending
-                  ? 'Rollover queued'
-                  : 'Roll over before next prompt',
+                  ? 'Fresh thread queued'
+                  : 'Start fresh thread on next prompt',
             ),
           ),
         ),
@@ -397,65 +348,74 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
     var kind = entry?.kind ?? SessionMemoryKind.decision;
     var pinned = entry?.pinned ?? false;
     final controller = TextEditingController(text: entry?.text ?? '');
-    final result = await showDialog<({SessionMemoryKind kind, String text, bool pinned})>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(entry == null ? 'Add memory' : 'Edit memory'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<SessionMemoryKind>(
-                  initialValue: kind,
-                  decoration: const InputDecoration(labelText: 'Type'),
-                  items: [
-                    for (final value in SessionMemoryKind.values)
-                      DropdownMenuItem(value: value, child: Text(value.label)),
+    final result =
+        await showDialog<({SessionMemoryKind kind, String text, bool pinned})>(
+          context: context,
+          builder: (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) => AlertDialog(
+              title: Text(entry == null ? 'Add memory' : 'Edit memory'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<SessionMemoryKind>(
+                      initialValue: kind,
+                      decoration: const InputDecoration(labelText: 'Type'),
+                      items: [
+                        for (final value in SessionMemoryKind.values)
+                          DropdownMenuItem(
+                            value: value,
+                            child: Text(value.label),
+                          ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) setDialogState(() => kind = value);
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: controller,
+                      autofocus: entry == null,
+                      minLines: 4,
+                      maxLines: 10,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: const InputDecoration(
+                        labelText: 'Memory',
+                        alignLabelWithHint: true,
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Pin permanently'),
+                      value: pinned,
+                      onChanged: (value) =>
+                          setDialogState(() => pinned = value),
+                    ),
                   ],
-                  onChanged: (value) {
-                    if (value != null) setDialogState(() => kind = value);
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final text = controller.text.trim();
+                    if (text.isEmpty) return;
+                    Navigator.pop(dialogContext, (
+                      kind: kind,
+                      text: text,
+                      pinned: pinned,
+                    ));
                   },
-                ),
-                const SizedBox(height: 14),
-                TextField(
-                  controller: controller,
-                  autofocus: entry == null,
-                  minLines: 4,
-                  maxLines: 10,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(
-                    labelText: 'Memory',
-                    alignLabelWithHint: true,
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Pin permanently'),
-                  value: pinned,
-                  onChanged: (value) => setDialogState(() => pinned = value),
+                  child: const Text('Save'),
                 ),
               ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () {
-                final text = controller.text.trim();
-                if (text.isEmpty) return;
-                Navigator.pop(dialogContext, (kind: kind, text: text, pinned: pinned));
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
-    );
+        );
     controller.dispose();
     if (result == null || !mounted) return;
     await provider.upsertSessionMemory(
@@ -501,7 +461,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Roll over this Codex thread?'),
+        title: const Text('Start a fresh Codex thread?'),
         content: const Text(
           'The next prompt will start a fresh native thread with durable memory '
           'and recent runs. The visible session history stays intact.',
@@ -513,7 +473,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Queue rollover'),
+            child: const Text('Start Fresh'),
           ),
         ],
       ),
