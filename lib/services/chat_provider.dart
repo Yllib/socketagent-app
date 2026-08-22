@@ -52,6 +52,7 @@ import 'adb_bridge_service.dart';
 import 'tool_event_reconciler.dart';
 import 'session_transcript_cache.dart';
 import 'hard_stop_target.dart';
+import 'session_live_state.dart';
 
 const _codexAgentControlTypes = {
   'wait',
@@ -596,6 +597,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
+  final SessionLiveState _sessionLiveState = SessionLiveState();
   final SessionTranscriptCache _transcriptCache = SessionTranscriptCache();
   final Map<String, Timer> _scheduledTaskRefreshRetries = {};
   final Map<String, String> _scheduledTaskLoadedRevisions = {};
@@ -885,23 +887,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (serverId == null ||
             _activeSessionServerId == null ||
             serverId == _activeSessionServerId)) {
+      final runtimeServerId =
+          serverId ?? _activeSessionServerId ?? _connMgr.activeServerId;
+      final liveRunning = _sessionLiveState.isRunning(
+        runtimeServerId,
+        sessionId,
+      );
       if (stats.current != null) {
-        _markSessionRunning(
-          sessionId,
-          serverId: serverId ?? _activeSessionServerId,
-          startedAt: stats.current!.startedAt,
-        );
-        _isProcessing = true;
-        _startPromptRuntime(startedAt: stats.current!.startedAt, replace: true);
-      } else if (!_awaitingPromptStart &&
-          !_hasPendingHardStop(
+        if (shouldRestoreWorkingFromStoredRun(
+          hasStoredRun: true,
+          liveRunning: liveRunning,
+        )) {
+          _markSessionRunning(
             sessionId,
-            serverId: serverId ?? _activeSessionServerId,
-          )) {
-        _markSessionIdle(
-          sessionId,
-          serverId: serverId ?? _activeSessionServerId,
-        );
+            serverId: runtimeServerId,
+            startedAt: stats.current!.startedAt,
+          );
+          _isProcessing = true;
+          _startPromptRuntime(
+            startedAt: stats.current!.startedAt,
+            replace: true,
+          );
+        } else if (liveRunning == false && !_awaitingPromptStart) {
+          _markSessionIdle(sessionId, serverId: runtimeServerId);
+          _isProcessing = false;
+          _stopPromptRuntime();
+        }
+      } else if (!_awaitingPromptStart &&
+          !_hasPendingHardStop(sessionId, serverId: runtimeServerId)) {
+        _markSessionIdle(sessionId, serverId: runtimeServerId);
         _isProcessing = false;
         _stopPromptRuntime();
       }
@@ -3885,6 +3899,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final sessionState = msg['state'] as String? ?? 'idle';
         final stateSessionId = msg['sessionId'] as String? ?? '';
         if (stateSessionId.isEmpty) return true;
+        _sessionLiveState.setRunning(
+          serverId,
+          stateSessionId,
+          sessionState != 'idle',
+        );
         final serverActiveStartedAt = _parseServerDateTime(
           msg['activeStartedAt'],
         );
@@ -3901,6 +3920,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       case 'result':
         final sessionId = msg['sessionId'] as String? ?? '';
         if (sessionId.isEmpty) return true;
+        _sessionLiveState.setRunning(serverId, sessionId, false);
         _markSessionIdle(sessionId, serverId: serverId);
         return true;
     }
@@ -4782,12 +4802,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final serverActiveStartedAt = _parseServerDateTime(
             msg['activeStartedAt'],
           );
+          final runtimeServerId =
+              serverId ?? _activeSessionServerId ?? _connMgr.activeServerId;
+          _sessionLiveState.setRunning(
+            runtimeServerId,
+            stateSessionId,
+            sessionState != 'idle',
+          );
           _requiresAction = sessionState == 'requires_action';
           // Use SDK state as authoritative source for running status
           if (sessionState == 'running') {
             _markSessionRunning(
               stateSessionId,
-              serverId: serverId ?? _connMgr.activeServerId,
+              serverId: runtimeServerId,
               startedAt: serverActiveStartedAt,
             );
             _isProcessing = true;
@@ -4797,14 +4824,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               replace: serverActiveStartedAt != null,
             );
           } else if (sessionState == 'idle') {
-            final logicalRunActive = activeSessionRunStats?.current != null;
-            if (logicalRunActive) {
-              _isProcessing = true;
-            } else if (!_awaitingPromptStart) {
-              _markSessionIdle(
-                stateSessionId,
-                serverId: serverId ?? _connMgr.activeServerId,
-              );
+            if (!_awaitingPromptStart) {
+              _markSessionIdle(stateSessionId, serverId: runtimeServerId);
               _isProcessing = false;
               _processingSetAt = null;
               _stopPromptRuntime();
@@ -5167,6 +5188,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   ?.map((e) => e.toString())
                   .toSet();
           if (serverId != null && runningSessions != null) {
+            _sessionLiveState.replaceServer(serverId, runningSessions);
             final rawStartedAt = msg['sessionActiveStartedAt'];
             final startedAtBySession = <String, DateTime?>{};
             if (rawStartedAt is Map) {
@@ -7404,13 +7426,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       serverId: _connMgr.activeServerId,
     );
     final continuationPending = msg['continuationPending'] == true;
-    final logicalRunActive = activeSessionRunStats?.current != null;
-    if (!awaitingAbort && !continuationPending && !logicalRunActive) {
+    final runtimeServerId = _activeSessionServerId ?? _connMgr.activeServerId;
+    _sessionLiveState.setRunning(
+      runtimeServerId,
+      _activeSessionId,
+      continuationPending,
+    );
+    if (!awaitingAbort && !continuationPending) {
       _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
     }
     _closeLiveStreamsForParent(null);
-    _isProcessing = awaitingAbort || continuationPending || logicalRunActive;
-    if (!continuationPending && !logicalRunActive) {
+    _isProcessing = awaitingAbort || continuationPending;
+    if (!awaitingAbort && !continuationPending) {
       _stopPromptRuntime();
     }
     _isCompacting = false;
@@ -8947,8 +8974,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final backend = normalizeHarnessBackend(msg['backend']?.toString());
     if (backend != null) _activeSessionBackend = backend;
     if (sessionId != null && sessionId.isNotEmpty) {
+      final sessionServerId = serverId?.isNotEmpty == true
+          ? serverId
+          : _activeSessionServerId ?? _connMgr.activeServerId;
       if (replacesSessionId != null && replacesSessionId.isNotEmpty) {
         _locallyClearedSessions.remove(replacesSessionId);
+        _sessionLiveState.remap(sessionServerId, replacesSessionId, sessionId);
+        if (_viewingSessionId == replacesSessionId) {
+          _viewingSessionId = sessionId;
+          _viewingServerId = sessionServerId;
+        }
       }
       _activeSessionId = sessionId;
       if (serverId != null && serverId.isNotEmpty) {

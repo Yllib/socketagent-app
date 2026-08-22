@@ -232,6 +232,10 @@ class HomeScreenState extends State<HomeScreen> {
       provider.clearPromptSuggestions();
     }
     if (text.isEmpty && !provider.hasAttachment) return;
+    // Keep the submitted prompt and its Working row on screen immediately.
+    if (!_followLatest) {
+      setState(() => _followLatest = true);
+    }
     provider.sendPrompt(text, priority: priority);
     _textController.clear();
     provider.saveDraft(''); // Clear draft on send
