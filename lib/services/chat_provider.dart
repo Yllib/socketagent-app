@@ -6613,6 +6613,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     var syntheticSendFileIndex = -1;
+    var syntheticSpeakIndex = -1;
     if (tool == 'SendFile') {
       final filePath = input['file_path']?.toString() ?? '';
       if (filePath.isNotEmpty) {
@@ -6629,6 +6630,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _messages[syntheticSendFileIndex].toolInput,
           );
         }
+      }
+    }
+    if (tool == 'Speak') {
+      final text = input['text']?.toString() ?? '';
+      if (text.isNotEmpty) {
+        syntheticSpeakIndex = _messages.lastIndexWhere(
+          (message) => isSyntheticSpeakCard(message, text),
+        );
       }
     }
     var toolMsg = ChatMessage.toolCall(
@@ -6651,10 +6660,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             message.toolUseId == toolUseId,
       );
     }
-    final replacesSyntheticSendFile =
-        existingIndex < 0 && syntheticSendFileIndex >= 0;
-    if (replacesSyntheticSendFile) {
-      existingIndex = syntheticSendFileIndex;
+    final syntheticCardIndex = syntheticSendFileIndex >= 0
+        ? syntheticSendFileIndex
+        : syntheticSpeakIndex;
+    final replacesSyntheticCard = existingIndex < 0 && syntheticCardIndex >= 0;
+    if (replacesSyntheticCard) {
+      existingIndex = syntheticCardIndex;
     }
     final isReplay = msg['replay'] == true;
     final materializeInTranscript = isSubagentTool
@@ -6674,7 +6685,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     if (existingIndex >= 0) {
       final existing = _messages[existingIndex];
-      if (replacesSyntheticSendFile ||
+      if (replacesSyntheticCard ||
           shouldReplaceToolCardMetadata(
             existingName: existing.toolName,
             existingInput: existing.toolInput,

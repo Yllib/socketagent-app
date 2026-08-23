@@ -66,6 +66,39 @@ void main() {
     );
   });
 
+  test('collapses synthetic and canonical Speak pairs', () {
+    final normalized = normalizeSendFileHistoryEntries([
+      {
+        'role': 'tool_call',
+        'toolName': 'Speak',
+        'toolUseId': 'exec-1',
+        'toolInput': {'text': 'The fix is ready.'},
+        'timestamp': '2026-08-22T20:00:00.000Z',
+      },
+      {
+        'role': 'tool_call',
+        'toolName': 'Speak',
+        'toolUseId': 'mcp_Speak_duplicate',
+        'toolInput': {'text': 'The fix is ready.'},
+        'timestamp': '2026-08-22T20:00:00.010Z',
+      },
+      {
+        'role': 'tool_result',
+        'toolUseId': 'mcp_Speak_duplicate',
+        'toolOutput': 'Speaking to user.',
+      },
+      {
+        'role': 'tool_result',
+        'toolUseId': 'exec-1',
+        'toolOutput': 'Speaking to user.',
+      },
+    ]);
+
+    expect(normalized, hasLength(2));
+    expect(normalized.first['toolUseId'], 'exec-1');
+    expect(normalized.last['toolUseId'], 'exec-1');
+  });
+
   test('removes misclassified known Codex items and their results', () {
     final normalized = normalizeSendFileHistoryEntries([
       {

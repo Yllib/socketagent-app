@@ -165,6 +165,13 @@ bool shouldReplaceToolCardMetadata({
           incomingInput.isNotEmpty);
 }
 
+bool isSyntheticSpeakCard(ChatMessage message, String text) {
+  return message.type == MessageType.toolCall &&
+      message.toolName == 'Speak' &&
+      message.toolUseId?.startsWith('speak_') == true &&
+      message.toolInput?['text'] == text;
+}
+
 bool isActiveSubagentStatus(Object? status) {
   final value = status?.toString();
   return value == 'running' || value == 'pending' || value == 'paused';

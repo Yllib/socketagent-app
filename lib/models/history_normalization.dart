@@ -6,6 +6,17 @@ bool _isSendFileCall(Map<String, dynamic> entry) {
 
 bool _isSyntheticSendFileId(String id) => id.startsWith('mcp_SendFile_');
 
+bool _isSpeakCall(Map<String, dynamic> entry) {
+  if (entry['role'] != 'tool_call') return false;
+  final name = entry['toolName']?.toString() ?? '';
+  return name == 'Speak' || name.endsWith('__Speak') || name.endsWith('/Speak');
+}
+
+String _speakText(Map<String, dynamic> entry) {
+  final input = entry['toolInput'];
+  return input is Map ? input['text']?.toString() ?? '' : '';
+}
+
 String _sendFilePath(Map<String, dynamic> entry) {
   final input = entry['toolInput'];
   return input is Map ? input['file_path']?.toString() ?? '' : '';
@@ -73,7 +84,7 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
     }
   }
 
-  final sendFileNormalized = [
+  var visibleToolNormalized = [
     for (var index = 0; index < entries.length; index++)
       if (!removedIndexes.contains(index) &&
           !(entries[index]['role'] == 'tool_result' &&
@@ -83,13 +94,60 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
         entries[index],
   ];
 
+  final duplicateSpeakIds = <String>{};
+  final duplicateSpeakIndexes = <int>{};
+  for (
+    var canonicalIndex = 0;
+    canonicalIndex < visibleToolNormalized.length;
+    canonicalIndex++
+  ) {
+    final canonical = visibleToolNormalized[canonicalIndex];
+    if (!_isSpeakCall(canonical)) continue;
+    final canonicalId = canonical['toolUseId']?.toString() ?? '';
+    final text = _speakText(canonical);
+    if (canonicalId.isEmpty ||
+        canonicalId.startsWith('mcp_Speak_') ||
+        text.isEmpty) {
+      continue;
+    }
+    final start = canonicalIndex > 4 ? canonicalIndex - 4 : 0;
+    final end = canonicalIndex + 4 < visibleToolNormalized.length
+        ? canonicalIndex + 4
+        : visibleToolNormalized.length - 1;
+    for (var syntheticIndex = start; syntheticIndex <= end; syntheticIndex++) {
+      if (syntheticIndex == canonicalIndex) continue;
+      final synthetic = visibleToolNormalized[syntheticIndex];
+      final syntheticId = synthetic['toolUseId']?.toString() ?? '';
+      if (!_isSpeakCall(synthetic) ||
+          !syntheticId.startsWith('mcp_Speak_') ||
+          _speakText(synthetic) != text ||
+          !_timestampsAreDuplicate(
+            canonical['timestamp'],
+            synthetic['timestamp'],
+          )) {
+        continue;
+      }
+      duplicateSpeakIndexes.add(syntheticIndex);
+      duplicateSpeakIds.add(syntheticId);
+    }
+  }
+  visibleToolNormalized = [
+    for (var index = 0; index < visibleToolNormalized.length; index++)
+      if (!duplicateSpeakIndexes.contains(index) &&
+          !(visibleToolNormalized[index]['role'] == 'tool_result' &&
+              duplicateSpeakIds.contains(
+                visibleToolNormalized[index]['toolUseId']?.toString() ?? '',
+              )))
+        visibleToolNormalized[index],
+  ];
+
   // SocketAgent 1.0.198 briefly emitted a future-item diagnostic for the
   // start frame of known agentMessage and plan items. Suppress those corrupted
   // cards from both device cache and server history; the real message/plan is
   // retained separately.
   final misclassifiedIds = <String>{};
   final duplicateNotifyIds = <String>{};
-  for (final entry in sendFileNormalized) {
+  for (final entry in visibleToolNormalized) {
     final input = entry['toolInput'];
     final itemType = input is Map ? input['itemType']?.toString() ?? '' : '';
     if (entry['role'] == 'tool_call' &&
@@ -111,7 +169,7 @@ List<Map<String, dynamic>> normalizeSendFileHistoryEntries(List rawEntries) {
       if (id.isNotEmpty) duplicateNotifyIds.add(id);
     }
   }
-  return sendFileNormalized
+  return visibleToolNormalized
       .where(
         (entry) =>
             !misclassifiedIds.contains(entry['toolUseId']?.toString() ?? '') &&

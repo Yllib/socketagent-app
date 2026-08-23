@@ -272,6 +272,23 @@ void main() {
     );
   });
 
+  test('matches a temporary Speak card to its canonical tool call', () {
+    final temporary = ChatMessage.toolCall(
+      tool: 'Speak',
+      input: const {'text': 'One card only.'},
+      toolUseId: 'speak_123',
+    );
+    final canonical = ChatMessage.toolCall(
+      tool: 'Speak',
+      input: const {'text': 'One card only.'},
+      toolUseId: 'exec-123',
+    );
+
+    expect(isSyntheticSpeakCard(temporary, 'One card only.'), isTrue);
+    expect(isSyntheticSpeakCard(canonical, 'One card only.'), isFalse);
+    expect(isSyntheticSpeakCard(temporary, 'Different text.'), isFalse);
+  });
+
   test('active-subagent replay does not invent a card at the chat tail', () {
     expect(
       shouldMaterializeSubagentReplayInTranscript(
