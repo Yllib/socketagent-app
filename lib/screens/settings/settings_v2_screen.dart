@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
+import '../../models/push_delivery_capabilities.dart';
 import '../../services/chat_provider.dart';
 import '../../services/notification_service.dart';
 import '../../services/private_integration_auth_flow.dart';
@@ -610,6 +611,7 @@ class _SettingsV2ServerDetailScreenState
         final runtime = provider.serverRuntimeInfo(config.id);
         final pushRegistered = provider.isPushRegisteredForServer(config.id);
         final pushDisabled = provider.isPushDisabledForServer(config.id);
+        final pushRoute = provider.pushDeliveryRouteForServer(config.id);
 
         return Scaffold(
           appBar: AppBar(
@@ -754,22 +756,6 @@ class _SettingsV2ServerDetailScreenState
               _SettingsGroup(
                 title: 'Notifications',
                 children: [
-                  _DetailRow(
-                    icon: pushRegistered
-                        ? Icons.notifications_active_outlined
-                        : pushDisabled
-                        ? Icons.notifications_off_outlined
-                        : Icons.notifications_none,
-                    title: 'This phone',
-                    subtitle: pushRegistered
-                        ? 'Registered for computer notifications'
-                        : pushDisabled
-                        ? 'Notifications explicitly disabled for this computer'
-                        : connected
-                        ? 'Automatic registration pending'
-                        : 'Computer offline',
-                    trailing: pushRegistered ? 'On' : 'Off',
-                  ),
                   FutureBuilder<bool>(
                     future: _notificationsEnabled,
                     builder: (context, snapshot) {
@@ -809,7 +795,44 @@ class _SettingsV2ServerDetailScreenState
                       );
                     },
                   ),
-                  if (connected && !pushRegistered)
+                  _DetailRow(
+                    icon: _pushRouteIcon(pushRoute.kind),
+                    title: 'Delivery path',
+                    subtitle: _pushRouteDescription(pushRoute.kind),
+                    trailing: _pushRouteLabel(pushRoute.kind),
+                  ),
+                  if (_pushRouteActionLabel(pushRoute.kind) case final label?)
+                    _ButtonRow(
+                      primaryLabel: label,
+                      primaryIcon: _pushRouteActionIcon(pushRoute.kind),
+                      onPrimary: () => _handlePushRouteAction(
+                        provider,
+                        config,
+                        pushRoute.kind,
+                      ),
+                    ),
+                  _DetailRow(
+                    icon: pushRegistered && pushRoute.isReady
+                        ? Icons.phonelink_ring_outlined
+                        : pushDisabled
+                        ? Icons.notifications_off_outlined
+                        : Icons.phonelink_erase_outlined,
+                    title: 'This phone',
+                    subtitle: _pushRegistrationDescription(
+                      connected: connected,
+                      routeReady: pushRoute.isReady,
+                      registered: pushRegistered,
+                      disabled: pushDisabled,
+                    ),
+                    trailing: pushRegistered && pushRoute.isReady
+                        ? 'Registered'
+                        : pushDisabled
+                        ? 'Disabled'
+                        : pushRoute.isReady
+                        ? 'Pending'
+                        : 'Waiting',
+                  ),
+                  if (connected && pushRoute.isReady && !pushRegistered)
                     _ButtonRow(
                       primaryLabel: _registeringPush
                           ? 'Registering'
@@ -821,7 +844,9 @@ class _SettingsV2ServerDetailScreenState
                           ? null
                           : () => _registerPush(provider, config),
                     )
-                  else if (connected && pushRegistered)
+                  else if (connected &&
+                      pushRoute.isReady &&
+                      pushRegistered)
                     _ButtonRow(
                       primaryLabel: _registeringPush
                           ? 'Updating'
@@ -1006,6 +1031,154 @@ class _SettingsV2ServerDetailScreenState
               : 'Could not register notifications for ${config.name}',
         ),
         backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  IconData _pushRouteIcon(PushDeliveryRouteKind kind) => switch (kind) {
+    PushDeliveryRouteKind.relay => Icons.cloud_done_outlined,
+    PushDeliveryRouteKind.directFirebase => Icons.send_to_mobile_outlined,
+    PushDeliveryRouteKind.checking => Icons.hourglass_empty,
+    _ => Icons.warning_amber_outlined,
+  };
+
+  String _pushRouteLabel(PushDeliveryRouteKind kind) => switch (kind) {
+    PushDeliveryRouteKind.checking => 'Checking',
+    PushDeliveryRouteKind.serverUpdateRequired => 'Update needed',
+    PushDeliveryRouteKind.relay => 'Relay',
+    PushDeliveryRouteKind.directFirebase => 'Direct Firebase',
+    PushDeliveryRouteKind.relayPairingRequired => 'Pairing needed',
+    PushDeliveryRouteKind.relaySignInRequired => 'Sign-in needed',
+    PushDeliveryRouteKind.relaySubscriptionRequired => 'Access needed',
+    PushDeliveryRouteKind.firebaseMissing => 'Setup needed',
+    PushDeliveryRouteKind.firebaseInvalid => 'Invalid setup',
+    PushDeliveryRouteKind.firebaseUnreadable => 'File unavailable',
+  };
+
+  String _pushRouteDescription(PushDeliveryRouteKind kind) => switch (kind) {
+    PushDeliveryRouteKind.checking =>
+      'Waiting for this computer to report its notification setup',
+    PushDeliveryRouteKind.serverUpdateRequired =>
+      'Update SocketAgent on this computer to check notification delivery',
+    PushDeliveryRouteKind.relay =>
+      'This computer sends notifications through the relay. Chat can stay direct',
+    PushDeliveryRouteKind.directFirebase =>
+      'This computer has valid Firebase credentials for direct notifications',
+    PushDeliveryRouteKind.relayPairingRequired =>
+      'This computer can reach the relay, but this phone is not paired with it',
+    PushDeliveryRouteKind.relaySignInRequired =>
+      'The relay is ready, but this phone must sign in before registration',
+    PushDeliveryRouteKind.relaySubscriptionRequired =>
+      'The relay is ready, but relay access is inactive for this phone',
+    PushDeliveryRouteKind.firebaseMissing =>
+      'Firebase setup must be completed before direct notifications can work',
+    PushDeliveryRouteKind.firebaseInvalid =>
+      'Firebase credentials are present but do not contain a valid service account',
+    PushDeliveryRouteKind.firebaseUnreadable =>
+      'The Firebase service account file is missing or cannot be read',
+  };
+
+  String? _pushRouteActionLabel(PushDeliveryRouteKind kind) => switch (kind) {
+    PushDeliveryRouteKind.serverUpdateRequired => 'Check Computer Update',
+    PushDeliveryRouteKind.relayPairingRequired =>
+      'Pair Relay for Notifications',
+    PushDeliveryRouteKind.relaySignInRequired => 'Sign In to Relay',
+    PushDeliveryRouteKind.relaySubscriptionRequired => 'Manage Relay Access',
+    PushDeliveryRouteKind.firebaseMissing ||
+    PushDeliveryRouteKind.firebaseInvalid ||
+    PushDeliveryRouteKind.firebaseUnreadable => 'View Firebase Setup',
+    _ => null,
+  };
+
+  IconData _pushRouteActionIcon(PushDeliveryRouteKind kind) => switch (kind) {
+    PushDeliveryRouteKind.serverUpdateRequired => Icons.system_update,
+    PushDeliveryRouteKind.relayPairingRequired => Icons.qr_code_scanner,
+    PushDeliveryRouteKind.relaySignInRequired ||
+    PushDeliveryRouteKind.relaySubscriptionRequired => Icons.login,
+    _ => Icons.settings_outlined,
+  };
+
+  String _pushRegistrationDescription({
+    required bool connected,
+    required bool routeReady,
+    required bool registered,
+    required bool disabled,
+  }) {
+    if (disabled) {
+      return 'Notifications are disabled for this computer on this phone';
+    }
+    if (!routeReady) {
+      return 'Complete the delivery path setup above before registering this phone';
+    }
+    if (registered) {
+      return 'This computer has accepted this phone for notifications';
+    }
+    if (connected) {
+      return 'The delivery path is ready, but this phone is not registered';
+    }
+    return 'Reconnect this computer to finish phone registration';
+  }
+
+  Future<void> _handlePushRouteAction(
+    ChatProvider provider,
+    ServerConfig config,
+    PushDeliveryRouteKind kind,
+  ) async {
+    switch (kind) {
+      case PushDeliveryRouteKind.serverUpdateRequired:
+        await _showVersionCheck(context, provider, config);
+        return;
+      case PushDeliveryRouteKind.relayPairingRequired:
+        await _pairServerRelay(context, provider, config);
+        return;
+      case PushDeliveryRouteKind.relaySignInRequired:
+      case PushDeliveryRouteKind.relaySubscriptionRequired:
+        await _ensureRelayAccess(context, provider);
+        return;
+      case PushDeliveryRouteKind.firebaseMissing:
+      case PushDeliveryRouteKind.firebaseInvalid:
+      case PushDeliveryRouteKind.firebaseUnreadable:
+        await _showFirebaseNotificationSetup();
+        return;
+      case PushDeliveryRouteKind.checking:
+      case PushDeliveryRouteKind.relay:
+      case PushDeliveryRouteKind.directFirebase:
+        return;
+    }
+  }
+
+  Future<void> _showFirebaseNotificationSetup() {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Firebase setup for direct notifications'),
+        content: const SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Add a Firebase service account to this computer, then restart SocketAgent.',
+              ),
+              SizedBox(height: 16),
+              Text('Recommended server/.env setting:'),
+              SizedBox(height: 8),
+              SelectableText(
+                'FIREBASE_SERVICE_ACCOUNT_PATH=/absolute/path/service-account.json',
+              ),
+              SizedBox(height: 16),
+              Text(
+                'The JSON file must contain project_id, client_email, and private_key. You can also use FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS.',
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Close'),
+          ),
+        ],
       ),
     );
   }
@@ -2142,11 +2315,18 @@ class _NotificationSummaryTileState extends State<_NotificationSummaryTile>
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, provider, _) {
-        final connected = provider.serverConfigs.where(
-          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
-        );
+        final connected = provider.serverConfigs
+            .where(
+              (c) =>
+                  provider.connMgr.statusOf(c.id) ==
+                  ConnectionStatus.connected,
+            )
+            .toList();
         final registered = connected
             .where((c) => provider.isPushRegisteredForServer(c.id))
+            .length;
+        final deliverySetupNeeded = connected
+            .where((c) => !provider.pushDeliveryRouteForServer(c.id).isReady)
             .length;
 
         return FutureBuilder<bool>(
@@ -2157,16 +2337,22 @@ class _NotificationSummaryTileState extends State<_NotificationSummaryTile>
             return _NavTile(
               icon: permissionKnown && !permissionEnabled
                   ? Icons.notifications_off_outlined
+                  : deliverySetupNeeded > 0
+                  ? Icons.warning_amber_outlined
                   : Icons.notifications_none,
               iconColor: permissionKnown && !permissionEnabled
                   ? Colors.red
+                  : deliverySetupNeeded > 0
+                  ? Colors.orange
                   : null,
               title: 'Computer notifications',
               subtitle: permissionKnown && !permissionEnabled
-                  ? 'Blocked by Android — tap to enable'
+                  ? 'Blocked by Android. Tap to enable'
                   : connected.isEmpty
-                  ? 'Android notifications on · no connected computers'
-                  : 'Android notifications on · $registered of ${connected.length} computers enrolled',
+                  ? 'Android notifications on. No connected computers'
+                  : deliverySetupNeeded > 0
+                  ? '$deliverySetupNeeded of ${connected.length} computers need notification setup'
+                  : '$registered of ${connected.length} computers registered',
               trailing: permissionKnown && !permissionEnabled
                   ? Icons.settings_outlined
                   : connected.isEmpty
@@ -2179,7 +2365,7 @@ class _NotificationSummaryTileState extends State<_NotificationSummaryTile>
                   : () => _openServerList(
                       context,
                       'Notification Registration',
-                      connected.toList(),
+                      connected,
                     ),
             );
           },

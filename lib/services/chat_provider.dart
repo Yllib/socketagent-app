@@ -29,6 +29,7 @@ import '../models/harness_rate_limit.dart';
 import '../models/private_integration_auth.dart';
 import '../models/codex_goal.dart';
 import '../models/session_memory.dart';
+import '../models/push_delivery_capabilities.dart';
 import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
@@ -601,6 +602,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Timer> _backendInstallAckTimers = {};
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
+  final Map<String, PushDeliveryCapabilities> _serverPushCapabilities = {};
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
   final SessionLiveState _sessionLiveState = SessionLiveState();
   final SessionTranscriptCache _transcriptCache = SessionTranscriptCache();
@@ -941,6 +943,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   bool isPushDisabledForServer(String serverId) =>
       _pushDisabledServers.contains(serverId);
+
+  PushDeliveryCapabilities? pushCapabilitiesForServer(String serverId) =>
+      _serverPushCapabilities[serverId];
+
+  PushDeliveryRouteState pushDeliveryRouteForServer(String serverId) {
+    final config = _serverConfigs
+        .where((item) => item.id == serverId)
+        .firstOrNull;
+    return PushDeliveryRouteState.evaluate(
+      capabilities: _serverPushCapabilities[serverId],
+      relayPaired: config?.isRelayPaired == true,
+      hasSubscriberToken: _subscriberToken.isNotEmpty,
+      hasRelayAccess: hasCachedRelayAccess,
+    );
+  }
 
   int get pushRegisteredServerCount => _pushRegisteredServers.length;
 
@@ -2402,7 +2419,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     final token = fcmToken ?? await PushNotificationService().getFcmToken();
     if (token == null || token.isEmpty) return false;
-    final message = {
+    final message = <String, dynamic>{
       'type': 'register_push_token',
       'fcmToken': token,
       'platform': 'android',
@@ -2419,7 +2436,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       final ws = _connMgr.getConnection(serverId);
       if (ws?.status != ConnectionStatus.connected) return false;
-      if (config.isRelayPaired) {
+      final deliveryRoute = pushDeliveryRouteForServer(serverId);
+      if (!deliveryRoute.isReady) return false;
+      if (deliveryRoute.kind == PushDeliveryRouteKind.relay) {
         final relayRegistered = await RelayPushService.register(
           relayUrl: config.relayUrl,
           pairingToken: config.pairingToken,
@@ -2432,7 +2451,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           return false;
         }
       }
-      ws!.send({...message, 'appServerId': serverId});
+      ws!.send({
+        ...message,
+        'appServerId': serverId,
+        'deliveryRoute': deliveryRoute.kind == PushDeliveryRouteKind.relay
+            ? 'relay'
+            : 'direct',
+      });
       return true;
     }
     var sent = false;
@@ -2444,7 +2469,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       final ws = _connMgr.getConnection(config.id);
       if (ws?.status == ConnectionStatus.connected) {
-        if (config.isRelayPaired) {
+        final deliveryRoute = pushDeliveryRouteForServer(config.id);
+        if (!deliveryRoute.isReady) continue;
+        if (deliveryRoute.kind == PushDeliveryRouteKind.relay) {
           final relayRegistered = await RelayPushService.register(
             relayUrl: config.relayUrl,
             pairingToken: config.pairingToken,
@@ -2457,7 +2484,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             continue;
           }
         }
-        ws!.send({...message, 'appServerId': config.id});
+        ws!.send({
+          ...message,
+          'appServerId': config.id,
+          'deliveryRoute': deliveryRoute.kind == PushDeliveryRouteKind.relay
+              ? 'relay'
+              : 'direct',
+        });
         sent = true;
       }
     }
@@ -2715,6 +2748,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_serverRuntimeInfo.remove(serverId) != null) {
       unawaited(_persistServerBuildCache());
     }
+    _serverPushCapabilities.remove(serverId);
     _perServerSessions.remove(serverId);
     _perServerScheduledTasks.remove(serverId);
     _scheduledTaskLoadedRevisions.remove(serverId);
@@ -3493,6 +3527,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Save subscriber token and email
   Future<void> saveSubscriberToken(String token, [String email = '']) async {
     _subscriberToken = token;
+    _subscriptionActive = true;
+    _subscriptionChecked = true;
+    _subscriptionCheckedAt = DateTime.now();
     if (email.isNotEmpty) _subscriberEmail = email;
     await _secureStorage.setSubscriberToken(token);
     if (email.isNotEmpty) await _secureStorage.setSubscriberEmail(email);
@@ -3500,9 +3537,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
     await _registerPushNotifications();
-    _subscriptionActive = true;
-    _subscriptionChecked = true;
-    _subscriptionCheckedAt = DateTime.now();
     notifyListeners();
   }
 
@@ -4241,6 +4275,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 : <String>['claude'];
             if (serverId != null) {
               _captureServerRuntimeInfo(msg, serverId);
+              _serverPushCapabilities[serverId] =
+                  PushDeliveryCapabilities.fromServerValue(
+                    msg['pushNotifications'],
+                  );
               _serverBackends[serverId] = backends;
               final secretManagement = msg['secretManagement'];
               _serverSecretManagementVersions[serverId] =
@@ -4260,7 +4298,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   ? (sessionMemory['version'] as num?)?.toInt() ?? 0
                   : 0;
               _captureCodexDriverSettings(msg, serverId);
-              unawaited(_captureRelayPairingFromCapabilities(serverId, msg));
+              unawaited(
+                (() async {
+                  await _captureRelayPairingFromCapabilities(serverId, msg);
+                  if (_connMgr.statusOf(serverId) ==
+                      ConnectionStatus.connected) {
+                    await _syncPushRegistrationForServer(serverId);
+                  }
+                })(),
+              );
               notifyListeners();
             }
             break;
