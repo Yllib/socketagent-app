@@ -1061,7 +1061,7 @@ class _SettingsV2ServerDetailScreenState
     PushDeliveryRouteKind.serverUpdateRequired =>
       'Update SocketAgent on this computer to check notification delivery',
     PushDeliveryRouteKind.relay =>
-      'This computer sends notifications through the relay. Chat can stay direct',
+      'Notifications will be delivered through the relay',
     PushDeliveryRouteKind.directFirebase =>
       'This computer has valid Firebase credentials for direct notifications',
     PushDeliveryRouteKind.relayPairingRequired =>
