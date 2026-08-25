@@ -28,11 +28,12 @@ bool isDirectPrivateIntegrationAuthMessage(
   String type,
   Map<String, dynamic> message, {
   required Set<String> directAuthRequestIds,
+  required bool hasPendingChallenge,
   required bool hasPendingOutcome,
 }) {
   if (type == 'outlook_auth' || type == 'ibs_auth') {
     final directRequestId = message['directRequestId'] as String? ?? '';
-    return directRequestId.isNotEmpty;
+    return directRequestId.isNotEmpty || hasPendingChallenge;
   }
   if (type != 'outlook_auth_result' && type != 'ibs_auth_result') {
     return false;

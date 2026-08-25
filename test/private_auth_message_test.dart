@@ -36,6 +36,7 @@ void main() {
         'outlook_auth',
         const {'directRequestId': 'settings-request'},
         directAuthRequestIds: const {},
+        hasPendingChallenge: false,
         hasPendingOutcome: false,
       ),
       isTrue,
@@ -45,6 +46,7 @@ void main() {
         'outlook_auth_result',
         const {'authRequestId': 'outlook-auth-request'},
         directAuthRequestIds: const {'outlook-auth-request'},
+        hasPendingChallenge: false,
         hasPendingOutcome: false,
       ),
       isTrue,
@@ -54,6 +56,7 @@ void main() {
         'ibs_auth_result',
         const {'authRequestId': 'ibs-auth-request'},
         directAuthRequestIds: const {},
+        hasPendingChallenge: false,
         hasPendingOutcome: true,
       ),
       isTrue,
@@ -66,6 +69,7 @@ void main() {
         'outlook_auth',
         const {'authRequestId': 'session-request'},
         directAuthRequestIds: const {},
+        hasPendingChallenge: false,
         hasPendingOutcome: false,
       ),
       isFalse,
@@ -75,9 +79,26 @@ void main() {
         'outlook_auth_result',
         const {'authRequestId': 'session-request'},
         directAuthRequestIds: const {},
+        hasPendingChallenge: false,
         hasPendingOutcome: false,
       ),
       isFalse,
     );
   });
+
+  test(
+    'a pending settings request recovers a challenge missing its marker',
+    () {
+      expect(
+        isDirectPrivateIntegrationAuthMessage(
+          'outlook_auth',
+          const {'authRequestId': 'outlook-auth-request'},
+          directAuthRequestIds: const {},
+          hasPendingChallenge: true,
+          hasPendingOutcome: false,
+        ),
+        isTrue,
+      );
+    },
+  );
 }

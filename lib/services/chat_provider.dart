@@ -568,6 +568,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _authRequestSessions = {};
   final Map<String, Completer<PrivateIntegrationAuthChallenge>>
   _privateAuthChallengeCompleters = {};
+  final Map<String, ({String serverId, String integration})>
+  _privateAuthChallengeRoutes = {};
   final Map<String, Completer<PrivateIntegrationAuthOutcome>>
   _privateAuthOutcomeCompleters = {};
   final Set<String> _directPrivateAuthRequestIds = {};
@@ -4025,6 +4027,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'session_transfer_import_result',
       'session_transfer_discard_result',
     };
+    final pendingPrivateAuthChallengeId = _pendingPrivateAuthChallengeRequestId(
+      type,
+      serverId,
+    );
     final isGlobalType =
         globalTypes.contains(type) ||
         isScheduledTaskStateMessage(type) ||
@@ -4032,6 +4038,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           type,
           msg,
           directAuthRequestIds: _directPrivateAuthRequestIds,
+          hasPendingChallenge: pendingPrivateAuthChallengeId != null,
           hasPendingOutcome: _privateAuthOutcomeCompleters.containsKey(
             msg['authRequestId'],
           ),
@@ -6064,7 +6071,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final captureOrigins = rawOrigins is List
         ? rawOrigins.whereType<String>().toList(growable: false)
         : <String>[];
-    final directRequestId = msg['directRequestId'] as String? ?? '';
+    final directRequestId =
+        msg['directRequestId'] as String? ??
+        _pendingPrivateAuthChallengeRequestId('outlook_auth', serverId) ??
+        '';
     if (directRequestId.isNotEmpty) {
       _completePrivateIntegrationAuthChallenge(
         directRequestId,
@@ -6161,7 +6171,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final captureOrigins = rawOrigins is List
         ? rawOrigins.whereType<String>().toList(growable: false)
         : <String>[];
-    final directRequestId = msg['directRequestId'] as String? ?? '';
+    final directRequestId =
+        msg['directRequestId'] as String? ??
+        _pendingPrivateAuthChallengeRequestId('ibs_auth', serverId) ??
+        '';
     if (directRequestId.isNotEmpty) {
       _completePrivateIntegrationAuthChallenge(
         directRequestId,
@@ -6251,6 +6264,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'private_auth_${DateTime.now().microsecondsSinceEpoch}_${_historyRequestSequence++}';
     final completer = Completer<PrivateIntegrationAuthChallenge>();
     _privateAuthChallengeCompleters[requestId] = completer;
+    _privateAuthChallengeRoutes[requestId] = (
+      serverId: serverId,
+      integration: integration,
+    );
     final sent = _connMgr.sendToServer(serverId, {
       'type': 'private_integration_auth_request',
       'requestId': requestId,
@@ -6258,15 +6275,37 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
     if (!sent) {
       _privateAuthChallengeCompleters.remove(requestId);
+      _privateAuthChallengeRoutes.remove(requestId);
       return Future.error('Computer is not connected.');
     }
     return completer.future.timeout(
-      const Duration(seconds: 12),
+      const Duration(seconds: 30),
       onTimeout: () {
         _privateAuthChallengeCompleters.remove(requestId);
-        throw TimeoutException('The computer did not open the sign-in flow.');
+        _privateAuthChallengeRoutes.remove(requestId);
+        final label = integration == 'ibs-auth' ? 'IBS' : 'Outlook';
+        throw TimeoutException(
+          'The selected computer did not return the $label sign-in page within 30 seconds.',
+        );
       },
     );
+  }
+
+  String? _pendingPrivateAuthChallengeRequestId(String type, String? serverId) {
+    final integration = switch (type) {
+      'outlook_auth' => 'outlook-auth',
+      'ibs_auth' => 'ibs-auth',
+      _ => null,
+    };
+    if (integration == null) return null;
+    for (final entry in _privateAuthChallengeRoutes.entries) {
+      final route = entry.value;
+      if (route.integration == integration &&
+          (serverId == null || route.serverId == serverId)) {
+        return entry.key;
+      }
+    }
+    return null;
   }
 
   void _completePrivateIntegrationAuthChallenge(
@@ -6277,6 +6316,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required List<String> captureOrigins,
   }) {
     final completer = _privateAuthChallengeCompleters.remove(directRequestId);
+    _privateAuthChallengeRoutes.remove(directRequestId);
     if (completer == null || completer.isCompleted) return;
     if (startUrl == null || startUrl.isEmpty || captureOrigins.isEmpty) {
       completer.completeError('The computer returned incomplete sign-in data.');
@@ -6297,6 +6337,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (msg['started'] == true) return;
     final requestId = msg['requestId'] as String? ?? '';
     final completer = _privateAuthChallengeCompleters.remove(requestId);
+    _privateAuthChallengeRoutes.remove(requestId);
     if (completer != null && !completer.isCompleted) {
       completer.completeError(
         msg['error']?.toString() ?? 'Could not start private sign-in.',
@@ -6317,10 +6358,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'owaSession': jsonEncode(result),
     });
     return completer.future.timeout(
-      const Duration(seconds: 30),
+      const Duration(seconds: 75),
       onTimeout: () {
         _privateAuthOutcomeCompleters.remove(challenge.authRequestId);
-        throw TimeoutException('The computer did not validate the sign-in.');
+        throw TimeoutException(
+          'The selected computer did not finish validating the sign-in within 75 seconds.',
+        );
       },
     );
   }
