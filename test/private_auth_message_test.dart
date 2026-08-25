@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:app/models/message.dart';
+import 'package:app/models/private_integration_auth.dart';
 
 void main() {
   test('Outlook auth card retains only server-supplied allowlist metadata', () {
@@ -27,5 +28,56 @@ void main() {
     expect(message.authStartUrl, 'https://ibs.example.test/app/list');
     expect(message.authCaptureOrigins, const ['https://ibs.example.test']);
     expect(message.type, MessageType.ibsAuth);
+  });
+
+  test('settings auth messages remain routable from the selected server', () {
+    expect(
+      isDirectPrivateIntegrationAuthMessage(
+        'outlook_auth',
+        const {'directRequestId': 'settings-request'},
+        directAuthRequestIds: const {},
+        hasPendingOutcome: false,
+      ),
+      isTrue,
+    );
+    expect(
+      isDirectPrivateIntegrationAuthMessage(
+        'outlook_auth_result',
+        const {'authRequestId': 'outlook-auth-request'},
+        directAuthRequestIds: const {'outlook-auth-request'},
+        hasPendingOutcome: false,
+      ),
+      isTrue,
+    );
+    expect(
+      isDirectPrivateIntegrationAuthMessage(
+        'ibs_auth_result',
+        const {'authRequestId': 'ibs-auth-request'},
+        directAuthRequestIds: const {},
+        hasPendingOutcome: true,
+      ),
+      isTrue,
+    );
+  });
+
+  test('session auth cards still follow visible-session routing', () {
+    expect(
+      isDirectPrivateIntegrationAuthMessage(
+        'outlook_auth',
+        const {'authRequestId': 'session-request'},
+        directAuthRequestIds: const {},
+        hasPendingOutcome: false,
+      ),
+      isFalse,
+    );
+    expect(
+      isDirectPrivateIntegrationAuthMessage(
+        'outlook_auth_result',
+        const {'authRequestId': 'session-request'},
+        directAuthRequestIds: const {},
+        hasPendingOutcome: false,
+      ),
+      isFalse,
+    );
   });
 }

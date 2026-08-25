@@ -4026,7 +4026,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'session_transfer_discard_result',
     };
     final isGlobalType =
-        globalTypes.contains(type) || isScheduledTaskStateMessage(type);
+        globalTypes.contains(type) ||
+        isScheduledTaskStateMessage(type) ||
+        isDirectPrivateIntegrationAuthMessage(
+          type,
+          msg,
+          directAuthRequestIds: _directPrivateAuthRequestIds,
+          hasPendingOutcome: _privateAuthOutcomeCompleters.containsKey(
+            msg['authRequestId'],
+          ),
+        );
 
     // Route: only process non-global messages from the active server
     final fromInactiveServer =
