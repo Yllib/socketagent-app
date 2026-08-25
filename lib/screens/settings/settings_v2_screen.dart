@@ -550,17 +550,42 @@ class SettingsV2ServerDetailScreen extends StatefulWidget {
 }
 
 class _SettingsV2ServerDetailScreenState
-    extends State<SettingsV2ServerDetailScreen> {
+    extends State<SettingsV2ServerDetailScreen>
+    with WidgetsBindingObserver {
   bool _registeringPush = false;
+  bool _requestingNotificationPermission = false;
+  Future<bool>? _notificationsEnabled;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _refreshNotificationPermission();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       context.read<ChatProvider>().requestServerSettings(
         serverId: widget.serverId,
       );
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshNotificationPermission();
+    }
+  }
+
+  void _refreshNotificationPermission() {
+    if (!mounted) return;
+    setState(() {
+      _notificationsEnabled = NotificationService().areNotificationsEnabled();
     });
   }
 
@@ -744,6 +769,45 @@ class _SettingsV2ServerDetailScreenState
                         ? 'Automatic registration pending'
                         : 'Computer offline',
                     trailing: pushRegistered ? 'On' : 'Off',
+                  ),
+                  FutureBuilder<bool>(
+                    future: _notificationsEnabled,
+                    builder: (context, snapshot) {
+                      final enabled = snapshot.data;
+                      return _DetailRow(
+                        icon: enabled == false
+                            ? Icons.notifications_off_outlined
+                            : Icons.notifications_active_outlined,
+                        title: 'Android permission',
+                        subtitle: enabled == null
+                            ? 'Checking whether this phone allows notifications'
+                            : enabled
+                            ? 'SocketAgent can show notifications on this phone'
+                            : 'Blocked by Android. Allow notifications to receive alerts',
+                        trailing: enabled == null
+                            ? 'Checking'
+                            : enabled
+                            ? 'Allowed'
+                            : 'Blocked',
+                      );
+                    },
+                  ),
+                  FutureBuilder<bool>(
+                    future: _notificationsEnabled,
+                    builder: (context, snapshot) {
+                      if (snapshot.data != false) {
+                        return const SizedBox.shrink();
+                      }
+                      return _ButtonRow(
+                        primaryLabel: _requestingNotificationPermission
+                            ? 'Checking Permission'
+                            : 'Allow Notifications',
+                        primaryIcon: Icons.notification_add_outlined,
+                        onPrimary: _requestingNotificationPermission
+                            ? null
+                            : _requestNotificationPermission,
+                      );
+                    },
                   ),
                   if (connected && !pushRegistered)
                     _ButtonRow(
@@ -942,6 +1006,32 @@ class _SettingsV2ServerDetailScreenState
               : 'Could not register notifications for ${config.name}',
         ),
         backgroundColor: ok ? Colors.green : Colors.red,
+      ),
+    );
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    setState(() => _requestingNotificationPermission = true);
+    final enabled = await NotificationService().requestNotificationPermission();
+    if (!mounted) return;
+
+    setState(() {
+      _requestingNotificationPermission = false;
+      _notificationsEnabled = Future.value(enabled);
+    });
+
+    if (enabled) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Android notifications allowed')),
+      );
+      return;
+    }
+
+    final opened = await NotificationService().openNotificationSettings();
+    if (!mounted || opened) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Could not open Android notification settings'),
       ),
     );
   }
