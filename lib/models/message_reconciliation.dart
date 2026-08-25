@@ -497,12 +497,11 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     final isProtectedUserPrompt =
         isUserPrompt && protectedUserMessageIds.contains(live.id);
     final isPositionedAfterSnapshot =
-        isUserPrompt &&
         newestSnapshotSequence != null &&
         live.sessionSeq != null &&
         live.sessionSeq! > newestSnapshotSequence;
     final isLiveUserTail =
-        isPositionedAfterSnapshot ||
+        (isUserPrompt && isPositionedAfterSnapshot) ||
         (newestLiveOverlap >= 0 && i > newestLiveOverlap && isUserPrompt);
     if (!_isLiveTranscriptMessage(live) &&
         !isLiveUserTail &&
@@ -538,6 +537,7 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
         ? i > newestLiveOverlap
         : reconciled.isEmpty || _isExplicitlyActiveLiveMessage(live);
     if (!belongsToUnmatchedLiveTail &&
+        !isPositionedAfterSnapshot &&
         !isLiveUserTail &&
         !isProtectedUserPrompt) {
       continue;

@@ -28,6 +28,7 @@ import 'codex_command_card.dart';
 import 'secure_input_card.dart';
 import 'html_plan_card.dart';
 import 'work_review_card.dart';
+import 'browser_session_card.dart';
 import 'workflow_card.dart';
 import 'codex_activity_card.dart';
 import 'notification_receipt_card.dart';
@@ -1579,6 +1580,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           onCancel: widget.onSecureInputCancel,
           availableSecrets: widget.availableSecrets,
         );
+      case MessageType.browserSession:
+        return BrowserSessionCard(message: msg, serverId: widget.serverId);
       case MessageType.result:
         return MessageBubble(
           message: msg,

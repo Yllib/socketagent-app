@@ -316,6 +316,19 @@ class SessionTranscriptCache {
     }
   }
 
+  Future<void> invalidate(String serverId, String sessionId) async {
+    final key = _key(serverId, sessionId);
+    _memory.remove(key);
+    _liveWriteTimers.remove(key)?.cancel();
+    try {
+      final directory = await _cacheDirectory();
+      final file = File('${directory.path}/${_fileName(key)}');
+      if (await file.exists()) await file.delete();
+    } catch (_) {
+      // Cache failures never block an authoritative refresh from the server.
+    }
+  }
+
   Future<void> prewarm(
     Iterable<({String serverId, String sessionId})> sessions,
   ) async {

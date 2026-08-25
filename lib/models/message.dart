@@ -19,6 +19,7 @@ enum MessageType {
   toolResult,
   question,
   secureInput,
+  browserSession,
   result,
   error,
   taskNotification,
@@ -98,6 +99,7 @@ class ChatMessage {
   String? originToolUseId;
   String? uuid;
   String? streamId;
+  String? messagePhase;
   String? agentId;
   // Durable transcript ordering assigned by the server. Replays keep the same
   // entryId/sessionSeq; streamed content advances revision in place.
@@ -140,6 +142,7 @@ class ChatMessage {
     this.originToolUseId,
     this.uuid,
     this.streamId,
+    this.messagePhase,
     this.agentId,
     this.entryId,
     this.sessionSeq,
@@ -475,6 +478,32 @@ class ChatMessage {
       authRequestId: authRequestId,
       authStartUrl: startUrl,
       authCaptureOrigins: captureOrigins,
+    );
+  }
+
+  factory ChatMessage.browserSession({
+    required String profile,
+    required String label,
+    required String url,
+    required int width,
+    required int height,
+    bool runtimeRequired = false,
+  }) {
+    return ChatMessage(
+      id: 'browser_session_${profile}_${DateTime.now().microsecondsSinceEpoch}',
+      sender: MessageSender.system,
+      type: MessageType.browserSession,
+      timestamp: DateTime.now(),
+      textContent: label,
+      toolName: 'BrowserSession',
+      toolInput: {
+        'profile': profile,
+        'label': label,
+        'url': url,
+        'width': width,
+        'height': height,
+        'runtimeRequired': runtimeRequired,
+      },
     );
   }
 

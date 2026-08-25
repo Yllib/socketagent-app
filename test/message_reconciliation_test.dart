@@ -684,6 +684,32 @@ void main() {
     },
   );
 
+  test(
+    'non-overlapping stale snapshot keeps a newer completed live tool card',
+    () {
+      final staleSnapshot = ChatMessage.assistantText('session')
+        ..textContent = 'older bounded history window'
+        ..entryId = 'entry-40'
+        ..sessionSeq = 40;
+      final completedTool = ChatMessage.toolCall(
+        tool: 'Bash',
+        input: const {'command': 'npm test'},
+        toolUseId: 'tool-41',
+      )
+        ..toolOutput = 'passed'
+        ..toolStreaming = false
+        ..entryId = 'entry-41'
+        ..sessionSeq = 41;
+
+      final reconciled = reconcileLiveTranscriptWithSnapshot(
+        [staleSnapshot],
+        [completedTool],
+      );
+
+      expect(reconciled, [same(staleSnapshot), same(completedTool)]);
+    },
+  );
+
   test('a locally sent prompt survives consecutive bounded snapshots', () {
     final currentPrompt = ChatMessage.userText('fix the agreement')
       ..uuid = 'current-user'

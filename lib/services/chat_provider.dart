@@ -509,6 +509,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final _subscriptionRequiredController = StreamController<void>.broadcast();
   final _backendAuthRequiredController =
       StreamController<Map<String, dynamic>>.broadcast();
+  final _browserFrameController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   List<ChatMessage> _messages = [];
   List<Session> _sessions = [];
@@ -629,6 +631,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final HarnessRateLimitStore _rateLimitStore = HarnessRateLimitStore();
   Timer? _rateLimitExpiryTimer;
   bool _isRetrying = false;
+  Timer? _apiRetryTimer;
   String? _activeHookName;
   List<String> _promptSuggestions = [];
   List<dynamic>? _supportedCommands;
@@ -831,6 +834,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Stream<Map<String, dynamic>> get terminalEvents => _terminalEvents.stream;
   Stream<Map<String, dynamic>> get backendAuthRequiredEvents =>
       _backendAuthRequiredController.stream;
+  Stream<Map<String, dynamic>> get browserFrameEvents =>
+      _browserFrameController.stream;
   Map<String, dynamic>? get terminalStatus => _terminalStatus;
   String? get terminalServerId => _terminalServerId;
   Map<String, dynamic>? get lastUsage => _lastUsage;
@@ -4007,6 +4012,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'push_token_unregistered',
       'push_registration_status',
       'private_integration_auth_result',
+      'browser_frame',
+      'browser_session_error',
+      'browser_runtime_install_progress',
       'prompt_received',
       'prompt_failed',
       'abort_ack',
@@ -4133,6 +4141,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'tool_progress':
           _handleToolProgress(msg);
+          break;
+        case 'history_retracted':
+          _handleHistoryRetraction(msg, serverId);
           break;
         case 'tool_stderr':
           _handleToolStderr(msg);
@@ -4712,9 +4723,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           break;
         case 'api_retry':
+          _apiRetryTimer?.cancel();
           _isRetrying = true;
           notifyListeners();
-          Future.delayed(const Duration(seconds: 10), () {
+          final rawDelayMs = (msg['delayMs'] as num?)?.toInt() ?? 0;
+          final delayMs = rawDelayMs.clamp(0, 5 * 60 * 1000).toInt();
+          _apiRetryTimer = Timer(Duration(milliseconds: delayMs), () {
+            _apiRetryTimer = null;
             if (_isRetrying) {
               _isRetrying = false;
               notifyListeners();
@@ -5652,6 +5667,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'private_integration_auth_result':
           _handlePrivateIntegrationAuthStartResult(msg);
           break;
+        case 'browser_session_open':
+          _handleBrowserSessionOpen(msg);
+          break;
+        case 'browser_frame':
+        case 'browser_session_error':
+        case 'browser_runtime_install_progress':
+          _browserFrameController.add({...msg, '_serverId': serverId});
+          break;
         case 'tool_summary':
           _handleToolSummary(msg);
           break;
@@ -5945,6 +5968,80 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
+  }
+
+  void _handleBrowserSessionOpen(Map<String, dynamic> msg) {
+    _closeLiveStreamsForParent(null);
+    final profile = msg['profile'] as String? ?? '';
+    final url = msg['url'] as String? ?? '';
+    if (profile.isEmpty || url.isEmpty) return;
+    _messages.add(
+      ChatMessage.browserSession(
+        profile: profile,
+        label: msg['label'] as String? ?? profile,
+        url: url,
+        width: (msg['width'] as num?)?.toInt() ?? 430,
+        height: (msg['height'] as num?)?.toInt() ?? 860,
+        runtimeRequired: msg['runtimeRequired'] == true,
+      ),
+    );
+    notifyListeners();
+  }
+
+  bool requestBrowserFrame({required String profile, String? serverId}) {
+    final message = {'type': 'browser_frame_request', 'profile': profile};
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
+  }
+
+  bool installBrowserRuntime({
+    required String profile,
+    required String url,
+    required String label,
+    String? serverId,
+  }) {
+    final message = {
+      'type': 'browser_runtime_install',
+      'profile': profile,
+      'url': url,
+      'label': label,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
+  }
+
+  bool sendBrowserSessionInput({
+    required String profile,
+    required String action,
+    String? serverId,
+    double? x,
+    double? y,
+    String? text,
+    String? key,
+    double? deltaX,
+    double? deltaY,
+    String? url,
+  }) {
+    final message = <String, dynamic>{
+      'type': 'browser_session_input',
+      'profile': profile,
+      'action': action,
+      if (x != null) 'x': x,
+      if (y != null) 'y': y,
+      if (text != null) 'text': text,
+      if (key != null) 'key': key,
+      if (deltaX != null) 'deltaX': deltaX,
+      if (deltaY != null) 'deltaY': deltaY,
+      if (url != null) 'url': url,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
   }
 
   void _handleOutlookAuth(Map<String, dynamic> msg, [String? serverId]) {
@@ -6341,6 +6438,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _streamingMessagesByKey[streamKey] = existing;
         _assistantMessagesByStreamKey[streamKey] = existing;
         existing.streamId = streamId;
+        existing.messagePhase = msg['messagePhase'] as String?;
         applyTranscriptPosition(existing, msg);
         _currentStreamingMessage = existing;
         _currentStreamingStreamId = streamId;
@@ -6370,11 +6468,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Forward SDK hierarchy fields
       streamMessage.parentToolUseId = parentToolUseId;
       streamMessage.uuid = msg['uuid'] as String?;
+      streamMessage.messagePhase = msg['messagePhase'] as String?;
       // Don't add to _messages yet — wait until there's visible content
     } else if (_currentStreamingStreamId == null && streamId != null) {
       _currentStreamingStreamId = streamId;
     }
     streamMessage.streamId = streamId;
+    streamMessage.messagePhase = msg['messagePhase'] as String?;
     applyTranscriptPosition(streamMessage, msg);
     _streamingMessagesByKey[streamKey] = streamMessage;
     _assistantMessagesByStreamKey[streamKey] = streamMessage;
@@ -6906,6 +7006,44 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       notifyListeners();
     }
+  }
+
+  void _handleHistoryRetraction(Map<String, dynamic> msg, String? serverId) {
+    final uuids =
+        (msg['uuids'] as List?)
+            ?.map((uuid) => uuid.toString())
+            .where((uuid) => uuid.isNotEmpty)
+            .toSet() ??
+        <String>{};
+    if (uuids.isEmpty) return;
+
+    bool isRetracted(ChatMessage message) =>
+        message.uuid != null && uuids.contains(message.uuid);
+    _messages.removeWhere(isRetracted);
+    _streamingMessagesByKey.removeWhere((_, message) => isRetracted(message));
+    _thinkingMessagesByKey.removeWhere((_, message) => isRetracted(message));
+    _assistantMessagesByStreamKey.removeWhere(
+      (_, message) => isRetracted(message),
+    );
+    _thinkingMessagesByStreamKey.removeWhere(
+      (_, message) => isRetracted(message),
+    );
+    if (_currentStreamingMessage != null &&
+        isRetracted(_currentStreamingMessage!)) {
+      _currentStreamingMessage = null;
+      _currentStreamingStreamId = null;
+    }
+    if (_currentThinkingMessage != null &&
+        isRetracted(_currentThinkingMessage!)) {
+      _currentThinkingMessage = null;
+    }
+
+    final sessionId = msg['sessionId'] as String?;
+    final ownerServerId = serverId ?? _activeSessionServerId;
+    if (sessionId != null && ownerServerId != null) {
+      unawaited(_transcriptCache.invalidate(ownerServerId, sessionId));
+    }
+    notifyListeners();
   }
 
   /// Handle streaming bash output — append to the targeted or most recent running tool card
@@ -7464,6 +7602,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _isCompacting = false;
     _isRetrying = false;
+    _apiRetryTimer?.cancel();
+    _apiRetryTimer = null;
     // Upload-only pending bubbles can settle on result. Queued injection
     // bubbles wait for injection_ack so they can still be pulled back before
     // the server actually starts that queued turn.
@@ -9642,6 +9782,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final m = ChatMessage.assistantText('');
               m.textContent = cleaned;
               m.uuid = entry['uuid'] as String?;
+              m.messagePhase = entry['messagePhase'] as String?;
               m.parentToolUseId = entry['parentToolUseId'] as String?;
               loaded.add(m);
             }
@@ -16834,6 +16975,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _initialHistoryTimeout?.cancel();
     _foregroundResumeTimer?.cancel();
     _rateLimitExpiryTimer?.cancel();
+    _apiRetryTimer?.cancel();
     for (final timer in _pushRegistrationRetryTimers.values) {
       timer.cancel();
     }
@@ -16910,6 +17052,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _tts.dispose();
     _subscriptionRequiredController.close();
     _backendAuthRequiredController.close();
+    _browserFrameController.close();
     _terminalEvents.close();
     super.dispose();
   }
