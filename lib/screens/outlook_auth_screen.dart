@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../services/desktop_web_user_agent.dart';
+import '../services/outlook_auth_session_state.dart';
 import '../services/window_security_service.dart';
 
 /// Protected WebView that captures only the exact approved OWA service
@@ -32,6 +33,9 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
   String _contentType = 'application/json';
   String? _findFolderTemplate;
   String? _findItemTemplate;
+  bool _resetAttempted = false;
+  bool _resetInProgress = false;
+  bool _expiredBrowserStateCleared = false;
 
   bool get _ready =>
       _authorization != null &&
@@ -65,6 +69,7 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
             if (uri != null && _captureOrigins.contains(uri.origin)) {
               await _controller.runJavaScript(_captureScript(uri.origin));
             }
+            await _resetExpiredBrowserStateIfNeeded(uri);
           },
           onNavigationRequest: (_) => NavigationDecision.navigate,
         ),
@@ -79,6 +84,97 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
     } catch (_) {}
     await _controller.setUserAgent(desktopWebUserAgent(currentUserAgent));
     await _controller.loadRequest(Uri.parse(widget.startUrl));
+  }
+
+  static const _authStateProbeScript = r'''
+(() => {
+  const body = String(document.body && document.body.innerText || '')
+    .slice(0, 6000)
+    .toLowerCase();
+  const interactiveSignIn = Boolean(document.querySelector([
+    'input[type="password"]',
+    'input[type="email"]',
+    'input[name="loginfmt"]',
+    'input[name="passwd"]',
+    'input[name="otc"]',
+    'input[autocomplete="one-time-code"]',
+    '#i0116',
+    '#i0118'
+  ].join(','))) ||
+    body.includes('approve sign in request') ||
+    body.includes('check your authenticator app');
+  const signingOut =
+    body.includes('while we sign you out') ||
+    body.includes('you signed out of your account') ||
+    body.includes('we are signing you out');
+  return JSON.stringify({interactiveSignIn, signingOut});
+})()
+''';
+
+  Future<void> _resetExpiredBrowserStateIfNeeded(Uri? finishedUri) async {
+    if (finishedUri == null ||
+        finishedUri.scheme != 'https' ||
+        _resetAttempted ||
+        _resetInProgress ||
+        _ready) {
+      return;
+    }
+
+    // Give silent SSO redirects time to leave transient Microsoft pages. A
+    // working browser session reaches Inbox and is never cleared.
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    if (!mounted || _resetAttempted || _resetInProgress || _ready) {
+      return;
+    }
+    String? currentUrl;
+    try {
+      currentUrl = await _controller.currentUrl();
+    } catch (_) {
+      return;
+    }
+    final currentUri = currentUrl == null ? null : Uri.tryParse(currentUrl);
+    if (currentUri?.origin != finishedUri.origin) {
+      return;
+    }
+    final pageIsApprovedMailbox =
+        currentUri != null && _captureOrigins.contains(currentUri.origin);
+
+    OutlookAuthPageProbe probe;
+    try {
+      final raw = await _controller.runJavaScriptReturningResult(
+        _authStateProbeScript,
+      );
+      probe = OutlookAuthPageProbe.parse(raw);
+    } catch (_) {
+      return;
+    }
+    if (!shouldResetExpiredOutlookBrowserState(
+      pageIsApprovedMailbox: pageIsApprovedMailbox,
+      pageUrlIsSignOut: currentUri != null && isOutlookSignOutUri(currentUri),
+      resetAttempted: _resetAttempted,
+      probe: probe,
+    )) {
+      return;
+    }
+
+    _resetAttempted = true;
+    _resetInProgress = true;
+    try {
+      await WebViewCookieManager().clearCookies();
+      await _controller.clearCache();
+      await _controller.clearLocalStorage();
+      if (!mounted) return;
+      setState(() {
+        _authorization = null;
+        _findFolderTemplate = null;
+        _findItemTemplate = null;
+        _expiredBrowserStateCleared = true;
+        _loading = true;
+      });
+      await _controller.loadRequest(Uri.parse(widget.startUrl));
+    } finally {
+      _resetInProgress = false;
+    }
   }
 
   String _captureScript(String approvedOrigin) {
@@ -251,6 +347,8 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
                 Text(
                   _ready
                       ? 'Required Outlook session requests captured securely.'
+                      : _expiredBrowserStateCleared
+                      ? 'The expired browser sign-in was cleared. Sign in once to reconnect.'
                       : 'Sign in normally, open Inbox, then switch folders once if needed.',
                   style: const TextStyle(
                     fontSize: 13,
