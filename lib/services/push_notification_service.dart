@@ -26,6 +26,7 @@ class PushNotificationService {
 
   bool _initialized = false;
   bool _available = false;
+  String? _projectId;
   Future<bool>? _initializationInFlight;
   String? _launchPayload;
   StreamSubscription<String>? _tokenRefreshSub;
@@ -42,6 +43,8 @@ class PushNotificationService {
   static final List<String> _claimedEventKeyOrder = <String>[];
   static const String pushDisabledServersPrefsKey =
       'push_disabled_server_ids_v1';
+
+  String? get projectId => _projectId;
 
   String? takeLaunchPayload() {
     final payload = _launchPayload;
@@ -66,7 +69,8 @@ class PushNotificationService {
 
   Future<bool> _initializeOnce() async {
     try {
-      await Firebase.initializeApp();
+      final app = await Firebase.initializeApp();
+      _projectId = app.options.projectId;
       final messaging = FirebaseMessaging.instance;
       FirebaseMessaging.onBackgroundMessage(
         socketAgentFirebaseBackgroundHandler,
@@ -91,6 +95,7 @@ class PushNotificationService {
       debugPrint('[Push] Firebase unavailable: $e');
       _available = false;
       _initialized = false;
+      _projectId = null;
     }
     return _available;
   }

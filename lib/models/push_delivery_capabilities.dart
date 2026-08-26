@@ -6,11 +6,13 @@ class PushDeliveryCapabilities {
     required this.directFcmConfigured,
     required this.relayConfigured,
     this.directFcmIssue,
+    this.directFcmProjectId,
   });
 
   final int version;
   final bool directFcmConfigured;
   final DirectFcmIssue? directFcmIssue;
+  final String? directFcmProjectId;
   final bool relayConfigured;
 
   bool get hasDetailedStatus => version >= 2;
@@ -32,6 +34,11 @@ class PushDeliveryCapabilities {
         'unreadable' => DirectFcmIssue.unreadable,
         _ => null,
       },
+      directFcmProjectId: switch (value['directFcmProjectId']) {
+        final String projectId when projectId.trim().isNotEmpty =>
+          projectId.trim(),
+        _ => null,
+      },
       relayConfigured: value['relayConfigured'] == true,
     );
   }
@@ -45,9 +52,11 @@ enum PushDeliveryRouteKind {
   relayPairingRequired,
   relaySignInRequired,
   relaySubscriptionRequired,
+  relayFirebaseResetRequired,
   firebaseMissing,
   firebaseInvalid,
   firebaseUnreadable,
+  firebaseProjectMismatch,
 }
 
 class PushDeliveryRouteState {
@@ -64,6 +73,8 @@ class PushDeliveryRouteState {
     required bool relayPaired,
     required bool hasSubscriberToken,
     required bool hasRelayAccess,
+    String? activeFirebaseProjectId,
+    bool usesCustomFirebase = false,
   }) {
     if (capabilities == null) {
       return const PushDeliveryRouteState(PushDeliveryRouteKind.checking);
@@ -73,14 +84,31 @@ class PushDeliveryRouteState {
         PushDeliveryRouteKind.serverUpdateRequired,
       );
     }
-    if (capabilities.relayConfigured &&
-        relayPaired &&
-        hasRelayAccess) {
+    final expectedProjectId = capabilities.directFcmProjectId;
+    final directProjectMatches =
+        capabilities.directFcmConfigured &&
+        (expectedProjectId == null ||
+            expectedProjectId.isEmpty ||
+            activeFirebaseProjectId == expectedProjectId);
+    final relayReady =
+        capabilities.relayConfigured && relayPaired && hasRelayAccess;
+    if (usesCustomFirebase && directProjectMatches) {
+      return const PushDeliveryRouteState(PushDeliveryRouteKind.directFirebase);
+    }
+    if (relayReady && !usesCustomFirebase) {
       return const PushDeliveryRouteState(PushDeliveryRouteKind.relay);
     }
-    if (capabilities.directFcmConfigured) {
+    if (directProjectMatches) {
+      return const PushDeliveryRouteState(PushDeliveryRouteKind.directFirebase);
+    }
+    if (relayReady && usesCustomFirebase) {
       return const PushDeliveryRouteState(
-        PushDeliveryRouteKind.directFirebase,
+        PushDeliveryRouteKind.relayFirebaseResetRequired,
+      );
+    }
+    if (capabilities.directFcmConfigured && !directProjectMatches) {
+      return const PushDeliveryRouteState(
+        PushDeliveryRouteKind.firebaseProjectMismatch,
       );
     }
     if (capabilities.relayConfigured && !relayPaired) {
@@ -98,12 +126,10 @@ class PushDeliveryRouteState {
         PushDeliveryRouteKind.relaySubscriptionRequired,
       );
     }
-    return PushDeliveryRouteState(
-      switch (capabilities.directFcmIssue) {
-        DirectFcmIssue.invalid => PushDeliveryRouteKind.firebaseInvalid,
-        DirectFcmIssue.unreadable => PushDeliveryRouteKind.firebaseUnreadable,
-        _ => PushDeliveryRouteKind.firebaseMissing,
-      },
-    );
+    return PushDeliveryRouteState(switch (capabilities.directFcmIssue) {
+      DirectFcmIssue.invalid => PushDeliveryRouteKind.firebaseInvalid,
+      DirectFcmIssue.unreadable => PushDeliveryRouteKind.firebaseUnreadable,
+      _ => PushDeliveryRouteKind.firebaseMissing,
+    });
   }
 }

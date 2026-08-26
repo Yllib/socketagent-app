@@ -7,12 +7,14 @@ void main() {
       'version': 2,
       'directFcmConfigured': false,
       'directFcmIssue': 'unreadable',
+      'directFcmProjectId': 'socketagent-kevin',
       'relayConfigured': true,
     });
 
     expect(capabilities.hasDetailedStatus, isTrue);
     expect(capabilities.directFcmConfigured, isFalse);
     expect(capabilities.directFcmIssue, DirectFcmIssue.unreadable);
+    expect(capabilities.directFcmProjectId, 'socketagent-kevin');
     expect(capabilities.relayConfigured, isTrue);
   });
 
@@ -128,5 +130,55 @@ void main() {
 
     expect(state.kind, PushDeliveryRouteKind.directFirebase);
     expect(state.isReady, isTrue);
+  });
+
+  test('requires the phone and server to use the same Firebase project', () {
+    const capabilities = PushDeliveryCapabilities(
+      version: 3,
+      directFcmConfigured: true,
+      directFcmProjectId: 'socketagent-kevin',
+      relayConfigured: false,
+    );
+
+    expect(
+      PushDeliveryRouteState.evaluate(
+        capabilities: capabilities,
+        relayPaired: false,
+        hasSubscriberToken: false,
+        hasRelayAccess: false,
+        activeFirebaseProjectId: 'socketclaude',
+      ).kind,
+      PushDeliveryRouteKind.firebaseProjectMismatch,
+    );
+    expect(
+      PushDeliveryRouteState.evaluate(
+        capabilities: capabilities,
+        relayPaired: false,
+        hasSubscriberToken: false,
+        hasRelayAccess: false,
+        activeFirebaseProjectId: 'socketagent-kevin',
+        usesCustomFirebase: true,
+      ).kind,
+      PushDeliveryRouteKind.directFirebase,
+    );
+  });
+
+  test('custom Firebase cannot register with the SocketAgent relay', () {
+    const capabilities = PushDeliveryCapabilities(
+      version: 3,
+      directFcmConfigured: false,
+      relayConfigured: true,
+    );
+    final state = PushDeliveryRouteState.evaluate(
+      capabilities: capabilities,
+      relayPaired: true,
+      hasSubscriberToken: true,
+      hasRelayAccess: true,
+      activeFirebaseProjectId: 'socketagent-kevin',
+      usesCustomFirebase: true,
+    );
+
+    expect(state.kind, PushDeliveryRouteKind.relayFirebaseResetRequired);
+    expect(state.isReady, isFalse);
   });
 }

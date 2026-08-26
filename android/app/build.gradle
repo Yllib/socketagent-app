@@ -12,6 +12,8 @@ def socketAgentApplicationId = (
 ).toString()
 def googleServicesFile = file("google-services.json")
 def googleServicesPackageNeedle = "\"package_name\": \"${socketAgentApplicationId}\""
+def firebaseCoreProject = findProject(':firebase_core')
+def firebaseSdkVersion = firebaseCoreProject?.properties['FirebaseSDKVersion'] ?: '34.15.0'
 
 if (googleServicesFile.exists() && googleServicesFile.text.contains(googleServicesPackageNeedle)) {
     apply plugin: "com.google.gms.google-services"
@@ -70,6 +72,8 @@ android {
 
 dependencies {
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+    implementation platform("com.google.firebase:firebase-bom:${firebaseSdkVersion}")
+    implementation 'com.google.firebase:firebase-common'
 }
 
 flutter {

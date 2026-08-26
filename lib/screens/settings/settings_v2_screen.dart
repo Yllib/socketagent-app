@@ -1,5 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -10,7 +13,9 @@ import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
 import '../../models/push_delivery_capabilities.dart';
 import '../../services/chat_provider.dart';
+import '../../services/firebase_project_configuration_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/push_notification_service.dart';
 import '../../services/private_integration_auth_flow.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
@@ -612,6 +617,21 @@ class _SettingsV2ServerDetailScreenState
         final pushRegistered = provider.isPushRegisteredForServer(config.id);
         final pushDisabled = provider.isPushDisabledForServer(config.id);
         final pushRoute = provider.pushDeliveryRouteForServer(config.id);
+        final pushCapabilities = provider.pushCapabilitiesForServer(config.id);
+        final firebaseConfiguration =
+            FirebaseProjectConfigurationService.instance;
+        final activeFirebaseProjectId = PushNotificationService().projectId;
+        final customFirebase = firebaseConfiguration.customConfiguration;
+        final bundledFirebaseProjectId = firebaseConfiguration.bundledProjectId;
+        final activeUsesCustomFirebase =
+            activeFirebaseProjectId != null &&
+            bundledFirebaseProjectId != null &&
+            activeFirebaseProjectId != bundledFirebaseProjectId;
+        final firebaseRestartRequired = customFirebase == null
+            ? activeUsesCustomFirebase
+            : customFirebase.projectId != activeFirebaseProjectId;
+        final pendingFirebaseProjectId =
+            customFirebase?.projectId ?? bundledFirebaseProjectId;
 
         return Scaffold(
           appBar: AppBar(
@@ -798,7 +818,11 @@ class _SettingsV2ServerDetailScreenState
                   _DetailRow(
                     icon: _pushRouteIcon(pushRoute.kind),
                     title: 'Delivery path',
-                    subtitle: _pushRouteDescription(pushRoute.kind),
+                    subtitle: _pushRouteDescription(
+                      pushRoute.kind,
+                      activeProjectId: activeFirebaseProjectId,
+                      expectedProjectId: pushCapabilities?.directFcmProjectId,
+                    ),
                     trailing: _pushRouteLabel(pushRoute.kind),
                   ),
                   if (_pushRouteActionLabel(pushRoute.kind) case final label?)
@@ -810,6 +834,32 @@ class _SettingsV2ServerDetailScreenState
                         config,
                         pushRoute.kind,
                       ),
+                    ),
+                  _DetailRow(
+                    icon: customFirebase == null
+                        ? Icons.verified_user_outlined
+                        : Icons.cloud_outlined,
+                    title: 'Firebase project',
+                    subtitle: firebaseRestartRequired
+                        ? 'Close and reopen SocketAgent to use ${pendingFirebaseProjectId ?? 'the saved project'}'
+                        : activeFirebaseProjectId == null
+                        ? 'Firebase did not initialize on this phone'
+                        : 'Using $activeFirebaseProjectId for notification tokens',
+                    trailing: firebaseRestartRequired
+                        ? 'Restart needed'
+                        : customFirebase == null
+                        ? activeUsesCustomFirebase
+                              ? 'Custom'
+                              : 'SocketAgent'
+                        : 'Custom',
+                  ),
+                  if (pushRoute.kind == PushDeliveryRouteKind.directFirebase ||
+                      customFirebase != null ||
+                      activeUsesCustomFirebase)
+                    _ButtonRow(
+                      primaryLabel: 'Manage Firebase',
+                      primaryIcon: Icons.settings_outlined,
+                      onPrimary: _showFirebaseNotificationSetup,
                     ),
                   _DetailRow(
                     icon: pushRegistered && pushRoute.isReady
@@ -844,9 +894,7 @@ class _SettingsV2ServerDetailScreenState
                           ? null
                           : () => _registerPush(provider, config),
                     )
-                  else if (connected &&
-                      pushRoute.isReady &&
-                      pushRegistered)
+                  else if (connected && pushRoute.isReady && pushRegistered)
                     _ButtonRow(
                       primaryLabel: _registeringPush
                           ? 'Updating'
@@ -1050,12 +1098,18 @@ class _SettingsV2ServerDetailScreenState
     PushDeliveryRouteKind.relayPairingRequired => 'Pairing needed',
     PushDeliveryRouteKind.relaySignInRequired => 'Sign-in needed',
     PushDeliveryRouteKind.relaySubscriptionRequired => 'Access needed',
+    PushDeliveryRouteKind.relayFirebaseResetRequired => 'Reset Firebase',
     PushDeliveryRouteKind.firebaseMissing => 'Setup needed',
     PushDeliveryRouteKind.firebaseInvalid => 'Invalid setup',
     PushDeliveryRouteKind.firebaseUnreadable => 'File unavailable',
+    PushDeliveryRouteKind.firebaseProjectMismatch => 'Project mismatch',
   };
 
-  String _pushRouteDescription(PushDeliveryRouteKind kind) => switch (kind) {
+  String _pushRouteDescription(
+    PushDeliveryRouteKind kind, {
+    String? activeProjectId,
+    String? expectedProjectId,
+  }) => switch (kind) {
     PushDeliveryRouteKind.checking =>
       'Waiting for this computer to report its notification setup',
     PushDeliveryRouteKind.serverUpdateRequired =>
@@ -1070,12 +1124,16 @@ class _SettingsV2ServerDetailScreenState
       'The relay is ready, but this phone must sign in before registration',
     PushDeliveryRouteKind.relaySubscriptionRequired =>
       'The relay is ready, but relay access is inactive for this phone',
+    PushDeliveryRouteKind.relayFirebaseResetRequired =>
+      'Relay notifications require the SocketAgent Firebase project on this phone',
     PushDeliveryRouteKind.firebaseMissing =>
       'Firebase setup must be completed before direct notifications can work',
     PushDeliveryRouteKind.firebaseInvalid =>
       'Firebase credentials are present but do not contain a valid service account',
     PushDeliveryRouteKind.firebaseUnreadable =>
       'The Firebase service account file is missing or cannot be read',
+    PushDeliveryRouteKind.firebaseProjectMismatch =>
+      'This phone uses ${activeProjectId ?? 'no Firebase project'}, but this computer expects ${expectedProjectId ?? 'another project'}',
   };
 
   String? _pushRouteActionLabel(PushDeliveryRouteKind kind) => switch (kind) {
@@ -1084,9 +1142,12 @@ class _SettingsV2ServerDetailScreenState
       'Pair Relay for Notifications',
     PushDeliveryRouteKind.relaySignInRequired => 'Sign In to Relay',
     PushDeliveryRouteKind.relaySubscriptionRequired => 'Manage Relay Access',
+    PushDeliveryRouteKind.relayFirebaseResetRequired =>
+      'Use SocketAgent Firebase',
     PushDeliveryRouteKind.firebaseMissing ||
     PushDeliveryRouteKind.firebaseInvalid ||
     PushDeliveryRouteKind.firebaseUnreadable => 'View Firebase Setup',
+    PushDeliveryRouteKind.firebaseProjectMismatch => 'Choose Firebase JSON',
     _ => null,
   };
 
@@ -1135,9 +1196,11 @@ class _SettingsV2ServerDetailScreenState
       case PushDeliveryRouteKind.relaySubscriptionRequired:
         await _ensureRelayAccess(context, provider);
         return;
+      case PushDeliveryRouteKind.relayFirebaseResetRequired:
       case PushDeliveryRouteKind.firebaseMissing:
       case PushDeliveryRouteKind.firebaseInvalid:
       case PushDeliveryRouteKind.firebaseUnreadable:
+      case PushDeliveryRouteKind.firebaseProjectMismatch:
         await _showFirebaseNotificationSetup();
         return;
       case PushDeliveryRouteKind.checking:
@@ -1147,40 +1210,138 @@ class _SettingsV2ServerDetailScreenState
     }
   }
 
-  Future<void> _showFirebaseNotificationSetup() {
-    return showDialog<void>(
+  Future<void> _showFirebaseNotificationSetup() async {
+    final firebaseConfiguration = FirebaseProjectConfigurationService.instance;
+    final custom = firebaseConfiguration.customConfiguration;
+    final action = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Firebase setup for direct notifications'),
-        content: const SingleChildScrollView(
+        title: const Text('Direct Firebase setup'),
+        content: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                'Add a Firebase service account to this computer, then restart SocketAgent.',
+              const Text(
+                'Import the Android google-services.json for this app. The Firebase Android package must match the installed SocketAgent package.',
               ),
-              SizedBox(height: 16),
-              Text('Recommended server/.env setting:'),
-              SizedBox(height: 8),
-              SelectableText(
+              if (custom != null) ...[
+                const SizedBox(height: 12),
+                Text('Saved phone project: ${custom.projectId}'),
+              ],
+              const SizedBox(height: 16),
+              const Text(
+                'Keep the private service-account JSON on the computer. Add this setting to server/.env, then restart the SocketAgent server:',
+              ),
+              const SizedBox(height: 8),
+              const SelectableText(
                 'FIREBASE_SERVICE_ACCOUNT_PATH=/absolute/path/service-account.json',
               ),
-              SizedBox(height: 16),
-              Text(
-                'The JSON file must contain project_id, client_email, and private_key. You can also use FIREBASE_SERVICE_ACCOUNT_JSON or GOOGLE_APPLICATION_CREDENTIALS.',
+              const SizedBox(height: 16),
+              const Text(
+                'Both files must come from the same Firebase project. Changing the phone project requires closing and reopening SocketAgent.',
               ),
             ],
           ),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
+            onPressed: () => Navigator.pop(dialogContext, 'close'),
             child: const Text('Close'),
+          ),
+          if (custom != null)
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, 'reset'),
+              child: const Text('Use SocketAgent Firebase'),
+            ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, 'import'),
+            child: const Text('Import JSON'),
           ),
         ],
       ),
     );
+    if (!mounted || action == null || action == 'close') return;
+    if (action == 'reset') {
+      await firebaseConfiguration.clear();
+      if (!mounted) return;
+      setState(() {});
+      await _showFirebaseRestartPrompt('SocketAgent Firebase');
+      return;
+    }
+    await _importFirebaseProject();
+  }
+
+  Future<void> _importFirebaseProject() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['json'],
+        withData: true,
+      );
+      if (result == null || result.files.isEmpty) return;
+      final selected = result.files.single;
+      final bytes =
+          selected.bytes ??
+          (selected.path == null
+              ? null
+              : await File(selected.path!).readAsBytes());
+      if (bytes == null || bytes.isEmpty) {
+        throw const FormatException('The selected file is empty');
+      }
+      if (bytes.length > 1024 * 1024) {
+        throw const FormatException(
+          'Firebase configuration must be under 1 MB',
+        );
+      }
+      final packageName = (await PackageInfo.fromPlatform()).packageName;
+      final configuration = FirebaseProjectConfiguration.fromGoogleServicesJson(
+        utf8.decode(bytes),
+        expectedPackageName: packageName,
+      );
+      await FirebaseProjectConfigurationService.instance.save(configuration);
+      if (!mounted) return;
+      setState(() {});
+      await _showFirebaseRestartPrompt(configuration.projectId);
+    } on FormatException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message.toString())));
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(error.message ?? 'Could not save Firebase setup'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _showFirebaseRestartPrompt(String projectId) async {
+    final closeNow = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Restart required'),
+        content: Text(
+          'SocketAgent will use $projectId after you close and reopen the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Later'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Close SocketAgent'),
+          ),
+        ],
+      ),
+    );
+    if (closeNow == true) {
+      await SystemNavigator.pop();
+    }
   }
 
   Future<void> _requestNotificationPermission() async {
@@ -2318,8 +2479,7 @@ class _NotificationSummaryTileState extends State<_NotificationSummaryTile>
         final connected = provider.serverConfigs
             .where(
               (c) =>
-                  provider.connMgr.statusOf(c.id) ==
-                  ConnectionStatus.connected,
+                  provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
             )
             .toList();
         final registered = connected

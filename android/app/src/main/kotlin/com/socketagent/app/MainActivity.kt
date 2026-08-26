@@ -156,6 +156,29 @@ class MainActivity : FlutterActivity() {
                         result.error("OPEN_NOTIFICATION_SETTINGS_ERROR", e.message, null)
                     }
                 }
+                "getFirebaseProjectConfiguration" -> {
+                    result.success(
+                        mapOf(
+                            "custom" to FirebaseProjectConfigurationStore.load(this)?.toMap(),
+                            "bundledProjectId" to FirebaseProjectConfigurationStore.bundledProjectId(this),
+                        )
+                    )
+                }
+                "setFirebaseProjectConfiguration" -> {
+                    try {
+                        val values = call.arguments as? Map<*, *>
+                            ?: throw IllegalArgumentException("Firebase configuration is required")
+                        result.success(
+                            FirebaseProjectConfigurationStore.save(this, values).toMap()
+                        )
+                    } catch (e: Exception) {
+                        result.error("FIREBASE_CONFIG_ERROR", e.message, null)
+                    }
+                }
+                "clearFirebaseProjectConfiguration" -> {
+                    FirebaseProjectConfigurationStore.clear(this)
+                    result.success(true)
+                }
                 "showAuthCodeOverlay" -> {
                     try {
                         val code = call.argument<String>("code") ?: ""

@@ -45,6 +45,7 @@ import 'kokoro_model_manager.dart';
 import 'elevenlabs_tts_engine.dart';
 import 'notification_service.dart';
 import 'push_notification_service.dart';
+import 'firebase_project_configuration_service.dart';
 import 'relay_push_service.dart';
 import 'crypto_service.dart';
 import 'server_connection_probe.dart';
@@ -956,6 +957,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       relayPaired: config?.isRelayPaired == true,
       hasSubscriberToken: _subscriberToken.isNotEmpty,
       hasRelayAccess: hasCachedRelayAccess,
+      activeFirebaseProjectId: PushNotificationService().projectId,
+      usesCustomFirebase:
+          PushNotificationService().projectId != null &&
+          FirebaseProjectConfigurationService.instance.bundledProjectId !=
+              null &&
+          PushNotificationService().projectId !=
+              FirebaseProjectConfigurationService.instance.bundledProjectId,
     );
   }
 
@@ -2423,6 +2431,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'register_push_token',
       'fcmToken': token,
       'platform': 'android',
+      if (PushNotificationService().projectId case final projectId?)
+        'firebaseProjectId': projectId,
     };
     if (serverId != null) {
       final config = _serverConfigs
