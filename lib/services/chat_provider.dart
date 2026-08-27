@@ -282,6 +282,9 @@ class BackendInstallState {
   final List<String> output;
   String _authTextTail = '';
 
+  bool get completedAuthentication =>
+      operation == 'auth' && status == 'completed' && !running;
+
   void apply(Map<String, dynamic> msg) {
     void absorbAuth(String value, {bool accumulate = false}) {
       var source = value;
@@ -510,6 +513,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final SecureStorageService _secureStorage = SecureStorageService();
   final _subscriptionRequiredController = StreamController<void>.broadcast();
   final _backendAuthRequiredController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _backendAuthResolvedController =
       StreamController<Map<String, dynamic>>.broadcast();
   final _browserFrameController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -839,6 +844,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Stream<Map<String, dynamic>> get terminalEvents => _terminalEvents.stream;
   Stream<Map<String, dynamic>> get backendAuthRequiredEvents =>
       _backendAuthRequiredController.stream;
+  Stream<Map<String, dynamic>> get backendAuthResolvedEvents =>
+      _backendAuthResolvedController.stream;
   Stream<Map<String, dynamic>> get browserFrameEvents =>
       _browserFrameController.stream;
   Map<String, dynamic>? get terminalStatus => _terminalStatus;
@@ -12344,6 +12351,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (!state.running) {
       _backendInstallAckTimers.remove(key)?.cancel();
+      if (state.completedAuthentication) {
+        _backendAuthResolvedController.add({
+          'serverId': serverId,
+          'backend': backend,
+        });
+      }
       requestServerSettings(serverId: serverId);
       _connMgr.sendToServer(serverId, {'type': 'list_sessions'});
     }
@@ -12927,6 +12940,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             : 'Backend is available.';
         state.authUrl = null;
         state.authCode = null;
+        _backendAuthResolvedController.add({
+          'serverId': serverId,
+          'backend': backend,
+        });
       }
     }
   }
@@ -17160,6 +17177,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _tts.dispose();
     _subscriptionRequiredController.close();
     _backendAuthRequiredController.close();
+    _backendAuthResolvedController.close();
     _browserFrameController.close();
     _terminalEvents.close();
     super.dispose();

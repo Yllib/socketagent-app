@@ -59,7 +59,9 @@ class BackendAuthCard extends StatelessWidget {
                   const SizedBox(width: 9),
                   Expanded(
                     child: Text(
-                      isMcp
+                      completed
+                          ? 'OpenAI signed in'
+                          : isMcp
                           ? '${mcpServerName ?? 'Connected app'} sign-in expired'
                           : 'OpenAI sign-in expired',
                       style: const TextStyle(fontWeight: FontWeight.w600),
@@ -76,7 +78,7 @@ class BackendAuthCard extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 completed
-                    ? 'Signed in. Codex is ready.'
+                    ? 'Codex is ready.'
                     : state?.message.isNotEmpty == true
                     ? state!.message
                     : message.textContent,

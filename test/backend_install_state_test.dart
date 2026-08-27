@@ -99,4 +99,23 @@ Follow these steps to sign in with ChatGPT using device code authorization:
 
     expect(state.authCode, isNull);
   });
+
+  test('recognizes completed authentication progress', () {
+    final state = BackendInstallState(
+      backend: 'codex',
+      requestId: 'test',
+      operation: 'auth',
+    );
+
+    state.apply({
+      'backend': 'codex',
+      'operation': 'auth',
+      'phase': 'probe',
+      'status': 'completed',
+      'message': 'Codex is ready.',
+    });
+
+    expect(state.running, isFalse);
+    expect(state.completedAuthentication, isTrue);
+  });
 }

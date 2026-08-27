@@ -29,6 +29,11 @@ class MainShellScreenState extends State<MainShellScreen>
   late int _currentIndex;
   StreamSubscription? _subRequiredSub;
   StreamSubscription? _backendAuthRequiredSub;
+  StreamSubscription? _backendAuthResolvedSub;
+  ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
+  _backendAuthSnackBar;
+  String? _backendAuthSnackBarServerId;
+  String? _backendAuthSnackBarBackend;
   Future<bool>? _paywallFuture;
   final UpdateService _updateService = UpdateService();
   bool _updateBannerDismissed = false;
@@ -70,7 +75,10 @@ class MainShellScreenState extends State<MainShellScreen>
             : event['backend']?.toString() == 'codex'
             ? 'OpenAI'
             : 'Backend';
-        ScaffoldMessenger.of(context).showSnackBar(
+        _backendAuthSnackBar?.close();
+        _backendAuthSnackBarServerId = event['serverId']?.toString();
+        _backendAuthSnackBarBackend = event['backend']?.toString();
+        final controller = ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('$backend sign-in required'),
             action: SnackBarAction(
@@ -93,6 +101,28 @@ class MainShellScreenState extends State<MainShellScreen>
             ),
           ),
         );
+        _backendAuthSnackBar = controller;
+        controller.closed.whenComplete(() {
+          if (!identical(_backendAuthSnackBar, controller)) return;
+          _backendAuthSnackBar = null;
+          _backendAuthSnackBarServerId = null;
+          _backendAuthSnackBarBackend = null;
+        });
+      });
+      _backendAuthResolvedSub = provider.backendAuthResolvedEvents.listen((
+        event,
+      ) {
+        if (!mounted || _backendAuthSnackBar == null) return;
+        final serverId = event['serverId']?.toString();
+        final backend = event['backend']?.toString();
+        if (serverId != _backendAuthSnackBarServerId ||
+            backend != _backendAuthSnackBarBackend) {
+          return;
+        }
+        _backendAuthSnackBar?.close();
+        _backendAuthSnackBar = null;
+        _backendAuthSnackBarServerId = null;
+        _backendAuthSnackBarBackend = null;
       });
       await provider.connectToServer();
       provider.refreshSubscriptionStatusIfStale();
@@ -155,6 +185,7 @@ class MainShellScreenState extends State<MainShellScreen>
     _scheduledTaskRefreshTimer?.cancel();
     _subRequiredSub?.cancel();
     _backendAuthRequiredSub?.cancel();
+    _backendAuthResolvedSub?.cancel();
     _updateService.removeListener(_onUpdateChange);
     routeObserver.unsubscribe(this);
     super.dispose();
