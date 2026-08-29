@@ -12409,6 +12409,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (!state.running) {
       _backendInstallAckTimers.remove(key)?.cancel();
       if (state.completedAuthentication) {
+        _removeResolvedBackendAuthCards(serverId, backend);
         _backendAuthResolvedController.add({
           'serverId': serverId,
           'backend': backend,
@@ -12714,6 +12715,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final severity = entry['severity']?.toString();
         if (backend == null || backend.isEmpty || severity != 'ok') continue;
 
+        _removeResolvedBackendAuthCards(serverId, backend);
+
         final key = _backendInstallKey(serverId, backend);
         final state = _backendInstallStates[key];
         if (state == null) continue;
@@ -12734,6 +12737,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         });
       }
     }
+  }
+
+  void _removeResolvedBackendAuthCards(String serverId, String backend) {
+    _messages.removeWhere((message) {
+      if (message.type != MessageType.backendAuth) return false;
+      final input = message.toolInput ?? const <String, dynamic>{};
+      return input['_serverId']?.toString() == serverId &&
+          input['backend']?.toString() == backend &&
+          (input['authScope']?.toString() ?? 'openai') == 'openai';
+    });
   }
 
   void requestServerSettings({String? serverId}) {
