@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import '../models/message.dart';
+import '../models/ai_response_report.dart';
 import '../models/condensed_chat_rows.dart';
 import '../models/raw_event.dart';
 import '../services/socketagent_link_router.dart';
@@ -67,6 +68,11 @@ class ChatView extends StatefulWidget {
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractQueuedMessage;
   final ValueChanged<String>? onReadAloud;
+  final Future<String?> Function(
+    ChatMessage message,
+    AiResponseReportCategory category,
+  )?
+  onReportAiResponse;
   final bool rawMode;
   final List<SdkItem> rawItems;
   // For SubAgentCard: tracked subagent tasks and full message list for child lookup
@@ -106,6 +112,7 @@ class ChatView extends StatefulWidget {
     this.onBranch,
     this.onRetractQueuedMessage,
     this.onReadAloud,
+    this.onReportAiResponse,
     this.rawMode = false,
     this.rawItems = const [],
     this.subagentTasks = const {},
@@ -1470,6 +1477,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           onBranch: widget.onBranch,
           onRetractPending: widget.onRetractQueuedMessage,
           onReadAloud: widget.onReadAloud,
+          onReport: widget.onReportAiResponse,
         );
       case MessageType.toolCall:
         if (msg.toolName == 'Workflow') {
@@ -1587,6 +1595,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           message: msg,
           sourceServerId: widget.serverId,
           onReadAloud: widget.onReadAloud,
+          onReport: widget.onReportAiResponse,
         );
       case MessageType.error:
         return _buildErrorWidget(msg);

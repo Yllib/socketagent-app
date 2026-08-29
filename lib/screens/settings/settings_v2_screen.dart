@@ -220,6 +220,18 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     }
   }
 
+  Future<void> _openPrivacyPolicy() async {
+    final opened = await launchUrl(
+      Uri.parse('https://rubanoenterprises.com/socketagent/privacy.html'),
+      mode: LaunchMode.externalApplication,
+    );
+    if (!opened && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not open the privacy policy')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -387,6 +399,18 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                     subtitle: 'Scan or paste an encrypted config export',
                     trailing: Icons.chevron_right,
                     onTap: _openConfigImport,
+                  ),
+                ],
+              ),
+              _SettingsGroup(
+                title: 'Legal',
+                children: [
+                  _NavTile(
+                    icon: Icons.privacy_tip_outlined,
+                    title: 'Privacy Policy',
+                    subtitle: 'How SocketAgent handles data',
+                    trailing: Icons.open_in_new,
+                    onTap: _openPrivacyPolicy,
                   ),
                 ],
               ),
@@ -1844,44 +1868,63 @@ Future<void> _openBackendAuthPage(
   if (uri == null) return;
 
   if (hasCode) {
-    final overlayReady = await _ensureAuthCodeOverlayPermission(context);
-    if (!context.mounted || !overlayReady) return;
-    final shown = await _showAuthCodeOverlay(
-      title: overlayTitle,
-      code: authCode,
-    );
-    if (!context.mounted) return;
-    if (!shown) {
-      final openAnyway = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('Code overlay did not appear'),
-          content: const Text(
-            'The code was copied, but Android did not allow SocketAgent to draw the overlay. You can open the browser anyway and paste the copied code.',
+    if (AppBuild.supportsSystemOverlays) {
+      final overlayReady = await _ensureAuthCodeOverlayPermission(context);
+      if (!context.mounted || !overlayReady) return;
+      final shown = await _showAuthCodeOverlay(
+        title: overlayTitle,
+        code: authCode,
+      );
+      if (!context.mounted) return;
+      if (!shown) {
+        final openAnyway = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: const Text('Code overlay did not appear'),
+            content: const Text(
+              'The code was copied, but Android did not allow SocketAgent to draw the overlay. You can open the browser anyway and paste the copied code.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Open Browser Anyway'),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text('Open Browser Anyway'),
-            ),
-          ],
+        );
+        if (!context.mounted || openAnyway != true) return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shown
+                ? 'Code copied and shown over browser'
+                : 'Code copied, but overlay could not be shown',
+          ),
         ),
       );
-      if (!context.mounted || openAnyway != true) return;
-    }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          shown
-              ? 'Code copied and shown over browser'
-              : 'Code copied, but overlay could not be shown',
+    } else {
+      final shown = await NotificationService().showInstant(
+        id: NotificationService.stableId('auth-code:$overlayTitle'),
+        title: '$overlayTitle code',
+        body:
+            '$authCode\nCopied to clipboard. Return to SocketAgent when sign-in finishes.',
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            shown
+                ? 'Code copied and shown in a notification'
+                : 'Code copied to clipboard',
+          ),
         ),
-      ),
-    );
+      );
+    }
   }
   await launchUrl(uri, mode: LaunchMode.externalApplication);
 }
@@ -2043,7 +2086,9 @@ Widget _buildBackendDeviceAuthCard(
                   waitingForCodexCode
                       ? 'Waiting for Device Code'
                       : hasCode
-                      ? 'Show Code & Open Browser'
+                      ? AppBuild.supportsSystemOverlays
+                            ? 'Show Code & Open Browser'
+                            : 'Copy Code & Open Browser'
                       : 'Open Browser',
                 ),
               ),
@@ -2188,7 +2233,7 @@ void showBackendOperationDialog(
                       authCode: authCode,
                     ),
                   ],
-                  if (isAuthOperation) ...[
+                  if (isAuthOperation && AppBuild.supportsSystemOverlays) ...[
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,

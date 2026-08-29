@@ -46,6 +46,15 @@ String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
     return '$type:$sessionId:$reviewId:$revision';
   }
 
+  if (type == 'browser_session_open') {
+    final entryId = message['entryId'] as String? ?? '';
+    final profile = message['profile'] as String? ?? '';
+    final revision = (message['revision'] as num?)?.toInt() ?? 0;
+    final identity = entryId.isNotEmpty ? entryId : profile;
+    if (identity.isEmpty) return null;
+    return '$type:$sessionId:$identity:$revision';
+  }
+
   if (type == 'monitor_output') {
     final taskId = message['taskId'] as String? ?? '';
     final revision = (message['revision'] as num?)?.toInt() ?? 0;
@@ -533,6 +542,12 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
             live.type == MessageType.skillInvocation);
     final isProtectedUserPrompt =
         isUserPrompt && protectedUserMessageIds.contains(live.id);
+    // A bounded initial response is not the complete transcript. A durable
+    // cached row is not deleted merely because it is outside that window.
+    final isDurableKnown =
+        live.entryId != null &&
+        live.entryId!.isNotEmpty &&
+        live.sessionSeq != null;
     final isPositionedAfterSnapshot =
         newestSnapshotSequence != null &&
         live.sessionSeq != null &&
@@ -542,7 +557,8 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
         (newestLiveOverlap >= 0 && i > newestLiveOverlap && isUserPrompt);
     if (!_isLiveTranscriptMessage(live) &&
         !isLiveUserTail &&
-        !isProtectedUserPrompt) {
+        !isProtectedUserPrompt &&
+        !isDurableKnown) {
       continue;
     }
     final stableKey = _stableLiveKey(live);
@@ -576,7 +592,8 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     if (!belongsToUnmatchedLiveTail &&
         !isPositionedAfterSnapshot &&
         !isLiveUserTail &&
-        !isProtectedUserPrompt) {
+        !isProtectedUserPrompt &&
+        !isDurableKnown) {
       continue;
     }
     if ((live.type == MessageType.question ||

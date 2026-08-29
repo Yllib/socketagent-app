@@ -104,31 +104,6 @@ Map<String, dynamic> mergeLiveTranscriptCacheEntry(
   final sequence = (entry['sessionSeq'] as num?)?.toInt();
   if (entryId.isEmpty || sequence == null || sequence <= 0) return current;
 
-  if (entry['role'] == 'browser_session') {
-    final browserSessions = (current['browserSessions'] as List? ?? const [])
-        .whereType<Map>()
-        .map((item) => Map<String, dynamic>.from(item))
-        .toList();
-    final profile = ((entry['toolInput'] as Map?)?['profile'] ?? '').toString();
-    final existingIndex = browserSessions.indexWhere((item) {
-      if (item['entryId'] == entryId) return true;
-      final itemProfile = ((item['toolInput'] as Map?)?['profile'] ?? '')
-          .toString();
-      return profile.isNotEmpty && itemProfile == profile;
-    });
-    if (existingIndex >= 0) {
-      final existingRevision =
-          (browserSessions[existingIndex]['revision'] as num?)?.toInt() ?? 0;
-      final incomingRevision = (entry['revision'] as num?)?.toInt() ?? 0;
-      if (incomingRevision < existingRevision) return current;
-      browserSessions[existingIndex] = Map<String, dynamic>.from(entry);
-    } else {
-      browserSessions.add(Map<String, dynamic>.from(entry));
-    }
-    return Map<String, dynamic>.from(current)
-      ..['browserSessions'] = browserSessions;
-  }
-
   final messages = (current['messages'] as List? ?? const [])
       .whereType<Map>()
       .map((message) => Map<String, dynamic>.from(message))
@@ -264,7 +239,7 @@ class SessionTranscriptCache {
   // sequence while missing intervening entries, making the server return an
   // empty delta for an incomplete phone transcript. Force one authoritative
   // resume after upgrades that tighten these invariants.
-  static const int schemaVersion = 3;
+  static const int schemaVersion = 4;
   static const int maxSnapshots = 10;
   static const int maxSnapshotBytes = 2 * 1024 * 1024;
 

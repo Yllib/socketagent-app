@@ -18,6 +18,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   final PlayBillingService _billing = PlayBillingService.instance;
   StreamSubscription<PlayBillingEvent>? _eventSubscription;
   bool _ownerLoading = false;
+  bool _reviewLoading = false;
   String? _message;
 
   @override
@@ -106,6 +107,53 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
   }
 
+  Future<void> _showReviewAccess() async {
+    final controller = TextEditingController();
+    final reviewCode = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Play review access'),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Review code'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (reviewCode == null || reviewCode.isEmpty || !mounted) return;
+
+    setState(() {
+      _reviewLoading = true;
+      _message = null;
+    });
+    final error = await context.read<ChatProvider>().requestPlayReviewAccess(
+      reviewCode,
+    );
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _reviewLoading = false;
+      _message = error;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isPlay = AppBuild.supportsPlayBilling;
@@ -150,6 +198,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   ),
                   const SizedBox(height: 36),
                   if (isPlay) _buildPlayActions() else _buildDirectActions(),
+                  if (isPlay) ...[
+                    const SizedBox(height: 12),
+                    _buildReviewAccessAction(),
+                  ],
                   if (_message != null) ...[
                     const SizedBox(height: 18),
                     Text(
@@ -233,6 +285,19 @@ class _PaywallScreenState extends State<PaywallScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildReviewAccessAction() {
+    return TextButton(
+      onPressed: _reviewLoading ? null : _showReviewAccess,
+      child: _reviewLoading
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Text('Play reviewer access'),
     );
   }
 

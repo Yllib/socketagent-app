@@ -1,4 +1,5 @@
 import 'package:app/models/message.dart';
+import 'package:app/models/ai_response_report.dart';
 import 'package:app/widgets/message_bubble.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -20,6 +21,11 @@ void main() {
     WidgetTester tester,
     ChatMessage message, {
     ValueChanged<String>? onReadAloud,
+    Future<String?> Function(
+      ChatMessage message,
+      AiResponseReportCategory category,
+    )?
+    onReport,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -27,6 +33,7 @@ void main() {
           body: MessageBubble(
             message: message,
             onReadAloud: onReadAloud ?? (_) {},
+            onReport: onReport,
           ),
         ),
       ),
@@ -204,5 +211,72 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(spokenText, 'Result\n\nRead the full report with care.');
+  });
+
+  testWidgets('assistant actions visibly expose the AI report flow', (
+    tester,
+  ) async {
+    ChatMessage? reportedMessage;
+    AiResponseReportCategory? reportedCategory;
+    await pumpBubble(
+      tester,
+      assistantMessage('A response the user wants reviewed.'),
+      onReport: (message, category) async {
+        reportedMessage = message;
+        reportedCategory = category;
+        return null;
+      },
+    );
+
+    expect(
+      find.byKey(const ValueKey<String>('assistant-message-actions-button')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('assistant-message-actions-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey<String>('report-ai-response')),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('report-ai-response')));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('Rubano Enterprises for review'),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('report-category-offensive_or_unsafe')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(reportedMessage?.textContent, 'A response the user wants reviewed.');
+    expect(reportedCategory, AiResponseReportCategory.offensiveOrUnsafe);
+    expect(find.text('Response reported'), findsOneWidget);
+  });
+
+  testWidgets('AI report failures stay visible to the user', (tester) async {
+    await pumpBubble(
+      tester,
+      assistantMessage('Response'),
+      onReport: (_, _) async => 'Could not send the report.',
+    );
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('assistant-message-actions-button')),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(
+      find.byKey(const ValueKey<String>('report-ai-response')),
+    );
+    await tester.tap(find.byKey(const ValueKey<String>('report-ai-response')));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('report-category-other')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Could not send the report.'), findsOneWidget);
   });
 }

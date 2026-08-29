@@ -822,6 +822,7 @@ class HomeScreenState extends State<HomeScreen> {
                         _focusNode.requestFocus();
                       },
                       onReadAloud: provider.replaySpeak,
+                      onReportAiResponse: provider.reportAiResponse,
                       rawMode: provider.rawMode,
                       rawItems: provider.rawItems,
                       subagentTasks: provider.subagentTasks,
@@ -1296,7 +1297,8 @@ class HomeScreenState extends State<HomeScreen> {
         if (showCodexMode)
           PopupMenuItem(
             value: 'manage_codex_goal',
-            enabled: provider.activeSessionId != null &&
+            enabled:
+                provider.activeSessionId != null &&
                 provider.activeServerSupportsCodexGoals,
             child: Row(
               children: [
@@ -1326,7 +1328,8 @@ class HomeScreenState extends State<HomeScreen> {
         if (showCodexMode)
           PopupMenuItem(
             value: 'session_memory',
-            enabled: provider.activeSessionId != null &&
+            enabled:
+                provider.activeSessionId != null &&
                 provider.activeServerSupportsSessionMemory,
             child: Row(
               children: [
@@ -3046,9 +3049,9 @@ class HomeScreenState extends State<HomeScreen> {
     ChatProvider provider,
   ) async {
     if (!provider.hasElevenLabsApiKey) {
-      await Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const VoiceSpeechScreen()),
-      );
+      await Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const VoiceSpeechScreen()));
       return;
     }
     if (provider.elevenLabsVoices.length <= 1 &&

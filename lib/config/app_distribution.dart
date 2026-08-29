@@ -12,4 +12,6 @@ abstract final class AppBuild {
 
   static const supportsSelfUpdates = distribution == AppDistribution.direct;
   static const supportsPlayBilling = distribution == AppDistribution.play;
+  static const supportsExactAlarms = distribution == AppDistribution.direct;
+  static const supportsSystemOverlays = distribution == AppDistribution.direct;
 }

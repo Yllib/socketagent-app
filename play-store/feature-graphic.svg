@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="500" viewBox="0 0 1024 500">
+  <rect width="1024" height="500" fill="#000000"/>
+  <rect x="82" y="86" width="328" height="328" rx="76" fill="#078862"/>
+  <rect x="148" y="156" width="181" height="168" rx="42" fill="#f7f8f8"/>
+  <rect x="184" y="197" width="15" height="42" rx="7.5" fill="#076b52"/>
+  <rect x="267" y="197" width="15" height="42" rx="7.5" fill="#076b52"/>
+  <rect x="219" y="262" width="31" height="12" rx="6" fill="#076b52"/>
+  <path d="M312 121 297 177h24l-25 60" fill="none" stroke="#f5b216" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="330" cy="145" r="5" fill="#f5b216"/>
+  <circle cx="335" cy="164" r="3.5" fill="#f5b216"/>
+  <text x="476" y="221" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="78" font-weight="700">SocketAgent</text>
+  <text x="480" y="282" fill="#b9b9b9" font-family="Arial, Helvetica, sans-serif" font-size="29">Claude Code and Codex</text>
+  <text x="480" y="324" fill="#b9b9b9" font-family="Arial, Helvetica, sans-serif" font-size="29">from your Android phone</text>
+</svg>

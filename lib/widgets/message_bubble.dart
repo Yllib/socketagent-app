@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
+import '../models/ai_response_report.dart';
 import '../services/socketagent_link_router.dart';
 
 class MessageBubble extends StatelessWidget {
@@ -13,6 +14,11 @@ class MessageBubble extends StatelessWidget {
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractPending;
   final ValueChanged<String>? onReadAloud;
+  final Future<String?> Function(
+    ChatMessage message,
+    AiResponseReportCategory category,
+  )?
+  onReport;
   final String? sourceServerId;
 
   const MessageBubble({
@@ -22,6 +28,7 @@ class MessageBubble extends StatelessWidget {
     this.onBranch,
     this.onRetractPending,
     this.onReadAloud,
+    this.onReport,
     this.sourceServerId,
   });
 
@@ -271,6 +278,14 @@ class MessageBubble extends StatelessWidget {
             left: 56,
             child: _RewindButton(onTap: () => _showRewindSheet(context)),
           ),
+        if (hasMessageActions)
+          Positioned(
+            top: -2,
+            right: 56,
+            child: _MessageActionsButton(
+              onTap: () => _showMessageActions(context),
+            ),
+          ),
       ],
     );
   }
@@ -279,94 +294,168 @@ class MessageBubble extends StatelessWidget {
     showModalBottomSheet<void>(
       context: context,
       builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 32,
-              height: 4,
-              margin: const EdgeInsets.only(top: 12, bottom: 8),
-              decoration: BoxDecoration(
-                color: Theme.of(
-                  context,
-                ).colorScheme.onSurfaceVariant.withAlpha(80),
-                borderRadius: BorderRadius.circular(2),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 32,
+                height: 4,
+                margin: const EdgeInsets.only(top: 12, bottom: 8),
+                decoration: BoxDecoration(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurfaceVariant.withAlpha(80),
+                  borderRadius: BorderRadius.circular(2),
+                ),
               ),
-            ),
-            ListTile(
-              key: const ValueKey<String>('copy-message-plain'),
-              leading: const Icon(Icons.content_copy_outlined),
-              title: const Text('Copy as plain text'),
-              subtitle: const Text('Copy without Markdown formatting'),
-              onTap: () async {
-                Navigator.pop(sheetContext);
-                await Clipboard.setData(
-                  ClipboardData(text: _plainText(message.textContent)),
-                );
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('Message copied')));
-              },
-            ),
-            ListTile(
-              key: const ValueKey<String>('copy-message-markdown'),
-              leading: const Icon(Icons.code_outlined),
-              title: const Text('Copy as Markdown'),
-              subtitle: const Text('Copy the original formatting source'),
-              onTap: () async {
-                Navigator.pop(sheetContext);
-                await Clipboard.setData(
-                  ClipboardData(text: message.textContent),
-                );
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Markdown copied')),
-                );
-              },
-            ),
-            ListTile(
-              key: const ValueKey<String>('share-message'),
-              leading: const Icon(Icons.share_outlined),
-              title: const Text('Share'),
-              subtitle: const Text('Share plain text with another app'),
-              onTap: () async {
-                Navigator.pop(sheetContext);
-                try {
-                  await _nativeChannel.invokeMethod<void>('shareText', {
-                    'text': _plainText(message.textContent),
-                    'subject': 'SocketAgent message',
-                    'chooserTitle': 'Share message',
-                  });
-                } on PlatformException catch (error) {
+              ListTile(
+                key: const ValueKey<String>('copy-message-plain'),
+                leading: const Icon(Icons.content_copy_outlined),
+                title: const Text('Copy as plain text'),
+                subtitle: const Text('Copy without Markdown formatting'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await Clipboard.setData(
+                    ClipboardData(text: _plainText(message.textContent)),
+                  );
                   if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        error.message ?? 'Unable to share this message',
-                      ),
-                    ),
+                    const SnackBar(content: Text('Message copied')),
                   );
-                }
-              },
-            ),
-            if (onReadAloud != null)
-              ListTile(
-                key: const ValueKey<String>('read-whole-message'),
-                leading: const Icon(Icons.volume_up_outlined),
-                title: const Text('Read aloud'),
-                subtitle: const Text('Use your selected text-to-speech voice'),
-                onTap: () {
-                  Navigator.pop(sheetContext);
-                  onReadAloud!(_plainText(message.textContent));
                 },
+              ),
+              ListTile(
+                key: const ValueKey<String>('copy-message-markdown'),
+                leading: const Icon(Icons.code_outlined),
+                title: const Text('Copy as Markdown'),
+                subtitle: const Text('Copy the original formatting source'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  await Clipboard.setData(
+                    ClipboardData(text: message.textContent),
+                  );
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Markdown copied')),
+                  );
+                },
+              ),
+              ListTile(
+                key: const ValueKey<String>('share-message'),
+                leading: const Icon(Icons.share_outlined),
+                title: const Text('Share'),
+                subtitle: const Text('Share plain text with another app'),
+                onTap: () async {
+                  Navigator.pop(sheetContext);
+                  try {
+                    await _nativeChannel.invokeMethod<void>('shareText', {
+                      'text': _plainText(message.textContent),
+                      'subject': 'SocketAgent message',
+                      'chooserTitle': 'Share message',
+                    });
+                  } on PlatformException catch (error) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          error.message ?? 'Unable to share this message',
+                        ),
+                      ),
+                    );
+                  }
+                },
+              ),
+              if (onReadAloud != null)
+                ListTile(
+                  key: const ValueKey<String>('read-whole-message'),
+                  leading: const Icon(Icons.volume_up_outlined),
+                  title: const Text('Read aloud'),
+                  subtitle: const Text(
+                    'Use your selected text-to-speech voice',
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    onReadAloud!(_plainText(message.textContent));
+                  },
+                ),
+              if (onReport != null)
+                ListTile(
+                  key: const ValueKey<String>('report-ai-response'),
+                  leading: const Icon(Icons.flag_outlined),
+                  title: const Text('Report response'),
+                  subtitle: const Text('Flag offensive or unsafe AI content'),
+                  onTap: () {
+                    Navigator.pop(sheetContext);
+                    _showReportSheet(context);
+                  },
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showReportSheet(BuildContext context) async {
+    final category = await showModalBottomSheet<AiResponseReportCategory>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(20, 20, 20, 4),
+              child: Text(
+                'Why are you reporting this response?',
+                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+              child: Text(
+                'SocketAgent will send this response and your reason to '
+                'Rubano Enterprises for review.',
+                style: TextStyle(
+                  color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            for (final option in AiResponseReportCategory.values)
+              ListTile(
+                key: ValueKey<String>('report-category-${option.wireName}'),
+                leading: Icon(_reportIcon(option)),
+                title: Text(option.label),
+                onTap: () => Navigator.pop(sheetContext, option),
               ),
             const SizedBox(height: 8),
           ],
         ),
       ),
     );
+    if (category == null || onReport == null || !context.mounted) return;
+
+    final error = await onReport!(message, category);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error ?? 'Response reported'),
+        backgroundColor: error == null
+            ? null
+            : Theme.of(context).colorScheme.error,
+      ),
+    );
   }
+
+  static IconData _reportIcon(AiResponseReportCategory category) =>
+      switch (category) {
+        AiResponseReportCategory.offensiveOrUnsafe => Icons.gpp_maybe_outlined,
+        AiResponseReportCategory.misleadingOrDeceptive =>
+          Icons.fact_check_outlined,
+        AiResponseReportCategory.other => Icons.more_horiz,
+      };
 
   static String _plainText(String markdown) {
     return markdown
@@ -592,6 +681,29 @@ class MessageBubble extends StatelessWidget {
     ).then((confirmed) {
       if (confirmed == true) onConfirmed();
     });
+  }
+}
+
+class _MessageActionsButton extends StatelessWidget {
+  const _MessageActionsButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      shape: const CircleBorder(),
+      child: InkWell(
+        key: const ValueKey<String>('assistant-message-actions-button'),
+        customBorder: const CircleBorder(),
+        onTap: onTap,
+        child: const Padding(
+          padding: EdgeInsets.all(4),
+          child: Icon(Icons.more_horiz, size: 16),
+        ),
+      ),
+    );
   }
 }
 

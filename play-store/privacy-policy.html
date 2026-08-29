@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SocketAgent privacy policy</title>
+  <meta name="description" content="Privacy policy for SocketAgent by Rubano Enterprises, LLC.">
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font: 16px/1.6 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(760px, calc(100% - 40px)); margin: 0 auto; padding: 56px 0 80px; }
+    h1 { margin: 0 0 4px; font-size: clamp(2rem, 7vw, 3.5rem); line-height: 1.1; }
+    h2 { margin: 40px 0 8px; font-size: 1.25rem; }
+    p, li { color: #d5d5d5; }
+    .date { margin: 0 0 36px; color: #8f8f8f; }
+    a { color: #73e48f; }
+    li + li { margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>SocketAgent privacy policy</h1>
+    <p class="date">Effective August 29, 2026</p>
+
+    <p>SocketAgent is published by Rubano Enterprises, LLC. This policy explains what the SocketAgent Android app, companion server, and optional relay service process.</p>
+
+    <h2>Data SocketAgent processes</h2>
+    <p>SocketAgent may process the following data when you use the related feature:</p>
+    <ul>
+      <li>A Firebase installation ID, Firebase Cloud Messaging token, app version, and basic device or app metadata used to deliver notifications.</li>
+      <li>Google Play purchase records, including the product ID, purchase token, subscription status, and expiration or cancellation state, used to verify relay access and prevent purchase fraud.</li>
+      <li>For users who bought a SocketAgent subscription through Stripe before Google Play billing was introduced, an email address contained in the existing signed subscriber token. The relay uses this email to verify the existing subscription. SocketAgent does not create a new Stripe customer or accept new Stripe purchases in the Google Play version.</li>
+      <li>Text sent to ElevenLabs when you choose ElevenLabs as the text-to-speech provider. This feature uses an ElevenLabs API key that you supply. ElevenLabs processes the submitted text under the terms and privacy settings of your ElevenLabs account.</li>
+      <li>Connection metadata and random pairing identifiers needed to connect the app, companion server, and relay and to protect those connections from unauthorized access.</li>
+      <li>When you choose <strong>Report response</strong>, the reported AI response, your selected reason, app version, app distribution, agent backend, and a random report identifier. SocketAgent shows what will be sent before you submit the report.</li>
+    </ul>
+
+    <h2>Chats, files, and voice input</h2>
+    <p>Messages, tool activity, and files sent through the SocketAgent relay are end-to-end encrypted between your Android device and your companion server. Rubano Enterprises and the relay cannot read that content unless you explicitly submit an AI response through the in-app reporting feature.</p>
+    <p>Your companion server and agent provider may store session history on the computer you control. Claude Code and OpenAI Codex process prompts and responses under the terms of the account you use with those services.</p>
+    <p>Voice input uses on-device speech recognition. SocketAgent does not send microphone recordings to Rubano Enterprises. If you choose an optional third-party speech feature, the app identifies that provider before you enable it.</p>
+
+    <h2>How data is used</h2>
+    <p>SocketAgent uses the data described above only to operate direct and relay connections, deliver notifications, verify purchases and existing subscriptions, provide features you choose, protect the service from abuse, and review reports of offensive, unsafe, misleading, or deceptive AI responses.</p>
+    <p>SocketAgent does not sell personal data. It does not use personal data for advertising, marketing profiles, or analytics.</p>
+
+    <h2>Service providers</h2>
+    <p>SocketAgent uses Google Play Billing for purchases, Firebase Cloud Messaging for notifications, and ElevenLabs only when you enable its text-to-speech option with your own API key. Existing pre-Google Play subscribers may still be verified through Stripe. These companies process data under their own terms and privacy policies.</p>
+
+    <h2>Retention and deletion</h2>
+    <p>Notification registration data remains on the relay until you unenroll the device, replace the registration, or the data is removed as part of service maintenance. Purchase records remain while needed to provide access, reconcile purchases, prevent fraud, and meet legal obligations. Legacy subscriber emails are decoded from signed tokens when access is checked and are not stored in the relay entitlement database. Submitted AI response reports remain only as long as needed to review the report, address abuse, and document the action taken.</p>
+    <p>You can remove local SocketAgent data by deleting sessions, servers, and settings in the app or by clearing the app's storage. You control the data stored by the companion server and agent tools on your computer. To request removal of relay registration, entitlement data, or a submitted AI response report, contact us using the address below. We may need purchase, pairing, or report information to locate the record.</p>
+
+    <h2>Security</h2>
+    <p>SocketAgent encrypts data in transit. Relay chat and file content uses end-to-end encryption. No system can guarantee absolute security, but SocketAgent limits collected data to what its features require.</p>
+
+    <h2>Age restriction</h2>
+    <p>SocketAgent is intended for adults age 18 and older. It is not directed to children.</p>
+
+    <h2>Changes</h2>
+    <p>We may update this policy when SocketAgent's features or data practices change. The effective date at the top identifies the current version.</p>
+
+    <h2>Contact</h2>
+    <p>Rubano Enterprises, LLC<br><a href="mailto:google@rubanoenterprises.com">google@rubanoenterprises.com</a></p>
+  </main>
+</body>
+</html>

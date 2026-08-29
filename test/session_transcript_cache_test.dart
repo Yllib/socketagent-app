@@ -190,12 +190,12 @@ void main() {
     expect(complete?['content'], 'complete');
   });
 
-  test('browser cards are cached even when their transcript row is old', () {
+  test('browser cards advance the chronological live transcript cache', () {
     final card = transcriptCacheEntryFromServerEvent({
       'type': 'browser_session_open',
-      'entryId': 'browser-session:google-play-rubano',
-      'sessionSeq': 12,
-      'revision': 4,
+      'entryId': 'browser-entry-101',
+      'sessionSeq': 101,
+      'revision': 1,
       'profile': 'google-play-rubano',
       'label': 'Google Play',
       'url': 'https://play.google.com/console',
@@ -217,13 +217,10 @@ void main() {
 
     final merged = mergeLiveTranscriptCacheEntry(current, card!);
 
-    expect(merged['total'], 100);
-    expect((merged['messages'] as List).single['entryId'], 'entry-100');
-    expect((merged['browserSessions'] as List), hasLength(1));
-    expect(
-      (merged['browserSessions'] as List).single['toolInput']['profile'],
-      'google-play-rubano',
-    );
+    expect(merged['total'], 101);
+    expect((merged['messages'] as List), hasLength(2));
+    expect((merged['messages'] as List).last['entryId'], 'browser-entry-101');
+    expect((merged['messages'] as List).last['role'], 'browser_session');
   });
 
   test('final redacted thinking retains duration and tokens in live cache', () {

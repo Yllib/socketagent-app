@@ -48,6 +48,57 @@ void main() {
     expect(reconciled.single.type, MessageType.browserSession);
   });
 
+  test('browser delivery identity follows the durable card revision', () {
+    final first = acknowledgedSessionEventKey({
+      'type': 'browser_session_open',
+      'sessionId': 'session-1',
+      'entryId': 'browser-entry-1',
+      'profile': 'google-play-rubano',
+      'revision': 4,
+      'deliveryId': 'delivery-1',
+    });
+    final retry = acknowledgedSessionEventKey({
+      'type': 'browser_session_open',
+      'sessionId': 'session-1',
+      'entryId': 'browser-entry-1',
+      'profile': 'google-play-rubano',
+      'revision': 4,
+      'deliveryId': 'delivery-2',
+    });
+    final updated = acknowledgedSessionEventKey({
+      'type': 'browser_session_open',
+      'sessionId': 'session-1',
+      'entryId': 'browser-entry-1',
+      'profile': 'google-play-rubano',
+      'revision': 5,
+      'deliveryId': 'delivery-3',
+    });
+
+    expect(retry, first);
+    expect(updated, isNot(first));
+  });
+
+  test('separate browser sends remain separate chronological cards', () {
+    final first = browserSessionMessageFromPayload({
+      'entryId': 'browser-entry-1',
+      'sessionSeq': 42,
+      'profile': 'google-play-rubano',
+      'url': 'https://play.google.com/console',
+    })!;
+    final second = browserSessionMessageFromPayload({
+      'entryId': 'browser-entry-2',
+      'sessionSeq': 58,
+      'profile': 'google-play-rubano',
+      'url': 'https://play.google.com/console',
+    })!;
+
+    expect(sameBrowserSessionCard(first, second), isFalse);
+    expect(orderByTranscriptPosition([second, first]), [
+      same(first),
+      same(second),
+    ]);
+  });
+
   test('a missing live message never matches a root parent', () {
     expect(liveMessageMatchesParent(null, null), isFalse);
 
@@ -706,6 +757,23 @@ void main() {
 
     expect(reconciled, isNot(contains(same(oldTool))));
     expect(reconciled.last, same(activeReply));
+  });
+
+  test('bounded refresh cannot erase an older durable cached message', () {
+    final cached = ChatMessage.assistantText('session')
+      ..textContent = 'message the user is currently reading'
+      ..entryId = 'entry-39'
+      ..sessionSeq = 39;
+    final snapshot = ChatMessage.assistantText('session')
+      ..textContent = 'new bounded history window'
+      ..entryId = 'entry-40'
+      ..sessionSeq = 40;
+
+    final reconciled = orderByTranscriptPosition(
+      reconcileLiveTranscriptWithSnapshot([snapshot], [cached]),
+    );
+
+    expect(reconciled, [same(cached), same(snapshot)]);
   });
 
   test(

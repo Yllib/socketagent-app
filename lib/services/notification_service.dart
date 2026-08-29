@@ -7,6 +7,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:flutter_timezone/flutter_timezone.dart';
 import '../models/notification_navigation.dart';
+import '../config/app_distribution.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
@@ -140,7 +141,9 @@ class NotificationService {
         >();
     if (requestPermissions) {
       await androidPlugin?.requestNotificationsPermission();
-      await androidPlugin?.requestExactAlarmsPermission();
+      if (AppBuild.supportsExactAlarms) {
+        await androidPlugin?.requestExactAlarmsPermission();
+      }
     }
 
     // Pre-create channels so their badge behavior is stable. Channel settings
@@ -698,7 +701,9 @@ class NotificationService {
         body: body.isEmpty ? null : body,
         scheduledDate: scheduledTz,
         notificationDetails: details,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: AppBuild.supportsExactAlarms
+            ? AndroidScheduleMode.exactAllowWhileIdle
+            : AndroidScheduleMode.inexactAllowWhileIdle,
         payload: 'reminder_$id',
       );
 

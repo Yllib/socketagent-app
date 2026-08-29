@@ -7,8 +7,10 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:open_filex/open_filex.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
+import '../models/ai_response_report.dart';
 import '../models/message_reconciliation.dart';
 import '../models/file_event_routing.dart';
 import '../models/history_normalization.dart';
@@ -55,6 +57,8 @@ import 'session_transcript_cache.dart';
 import 'hard_stop_target.dart';
 import 'session_live_state.dart';
 import 'session_identity_remap.dart';
+import 'ai_response_report_service.dart';
+import '../config/app_distribution.dart';
 
 const _codexAgentControlTypes = {
   'wait',
@@ -495,6 +499,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final NotificationService _notifications = NotificationService();
   final CryptoService _crypto = CryptoService();
   final SecureStorageService _secureStorage = SecureStorageService();
+  final AiResponseReportService _aiResponseReports = AiResponseReportService();
   final _subscriptionRequiredController = StreamController<void>.broadcast();
   final _backendAuthRequiredController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -3300,6 +3305,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return urls;
   }
 
+  Future<String?> reportAiResponse(
+    ChatMessage message,
+    AiResponseReportCategory category,
+  ) async {
+    if (message.sender != MessageSender.assistant ||
+        message.textContent.trim().isEmpty) {
+      return 'There is no assistant response to report.';
+    }
+    final packageInfo = await PackageInfo.fromPlatform();
+    return _aiResponseReports.submit(
+      relayHttpUrls: _relayHttpUrlCandidates(),
+      category: category,
+      content: message.textContent,
+      subscriberToken: _subscriberToken,
+      appVersion: '${packageInfo.version}+${packageInfo.buildNumber}',
+      distribution: AppBuild.distributionName,
+      backend: _activeSessionBackend ?? '',
+    );
+  }
+
   String? _relayHttpUrlFromWs(String relayUrl) {
     var value = relayUrl.trim();
     if (value.isEmpty) return null;
@@ -3513,6 +3538,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (response.statusCode == 403) return 'The owner code is not valid.';
       } catch (e) {
         debugPrint('[Subscription] Owner access failed: $e');
+      }
+    }
+    return 'Could not reach the relay.';
+  }
+
+  /// Exchange a Play Console review code for temporary relay access.
+  Future<String?> requestPlayReviewAccess(String reviewCode) async {
+    if (reviewCode.trim().isEmpty) return 'Enter the review code.';
+    final prefs = await SharedPreferences.getInstance();
+    _cachedPrefs = prefs;
+    final httpUrls = _relayHttpUrlCandidates();
+    if (httpUrls.isEmpty) return 'The relay URL is not configured.';
+
+    for (final httpUrl in httpUrls) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('$httpUrl/api/play-review-access'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'reviewCode': reviewCode.trim()}),
+            )
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          final relayToken = data['token'] as String?;
+          if (relayToken == null || relayToken.isEmpty) {
+            return 'The relay did not return an access token.';
+          }
+          await saveSubscriberToken(relayToken);
+          _applySubscriptionDetails(data);
+          notifyListeners();
+          return null;
+        }
+        if (response.statusCode == 403) return 'The review code is not valid.';
+      } catch (e) {
+        debugPrint('[Subscription] Play review access failed: $e');
       }
     }
     return 'Could not reach the relay.';
@@ -4158,6 +4219,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             type == 'file' ||
             type == 'html_plan' ||
             type == 'work_review_card' ||
+            type == 'browser_session_open' ||
             type == 'monitor_output' ||
             type == 'text' ||
             type == 'thinking');
@@ -5952,6 +6014,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             type == 'file' ||
             type == 'html_plan' ||
             type == 'work_review_card' ||
+            type == 'browser_session_open' ||
             type == 'text' ||
             type == 'thinking');
     if (!tracked) return;
@@ -9377,10 +9440,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final rawMessages = normalizeSendFileHistoryEntries(
       msg['messages'] as List? ?? const [],
     );
-    final rawBrowserSessions = (msg['browserSessions'] as List? ?? const [])
-        .whereType<Map>()
-        .map((entry) => Map<String, dynamic>.from(entry))
-        .toList();
     final rawTaskStates = (msg['taskStates'] as List? ?? const [])
         .whereType<Map>()
         .map((entry) => Map<String, dynamic>.from(entry))
@@ -9392,11 +9451,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final historyEntries =
         <Map<String, dynamic>>[
           ...rawMessages,
-          ...rawBrowserSessions.where(
-            (entry) =>
-                (entry['entryId']?.toString() ?? '').isEmpty ||
-                !messageEntryIds.contains(entry['entryId'].toString()),
-          ),
           ...rawTaskStates.where(
             (entry) =>
                 (entry['entryId']?.toString() ?? '').isEmpty ||
@@ -16812,6 +16866,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _sessionMemoryCompleters.clear();
     _connMgr.dispose();
+    _aiResponseReports.dispose();
     _speech.dispose();
     _systemEngine.playbackState.removeListener(_onTtsPlaybackChanged);
     _kokoroServerEngine.playbackState.removeListener(_onTtsPlaybackChanged);
