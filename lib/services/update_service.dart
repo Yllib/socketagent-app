@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart' as crypto;
+import '../config/app_distribution.dart';
 
 class UpdateInfo {
   final String latestVersion;
@@ -57,6 +58,7 @@ class UpdateService extends ChangeNotifier {
 
   /// Direct app update check against the public release metadata on GitHub.
   Future<UpdateInfo?> checkForUpdate() async {
+    if (!AppBuild.supportsSelfUpdates) return null;
     _finishInstallerLaunchState();
     _error = null;
     try {
@@ -171,6 +173,7 @@ class UpdateService extends ChangeNotifier {
   /// Download and verify the APK without opening the installer. Download state
   /// lives on this service, so it continues while callers navigate elsewhere.
   Future<void> downloadUpdate() async {
+    if (!AppBuild.supportsSelfUpdates) return;
     if (_updateInfo == null || _updateInfo!.downloadUrl.isEmpty) return;
     if (_isDownloading) return;
     if (_updateInfo!.sha256.isEmpty) {
@@ -230,6 +233,7 @@ class UpdateService extends ChangeNotifier {
   /// both steps. New compact controls should use downloadUpdate followed by
   /// installDownloaded so the ready-to-install state remains explicit.
   Future<void> downloadAndInstall() async {
+    if (!AppBuild.supportsSelfUpdates) return;
     await _refreshDownloadedApkState();
     if (!_hasDownloadedApk) {
       await downloadUpdate();
@@ -240,6 +244,7 @@ class UpdateService extends ChangeNotifier {
   }
 
   Future<void> installDownloaded() async {
+    if (!AppBuild.supportsSelfUpdates) return;
     if (_isOpeningInstaller) return;
     _isOpeningInstaller = true;
     _error = null;

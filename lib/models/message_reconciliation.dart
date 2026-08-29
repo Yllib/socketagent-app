@@ -86,6 +86,42 @@ void applyTranscriptPosition(ChatMessage message, Map<String, dynamic> source) {
   }
 }
 
+ChatMessage? browserSessionMessageFromPayload(Map<String, dynamic> payload) {
+  final rawInput = payload['toolInput'];
+  final input = rawInput is Map ? Map<String, dynamic>.from(rawInput) : payload;
+  final profile = input['profile'] as String? ?? '';
+  final url = input['url'] as String? ?? '';
+  if (profile.isEmpty || url.isEmpty) return null;
+  final message = ChatMessage.browserSession(
+    profile: profile,
+    label: input['label'] as String? ?? profile,
+    url: url,
+    width: (input['width'] as num?)?.toInt() ?? 430,
+    height: (input['height'] as num?)?.toInt() ?? 860,
+    runtimeRequired: input['runtimeRequired'] == true,
+  );
+  applyTranscriptPosition(message, payload);
+  return message;
+}
+
+bool sameBrowserSessionCard(ChatMessage left, ChatMessage right) {
+  if (left.type != MessageType.browserSession ||
+      right.type != MessageType.browserSession) {
+    return false;
+  }
+  final leftEntryId = left.entryId;
+  final rightEntryId = right.entryId;
+  if (leftEntryId != null &&
+      leftEntryId.isNotEmpty &&
+      rightEntryId != null &&
+      rightEntryId.isNotEmpty) {
+    return leftEntryId == rightEntryId;
+  }
+  final leftProfile = left.toolInput?['profile'] as String? ?? '';
+  final rightProfile = right.toolInput?['profile'] as String? ?? '';
+  return leftProfile.isNotEmpty && leftProfile == rightProfile;
+}
+
 bool isStaleTranscriptRevision(
   Iterable<ChatMessage> messages,
   Map<String, dynamic> incoming,
@@ -347,7 +383,8 @@ bool _isLiveTranscriptMessage(ChatMessage message) {
       message.type == MessageType.text ||
       message.type == MessageType.thinking ||
       message.type == MessageType.question ||
-      message.type == MessageType.secureInput;
+      message.type == MessageType.secureInput ||
+      message.type == MessageType.browserSession;
 }
 
 bool _isExplicitlyActiveLiveMessage(ChatMessage message) {

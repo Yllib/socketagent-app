@@ -3,7 +3,6 @@ package com.socketagent.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -15,9 +14,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.view.inputmethod.EditorInfo
-import android.text.InputType
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -58,139 +54,6 @@ object AuthCodeOverlay {
             shown
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
-            false
-        }
-    }
-
-    fun showAdbPairing(
-        context: Context,
-        initialPort: String,
-        initialCode: String,
-        timeoutMillis: Long,
-        onSubmit: (String, String) -> Unit
-    ): Boolean {
-        if (!canDraw(context)) return false
-
-        if (Looper.myLooper() == Looper.getMainLooper()) {
-            return showAdbPairingOnMain(
-                context,
-                initialPort,
-                initialCode,
-                timeoutMillis,
-                onSubmit
-            )
-        }
-
-        val latch = CountDownLatch(1)
-        var shown = false
-        handler.post {
-            shown = showAdbPairingOnMain(
-                context,
-                initialPort,
-                initialCode,
-                timeoutMillis,
-                onSubmit
-            )
-            latch.countDown()
-        }
-        return try {
-            latch.await(2, TimeUnit.SECONDS)
-            shown
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            false
-        }
-    }
-
-    private fun showAdbPairingOnMain(
-        context: Context,
-        initialPort: String,
-        initialCode: String,
-        timeoutMillis: Long,
-        onSubmit: (String, String) -> Unit
-    ): Boolean {
-        return try {
-            hideOnMain()
-            val appContext = context.applicationContext
-            val wm = appContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-            windowManager = wm
-
-            val card = overlayCard(appContext)
-            val header = overlayHeader(appContext, "Pair wireless ADB")
-            header.addView(actionPill(appContext, "Close") { hide() })
-            card.addView(header)
-
-            card.addView(TextView(appContext).apply {
-                text = "Enter the values shown under Pair device with pairing code."
-                setTextColor(Color.argb(205, 255, 255, 255))
-                textSize = 12f
-                setPadding(0, dp(appContext, 8), 0, dp(appContext, 8))
-            })
-
-            val fields = LinearLayout(appContext).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-            }
-            val portField = numberField(appContext, "Pairing port", initialPort).apply {
-                imeOptions = EditorInfo.IME_ACTION_NEXT
-            }
-            val codeField = numberField(appContext, "Pairing code", initialCode).apply {
-                imeOptions = EditorInfo.IME_ACTION_DONE
-            }
-            fields.addView(portField, LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            ).apply { marginEnd = dp(appContext, 8) })
-            fields.addView(codeField, LinearLayout.LayoutParams(
-                0,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                1f
-            ))
-            card.addView(fields)
-
-            val actions = LinearLayout(appContext).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, dp(appContext, 10), 0, 0)
-            }
-            actions.addView(TextView(appContext).apply {
-                text = "Drag title to move"
-                setTextColor(Color.argb(190, 255, 255, 255))
-                textSize = 12f
-                layoutParams = LinearLayout.LayoutParams(
-                    0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT,
-                    1f
-                )
-            })
-            actions.addView(actionPill(appContext, "Pair") {
-                val port = portField.text.toString().trim()
-                val code = codeField.text.toString().trim()
-                val parsedPort = port.toIntOrNull()
-                if (parsedPort == null || parsedPort !in 1..65535) {
-                    Toast.makeText(appContext, "Enter a valid pairing port", Toast.LENGTH_SHORT).show()
-                    portField.requestFocus()
-                    return@actionPill
-                }
-                if (code.length !in 4..12 || code.any { !it.isDigit() }) {
-                    Toast.makeText(appContext, "Enter the numeric pairing code", Toast.LENGTH_SHORT).show()
-                    codeField.requestFocus()
-                    return@actionPill
-                }
-                onSubmit(port, code)
-                Toast.makeText(appContext, "ADB pairing submitted", Toast.LENGTH_SHORT).show()
-                hide()
-            })
-            card.addView(actions)
-
-            val params = overlayParams(appContext, focusable = true)
-            attachDrag(header, card, params)
-            wm.addView(card, params)
-            overlayView = card
-            scheduleHide(timeoutMillis)
-            true
-        } catch (_: Exception) {
             false
         }
     }
@@ -303,20 +166,6 @@ object AuthCodeOverlay {
                     1f
                 )
             })
-        }
-    }
-
-    private fun numberField(context: Context, hint: String, value: String): EditText {
-        return EditText(context).apply {
-            setText(value)
-            this.hint = hint
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.argb(155, 255, 255, 255))
-            textSize = 15f
-            inputType = InputType.TYPE_CLASS_NUMBER
-            isSingleLine = true
-            setSelectAllOnFocus(true)
-            backgroundTintList = ColorStateList.valueOf(Color.argb(150, 255, 255, 255))
         }
     }
 

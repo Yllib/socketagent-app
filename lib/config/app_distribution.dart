@@ -1,0 +1,15 @@
+enum AppDistribution { direct, play }
+
+abstract final class AppBuild {
+  static const distributionName = String.fromEnvironment(
+    'SOCKETAGENT_DISTRIBUTION',
+    defaultValue: 'direct',
+  );
+
+  static const distribution = distributionName == 'play'
+      ? AppDistribution.play
+      : AppDistribution.direct;
+
+  static const supportsSelfUpdates = distribution == AppDistribution.direct;
+  static const supportsPlayBilling = distribution == AppDistribution.play;
+}

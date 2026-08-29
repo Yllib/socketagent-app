@@ -8,13 +8,14 @@ import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
 import '../../models/push_delivery_capabilities.dart';
+import '../../config/app_distribution.dart';
 import '../../services/chat_provider.dart';
 import '../../services/firebase_project_configuration_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/play_billing_service.dart';
 import '../../services/push_notification_service.dart';
 import '../../services/private_integration_auth_flow.dart';
 import '../../services/update_service.dart';
@@ -26,7 +27,6 @@ import '../connect_computer_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
 import '../paywall_screen.dart';
-import 'adb_bridge_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
 import 'voice_speech_screen.dart';
@@ -53,21 +53,28 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
   @override
   void initState() {
     super.initState();
-    updateService.addListener(_onUpdateChanged);
+    if (AppBuild.supportsSelfUpdates) {
+      updateService.addListener(_onUpdateChanged);
+    }
     unawaited(_loadCurrentVersion());
   }
 
   @override
   void didUpdateWidget(covariant SettingsV2Screen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.updateService == updateService) return;
+    if (!AppBuild.supportsSelfUpdates ||
+        oldWidget.updateService == updateService) {
+      return;
+    }
     oldWidget.updateService.removeListener(_onUpdateChanged);
     updateService.addListener(_onUpdateChanged);
   }
 
   @override
   void dispose() {
-    updateService.removeListener(_onUpdateChanged);
+    if (AppBuild.supportsSelfUpdates) {
+      updateService.removeListener(_onUpdateChanged);
+    }
     super.dispose();
   }
 
@@ -225,7 +232,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           appBar: AppBar(
             title: const Text('Settings'),
             actions: [
-              _buildUpdateAction(context),
+              if (AppBuild.supportsSelfUpdates) _buildUpdateAction(context),
               Padding(
                 padding: const EdgeInsets.only(left: 2, right: 12),
                 child: Center(
@@ -360,17 +367,6 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => const ProtectedFilesScreen(),
-                      ),
-                    ),
-                  ),
-                  _NavTile(
-                    icon: Icons.usb,
-                    title: 'ADB Bridge',
-                    subtitle: 'Tunnel Android Wireless Debugging through relay',
-                    trailing: Icons.chevron_right,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const AdbBridgeScreen(),
                       ),
                     ),
                   ),
@@ -513,7 +509,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
         ),
       );
     }
-    if (updateService.updateAvailable) {
+    if (AppBuild.supportsSelfUpdates && updateService.updateAvailable) {
       final downloading = updateService.isDownloading;
       final downloaded = updateService.hasDownloadedApk;
       final openingInstaller = updateService.isOpeningInstaller;
@@ -1467,17 +1463,19 @@ class _Overview extends StatelessWidget {
                   tone: warnings == 0 ? _ChipTone.good : _ChipTone.warning,
                 ),
               ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _MetricChip(
-                  icon: Icons.system_update,
-                  label: 'App',
-                  value: updateService.updateAvailable ? 'update' : 'current',
-                  tone: updateService.updateAvailable
-                      ? _ChipTone.info
-                      : _ChipTone.good,
+              if (AppBuild.supportsSelfUpdates) ...[
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _MetricChip(
+                    icon: Icons.system_update,
+                    label: 'App',
+                    value: updateService.updateAvailable ? 'update' : 'current',
+                    tone: updateService.updateAvailable
+                        ? _ChipTone.info
+                        : _ChipTone.good,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ],
@@ -2344,6 +2342,7 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
   Future<void> _handleTap(ChatProvider provider) async {
     final hasAccess = provider.hasCachedRelayAccess;
     final isOwner = provider.subscriptionStatus == 'owner';
+    final isGooglePlay = provider.subscriptionProvider == 'google_play';
 
     if (!hasAccess) {
       final signedIn = await Navigator.of(
@@ -2355,23 +2354,19 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
       return;
     }
 
-    if (isOwner || _openingPortal) return;
+    if (isOwner || !isGooglePlay || _openingPortal) return;
 
     setState(() => _openingPortal = true);
-    final url = await provider.getBillingPortalUrl();
+    final opened = await PlayBillingService.openSubscriptionManagement();
     if (!mounted) return;
     setState(() => _openingPortal = false);
 
-    if (url == null || url.isEmpty) {
+    if (!opened) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open billing portal')),
+        const SnackBar(content: Text('Could not open Google Play')),
       );
       return;
     }
-
-    await Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => _BillingPortalScreen(url: url)));
     if (mounted) {
       await provider.checkSubscriptionStatus();
     }
@@ -2383,6 +2378,8 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
       builder: (context, provider, _) {
         final hasAccess = provider.hasCachedRelayAccess;
         final isOwner = provider.subscriptionStatus == 'owner';
+        final isLegacyStripe = provider.subscriptionProvider == 'stripe';
+        final isGooglePlay = provider.subscriptionProvider == 'google_play';
         final lines = _subscriptionLines(provider);
 
         return ListTile(
@@ -2400,38 +2397,24 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
           trailing: hasAccess
               ? isOwner
                     ? const Text('Owner')
+                    : isLegacyStripe
+                    ? const Text('Legacy')
                     : _openingPortal
                     ? const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : TextButton(
+                    : isGooglePlay
+                    ? TextButton(
                         onPressed: () => _handleTap(provider),
                         child: const Text('Manage'),
                       )
+                    : const SizedBox.shrink()
               : const Icon(Icons.chevron_right),
-          onTap: () => _handleTap(provider),
+          onTap: !hasAccess || isGooglePlay ? () => _handleTap(provider) : null,
         );
       },
-    );
-  }
-}
-
-class _BillingPortalScreen extends StatelessWidget {
-  const _BillingPortalScreen({required this.url});
-
-  final String url;
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..loadRequest(Uri.parse(url));
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Manage Subscription')),
-      body: WebViewWidget(controller: controller),
     );
   }
 }
@@ -3616,6 +3599,9 @@ List<String> _subscriptionLines(ChatProvider provider) {
     parts.add('Checking subscription');
   } else if (provider.subscriptionStatus == 'owner') {
     parts.add('Owner account');
+  } else if (provider.subscriptionProvider == 'stripe' &&
+      provider.subscriptionActive) {
+    parts.add('Legacy Stripe subscription active');
   } else if (provider.subscriptionStatus == 'trialing' &&
       provider.trialEnd != null) {
     parts.add('Trial ends ${_formatDate(provider.trialEnd!)}');

@@ -1968,6 +1968,7 @@ class _SessionsTabState extends State<SessionsTab> {
   Widget _buildUpdateBanner(BuildContext context) {
     final shell = context.findAncestorStateOfType<MainShellScreenState>();
     if (shell == null ||
+        !shell.supportsSelfUpdates ||
         !shell.updateService.updateAvailable ||
         shell.updateBannerDismissed) {
       return const SizedBox.shrink();

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../config/app_distribution.dart';
 import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
 import '../services/update_service.dart';
@@ -48,7 +49,9 @@ class MainShellScreenState extends State<MainShellScreen>
     super.initState();
     _currentIndex = widget.initialIndex.clamp(0, 2).toInt();
     WidgetsBinding.instance.addObserver(this);
-    _updateService.addListener(_onUpdateChange);
+    if (AppBuild.supportsSelfUpdates) {
+      _updateService.addListener(_onUpdateChange);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
       _subRequiredSub = provider.onSubscriptionRequired.listen((_) {
@@ -127,16 +130,19 @@ class MainShellScreenState extends State<MainShellScreen>
       await provider.connectToServer();
       provider.refreshSubscriptionStatusIfStale();
       provider.requestSessionList();
-      // App release metadata is public on GitHub; do not depend on a server.
-      unawaited(_checkForAppUpdate(force: true));
-      _updateCheckTimer = Timer.periodic(
-        _updateCheckInterval,
-        (_) => unawaited(_checkForAppUpdate()),
-      );
+      if (AppBuild.supportsSelfUpdates) {
+        // Direct builds update from public GitHub release metadata.
+        unawaited(_checkForAppUpdate(force: true));
+        _updateCheckTimer = Timer.periodic(
+          _updateCheckInterval,
+          (_) => unawaited(_checkForAppUpdate()),
+        );
+      }
     });
   }
 
   Future<void> _checkForAppUpdate({bool force = false}) {
+    if (!AppBuild.supportsSelfUpdates) return Future.value();
     final active = _updateCheckInFlight;
     if (active != null) return active;
     final lastCheck = _lastUpdateCheckAt;
@@ -186,7 +192,9 @@ class MainShellScreenState extends State<MainShellScreen>
     _subRequiredSub?.cancel();
     _backendAuthRequiredSub?.cancel();
     _backendAuthResolvedSub?.cancel();
-    _updateService.removeListener(_onUpdateChange);
+    if (AppBuild.supportsSelfUpdates) {
+      _updateService.removeListener(_onUpdateChange);
+    }
     routeObserver.unsubscribe(this);
     super.dispose();
   }
@@ -194,10 +202,11 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      // Returning from Android's package installer must re-read the running
-      // app version immediately. The normal foreground throttle would leave a
-      // successfully installed APK showing as install-ready for up to a minute.
-      unawaited(_checkForAppUpdate(force: _updateService.hasDownloadedApk));
+      if (AppBuild.supportsSelfUpdates) {
+        // Returning from Android's package installer must re-read the running
+        // version immediately so a completed install is not shown as pending.
+        unawaited(_checkForAppUpdate(force: _updateService.hasDownloadedApk));
+      }
       if (_currentIndex == 1) _startScheduledTaskRefresh();
     } else {
       _scheduledTaskRefreshTimer?.cancel();
@@ -239,6 +248,7 @@ class MainShellScreenState extends State<MainShellScreen>
 
   /// Expose update service to child widgets
   UpdateService get updateService => _updateService;
+  bool get supportsSelfUpdates => AppBuild.supportsSelfUpdates;
   bool get updateBannerDismissed => _updateBannerDismissed;
   void dismissUpdateBanner() => setState(() {
     _updateBannerDismissed = true;

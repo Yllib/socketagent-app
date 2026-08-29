@@ -104,6 +104,31 @@ Map<String, dynamic> mergeLiveTranscriptCacheEntry(
   final sequence = (entry['sessionSeq'] as num?)?.toInt();
   if (entryId.isEmpty || sequence == null || sequence <= 0) return current;
 
+  if (entry['role'] == 'browser_session') {
+    final browserSessions = (current['browserSessions'] as List? ?? const [])
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+    final profile = ((entry['toolInput'] as Map?)?['profile'] ?? '').toString();
+    final existingIndex = browserSessions.indexWhere((item) {
+      if (item['entryId'] == entryId) return true;
+      final itemProfile = ((item['toolInput'] as Map?)?['profile'] ?? '')
+          .toString();
+      return profile.isNotEmpty && itemProfile == profile;
+    });
+    if (existingIndex >= 0) {
+      final existingRevision =
+          (browserSessions[existingIndex]['revision'] as num?)?.toInt() ?? 0;
+      final incomingRevision = (entry['revision'] as num?)?.toInt() ?? 0;
+      if (incomingRevision < existingRevision) return current;
+      browserSessions[existingIndex] = Map<String, dynamic>.from(entry);
+    } else {
+      browserSessions.add(Map<String, dynamic>.from(entry));
+    }
+    return Map<String, dynamic>.from(current)
+      ..['browserSessions'] = browserSessions;
+  }
+
   final messages = (current['messages'] as List? ?? const [])
       .whereType<Map>()
       .map((message) => Map<String, dynamic>.from(message))
@@ -210,6 +235,24 @@ Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
         'workReview': event['review'] is Map
             ? Map<String, dynamic>.from(event['review'] as Map)
             : Map<String, dynamic>.from(event),
+      };
+    case 'browser_session_open':
+      final profile = event['profile']?.toString() ?? '';
+      final url = event['url']?.toString() ?? '';
+      if (profile.isEmpty || url.isEmpty) return null;
+      return {
+        ...base,
+        'role': 'browser_session',
+        'content': event['label']?.toString() ?? profile,
+        'toolName': 'BrowserSession',
+        'toolInput': {
+          'profile': profile,
+          'label': event['label']?.toString() ?? profile,
+          'url': url,
+          'width': (event['width'] as num?)?.toInt() ?? 430,
+          'height': (event['height'] as num?)?.toInt() ?? 860,
+          if (event['runtimeRequired'] == true) 'runtimeRequired': true,
+        },
       };
   }
   return null;

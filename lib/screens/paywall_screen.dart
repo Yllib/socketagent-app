@@ -1,7 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+
+import '../config/app_distribution.dart';
 import '../services/chat_provider.dart';
+import '../services/play_billing_service.dart';
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
@@ -11,232 +15,256 @@ class PaywallScreen extends StatefulWidget {
 }
 
 class _PaywallScreenState extends State<PaywallScreen> {
-  final _emailController = TextEditingController();
-  bool _loading = false;
-  String? _error;
-  bool _showWebView = false;
-  String? _checkoutSessionId;
-  late WebViewController _webViewController;
+  final PlayBillingService _billing = PlayBillingService.instance;
+  StreamSubscription<PlayBillingEvent>? _eventSubscription;
+  bool _ownerLoading = false;
+  String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    _billing.addListener(_onBillingChanged);
+    _eventSubscription = _billing.events.listen(_handleBillingEvent);
+  }
 
   @override
   void dispose() {
-    _emailController.dispose();
+    _eventSubscription?.cancel();
+    _billing.removeListener(_onBillingChanged);
     super.dispose();
   }
 
-  Future<void> _subscribe() async {
-    final input = _emailController.text.trim().toLowerCase();
-    if (input.isEmpty) {
-      setState(() => _error = 'Enter your email to continue');
-      return;
-    }
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
-    final provider = context.read<ChatProvider>();
-    final result = await provider.createCheckoutSession(input);
-
-    if (!mounted) return;
-
-    if (result == null) {
-      setState(() {
-        _loading = false;
-        _error =
-            'Could not reach the relay service. Check your internet connection.';
-      });
-      return;
-    }
-
-    // Server returned an error
-    if (result.containsKey('error')) {
-      setState(() {
-        _loading = false;
-        _error = result['error'] as String? ?? 'Unknown relay error';
-      });
-      return;
-    }
-
-    // Existing subscription / owner bypass: token returned directly.
-    if (result['ownerBypass'] == true ||
-        result['existingSubscription'] == true) {
-      final token = result['token'] as String? ?? '';
-      final email = result['email'] as String? ?? '';
-      await provider.saveSubscriberToken(token, email);
-      if (mounted) {
-        Navigator.of(context).pop(true);
-      }
-      return;
-    }
-
-    // Normal flow: open Stripe Checkout in WebView
-    final url = result['url'] as String?;
-    if (url == null || url.isEmpty) {
-      setState(() {
-        _loading = false;
-        _error = 'Could not create checkout session';
-      });
-      return;
-    }
-
-    // Extract session ID from the checkout response
-    _checkoutSessionId = result['sessionId'] as String?;
-
-    _webViewController = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onNavigationRequest: (request) {
-            // Intercept success redirect
-            if (request.url.contains('/checkout/success')) {
-              _handleCheckoutSuccess(request.url);
-              return NavigationDecision.prevent;
-            }
-            if (request.url.contains('/checkout/cancel')) {
-              setState(() {
-                _showWebView = false;
-                _loading = false;
-              });
-              return NavigationDecision.prevent;
-            }
-            return NavigationDecision.navigate;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(url));
-
-    setState(() {
-      _showWebView = true;
-      _loading = false;
-    });
+  void _onBillingChanged() {
+    if (mounted) setState(() {});
   }
 
-  Future<void> _handleCheckoutSuccess(String successUrl) async {
-    setState(() {
-      _showWebView = false;
-      _loading = true;
-    });
-
-    final redirectSessionId = Uri.tryParse(
-      successUrl,
-    )?.queryParameters['session_id'];
-    final sessionId = redirectSessionId ?? _checkoutSessionId;
-    if (sessionId == null || sessionId.isEmpty) {
-      setState(() {
-        _loading = false;
-        _error = 'Missing session ID — please try again';
-      });
+  void _handleBillingEvent(PlayBillingEvent event) {
+    if (!mounted) return;
+    if (event.type == PlayBillingEventType.accessGranted) {
+      Navigator.of(context).pop(true);
       return;
     }
+    setState(() => _message = event.message);
+  }
 
-    final provider = context.read<ChatProvider>();
-    final success = await provider.verifyCheckoutSession(sessionId);
-
-    if (!mounted) return;
-
-    if (success) {
-      Navigator.of(context).pop(true);
-    } else {
-      setState(() {
-        _loading = false;
-        _error = 'Could not verify payment. Please try again.';
-      });
+  Future<void> _openPlayStore() async {
+    final opened = await PlayBillingService.openPlayStoreListing();
+    if (!opened && mounted) {
+      setState(() => _message = 'Could not open SocketAgent in Google Play.');
     }
+  }
+
+  Future<void> _restore() async {
+    setState(() => _message = null);
+    await _billing.restore();
+  }
+
+  Future<void> _showOwnerAccess() async {
+    final controller = TextEditingController();
+    final ownerCode = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Owner access'),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Owner code'),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (ownerCode == null || ownerCode.isEmpty || !mounted) return;
+
+    setState(() {
+      _ownerLoading = true;
+      _message = null;
+    });
+    final error = await context.read<ChatProvider>().requestOwnerAccess(
+      ownerCode,
+    );
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _ownerLoading = false;
+      _message = error;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_showWebView) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Subscribe'),
-          leading: IconButton(
-            icon: const Icon(Icons.close),
-            onPressed: () {
-              setState(() {
-                _showWebView = false;
-                _loading = false;
-              });
-            },
-          ),
-        ),
-        body: WebViewWidget(controller: _webViewController),
-      );
-    }
-
+    final isPlay = AppBuild.supportsPlayBilling;
     return Scaffold(
+      backgroundColor: Colors.black,
+      appBar: AppBar(
+        backgroundColor: Colors.black,
+        title: const Text('Relay access'),
+      ),
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const Spacer(flex: 2),
-              Icon(
-                Icons.bolt,
-                size: 64,
-                color: Theme.of(context).colorScheme.primary,
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 24),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.bolt,
+                    size: 58,
+                    color: Theme.of(context).colorScheme.primary,
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    isPlay
+                        ? 'Use SocketAgent away from home'
+                        : 'Google Play subscription required',
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    isPlay
+                        ? 'Connect to your computers through the encrypted relay.'
+                        : 'New relay subscriptions start in the Google Play version of SocketAgent.',
+                    style: TextStyle(color: Colors.white.withAlpha(175)),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 36),
+                  if (isPlay) _buildPlayActions() else _buildDirectActions(),
+                  if (_message != null) ...[
+                    const SizedBox(height: 18),
+                    Text(
+                      _message!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ],
               ),
-              const SizedBox(height: 16),
-              Text(
-                'SocketAgent',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Sign in to relay Claude and Codex from your phone.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurface.withAlpha(180),
-                ),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 48),
-              TextField(
-                controller: _emailController,
-                keyboardType: TextInputType.emailAddress,
-                textInputAction: TextInputAction.go,
-                onSubmitted: (_) => _subscribe(),
-                decoration: InputDecoration(
-                  labelText: 'Email',
-                  hintText: 'you@example.com',
-                  border: const OutlineInputBorder(),
-                  prefixIcon: const Icon(Icons.email_outlined),
-                  errorText: _error,
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: FilledButton(
-                  onPressed: _loading ? null : _subscribe,
-                  child: _loading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Continue'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Existing subscribers are signed in automatically.\nNew accounts get 7 days free, then \$5/month.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurface.withAlpha(120),
-                ),
-              ),
-              const Spacer(flex: 3),
-            ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildPlayActions() {
+    if (_billing.loading && _billing.product == null) {
+      return const CircularProgressIndicator(strokeWidth: 2);
+    }
+
+    if (_billing.product == null) {
+      return Column(
+        children: [
+          Text(
+            _billing.error ?? 'The subscription is not available.',
+            style: const TextStyle(color: Colors.white70),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          OutlinedButton(
+            onPressed: _billing.loading ? null : _billing.refreshProducts,
+            child: const Text('Try again'),
+          ),
+        ],
+      );
+    }
+
+    final price = _billing.renewalPrice ?? _billing.product!.price;
+    final actionText = _billing.includesFreeTrial
+        ? 'Start ${_billing.trialPeriodLabel} free'
+        : 'Subscribe for $price';
+    final terms = _billing.includesFreeTrial
+        ? 'Then $price per ${_billing.renewalPeriodLabel}. Cancel anytime in Google Play.'
+        : '$price per ${_billing.renewalPeriodLabel}. Cancel anytime in Google Play.';
+
+    return Column(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: FilledButton(
+            onPressed: _billing.purchaseInProgress ? null : _billing.purchase,
+            child: _billing.purchaseInProgress
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : Text(actionText),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          terms,
+          style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(145)),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 10),
+        TextButton(
+          onPressed: _billing.purchaseInProgress || _billing.restoring
+              ? null
+              : _restore,
+          child: Text(
+            _billing.restoring
+                ? 'Checking Google Play…'
+                : 'Restore Google Play purchase',
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDirectActions() {
+    return Column(
+      children: [
+        SizedBox(
+          width: double.infinity,
+          height: 50,
+          child: FilledButton(
+            onPressed: _openPlayStore,
+            child: const Text('Open Google Play'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'After subscribing, install the Direct version over the Play version to keep your access and settings.',
+          style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(145)),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 20),
+        TextButton(
+          onPressed: _ownerLoading ? null : _showOwnerAccess,
+          child: _ownerLoading
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Owner access'),
+        ),
+      ],
     );
   }
 }

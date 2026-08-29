@@ -3,6 +3,51 @@ import 'package:app/models/message_reconciliation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('browser session history restores the protected browser card', () {
+    final message = browserSessionMessageFromPayload({
+      'role': 'browser_session',
+      'entryId': 'browser-session:google-play-rubano',
+      'sessionSeq': 42,
+      'revision': 3,
+      'toolInput': {
+        'profile': 'google-play-rubano',
+        'label': 'Google Admin verification',
+        'url': 'https://admin.google.com/ac/domains/manage',
+        'width': 430,
+        'height': 860,
+      },
+    });
+
+    expect(message, isNotNull);
+    expect(message!.type, MessageType.browserSession);
+    expect(message.entryId, 'browser-session:google-play-rubano');
+    expect(message.sessionSeq, 42);
+    expect(
+      message.toolInput?['url'],
+      'https://admin.google.com/ac/domains/manage',
+    );
+  });
+
+  test('a delayed snapshot does not remove a live protected browser card', () {
+    final live = browserSessionMessageFromPayload({
+      'type': 'browser_session_open',
+      'entryId': 'browser-session:google-play-rubano',
+      'sessionSeq': 42,
+      'revision': 1,
+      'profile': 'google-play-rubano',
+      'label': 'Google Play',
+      'url': 'https://play.google.com/console',
+    })!;
+
+    final reconciled = reconcileLiveTranscriptWithSnapshot(
+      const <ChatMessage>[],
+      [live],
+    );
+
+    expect(reconciled, hasLength(1));
+    expect(reconciled.single.type, MessageType.browserSession);
+  });
+
   test('a missing live message never matches a root parent', () {
     expect(liveMessageMatchesParent(null, null), isFalse);
 
@@ -691,15 +736,16 @@ void main() {
         ..textContent = 'older bounded history window'
         ..entryId = 'entry-40'
         ..sessionSeq = 40;
-      final completedTool = ChatMessage.toolCall(
-        tool: 'Bash',
-        input: const {'command': 'npm test'},
-        toolUseId: 'tool-41',
-      )
-        ..toolOutput = 'passed'
-        ..toolStreaming = false
-        ..entryId = 'entry-41'
-        ..sessionSeq = 41;
+      final completedTool =
+          ChatMessage.toolCall(
+              tool: 'Bash',
+              input: const {'command': 'npm test'},
+              toolUseId: 'tool-41',
+            )
+            ..toolOutput = 'passed'
+            ..toolStreaming = false
+            ..entryId = 'entry-41'
+            ..sessionSeq = 41;
 
       final reconciled = reconcileLiveTranscriptWithSnapshot(
         [staleSnapshot],

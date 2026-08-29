@@ -50,7 +50,6 @@ import 'relay_push_service.dart';
 import 'crypto_service.dart';
 import 'server_connection_probe.dart';
 import 'secure_storage_service.dart';
-import 'adb_bridge_service.dart';
 import 'tool_event_reconciler.dart';
 import 'session_transcript_cache.dart';
 import 'hard_stop_target.dart';
@@ -401,21 +400,6 @@ class _DownloadProgressNotification {
   final String fileId;
   final String fileName;
   final double? progress;
-}
-
-class _PhoneAdbFileTransfer {
-  _PhoneAdbFileTransfer({
-    required this.path,
-    required this.sink,
-    required this.completer,
-    required this.expectedSize,
-  });
-
-  final String path;
-  final IOSink sink;
-  final Completer<String> completer;
-  final int expectedSize;
-  int receivedBytes = 0;
 }
 
 class _PendingHardStop {
@@ -784,6 +768,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _subscriptionActive = false;
   bool _subscriptionChecked = false;
   String _subscriptionStatus = ''; // "active", "trialing", "owner"
+  String _subscriptionProvider = ''; // "google_play", "stripe", "owner"
   DateTime? _trialEnd;
   DateTime? _periodEnd;
   bool _cancelAtPeriodEnd = false;
@@ -820,11 +805,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Completer<bool>> _pushRegistrationCompleters = {};
   final Map<String, Timer> _pushRegistrationRetryTimers = {};
   final Map<String, int> _pushRegistrationRetryAttempts = {};
-  final Map<String, Completer<Map<String, dynamic>>>
-  _adbBridgeSidecarCompleters = {};
-  final Map<String, Completer<Map<String, dynamic>>> _adbCommandCompleters = {};
-  final Map<String, _PhoneAdbFileTransfer> _phoneAdbFileTransfers = {};
-
   StreamSubscription? _messageSub;
   StreamSubscription? _statusSub;
   StreamSubscription? _speechResultSub;
@@ -1955,6 +1935,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get subscriptionActive => _subscriptionActive;
   bool get subscriptionChecked => _subscriptionChecked;
   String get subscriptionStatus => _subscriptionStatus;
+  String get subscriptionProvider => _subscriptionProvider;
   DateTime? get trialEnd => _trialEnd;
   DateTime? get periodEnd => _periodEnd;
   bool get cancelAtPeriodEnd => _cancelAtPeriodEnd;
@@ -1995,7 +1976,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     };
     _loadSettings();
     _setupListeners();
-    unawaited(AdbBridgeService.instance.restoreLocalAdbConnection());
   }
 
   void _onTtsPlaybackChanged() {
@@ -3393,6 +3373,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         _subscriptionActive = data['active'] == true;
+        _subscriptionProvider = data['provider'] as String? ?? '';
+        final responseEmail = data['email'] as String?;
+        if (responseEmail != null && responseEmail.isNotEmpty) {
+          _subscriberEmail = responseEmail;
+          await _secureStorage.setSubscriberEmail(responseEmail);
+        }
         if (_subscriptionActive) {
           _subscriptionStatus = data['status'] as String? ?? '';
           _trialEnd = data['trialEnd'] != null
@@ -3411,6 +3397,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         _subscriptionActive = false;
         _subscriptionStatus = '';
+        _subscriptionProvider = '';
         _trialEnd = null;
         _periodEnd = null;
         _cancelAtPeriodEnd = false;
@@ -3424,6 +3411,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         _subscriptionActive = false;
         _subscriptionStatus = '';
+        _subscriptionProvider = '';
         _trialEnd = null;
         _periodEnd = null;
         _cancelAtPeriodEnd = false;
@@ -3436,109 +3424,120 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _subscriptionActive;
   }
 
-  /// Create a Stripe Checkout Session (or get owner bypass token).
-  /// Returns a Map with either {url: checkoutUrl} or {ownerBypass: true, token: signedToken}.
-  Future<Map<String, dynamic>?> createCheckoutSession(String email) async {
+  /// Verify a Google Play purchase through the relay and save its access token.
+  /// A null result means the purchase was verified.
+  Future<String?> verifyGooglePlayPurchase(
+    String purchaseToken,
+    String productId,
+  ) async {
+    if (purchaseToken.trim().isEmpty || productId.trim().isEmpty) {
+      return 'Google Play did not return a valid purchase.';
+    }
     final prefs = await SharedPreferences.getInstance();
     _cachedPrefs = prefs;
     final httpUrls = _relayHttpUrlCandidates();
     if (httpUrls.isEmpty) {
-      return {'error': 'Relay checkout URL is not configured'};
+      return 'The relay URL is not configured.';
     }
 
     Object? lastError;
     for (final httpUrl in httpUrls) {
       try {
-        final uri = Uri.parse('$httpUrl/api/checkout');
+        final uri = Uri.parse('$httpUrl/api/google-play/verify');
         final response = await http
             .post(
               uri,
               headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'email': email.trim()}),
+              body: jsonEncode({
+                'purchaseToken': purchaseToken.trim(),
+                'productId': productId.trim(),
+              }),
             )
-            .timeout(const Duration(seconds: 15));
+            .timeout(const Duration(seconds: 20));
 
         if (response.statusCode == 200) {
-          return jsonDecode(response.body) as Map<String, dynamic>;
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          final relayToken = data['token'] as String?;
+          if (relayToken == null || relayToken.isEmpty) {
+            return 'The relay did not return an access token.';
+          }
+          await saveSubscriberToken(relayToken);
+          _applySubscriptionDetails(data);
+          notifyListeners();
+          return null;
         }
-        // Return server error so the UI can display it.
         try {
           final errBody = jsonDecode(response.body) as Map<String, dynamic>;
-          return {
-            'error':
-                errBody['error'] ??
-                'SocketAgent error (${response.statusCode})',
-          };
+          return errBody['error']?.toString() ??
+              'Purchase verification failed (${response.statusCode}).';
         } catch (_) {
-          return {'error': 'SocketAgent error (${response.statusCode})'};
+          return 'Purchase verification failed (${response.statusCode}).';
         }
       } catch (e) {
         lastError = e;
-        debugPrint('[Subscription] Checkout error via $httpUrl: $e');
+        debugPrint('[Subscription] Google Play verification failed: $e');
       }
     }
-    return {
-      'error':
-          'Could not reach relay checkout at ${httpUrls.join(', ')}: $lastError',
-    };
+    debugPrint('[Subscription] Relay verification unavailable: $lastError');
+    return 'Could not reach the relay to verify this purchase.';
   }
 
-  /// Verify a completed Stripe Checkout Session and get signed token
-  Future<bool> verifyCheckoutSession(String sessionId) async {
+  /// Exchange the private owner code for a signed relay access token.
+  Future<String?> requestOwnerAccess(String ownerCode) async {
+    if (ownerCode.trim().isEmpty) return 'Enter the owner code.';
     final prefs = await SharedPreferences.getInstance();
     _cachedPrefs = prefs;
-    final httpUrl = _relayHttpUrl();
-    if (httpUrl == null) return false;
+    final httpUrls = _relayHttpUrlCandidates();
+    if (httpUrls.isEmpty) return 'The relay URL is not configured.';
 
-    try {
-      final uri = Uri.parse('$httpUrl/api/verify-session');
-      final response = await http
-          .post(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'sessionId': sessionId}),
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        final token = data['token'] as String?;
-        final email = data['email'] as String? ?? '';
-        if (token != null && token.isNotEmpty) {
-          await saveSubscriberToken(token, email);
-          return true;
+    for (final httpUrl in httpUrls) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('$httpUrl/api/owner-access'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'ownerCode': ownerCode.trim()}),
+            )
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          final relayToken = data['token'] as String?;
+          if (relayToken == null || relayToken.isEmpty) {
+            return 'The relay did not return an access token.';
+          }
+          await saveSubscriberToken(relayToken);
+          _applySubscriptionDetails(data);
+          notifyListeners();
+          return null;
         }
+        if (response.statusCode == 403) return 'The owner code is not valid.';
+      } catch (e) {
+        debugPrint('[Subscription] Owner access failed: $e');
       }
-    } catch (e) {
-      debugPrint('[Subscription] Verify error: $e');
     }
-    return false;
+    return 'Could not reach the relay.';
   }
 
-  /// Get Stripe billing portal URL for subscription management
-  Future<String?> getBillingPortalUrl() async {
-    if (_subscriberEmail.isEmpty) return null;
-    final httpUrl = _relayHttpUrl();
-    if (httpUrl == null) return null;
-
-    try {
-      final uri = Uri.parse('$httpUrl/api/billing-portal');
-      final response = await http
-          .post(
-            uri,
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'email': _subscriberEmail}),
-          )
-          .timeout(const Duration(seconds: 15));
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        return data['url'] as String?;
-      }
-    } catch (e) {
-      debugPrint('[Subscription] Billing portal error: $e');
+  void _applySubscriptionDetails(Map<String, dynamic> data) {
+    _subscriptionActive = data['active'] == true;
+    _subscriptionChecked = true;
+    _subscriptionCheckedAt = DateTime.now();
+    _subscriptionStatus = data['status'] as String? ?? '';
+    _subscriptionProvider = data['provider'] as String? ?? '';
+    final email = data['email'] as String?;
+    if (email != null && email.isNotEmpty) {
+      _subscriberEmail = email;
+      unawaited(_secureStorage.setSubscriberEmail(email));
     }
-    return null;
+    final periodEnd = data['periodEnd'];
+    _periodEnd = periodEnd is num
+        ? DateTime.fromMillisecondsSinceEpoch(periodEnd.toInt())
+        : null;
+    final trialEnd = data['trialEnd'];
+    _trialEnd = trialEnd is num
+        ? DateTime.fromMillisecondsSinceEpoch(trialEnd.toInt())
+        : null;
+    _cancelAtPeriodEnd = data['cancelAtPeriodEnd'] == true;
   }
 
   /// Save subscriber token and email
@@ -3547,9 +3546,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _subscriptionActive = true;
     _subscriptionChecked = true;
     _subscriptionCheckedAt = DateTime.now();
-    if (email.isNotEmpty) _subscriberEmail = email;
+    _subscriberEmail = email;
     await _secureStorage.setSubscriberToken(token);
-    if (email.isNotEmpty) await _secureStorage.setSubscriberEmail(email);
+    if (email.isEmpty) {
+      await _secureStorage.deleteSubscriberEmail();
+    } else {
+      await _secureStorage.setSubscriberEmail(email);
+    }
     // Update subscriber token on all relay connections
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
@@ -3563,6 +3566,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _subscriberEmail = '';
     _subscriptionActive = false;
     _subscriptionChecked = false;
+    _subscriptionStatus = '';
+    _subscriptionProvider = '';
+    _trialEnd = null;
+    _periodEnd = null;
+    _cancelAtPeriodEnd = false;
     _subscriptionCheckedAt = null;
     _subscriptionCheckInFlight = null;
     await _secureStorage.deleteSubscriberToken();
@@ -4050,12 +4058,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'terminal_output',
       'terminal_exited',
       'terminal_error',
-      'adb_bridge_sidecar_status',
-      'adb_command_result',
-      'phone_adb_request',
-      'phone_adb_file_chunk',
-      'phone_adb_file_end',
-      'phone_adb_cancel',
       'file',
       'file_data',
       'file_chunk',
@@ -4347,24 +4349,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'terminal_exited':
         case 'terminal_error':
           _handleTerminalMessage(msg, serverId);
-          break;
-        case 'adb_bridge_sidecar_status':
-          _handleAdbBridgeSidecarStatus(msg);
-          break;
-        case 'adb_command_result':
-          _handleAdbCommandResult(msg);
-          break;
-        case 'phone_adb_request':
-          _handlePhoneAdbRequest(msg, serverId);
-          break;
-        case 'phone_adb_file_chunk':
-          _handlePhoneAdbFileChunk(msg);
-          break;
-        case 'phone_adb_file_end':
-          _handlePhoneAdbFileEnd(msg);
-          break;
-        case 'phone_adb_cancel':
-          _handlePhoneAdbCancel(msg);
           break;
         case 'push_token_registered':
           {
@@ -6051,19 +6035,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _handleBrowserSessionOpen(Map<String, dynamic> msg) {
     _closeLiveStreamsForParent(null);
-    final profile = msg['profile'] as String? ?? '';
-    final url = msg['url'] as String? ?? '';
-    if (profile.isEmpty || url.isEmpty) return;
-    _messages.add(
-      ChatMessage.browserSession(
-        profile: profile,
-        label: msg['label'] as String? ?? profile,
-        url: url,
-        width: (msg['width'] as num?)?.toInt() ?? 430,
-        height: (msg['height'] as num?)?.toInt() ?? 860,
-        runtimeRequired: msg['runtimeRequired'] == true,
-      ),
+    final card = browserSessionMessageFromPayload(msg);
+    if (card == null) return;
+    final existingIndex = _messages.lastIndexWhere(
+      (message) => sameBrowserSessionCard(message, card),
     );
+    if (existingIndex >= 0) {
+      _messages[existingIndex] = card;
+    } else {
+      _messages.add(card);
+    }
     notifyListeners();
   }
 
@@ -9396,6 +9377,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final rawMessages = normalizeSendFileHistoryEntries(
       msg['messages'] as List? ?? const [],
     );
+    final rawBrowserSessions = (msg['browserSessions'] as List? ?? const [])
+        .whereType<Map>()
+        .map((entry) => Map<String, dynamic>.from(entry))
+        .toList();
     final rawTaskStates = (msg['taskStates'] as List? ?? const [])
         .whereType<Map>()
         .map((entry) => Map<String, dynamic>.from(entry))
@@ -9407,6 +9392,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final historyEntries =
         <Map<String, dynamic>>[
           ...rawMessages,
+          ...rawBrowserSessions.where(
+            (entry) =>
+                (entry['entryId']?.toString() ?? '').isEmpty ||
+                !messageEntryIds.contains(entry['entryId'].toString()),
+          ),
           ...rawTaskStates.where(
             (entry) =>
                 (entry['entryId']?.toString() ?? '').isEmpty ||
@@ -10513,6 +10503,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             );
             secureMessage.answered = status != 'pending';
             loaded.add(secureMessage);
+          }
+          break;
+        case 'browser_session':
+          final card = browserSessionMessageFromPayload(entry);
+          if (card != null) {
+            final existingIndex = loaded.lastIndexWhere(
+              (message) => sameBrowserSessionCard(message, card),
+            );
+            if (existingIndex >= 0) {
+              loaded[existingIndex] = card;
+            } else {
+              loaded.add(card);
+            }
           }
           break;
         case 'html_plan':
@@ -12475,275 +12478,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void _handleAdbBridgeSidecarStatus(Map<String, dynamic> msg) {
-    final requestId = msg['requestId'] as String?;
-    if (requestId == null || requestId.isEmpty) return;
-    final completer = _adbBridgeSidecarCompleters.remove(requestId);
-    if (completer != null && !completer.isCompleted) {
-      completer.complete(Map<String, dynamic>.from(msg));
-    }
-  }
-
-  void _handleAdbCommandResult(Map<String, dynamic> msg) {
-    final requestId = msg['requestId'] as String?;
-    if (requestId == null || requestId.isEmpty) return;
-    final completer = _adbCommandCompleters.remove(requestId);
-    if (completer != null && !completer.isCompleted) {
-      completer.complete(Map<String, dynamic>.from(msg));
-    }
-  }
-
-  void _handlePhoneAdbRequest(Map<String, dynamic> msg, String? serverId) {
-    final requestId = msg['requestId'] as String?;
-    if (requestId == null || requestId.isEmpty || serverId == null) return;
-    unawaited(() async {
-      Map<String, dynamic> result;
-      try {
-        final command = msg['command'] as String? ?? 'devices';
-        switch (command) {
-          case 'pair':
-            result = await AdbBridgeService.instance.localAdbPair(
-              port: _phoneAdbRequestPort(msg, 'pairPort'),
-              code: msg['code']?.toString() ?? '',
-            );
-            break;
-          case 'connect':
-            result = await AdbBridgeService.instance.localAdbConnect(
-              port: _phoneAdbRequestPort(msg, 'connectPort'),
-            );
-            break;
-          case 'shell':
-            result = await AdbBridgeService.instance.localAdbShell(
-              msg['shellCommand'] as String? ?? '',
-            );
-            break;
-          case 'adb':
-          case 'command':
-            result = await AdbBridgeService.instance.localAdbCommand(
-              _phoneAdbStringList(msg['args']),
-              timeoutSeconds: _phoneAdbInt(msg, 'timeoutSeconds', 30),
-            );
-            break;
-          case 'install':
-            final apkPath = await _receivePhoneAdbInstallFile(requestId, msg);
-            try {
-              result = await AdbBridgeService.instance.localAdbInstall(
-                apkPath,
-                args: _phoneAdbStringList(msg['args']),
-              );
-            } finally {
-              unawaited(() async {
-                try {
-                  await File(apkPath).delete();
-                } catch (_) {}
-              }());
-            }
-            break;
-          case 'open_apk':
-          case 'open-apk':
-          case 'stage_apk':
-          case 'stage-apk':
-            final apkPath = await _receivePhoneAdbInstallFile(requestId, msg);
-            result = await _openPhoneAdbApkInstaller(apkPath);
-            break;
-          case 'logcat':
-            result = await AdbBridgeService.instance.localAdbStream(
-              streamId: requestId,
-              args: <String>['logcat', ..._phoneAdbStringList(msg['args'])],
-              timeoutSeconds: _phoneAdbInt(msg, 'timeoutSeconds', 30),
-              maxBytes: _phoneAdbInt(msg, 'maxBytes', 1024 * 1024),
-              onEvent: (event) {
-                if (event['event'] != 'chunk') return;
-                _connMgr.sendToServer(serverId, {
-                  'type': 'phone_adb_stream_chunk',
-                  'requestId': requestId,
-                  'stream': event['stream']?.toString() ?? 'stdout',
-                  'data': event['data']?.toString() ?? '',
-                });
-              },
-            );
-            break;
-          case 'devices':
-          default:
-            result = await AdbBridgeService.instance.localAdbDevices();
-            break;
-        }
-      } catch (e) {
-        result = <String, dynamic>{
-          'ok': false,
-          'command': msg['command'] as String? ?? 'adb',
-          'stdout': '',
-          'stderr': '',
-          'message': e.toString(),
-        };
-      }
-      _connMgr.sendToServer(serverId, {
-        'type': 'phone_adb_result',
-        'requestId': requestId,
-        'result': result,
-      });
-    }());
-  }
-
-  List<String> _phoneAdbStringList(Object? raw) {
-    if (raw is! List) return <String>[];
-    return raw
-        .map((value) => value?.toString() ?? '')
-        .where((value) => value.trim().isNotEmpty)
-        .toList(growable: false);
-  }
-
-  int _phoneAdbInt(Map<String, dynamic> msg, String key, int fallback) {
-    final raw = msg[key];
-    if (raw is int) return raw;
-    if (raw is num) return raw.toInt();
-    if (raw is String) return int.tryParse(raw) ?? fallback;
-    return fallback;
-  }
-
-  int _phoneAdbRequestPort(Map<String, dynamic> msg, String key) {
-    final direct = _phoneAdbInt(msg, key, 0);
-    if (direct > 0) return direct;
-    final args = _phoneAdbStringList(msg['args']);
-    if (args.isNotEmpty) {
-      final raw = args.first.contains(':')
-          ? args.first.split(':').last
-          : args.first;
-      final parsed = int.tryParse(raw);
-      if (parsed != null && parsed > 0) return parsed;
-    }
-    throw StateError('ADB port is required.');
-  }
-
-  Future<String> _receivePhoneAdbInstallFile(
-    String requestId,
-    Map<String, dynamic> msg,
-  ) {
-    final rawName = msg['fileName']?.toString().trim();
-    final safeName =
-        (rawName == null || rawName.isEmpty ? 'install.apk' : rawName)
-            .replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
-    final expectedSize = _phoneAdbInt(msg, 'fileSize', 0);
-    final tempDir = Directory('${Directory.systemTemp.path}/socketagent_adb');
-    if (!tempDir.existsSync()) {
-      tempDir.createSync(recursive: true);
-    }
-    final file = File('${tempDir.path}/${requestId}_$safeName');
-    if (file.existsSync()) {
-      file.deleteSync();
-    }
-    final transfer = _PhoneAdbFileTransfer(
-      path: file.path,
-      sink: file.openWrite(),
-      completer: Completer<String>(),
-      expectedSize: expectedSize,
-    );
-    _phoneAdbFileTransfers[requestId] = transfer;
-    return transfer.completer.future.timeout(
-      const Duration(minutes: 10),
-      onTimeout: () {
-        _failPhoneAdbTransfer(
-          requestId,
-          'Timed out receiving APK from the computer.',
-        );
-        throw TimeoutException('Timed out receiving APK from the computer.');
-      },
-    );
-  }
-
-  Future<Map<String, dynamic>> _openPhoneAdbApkInstaller(String apkPath) async {
-    final result = await OpenFilex.open(
-      apkPath,
-      type: 'application/vnd.android.package-archive',
-    );
-    final ok = result.type == ResultType.done;
-    return <String, dynamic>{
-      'ok': ok,
-      'command': 'open-apk',
-      'endpoint': apkPath,
-      'exitCode': null,
-      'stdout': '',
-      'stderr': '',
-      'message': ok
-          ? 'Android package installer opened.'
-          : 'Could not open Android package installer: ${result.message}',
-    };
-  }
-
-  void _handlePhoneAdbFileChunk(Map<String, dynamic> msg) {
-    final requestId = msg['requestId'] as String?;
-    if (requestId == null || requestId.isEmpty) return;
-    final transfer = _phoneAdbFileTransfers[requestId];
-    if (transfer == null) return;
-    try {
-      final data = msg['data'] as String? ?? '';
-      final bytes = base64Decode(data);
-      transfer.sink.add(bytes);
-      transfer.receivedBytes += bytes.length;
-    } catch (e) {
-      _failPhoneAdbTransfer(requestId, 'Failed to decode APK chunk: $e');
-    }
-  }
-
-  void _handlePhoneAdbFileEnd(Map<String, dynamic> msg) {
-    final requestId = msg['requestId'] as String?;
-    if (requestId == null || requestId.isEmpty) return;
-    final transfer = _phoneAdbFileTransfers.remove(requestId);
-    if (transfer == null) return;
-    unawaited(() async {
-      try {
-        await transfer.sink.flush();
-        await transfer.sink.close();
-        if (msg['ok'] == false) {
-          throw StateError(
-            msg['message']?.toString() ?? 'APK transfer failed.',
-          );
-        }
-        if (transfer.expectedSize > 0 &&
-            transfer.receivedBytes != transfer.expectedSize) {
-          throw StateError(
-            'APK transfer size mismatch: received ${transfer.receivedBytes} of ${transfer.expectedSize} bytes.',
-          );
-        }
-        if (!transfer.completer.isCompleted) {
-          transfer.completer.complete(transfer.path);
-        }
-      } catch (e) {
-        unawaited(() async {
-          try {
-            await File(transfer.path).delete();
-          } catch (_) {}
-        }());
-        if (!transfer.completer.isCompleted) {
-          transfer.completer.completeError(e);
-        }
-      }
-    }());
-  }
-
-  void _handlePhoneAdbCancel(Map<String, dynamic> msg) {
-    final requestId = msg['requestId'] as String?;
-    if (requestId == null || requestId.isEmpty) return;
-    unawaited(AdbBridgeService.instance.localAdbStopStream(requestId));
-    _failPhoneAdbTransfer(requestId, 'Phone ADB request was cancelled.');
-  }
-
-  void _failPhoneAdbTransfer(String requestId, String message) {
-    final transfer = _phoneAdbFileTransfers.remove(requestId);
-    if (transfer == null) return;
-    unawaited(() async {
-      try {
-        await transfer.sink.close();
-      } catch (_) {}
-      try {
-        await File(transfer.path).delete();
-      } catch (_) {}
-    }());
-    if (!transfer.completer.isCompleted) {
-      transfer.completer.completeError(StateError(message));
-    }
-  }
-
   void _captureServerRuntimeInfo(Map<String, dynamic> msg, String serverId) {
     final existing = Map<String, dynamic>.from(
       _serverRuntimeInfo[serverId] ?? const <String, dynamic>{},
@@ -14476,73 +14210,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       onTimeout: () => <String, dynamic>{
         'success': false,
         'error': 'Timed out waiting for update',
-      },
-    );
-  }
-
-  Future<Map<String, dynamic>> requestAdbBridgeSidecar(
-    String serverId, {
-    String action = 'status',
-    int localPort = 5038,
-  }) async {
-    final requestId =
-        'adb_bridge_${action}_${DateTime.now().millisecondsSinceEpoch}';
-    final completer = Completer<Map<String, dynamic>>();
-    _adbBridgeSidecarCompleters[requestId] = completer;
-
-    final type = switch (action) {
-      'start' => 'adb_bridge_sidecar_start',
-      'stop' => 'adb_bridge_sidecar_stop',
-      _ => 'adb_bridge_sidecar_status',
-    };
-    final message = <String, dynamic>{
-      'type': type,
-      'requestId': requestId,
-      if (action == 'start') 'localPort': localPort,
-    };
-    _connMgr.sendToServer(serverId, message);
-
-    return completer.future.timeout(
-      const Duration(seconds: 12),
-      onTimeout: () {
-        _adbBridgeSidecarCompleters.remove(requestId);
-        return <String, dynamic>{
-          'requestId': requestId,
-          'running': false,
-          'error': 'Timed out waiting for ADB sidecar status.',
-        };
-      },
-    );
-  }
-
-  Future<Map<String, dynamic>> requestAdbCommand(
-    String serverId, {
-    required String command,
-    required String host,
-    required int port,
-    String? code,
-  }) async {
-    final requestId = 'adb_${command}_${DateTime.now().millisecondsSinceEpoch}';
-    final completer = Completer<Map<String, dynamic>>();
-    _adbCommandCompleters[requestId] = completer;
-    _connMgr.sendToServer(serverId, {
-      'type': 'adb_command',
-      'requestId': requestId,
-      'command': command,
-      'host': host,
-      'port': port,
-      if (code != null) 'code': code,
-    });
-    return completer.future.timeout(
-      const Duration(seconds: 40),
-      onTimeout: () {
-        _adbCommandCompleters.remove(requestId);
-        return <String, dynamic>{
-          'requestId': requestId,
-          'command': command,
-          'ok': false,
-          'message': 'Timed out waiting for adb $command.',
-        };
       },
     );
   }
@@ -17132,24 +16799,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _scheduledTaskRefreshRetries.clear();
-    for (final completer in _adbBridgeSidecarCompleters.values) {
-      if (!completer.isCompleted) {
-        completer.complete(<String, dynamic>{
-          'running': false,
-          'error': 'SocketAgent app is closing.',
-        });
-      }
-    }
-    _adbBridgeSidecarCompleters.clear();
-    for (final completer in _adbCommandCompleters.values) {
-      if (!completer.isCompleted) {
-        completer.complete(<String, dynamic>{
-          'ok': false,
-          'message': 'SocketAgent app is closing.',
-        });
-      }
-    }
-    _adbCommandCompleters.clear();
     for (final completer in _codexGoalCompleters.values) {
       if (!completer.isCompleted) {
         completer.completeError(StateError('SocketAgent app is closing.'));
@@ -17162,9 +16811,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     _sessionMemoryCompleters.clear();
-    for (final requestId in _phoneAdbFileTransfers.keys.toList()) {
-      _failPhoneAdbTransfer(requestId, 'SocketAgent app is closing.');
-    }
     _connMgr.dispose();
     _speech.dispose();
     _systemEngine.playbackState.removeListener(_onTtsPlaybackChanged);

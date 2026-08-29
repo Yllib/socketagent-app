@@ -23,6 +23,11 @@ android {
     namespace = "com.socketagent.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "28.2.13676358"
+    flavorDimensions "distribution"
+
+    buildFeatures {
+        buildConfig = true
+    }
 
     compileOptions {
         coreLibraryDesugaringEnabled true
@@ -40,6 +45,17 @@ android {
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+    }
+
+    productFlavors {
+        direct {
+            dimension "distribution"
+            buildConfigField "String", "DISTRIBUTION", '"direct"'
+        }
+        play {
+            dimension "distribution"
+            buildConfigField "String", "DISTRIBUTION", '"play"'
+        }
     }
 
     signingConfigs {

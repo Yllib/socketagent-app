@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:webview_flutter/webview_flutter.dart';
 import '../../services/chat_provider.dart';
+import '../../services/play_billing_service.dart';
 import '../paywall_screen.dart';
 
 class AccountCard extends StatelessWidget {
@@ -171,6 +171,9 @@ class _SignedInCardState extends State<_SignedInCard> {
   String _statusLine(ChatProvider p) {
     if (_loading) return 'Checking subscription...';
     if (p.subscriptionStatus == 'owner') return 'Owner account';
+    if (p.subscriptionProvider == 'stripe' && p.subscriptionActive) {
+      return 'Legacy Stripe subscription active';
+    }
     if (p.subscriptionStatus == 'trialing' && p.trialEnd != null) {
       final daysLeft = p.trialEnd!.difference(DateTime.now()).inDays;
       if (daysLeft <= 0) return 'Trial ends today';
@@ -197,19 +200,16 @@ class _SignedInCardState extends State<_SignedInCard> {
   }
 
   Future<void> _openBillingPortal() async {
-    final url = await widget.provider.getBillingPortalUrl();
-    if (url == null || !mounted) {
+    final opened = await PlayBillingService.openSubscriptionManagement();
+    if (!opened || !mounted) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open billing portal')),
+          const SnackBar(content: Text('Could not open Google Play')),
         );
       }
       return;
     }
-    if (!mounted) return;
-    Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => _BillingPortalScreen(url: url)))
-        .then((_) => _loadDetails());
+    await widget.provider.checkSubscriptionStatus();
   }
 
   @override
@@ -219,6 +219,7 @@ class _SignedInCardState extends State<_SignedInCard> {
         final theme = Theme.of(context);
         final status = _statusLine(provider);
         final isOwner = provider.subscriptionStatus == 'owner';
+        final isGooglePlay = provider.subscriptionProvider == 'google_play';
 
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -267,7 +268,7 @@ class _SignedInCardState extends State<_SignedInCard> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    if (!isOwner)
+                    if (!isOwner && isGooglePlay)
                       TextButton(
                         onPressed: _openBillingPortal,
                         child: const Text('Manage Subscription'),
@@ -294,8 +295,10 @@ class _SignedInCardState extends State<_SignedInCard> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Sign out?'),
-        content: const Text(
-          'You will need to subscribe again or enter your credentials to use relay access.',
+        content: Text(
+          provider.subscriptionProvider == 'stripe'
+              ? 'Your existing Stripe subscription will remain active, but you will need to sign in again to restore relay access.'
+              : 'You will need to restore your Google Play purchase to use relay access again.',
         ),
         actions: [
           TextButton(
@@ -314,22 +317,5 @@ class _SignedInCardState extends State<_SignedInCard> {
       provider.disconnect();
       provider.connectToServer();
     }
-  }
-}
-
-class _BillingPortalScreen extends StatelessWidget {
-  final String url;
-  const _BillingPortalScreen({required this.url});
-
-  @override
-  Widget build(BuildContext context) {
-    final controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..loadRequest(Uri.parse(url));
-
-    return Scaffold(
-      appBar: AppBar(title: const Text('Manage Subscription')),
-      body: WebViewWidget(controller: controller),
-    );
   }
 }

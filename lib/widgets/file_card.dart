@@ -1,15 +1,18 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:open_filex/open_filex.dart';
 import 'package:provider/provider.dart';
 import '../models/message.dart';
 import '../services/chat_provider.dart';
+import '../services/file_open_service.dart';
 
 class FileCard extends StatelessWidget {
   final ChatMessage message;
+  final FileOpenService? fileOpenService;
 
-  const FileCard({super.key, required this.message});
+  const FileCard({super.key, required this.message, this.fileOpenService});
+
+  static final FileOpenService _defaultFileOpenService = FileOpenService();
 
   String get _filePath {
     return message.toolInput?['file_path'] as String? ?? 'Unknown file';
@@ -71,6 +74,31 @@ class FileCard extends StatelessWidget {
       return Icons.table_chart;
     }
     return Icons.insert_drive_file;
+  }
+
+  Future<void> _openFile(BuildContext context, String path) async {
+    final service = fileOpenService ?? _defaultFileOpenService;
+    final result = await service.open(path);
+    if (!context.mounted || result.outcome == FileOpenOutcome.opened) return;
+
+    if (result.outcome == FileOpenOutcome.needsApkPermission) {
+      final opened = await service.openApkPermissionSettings();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            opened
+                ? 'Allow installs from SocketAgent, then tap Open again.'
+                : 'Allow installs from SocketAgent in Android settings.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(result.message ?? 'Could not open the file.')),
+    );
   }
 
   @override
@@ -195,7 +223,7 @@ class FileCard extends StatelessWidget {
                     size: 20,
                     color: Color(0xFFA6E3A1),
                   ),
-                  onPressed: () => OpenFilex.open(localPath),
+                  onPressed: () => _openFile(context, localPath),
                   tooltip: 'Open',
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(

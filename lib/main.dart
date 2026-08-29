@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'config/app_distribution.dart';
 import 'services/chat_provider.dart';
 import 'services/work_review_repository.dart';
 import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/firebase_project_configuration_service.dart';
+import 'services/play_billing_service.dart';
 import 'services/session_deep_link.dart';
 import 'models/notification_navigation.dart';
 import 'screens/main_shell_screen.dart';
@@ -21,9 +23,12 @@ final routeObserver = RouteObserver<ModalRoute<void>>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _verifyDistribution();
   await FirebaseProjectConfigurationService.instance.initialize();
   await NotificationService().initialize();
   final chatProvider = ChatProvider();
+  await chatProvider.settingsReady;
+  PlayBillingService.instance.initialize(chatProvider.verifyGooglePlayPurchase);
   final workReviews = WorkReviewRepository(
     transport: ConnectionManagerWorkReviewTransport(chatProvider.connMgr),
   );
@@ -32,6 +37,19 @@ void main() async {
   runApp(
     ClaudeAssistantApp(chatProvider: chatProvider, workReviews: workReviews),
   );
+}
+
+Future<void> _verifyDistribution() async {
+  const channel = MethodChannel('com.socketagent.app/intent');
+  final nativeDistribution = await channel.invokeMethod<String>(
+    'getDistribution',
+  );
+  if (nativeDistribution != AppBuild.distributionName) {
+    throw StateError(
+      'Android flavor $nativeDistribution was built with '
+      'SOCKETAGENT_DISTRIBUTION=${AppBuild.distributionName}.',
+    );
+  }
 }
 
 class ClaudeAssistantApp extends StatelessWidget {

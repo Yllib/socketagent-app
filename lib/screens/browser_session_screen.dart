@@ -459,6 +459,12 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
                           onPressed: _enterSensitiveText,
                           icon: const Icon(Icons.keyboard),
                         ),
+                        IconButton(
+                          tooltip: 'Backspace',
+                          onPressed: () =>
+                              _send('key', values: {'key': 'Backspace'}),
+                          icon: const Icon(Icons.backspace_outlined),
+                        ),
                         TextButton(
                           onPressed: () => _send('key', values: {'key': 'Tab'}),
                           child: const Text('Tab'),
