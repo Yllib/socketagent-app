@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../config/app_distribution.dart';
 import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
+import '../services/connection_manager.dart';
 import '../services/update_service.dart';
 import '../services/websocket_service.dart';
 import '../models/notification_navigation.dart';
@@ -28,7 +29,6 @@ class MainShellScreenState extends State<MainShellScreen>
   static const _updateCheckInterval = Duration(minutes: 5);
   static const _foregroundUpdateThrottle = Duration(minutes: 1);
   late int _currentIndex;
-  StreamSubscription? _subRequiredSub;
   StreamSubscription? _backendAuthRequiredSub;
   StreamSubscription? _backendAuthResolvedSub;
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
@@ -54,20 +54,6 @@ class MainShellScreenState extends State<MainShellScreen>
     }
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
-      _subRequiredSub = provider.onSubscriptionRequired.listen((_) {
-        if (!mounted) return;
-        if (provider.subscriberToken.isNotEmpty) {
-          unawaited(
-            provider.checkSubscriptionStatus().then((active) {
-              if (!active && mounted) {
-                _showPaywall();
-              }
-            }),
-          );
-          return;
-        }
-        _showPaywall();
-      });
       _backendAuthRequiredSub = provider.backendAuthRequiredEvents.listen((
         event,
       ) {
@@ -189,7 +175,6 @@ class MainShellScreenState extends State<MainShellScreen>
     WidgetsBinding.instance.removeObserver(this);
     _updateCheckTimer?.cancel();
     _scheduledTaskRefreshTimer?.cancel();
-    _subRequiredSub?.cancel();
     _backendAuthRequiredSub?.cancel();
     _backendAuthResolvedSub?.cancel();
     if (AppBuild.supportsSelfUpdates) {
@@ -256,9 +241,14 @@ class MainShellScreenState extends State<MainShellScreen>
   });
 
   /// Check subscription — callable from child tabs via context.findAncestorStateOfType
-  Future<bool> requireSubscription() async {
+  Future<bool> requireSubscription({String? serverId}) async {
     final provider = context.read<ChatProvider>();
-    if (provider.connectionMode != ConnectionMode.relay) return true;
+    final mode = connectionModeForServerId(
+      provider.serverConfigs,
+      serverId,
+      fallback: provider.connectionMode,
+    );
+    if (mode != ConnectionMode.relay) return true;
     if (provider.hasCachedRelayAccess) {
       provider.refreshSubscriptionStatusIfStale();
       return true;

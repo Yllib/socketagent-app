@@ -1,4 +1,6 @@
 import 'package:app/models/server_config.dart';
+import 'package:app/services/connection_manager.dart';
+import 'package:app/services/websocket_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 ServerConfig relayConfig({required String id, String name = 'Server'}) {
@@ -81,5 +83,37 @@ void main() {
     );
 
     expect(config.connectionIdentity, startsWith('relay-unconfigured'));
+  });
+
+  test('an explicit direct server is not gated by the active relay', () {
+    final direct = ServerConfig(
+      id: 'direct',
+      name: 'Local server',
+      host: '192.0.2.10',
+      port: 8085,
+      token: 'token',
+    );
+
+    expect(
+      connectionModeForServerId(
+        [relayConfig(id: 'relay'), direct],
+        direct.id,
+        fallback: ConnectionMode.relay,
+      ),
+      ConnectionMode.direct,
+    );
+  });
+
+  test('an explicit relay server is gated by the active direct connection', () {
+    final relay = relayConfig(id: 'relay');
+
+    expect(
+      connectionModeForServerId(
+        [relay],
+        relay.id,
+        fallback: ConnectionMode.direct,
+      ),
+      ConnectionMode.relay,
+    );
   });
 }

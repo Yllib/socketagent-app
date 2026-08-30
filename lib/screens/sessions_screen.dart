@@ -191,9 +191,11 @@ class _SessionsTabState extends State<SessionsTab> {
     });
   }
 
-  Future<bool> _requireSubscription() async {
+  Future<bool> _requireSubscription({String? serverId}) async {
     final shell = context.findAncestorStateOfType<MainShellScreenState>();
-    if (shell != null) return shell.requireSubscription();
+    if (shell != null) {
+      return shell.requireSubscription(serverId: serverId);
+    }
     return true;
   }
 
@@ -215,6 +217,7 @@ class _SessionsTabState extends State<SessionsTab> {
     if (_openingSessionKey != null) return;
     setState(() => _openingSessionKey = openKey);
     final provider = context.read<ChatProvider>();
+    var accessServerId = serverId;
     try {
       if (sessionId != null) {
         final session = provider.sessions
@@ -226,13 +229,14 @@ class _SessionsTabState extends State<SessionsTab> {
                       session.serverId == serverId),
             )
             .firstOrNull;
+        accessServerId ??= session?.serverId;
         if (session != null && !provider.isSessionAvailable(session)) {
           _showOfflineSessionSnack(context, session);
           return;
         }
       }
 
-      if (!await _requireSubscription()) return;
+      if (!await _requireSubscription(serverId: accessServerId)) return;
       if (!context.mounted) return;
 
       if (sdkSession && sessionId != null && cwd != null) {
@@ -3055,7 +3059,7 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   Future<void> _forkSession(BuildContext context, Session session) async {
-    if (!await _requireSubscription()) return;
+    if (!await _requireSubscription(serverId: session.serverId)) return;
     if (!context.mounted) return;
 
     final provider = context.read<ChatProvider>();

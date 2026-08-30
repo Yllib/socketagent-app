@@ -21,6 +21,20 @@ ConnectionMode connectionModeForServerConfig(ServerConfig config) {
   return config.useRelay ? ConnectionMode.relay : ConnectionMode.direct;
 }
 
+/// Resolves the transport for an explicit server without letting another
+/// active connection decide whether the requested action needs relay access.
+ConnectionMode connectionModeForServerId(
+  Iterable<ServerConfig> configs,
+  String? serverId, {
+  required ConnectionMode fallback,
+}) {
+  if (serverId == null || serverId.isEmpty) return fallback;
+  for (final config in configs) {
+    if (config.id == serverId) return connectionModeForServerConfig(config);
+  }
+  return fallback;
+}
+
 /// Manages simultaneous WebSocket connections to multiple SocketAgent servers.
 ///
 /// Each server gets its own [WebSocketService] and (if relay) its own
