@@ -39,7 +39,7 @@ class FileOpenService {
        _platformFileOpener = platformFileOpener ?? _openWithPlatform,
        _isAndroid = isAndroid ?? Platform.isAndroid,
        _supportsApkInstalls =
-           supportsApkInstalls ?? AppBuild.supportsSelfUpdates;
+           supportsApkInstalls ?? AppBuild.supportsApkInstalls;
 
   final MethodChannel _nativeChannel;
   final PlatformFileOpener _platformFileOpener;
@@ -55,7 +55,7 @@ class FileOpenService {
     if (isApk && _isAndroid) {
       if (!_supportsApkInstalls) {
         return const FileOpenResult.failed(
-          'APK installation is not available in the Play Store version.',
+          'APK installation is disabled in this build.',
         );
       }
 

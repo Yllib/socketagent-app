@@ -9,6 +9,10 @@ void main() {
     );
   });
 
+  test('user-initiated APK installs are available in every distribution', () {
+    expect(AppBuild.supportsApkInstalls, isTrue);
+  });
+
   test('Play Billing is available only in the Play distribution', () {
     expect(
       AppBuild.supportsPlayBilling,

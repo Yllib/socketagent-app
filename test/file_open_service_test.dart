@@ -56,6 +56,28 @@ void main() {
     expect(openedType, 'application/vnd.android.package-archive');
   });
 
+  test(
+    'a build can disable APK opening without affecting other files',
+    () async {
+      var openedPath = '';
+      final service = FileOpenService(
+        isAndroid: true,
+        supportsApkInstalls: false,
+        platformFileOpener: (path, {type}) async {
+          openedPath = path;
+          return OpenResult();
+        },
+      );
+
+      final apkResult = await service.open('/tmp/app.apk');
+      final textResult = await service.open('/tmp/report.txt');
+
+      expect(apkResult.outcome, FileOpenOutcome.failed);
+      expect(textResult.outcome, FileOpenOutcome.opened);
+      expect(openedPath, '/tmp/report.txt');
+    },
+  );
+
   test('generic opener failures become readable errors', () async {
     final service = FileOpenService(
       isAndroid: false,
