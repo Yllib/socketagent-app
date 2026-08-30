@@ -48,6 +48,8 @@ class SettingsV2Screen extends StatefulWidget {
 class _SettingsV2ScreenState extends State<SettingsV2Screen> {
   String _currentVersion = '';
   bool _checkingForUpdate = false;
+  int _versionTapCount = 0;
+  DateTime? _lastVersionTapAt;
 
   UpdateService get updateService => widget.updateService;
 
@@ -233,6 +235,110 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     }
   }
 
+  void _handleVersionTap() {
+    final now = DateTime.now();
+    if (_lastVersionTapAt == null ||
+        now.difference(_lastVersionTapAt!) > const Duration(seconds: 3)) {
+      _versionTapCount = 0;
+    }
+    _lastVersionTapAt = now;
+    _versionTapCount += 1;
+    if (_versionTapCount < 7) return;
+
+    _versionTapCount = 0;
+    _lastVersionTapAt = null;
+    unawaited(HapticFeedback.mediumImpact());
+    unawaited(_showOwnerAccess());
+  }
+
+  Future<void> _showOwnerAccess() async {
+    final provider = context.read<ChatProvider>();
+    final controller = TextEditingController();
+    final granted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        var loading = false;
+        String? errorMessage;
+
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> submit() async {
+              final ownerCode = controller.text.trim();
+              if (ownerCode.isEmpty) {
+                setDialogState(() => errorMessage = 'Enter the owner code.');
+                return;
+              }
+              setDialogState(() {
+                loading = true;
+                errorMessage = null;
+              });
+              final error = await provider.requestOwnerAccess(ownerCode);
+              if (!dialogContext.mounted) return;
+              if (error == null) {
+                Navigator.pop(dialogContext, true);
+                return;
+              }
+              setDialogState(() {
+                loading = false;
+                errorMessage = error;
+              });
+            }
+
+            return AlertDialog(
+              title: const Text('Owner access'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  TextField(
+                    controller: controller,
+                    obscureText: true,
+                    autofocus: true,
+                    enabled: !loading,
+                    decoration: const InputDecoration(labelText: 'Owner code'),
+                    onSubmitted: loading ? null : (_) => unawaited(submit()),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: loading
+                      ? null
+                      : () => Navigator.pop(dialogContext, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: loading ? null : () => unawaited(submit()),
+                  child: loading
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Continue'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    if (granted == true && mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Owner access enabled')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -404,8 +510,17 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                 ],
               ),
               _SettingsGroup(
-                title: 'Legal',
+                title: 'About',
                 children: [
+                  ListTile(
+                    key: const Key('app-version-row'),
+                    leading: const Icon(Icons.info_outline),
+                    title: const Text('Version'),
+                    subtitle: Text(
+                      _currentVersion.isEmpty ? 'Loading' : 'v$_currentVersion',
+                    ),
+                    onTap: _handleVersionTap,
+                  ),
                   _NavTile(
                     icon: Icons.privacy_tip_outlined,
                     title: 'Privacy Policy',

@@ -140,6 +140,32 @@ void main() {
     expect(find.text('Import Computers'), findsOneWidget);
   });
 
+  testWidgets('seven version taps reveal owner access', (tester) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService();
+    addTearDown(provider.dispose);
+    addTearDown(updateService.dispose);
+
+    await pumpSettings(tester, provider, updateService);
+    final versionRow = find.byKey(const Key('app-version-row'));
+    await tester.scrollUntilVisible(
+      versionRow,
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    for (var tap = 0; tap < 6; tap += 1) {
+      await tester.tap(versionRow);
+      await tester.pump();
+    }
+    expect(find.text('Owner access'), findsNothing);
+
+    await tester.tap(versionRow);
+    await tester.pumpAndSettle();
+    expect(find.text('Owner access'), findsOneWidget);
+    expect(find.text('Owner code'), findsOneWidget);
+  });
+
   testWidgets('settings header downloads an available update directly', (
     tester,
   ) async {

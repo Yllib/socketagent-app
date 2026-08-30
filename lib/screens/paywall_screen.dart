@@ -19,7 +19,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
   final PlayBillingService _billing = PlayBillingService.instance;
   final TextEditingController _emailController = TextEditingController();
   StreamSubscription<PlayBillingEvent>? _eventSubscription;
-  bool _ownerLoading = false;
   bool _reviewLoading = false;
   bool _directLoading = false;
   bool _showDirectCheckout = false;
@@ -146,53 +145,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
   }
 
-  Future<void> _showOwnerAccess() async {
-    final controller = TextEditingController();
-    final ownerCode = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Owner access'),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Owner code'),
-          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
-    if (ownerCode == null || ownerCode.isEmpty || !mounted) return;
-
-    setState(() {
-      _ownerLoading = true;
-      _message = null;
-    });
-    final error = await context.read<ChatProvider>().requestOwnerAccess(
-      ownerCode,
-    );
-    if (!mounted) return;
-    if (error == null) {
-      Navigator.of(context).pop(true);
-      return;
-    }
-    setState(() {
-      _ownerLoading = false;
-      _message = error;
-    });
-  }
-
   Future<void> _showReviewAccess() async {
     final controller = TextEditingController();
     final reviewCode = await showDialog<String>(
@@ -307,8 +259,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
                     const SizedBox(height: 12),
                     _buildReviewAccessAction(),
                   ],
-                  const SizedBox(height: 8),
-                  _buildOwnerAccessAction(),
                   if (_message != null) ...[
                     const SizedBox(height: 18),
                     Text(
@@ -405,19 +355,6 @@ class _PaywallScreenState extends State<PaywallScreen> {
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : const Text('Play reviewer access'),
-    );
-  }
-
-  Widget _buildOwnerAccessAction() {
-    return TextButton(
-      onPressed: _ownerLoading ? null : _showOwnerAccess,
-      child: _ownerLoading
-          ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Text('Owner access'),
     );
   }
 
