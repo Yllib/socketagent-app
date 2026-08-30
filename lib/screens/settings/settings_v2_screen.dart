@@ -2402,11 +2402,14 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
       context: context,
       sections: [
         AdaptiveSheetSection([
-          if (provider.subscriptionProvider == 'google_play')
-            const AdaptiveSheetAction(
+          if (provider.subscriptionProvider == 'google_play' ||
+              provider.subscriptionProvider == 'stripe')
+            AdaptiveSheetAction(
               value: _SubscriptionAction.manage,
               label: 'Manage subscription',
-              subtitle: 'Open Google Play subscription settings',
+              subtitle: provider.subscriptionProvider == 'google_play'
+                  ? 'Open Google Play subscription settings'
+                  : 'Open the Stripe billing portal',
               icon: Icons.open_in_new,
             ),
           const AdaptiveSheetAction(
@@ -2427,13 +2430,20 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
     if (_openingPortal) return;
 
     setState(() => _openingPortal = true);
-    final opened = await PlayBillingService.openSubscriptionManagement();
+    final bool opened;
+    if (provider.subscriptionProvider == 'stripe') {
+      final url = await provider.getDirectBillingPortalUrl();
+      opened = url != null &&
+          await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } else {
+      opened = await PlayBillingService.openSubscriptionManagement();
+    }
     if (!mounted) return;
     setState(() => _openingPortal = false);
 
     if (!opened) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not open Google Play')),
+        const SnackBar(content: Text('Could not open subscription settings')),
       );
       return;
     }

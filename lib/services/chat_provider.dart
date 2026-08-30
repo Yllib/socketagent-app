@@ -3449,6 +3449,92 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _subscriptionActive;
   }
 
+  Future<Map<String, dynamic>> createDirectCheckoutSession(
+    String email,
+  ) async {
+    final normalizedEmail = email.trim();
+    if (normalizedEmail.isEmpty) return {'error': 'Enter your email address.'};
+
+    Object? lastError;
+    for (final httpUrl in _relayHttpUrlCandidates()) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('$httpUrl/api/direct/checkout'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'email': normalizedEmail}),
+            )
+            .timeout(const Duration(seconds: 20));
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (response.statusCode == 200) return data;
+        return {'error': data['error']?.toString() ?? 'Could not start checkout.'};
+      } catch (error) {
+        lastError = error;
+        debugPrint('[Subscription] Direct checkout failed: $error');
+      }
+    }
+    debugPrint('[Subscription] Direct checkout unavailable: $lastError');
+    return {'error': 'Could not reach the relay to start checkout.'};
+  }
+
+  Future<String?> verifyDirectCheckoutSession(String sessionId) async {
+    if (sessionId.trim().isEmpty) return 'Checkout session is missing.';
+
+    Object? lastError;
+    for (final httpUrl in _relayHttpUrlCandidates()) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('$httpUrl/api/direct/checkout/verify'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'sessionId': sessionId.trim()}),
+            )
+            .timeout(const Duration(seconds: 20));
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        if (response.statusCode != 200) {
+          return data['error']?.toString() ?? 'Could not verify checkout.';
+        }
+        final relayToken = data['token'] as String?;
+        if (relayToken == null || relayToken.isEmpty) {
+          return 'The relay did not return an access token.';
+        }
+        final email = data['email'] as String? ?? '';
+        await saveSubscriberToken(relayToken, email);
+        _applySubscriptionDetails(data);
+        notifyListeners();
+        return null;
+      } catch (error) {
+        lastError = error;
+        debugPrint('[Subscription] Direct checkout verification failed: $error');
+      }
+    }
+    debugPrint('[Subscription] Direct checkout verification unavailable: $lastError');
+    return 'Could not reach the relay to verify checkout.';
+  }
+
+  Future<String?> getDirectBillingPortalUrl() async {
+    if (_subscriberToken.isEmpty) return null;
+
+    for (final httpUrl in _relayHttpUrlCandidates()) {
+      try {
+        final response = await http
+            .post(
+              Uri.parse('$httpUrl/api/direct/billing-portal'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'subscriberToken': _subscriberToken}),
+            )
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode != 200) continue;
+        final data = jsonDecode(response.body) as Map<String, dynamic>;
+        final url = data['url'] as String?;
+        if (url != null && url.isNotEmpty) return url;
+      } catch (error) {
+        debugPrint('[Subscription] Direct billing portal failed: $error');
+      }
+    }
+    return null;
+  }
+
   /// Verify a Google Play purchase through the relay and save its access token.
   /// A null result means the purchase was verified.
   Future<String?> verifyGooglePlayPurchase(

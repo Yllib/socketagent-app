@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 import '../config/app_distribution.dart';
 import '../services/chat_provider.dart';
@@ -16,9 +17,14 @@ class PaywallScreen extends StatefulWidget {
 
 class _PaywallScreenState extends State<PaywallScreen> {
   final PlayBillingService _billing = PlayBillingService.instance;
+  final TextEditingController _emailController = TextEditingController();
   StreamSubscription<PlayBillingEvent>? _eventSubscription;
   bool _ownerLoading = false;
   bool _reviewLoading = false;
+  bool _directLoading = false;
+  bool _showDirectCheckout = false;
+  String? _directCheckoutSessionId;
+  WebViewController? _directCheckoutController;
   String? _message;
 
   @override
@@ -32,6 +38,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   void dispose() {
     _eventSubscription?.cancel();
     _billing.removeListener(_onBillingChanged);
+    _emailController.dispose();
     super.dispose();
   }
 
@@ -58,6 +65,85 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Future<void> _restore() async {
     setState(() => _message = null);
     await _billing.restore();
+  }
+
+  Future<void> _startDirectCheckout() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) {
+      setState(() => _message = 'Enter your email address.');
+      return;
+    }
+    setState(() {
+      _directLoading = true;
+      _message = null;
+    });
+
+    final result = await context
+        .read<ChatProvider>()
+        .createDirectCheckoutSession(email);
+    if (!mounted) return;
+    final error = result['error'] as String?;
+    final url = result['url'] as String?;
+    final sessionId = result['sessionId'] as String?;
+    if (error != null || url == null || sessionId == null) {
+      setState(() {
+        _directLoading = false;
+        _message = error ?? 'The relay did not return a checkout session.';
+      });
+      return;
+    }
+
+    _directCheckoutSessionId = sessionId;
+    _directCheckoutController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(Colors.black)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onNavigationRequest: (request) {
+            final uri = Uri.tryParse(request.url);
+            if (uri?.path == '/checkout/direct/success') {
+              unawaited(_finishDirectCheckout());
+              return NavigationDecision.prevent;
+            }
+            if (uri?.path == '/checkout/direct/cancel') {
+              setState(() {
+                _showDirectCheckout = false;
+                _directLoading = false;
+              });
+              return NavigationDecision.prevent;
+            }
+            return NavigationDecision.navigate;
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(url));
+    setState(() {
+      _showDirectCheckout = true;
+      _directLoading = false;
+    });
+  }
+
+  Future<void> _finishDirectCheckout() async {
+    if (_directLoading) return;
+    final sessionId = _directCheckoutSessionId;
+    if (sessionId == null) return;
+    setState(() {
+      _showDirectCheckout = false;
+      _directLoading = true;
+      _message = null;
+    });
+    final error = await context
+        .read<ChatProvider>()
+        .verifyDirectCheckoutSession(sessionId);
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _directLoading = false;
+      _message = error;
+    });
   }
 
   Future<void> _showOwnerAccess() async {
@@ -157,6 +243,25 @@ class _PaywallScreenState extends State<PaywallScreen> {
   @override
   Widget build(BuildContext context) {
     final isPlay = AppBuild.supportsPlayBilling;
+    if (_showDirectCheckout && _directCheckoutController != null) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.black,
+          title: const Text('Subscribe'),
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () {
+              setState(() {
+                _showDirectCheckout = false;
+                _directLoading = false;
+              });
+            },
+          ),
+        ),
+        body: WebViewWidget(controller: _directCheckoutController!),
+      );
+    }
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
@@ -181,7 +286,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   Text(
                     isPlay
                         ? 'Use SocketAgent away from home'
-                        : 'Google Play subscription required',
+                        : 'Subscribe to relay access',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.w700,
@@ -192,7 +297,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   Text(
                     isPlay
                         ? 'Connect to your computers through the encrypted relay.'
-                        : 'New relay subscriptions start in the Google Play version of SocketAgent.',
+                        : 'Direct subscriptions are handled securely by Stripe.',
                     style: TextStyle(color: Colors.white.withAlpha(175)),
                     textAlign: TextAlign.center,
                   ),
@@ -202,6 +307,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
                     const SizedBox(height: 12),
                     _buildReviewAccessAction(),
                   ],
+                  const SizedBox(height: 8),
+                  _buildOwnerAccessAction(),
                   if (_message != null) ...[
                     const SizedBox(height: 18),
                     Text(
@@ -301,33 +408,60 @@ class _PaywallScreenState extends State<PaywallScreen> {
     );
   }
 
+  Widget _buildOwnerAccessAction() {
+    return TextButton(
+      onPressed: _ownerLoading ? null : _showOwnerAccess,
+      child: _ownerLoading
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Text('Owner access'),
+    );
+  }
+
   Widget _buildDirectActions() {
     return Column(
       children: [
+        TextField(
+          controller: _emailController,
+          keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.go,
+          autofillHints: const [AutofillHints.email],
+          onSubmitted: (_) => _startDirectCheckout(),
+          decoration: const InputDecoration(
+            labelText: 'Email',
+            hintText: 'you@example.com',
+            border: OutlineInputBorder(),
+            prefixIcon: Icon(Icons.email_outlined),
+          ),
+        ),
+        const SizedBox(height: 16),
         SizedBox(
           width: double.infinity,
           height: 50,
           child: FilledButton(
-            onPressed: _openPlayStore,
-            child: const Text('Open Google Play'),
+            onPressed: _directLoading ? null : _startDirectCheckout,
+            child: _directLoading
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Start 7-day free trial'),
           ),
         ),
         const SizedBox(height: 12),
         Text(
-          'After subscribing, install the Direct version over the Play version to keep your access and settings.',
+          'Stripe shows the renewal price before you confirm. Cancel anytime.',
           style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(145)),
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 10),
         TextButton(
-          onPressed: _ownerLoading ? null : _showOwnerAccess,
-          child: _ownerLoading
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Owner access'),
+          onPressed: _openPlayStore,
+          child: const Text('Use Google Play instead'),
         ),
       ],
     );

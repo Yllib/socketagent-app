@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../services/chat_provider.dart';
 import '../../services/play_billing_service.dart';
 import '../paywall_screen.dart';
@@ -200,11 +201,19 @@ class _SignedInCardState extends State<_SignedInCard> {
   }
 
   Future<void> _openBillingPortal() async {
-    final opened = await PlayBillingService.openSubscriptionManagement();
+    final provider = widget.provider;
+    final bool opened;
+    if (provider.subscriptionProvider == 'stripe') {
+      final url = await provider.getDirectBillingPortalUrl();
+      opened = url != null &&
+          await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } else {
+      opened = await PlayBillingService.openSubscriptionManagement();
+    }
     if (!opened || !mounted) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Could not open Google Play')),
+          const SnackBar(content: Text('Could not open subscription settings')),
         );
       }
       return;
@@ -220,6 +229,7 @@ class _SignedInCardState extends State<_SignedInCard> {
         final status = _statusLine(provider);
         final isOwner = provider.subscriptionStatus == 'owner';
         final isGooglePlay = provider.subscriptionProvider == 'google_play';
+        final isStripe = provider.subscriptionProvider == 'stripe';
 
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -268,7 +278,7 @@ class _SignedInCardState extends State<_SignedInCard> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    if (!isOwner && isGooglePlay)
+                    if (!isOwner && (isGooglePlay || isStripe))
                       TextButton(
                         onPressed: _openBillingPortal,
                         child: const Text('Manage Subscription'),
