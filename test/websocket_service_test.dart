@@ -77,6 +77,21 @@ void main() {
     );
   });
 
+  test('a new subscriber token changes the relay configuration', () {
+    expect(
+      relayConfigurationChanged(
+        currentRelayUrl: 'wss://relay.example.test',
+        nextRelayUrl: 'wss://relay.example.test',
+        currentPairingToken: 'pairing-token',
+        nextPairingToken: 'pairing-token',
+        currentSubscriberToken: '',
+        nextSubscriberToken: 'owner-token',
+        sameCryptoService: true,
+      ),
+      isTrue,
+    );
+  });
+
   test('bulk relay lane derives an isolated opaque pairing identity', () {
     expect(
       pairingTokenForLane('pairing-token', TransportLane.control),

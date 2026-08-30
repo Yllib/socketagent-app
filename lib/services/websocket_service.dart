@@ -43,6 +43,21 @@ bool relayTransportIsConfigured({
       cryptoReady;
 }
 
+bool relayConfigurationChanged({
+  required String currentRelayUrl,
+  required String nextRelayUrl,
+  required String currentPairingToken,
+  required String nextPairingToken,
+  required String currentSubscriberToken,
+  required String nextSubscriberToken,
+  required bool sameCryptoService,
+}) {
+  return currentRelayUrl != nextRelayUrl ||
+      currentPairingToken != nextPairingToken ||
+      currentSubscriberToken != nextSubscriberToken ||
+      !sameCryptoService;
+}
+
 class WebSocketService {
   static const int _sessionEventAckVersion = 2;
   WebSocketService({
@@ -136,10 +151,15 @@ class WebSocketService {
     required CryptoService cryptoService,
     String subscriberToken = '',
   }) {
-    final changed =
-        _relayUrl != relayUrl ||
-        _pairingToken != pairingToken ||
-        !identical(_cryptoService, cryptoService);
+    final changed = relayConfigurationChanged(
+      currentRelayUrl: _relayUrl,
+      nextRelayUrl: relayUrl,
+      currentPairingToken: _pairingToken,
+      nextPairingToken: pairingToken,
+      currentSubscriberToken: _subscriberToken,
+      nextSubscriberToken: subscriberToken,
+      sameCryptoService: identical(_cryptoService, cryptoService),
+    );
     if (changed && _channel != null) disconnect();
     _relayUrl = relayUrl;
     _pairingToken = pairingToken;

@@ -3273,15 +3273,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.connectAll();
   }
 
-  /// Derive HTTP URL from relay WebSocket URL.
-  ///
-  /// Prefer the active/per-server relay config. The legacy shared-pref
-  /// `relay_url` can be stale on upgraded installs and should only be a
-  /// fallback.
-  String? _relayHttpUrl() {
-    return _relayHttpUrlCandidates().firstOrNull;
-  }
-
   List<String> _relayHttpUrlCandidates() {
     final candidates = <String>[
       if (_connMgr.activeConfig?.relayUrl.isNotEmpty == true)
@@ -3381,66 +3372,70 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final prefs = await SharedPreferences.getInstance();
     _cachedPrefs = prefs;
-    final httpUrl = _relayHttpUrl();
-    if (httpUrl == null) {
+    final httpUrls = _relayHttpUrlCandidates();
+    if (httpUrls.isEmpty) {
       _subscriptionChecked = true;
       _subscriptionCheckedAt = DateTime.now();
       notifyListeners();
       return false;
     }
 
-    try {
-      final uri = Uri.parse(
-        '$httpUrl/api/subscription-status?token=${Uri.encodeComponent(token)}',
-      );
-      final response = await http.get(uri).timeout(const Duration(seconds: 10));
-      if (_subscriberToken != token) return _subscriptionActive;
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        _subscriptionActive = data['active'] == true;
-        _subscriptionProvider = data['provider'] as String? ?? '';
-        final responseEmail = data['email'] as String?;
-        if (responseEmail != null && responseEmail.isNotEmpty) {
-          _subscriberEmail = responseEmail;
-          await _secureStorage.setSubscriberEmail(responseEmail);
+    Map<String, dynamic>? statusData;
+    Map<String, dynamic>? inactiveStatusData;
+    for (final httpUrl in httpUrls) {
+      try {
+        final uri = Uri.parse(
+          '$httpUrl/api/subscription-status?token=${Uri.encodeComponent(token)}',
+        );
+        final response = await http
+            .get(uri)
+            .timeout(const Duration(seconds: 10));
+        if (_subscriberToken != token) return _subscriptionActive;
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body) as Map<String, dynamic>;
+          if (data['active'] == true) {
+            statusData = data;
+            break;
+          }
+          inactiveStatusData ??= data;
         }
-        if (_subscriptionActive) {
-          _subscriptionStatus = data['status'] as String? ?? '';
-          _trialEnd = data['trialEnd'] != null
-              ? DateTime.fromMillisecondsSinceEpoch(data['trialEnd'] as int)
-              : null;
-          _periodEnd = data['periodEnd'] != null
-              ? DateTime.fromMillisecondsSinceEpoch(data['periodEnd'] as int)
-              : null;
-          _cancelAtPeriodEnd = data['cancelAtPeriodEnd'] == true;
-        } else {
-          _subscriptionStatus = '';
-          _trialEnd = null;
-          _periodEnd = null;
-          _cancelAtPeriodEnd = false;
-        }
+      } catch (e) {
+        debugPrint('[Subscription] Status check failed for $httpUrl: $e');
+      }
+    }
+
+    if (_subscriberToken != token) return _subscriptionActive;
+    statusData ??= inactiveStatusData;
+    if (statusData != null) {
+      _subscriptionActive = statusData['active'] == true;
+      _subscriptionProvider = statusData['provider'] as String? ?? '';
+      final responseEmail = statusData['email'] as String?;
+      if (responseEmail != null && responseEmail.isNotEmpty) {
+        _subscriberEmail = responseEmail;
+        await _secureStorage.setSubscriberEmail(responseEmail);
+      }
+      if (_subscriptionActive) {
+        _subscriptionStatus = statusData['status'] as String? ?? '';
+        final trialEnd = statusData['trialEnd'];
+        _trialEnd = trialEnd is num
+            ? DateTime.fromMillisecondsSinceEpoch(trialEnd.toInt())
+            : null;
+        final periodEnd = statusData['periodEnd'];
+        _periodEnd = periodEnd is num
+            ? DateTime.fromMillisecondsSinceEpoch(periodEnd.toInt())
+            : null;
+        _cancelAtPeriodEnd = statusData['cancelAtPeriodEnd'] == true;
       } else {
-        _subscriptionActive = false;
         _subscriptionStatus = '';
-        _subscriptionProvider = '';
         _trialEnd = null;
         _periodEnd = null;
         _cancelAtPeriodEnd = false;
       }
-    } catch (e) {
-      debugPrint('[Subscription] Status check error: $e');
-      if (_subscriberToken != token) return _subscriptionActive;
-      if (token.isNotEmpty) {
-        _subscriptionActive = true;
-        if (_subscriptionStatus.isEmpty) _subscriptionStatus = 'unknown';
-      } else {
-        _subscriptionActive = false;
-        _subscriptionStatus = '';
-        _subscriptionProvider = '';
-        _trialEnd = null;
-        _periodEnd = null;
-        _cancelAtPeriodEnd = false;
-      }
+    } else {
+      // Keep the saved credential usable while every configured relay is
+      // unavailable. A later refresh will replace this cached state.
+      _subscriptionActive = true;
+      if (_subscriptionStatus.isEmpty) _subscriptionStatus = 'unknown';
     }
 
     _subscriptionChecked = true;
@@ -3703,6 +3698,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Update subscriber token on all relay connections
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
+    _connMgr.connectAll();
     await _registerPushNotifications();
     notifyListeners();
   }
