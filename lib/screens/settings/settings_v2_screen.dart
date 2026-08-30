@@ -2386,8 +2386,6 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
 
   Future<void> _handleTap(ChatProvider provider) async {
     final hasAccess = provider.hasCachedRelayAccess;
-    final isOwner = provider.subscriptionStatus == 'owner';
-    final isGooglePlay = provider.subscriptionProvider == 'google_play';
 
     if (!hasAccess) {
       final signedIn = await Navigator.of(
@@ -2399,7 +2397,41 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
       return;
     }
 
-    if (isOwner || !isGooglePlay || _openingPortal) return;
+    final action = await showModalBottomSheet<_SubscriptionAction>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (provider.subscriptionProvider == 'google_play')
+              ListTile(
+                leading: const Icon(Icons.open_in_new),
+                title: const Text('Manage subscription'),
+                subtitle: const Text('Open Google Play subscription settings'),
+                onTap: () =>
+                    Navigator.pop(sheetContext, _SubscriptionAction.manage),
+              ),
+            ListTile(
+              leading: const Icon(Icons.logout),
+              title: const Text('Sign out of relay'),
+              subtitle: const Text(
+                'Keep your subscription and paired computers',
+              ),
+              onTap: () =>
+                  Navigator.pop(sheetContext, _SubscriptionAction.signOut),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (!mounted || action == null) return;
+    if (action == _SubscriptionAction.signOut) {
+      await _confirmSignOut(provider);
+      return;
+    }
+    if (_openingPortal) return;
 
     setState(() => _openingPortal = true);
     final opened = await PlayBillingService.openSubscriptionManagement();
@@ -2417,6 +2449,38 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
     }
   }
 
+  Future<void> _confirmSignOut(ChatProvider provider) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sign out of relay?'),
+        content: const Text(
+          'This removes relay access from this device. Your subscription and paired computers will not be changed.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Sign Out'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    await provider.clearSubscriberToken();
+    provider.disconnect();
+    provider.connectToServer();
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Signed out of relay')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -2424,7 +2488,6 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
         final hasAccess = provider.hasCachedRelayAccess;
         final isOwner = provider.subscriptionStatus == 'owner';
         final isLegacyStripe = provider.subscriptionProvider == 'stripe';
-        final isGooglePlay = provider.subscriptionProvider == 'google_play';
         final lines = _subscriptionLines(provider);
 
         return ListTile(
@@ -2439,30 +2502,30 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
                 Text(line, maxLines: 1, overflow: TextOverflow.ellipsis),
             ],
           ),
-          trailing: hasAccess
-              ? isOwner
-                    ? const Text('Owner')
-                    : isLegacyStripe
-                    ? const Text('Legacy')
-                    : _openingPortal
-                    ? const SizedBox(
-                        width: 20,
-                        height: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : isGooglePlay
-                    ? TextButton(
-                        onPressed: () => _handleTap(provider),
-                        child: const Text('Manage'),
-                      )
-                    : const SizedBox.shrink()
-              : const Icon(Icons.chevron_right),
-          onTap: !hasAccess || isGooglePlay ? () => _handleTap(provider) : null,
+          trailing: _openingPortal
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (hasAccess && isOwner) const Text('Owner'),
+                    if (hasAccess && isLegacyStripe) const Text('Legacy'),
+                    if (hasAccess && (isOwner || isLegacyStripe))
+                      const SizedBox(width: 4),
+                    const Icon(Icons.chevron_right),
+                  ],
+                ),
+          onTap: () => _handleTap(provider),
         );
       },
     );
   }
 }
+
+enum _SubscriptionAction { manage, signOut }
 
 class _NotificationSummaryTile extends StatefulWidget {
   @override
