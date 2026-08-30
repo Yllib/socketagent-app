@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import '../models/ai_response_report.dart';
 import '../services/socketagent_link_router.dart';
+import 'adaptive_action_sheet.dart';
 
 class MessageBubble extends StatelessWidget {
   static const _nativeChannel = MethodChannel('com.socketagent.app/intent');
@@ -293,107 +294,94 @@ class MessageBubble extends StatelessWidget {
   void _showMessageActions(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
-      builder: (sheetContext) => SafeArea(
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 32,
-                height: 4,
-                margin: const EdgeInsets.only(top: 12, bottom: 8),
-                decoration: BoxDecoration(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurfaceVariant.withAlpha(80),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              ListTile(
-                key: const ValueKey<String>('copy-message-plain'),
-                leading: const Icon(Icons.content_copy_outlined),
-                title: const Text('Copy as plain text'),
-                subtitle: const Text('Copy without Markdown formatting'),
-                onTap: () async {
-                  Navigator.pop(sheetContext);
-                  await Clipboard.setData(
-                    ClipboardData(text: _plainText(message.textContent)),
-                  );
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Message copied')),
-                  );
-                },
-              ),
-              ListTile(
-                key: const ValueKey<String>('copy-message-markdown'),
-                leading: const Icon(Icons.code_outlined),
-                title: const Text('Copy as Markdown'),
-                subtitle: const Text('Copy the original formatting source'),
-                onTap: () async {
-                  Navigator.pop(sheetContext);
-                  await Clipboard.setData(
-                    ClipboardData(text: message.textContent),
-                  );
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Markdown copied')),
-                  );
-                },
-              ),
-              ListTile(
-                key: const ValueKey<String>('share-message'),
-                leading: const Icon(Icons.share_outlined),
-                title: const Text('Share'),
-                subtitle: const Text('Share plain text with another app'),
-                onTap: () async {
-                  Navigator.pop(sheetContext);
-                  try {
-                    await _nativeChannel.invokeMethod<void>('shareText', {
-                      'text': _plainText(message.textContent),
-                      'subject': 'SocketAgent message',
-                      'chooserTitle': 'Share message',
-                    });
-                  } on PlatformException catch (error) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          error.message ?? 'Unable to share this message',
-                        ),
-                      ),
-                    );
-                  }
-                },
-              ),
-              if (onReadAloud != null)
-                ListTile(
-                  key: const ValueKey<String>('read-whole-message'),
-                  leading: const Icon(Icons.volume_up_outlined),
-                  title: const Text('Read aloud'),
-                  subtitle: const Text(
-                    'Use your selected text-to-speech voice',
-                  ),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    onReadAloud!(_plainText(message.textContent));
-                  },
-                ),
-              if (onReport != null)
-                ListTile(
-                  key: const ValueKey<String>('report-ai-response'),
-                  leading: const Icon(Icons.flag_outlined),
-                  title: const Text('Report response'),
-                  subtitle: const Text('Flag offensive or unsafe AI content'),
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _showReportSheet(context);
-                  },
-                ),
-              const SizedBox(height: 8),
-            ],
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      constraints: adaptiveActionSheetConstraints,
+      builder: (sheetContext) => AdaptiveSheetBody(
+        children: [
+          ListTile(
+            key: const ValueKey<String>('copy-message-plain'),
+            leading: const Icon(Icons.content_copy_outlined),
+            title: const Text('Copy as plain text'),
+            subtitle: const Text('Copy without Markdown formatting'),
+            onTap: () async {
+              Navigator.pop(sheetContext);
+              await Clipboard.setData(
+                ClipboardData(text: _plainText(message.textContent)),
+              );
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Message copied')),
+              );
+            },
           ),
-        ),
+          ListTile(
+            key: const ValueKey<String>('copy-message-markdown'),
+            leading: const Icon(Icons.code_outlined),
+            title: const Text('Copy as Markdown'),
+            subtitle: const Text('Copy the original formatting source'),
+            onTap: () async {
+              Navigator.pop(sheetContext);
+              await Clipboard.setData(
+                ClipboardData(text: message.textContent),
+              );
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Markdown copied')),
+              );
+            },
+          ),
+          ListTile(
+            key: const ValueKey<String>('share-message'),
+            leading: const Icon(Icons.share_outlined),
+            title: const Text('Share'),
+            subtitle: const Text('Share plain text with another app'),
+            onTap: () async {
+              Navigator.pop(sheetContext);
+              try {
+                await _nativeChannel.invokeMethod<void>('shareText', {
+                  'text': _plainText(message.textContent),
+                  'subject': 'SocketAgent message',
+                  'chooserTitle': 'Share message',
+                });
+              } on PlatformException catch (error) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      error.message ?? 'Unable to share this message',
+                    ),
+                  ),
+                );
+              }
+            },
+          ),
+          if (onReadAloud != null)
+            ListTile(
+              key: const ValueKey<String>('read-whole-message'),
+              leading: const Icon(Icons.volume_up_outlined),
+              title: const Text('Read aloud'),
+              subtitle: const Text(
+                'Use your selected text-to-speech voice',
+              ),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                onReadAloud!(_plainText(message.textContent));
+              },
+            ),
+          if (onReport != null)
+            ListTile(
+              key: const ValueKey<String>('report-ai-response'),
+              leading: const Icon(Icons.flag_outlined),
+              title: const Text('Report response'),
+              subtitle: const Text('Flag offensive or unsafe AI content'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showReportSheet(context);
+              },
+            ),
+        ],
       ),
     );
   }
@@ -401,38 +389,23 @@ class MessageBubble extends StatelessWidget {
   Future<void> _showReportSheet(BuildContext context) async {
     final category = await showModalBottomSheet<AiResponseReportCategory>(
       context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.fromLTRB(20, 20, 20, 4),
-              child: Text(
-                'Why are you reporting this response?',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
-              ),
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      constraints: adaptiveActionSheetConstraints,
+      builder: (sheetContext) => AdaptiveSheetBody(
+        title: 'Why are you reporting this response?',
+        subtitle:
+            'SocketAgent will send this response and your reason to Rubano Enterprises for review.',
+        children: [
+          for (final option in AiResponseReportCategory.values)
+            ListTile(
+              key: ValueKey<String>('report-category-${option.wireName}'),
+              leading: Icon(_reportIcon(option)),
+              title: Text(option.label),
+              onTap: () => Navigator.pop(sheetContext, option),
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: Text(
-                'SocketAgent will send this response and your reason to '
-                'Rubano Enterprises for review.',
-                style: TextStyle(
-                  color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            for (final option in AiResponseReportCategory.values)
-              ListTile(
-                key: ValueKey<String>('report-category-${option.wireName}'),
-                leading: Icon(_reportIcon(option)),
-                title: Text(option.label),
-                onTap: () => Navigator.pop(sheetContext, option),
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
+        ],
       ),
     );
     if (category == null || onReport == null || !context.mounted) return;
@@ -558,97 +531,78 @@ class MessageBubble extends StatelessWidget {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 32,
-              height: 4,
-              margin: const EdgeInsets.only(top: 12, bottom: 8),
-              decoration: BoxDecoration(
-                color: Theme.of(
+      useSafeArea: true,
+      showDragHandle: true,
+      constraints: adaptiveActionSheetConstraints,
+      builder: (ctx) => AdaptiveSheetBody(
+        title: 'Rewind options',
+        children: [
+          if (onRewindConversation != null)
+            ListTile(
+              leading: Icon(Icons.history, color: Colors.orange.shade400),
+              title: const Text('Rewind Conversation'),
+              subtitle: const Text(
+                'Remove messages after this point, keep files',
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmAction(
                   context,
-                ).colorScheme.onSurfaceVariant.withAlpha(80),
-                borderRadius: BorderRadius.circular(2),
-              ),
+                  title: 'Rewind Conversation',
+                  body:
+                      'Rewind the conversation to this message?\n\n'
+                      'All messages after this point will be removed. '
+                      'File changes will be kept as-is. '
+                      'You can then send a new message to take a different path.',
+                  actionLabel: 'Rewind',
+                  color: Colors.orange,
+                  onConfirmed: () =>
+                      onRewindConversation!(uuid, rewindFiles: false),
+                );
+              },
             ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-              child: Text(
-                'Rewind Options',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
+          if (onRewindConversation != null)
+            ListTile(
+              leading: Icon(Icons.restore, color: Colors.deepOrange.shade400),
+              title: const Text('Rewind Everything'),
+              subtitle: const Text('Revert files and remove messages'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmAction(
+                  context,
+                  title: 'Rewind Everything',
+                  body:
+                      'Rewind the conversation and revert all file changes back to this message?\n\n'
+                      'Both files and messages after this point will be reverted. '
+                      'You can then send a new message to take a different path.',
+                  actionLabel: 'Rewind',
+                  color: Colors.deepOrange,
+                  onConfirmed: () =>
+                      onRewindConversation!(uuid, rewindFiles: true),
+                );
+              },
             ),
-            const Divider(),
-            if (onRewindConversation != null)
-              ListTile(
-                leading: Icon(Icons.history, color: Colors.orange.shade400),
-                title: const Text('Rewind Conversation'),
-                subtitle: const Text(
-                  'Remove messages after this point, keep files',
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _confirmAction(
-                    context,
-                    title: 'Rewind Conversation',
-                    body:
-                        'Rewind the conversation to this message?\n\n'
-                        'All messages after this point will be removed. '
-                        'File changes will be kept as-is. '
-                        'You can then send a new message to take a different path.',
-                    actionLabel: 'Rewind',
-                    color: Colors.orange,
-                    onConfirmed: () =>
-                        onRewindConversation!(uuid, rewindFiles: false),
-                  );
-                },
-              ),
-            if (onRewindConversation != null)
-              ListTile(
-                leading: Icon(Icons.restore, color: Colors.deepOrange.shade400),
-                title: const Text('Rewind Everything'),
-                subtitle: const Text('Revert files and remove messages'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _confirmAction(
-                    context,
-                    title: 'Rewind Everything',
-                    body:
-                        'Rewind the conversation and revert all file changes back to this message?\n\n'
-                        'Both files and messages after this point will be reverted. '
-                        'You can then send a new message to take a different path.',
-                    actionLabel: 'Rewind',
-                    color: Colors.deepOrange,
-                    onConfirmed: () =>
-                        onRewindConversation!(uuid, rewindFiles: true),
-                  );
-                },
-              ),
-            if (onBranch != null)
-              ListTile(
-                leading: Icon(Icons.fork_right, color: Colors.blue.shade400),
-                title: const Text('Branch From Here'),
-                subtitle: const Text('Fork into a new session at this point'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _confirmAction(
-                    context,
-                    title: 'Branch Conversation',
-                    body:
-                        'Create a new session branching from this message?\n\n'
-                        'The original conversation stays untouched. '
-                        'You\'ll be switched to the new branch.',
-                    actionLabel: 'Branch',
-                    color: Colors.blue,
-                    onConfirmed: () => onBranch!(uuid),
-                  );
-                },
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
+          if (onBranch != null)
+            ListTile(
+              leading: Icon(Icons.fork_right, color: Colors.blue.shade400),
+              title: const Text('Branch From Here'),
+              subtitle: const Text('Fork into a new session at this point'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmAction(
+                  context,
+                  title: 'Branch Conversation',
+                  body:
+                      'Create a new session branching from this message?\n\n'
+                      'The original conversation stays untouched. '
+                      'You\'ll be switched to the new branch.',
+                  actionLabel: 'Branch',
+                  color: Colors.blue,
+                  onConfirmed: () => onBranch!(uuid),
+                );
+              },
+            ),
+        ],
       ),
     );
   }

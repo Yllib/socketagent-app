@@ -14621,9 +14621,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  void deleteSession(String sessionId) {
-    final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
-    _sessions.removeWhere((s) => s.id == sessionId);
+  void deleteSession(String sessionId, {String? serverId}) {
+    final session = _sessions
+        .where(
+          (s) =>
+              s.id == sessionId &&
+              (serverId == null || serverId.isEmpty || s.serverId == serverId),
+        )
+        .firstOrNull;
+    _sessions.removeWhere(
+      (s) =>
+          s.id == sessionId &&
+          (serverId == null || serverId.isEmpty || s.serverId == serverId),
+    );
     // Also remove from per-server cache
     if (session != null && session.serverId.isNotEmpty) {
       _perServerSessions[session.serverId]?.removeWhere(
@@ -14631,6 +14641,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
       _saveSessionCacheSoon();
       _connMgr.sendToServer(session.serverId, {
+        'type': 'delete_session',
+        'sessionId': sessionId,
+      });
+    } else if (serverId != null && serverId.isNotEmpty) {
+      _perServerSessions[serverId]?.removeWhere((s) => s.id == sessionId);
+      _saveSessionCacheSoon();
+      _connMgr.sendToServer(serverId, {
         'type': 'delete_session',
         'sessionId': sessionId,
       });

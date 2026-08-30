@@ -5,6 +5,7 @@ import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/connection_manager.dart';
 import '../../services/websocket_service.dart';
+import '../../widgets/adaptive_action_sheet.dart';
 import 'skill_edit_screen.dart';
 
 /// A skill entry tagged with which server it came from.
@@ -299,7 +300,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
     }
   }
 
-  void _showNewSkillServerPicker() {
+  Future<void> _showNewSkillServerPicker() async {
     final connected = _connMgr.configs
         .where((c) => _connMgr.statusOf(c.id) == ConnectionStatus.connected)
         .toList();
@@ -308,37 +309,27 @@ class _SkillsScreenState extends State<SkillsScreen> {
       _openEditor(targetServer: connected.first);
       return;
     }
-    showModalBottomSheet(
+    final selected = await showAdaptiveActionSheet<ServerConfig>(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Create on which computer?',
-                style: Theme.of(ctx).textTheme.titleSmall,
-              ),
-            ),
-            ...connected.map(
-              (s) => ListTile(
-                leading: Icon(
-                  Icons.dns,
-                  color: s.colorValue != null ? Color(s.colorValue!) : null,
+      title: 'Create on which computer?',
+      sections: [
+        AdaptiveSheetSection(
+          connected
+              .map(
+                (server) => AdaptiveSheetAction(
+                  value: server,
+                  label: server.name,
+                  icon: Icons.dns,
+                  iconColor: server.colorValue != null
+                      ? Color(server.colorValue!)
+                      : null,
                 ),
-                title: Text(s.name),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _openEditor(targetServer: s);
-                },
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
+              )
+              .toList(),
         ),
-      ),
+      ],
     );
+    if (selected != null && mounted) _openEditor(targetServer: selected);
   }
 
   @override
@@ -1375,6 +1366,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
     showModalBottomSheet(
       context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      constraints: adaptiveActionSheetConstraints,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, sheetSetState) {
           setSheetState = sheetSetState;
@@ -1409,61 +1404,51 @@ class _SkillsScreenState extends State<SkillsScreen> {
               ? currentEntries
               : serverEntries;
 
-          return SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    pluginName,
-                    style: Theme.of(ctx).textTheme.titleSmall,
+          return AdaptiveSheetBody(
+            title: pluginName,
+            children: [
+              ...entries.map((entry) {
+                final serverId = entry.key;
+                final pluginId = entry.value['id'] as String? ?? '';
+                final installed = entry.value['installed'] as bool? ?? false;
+                final enabled = entry.value['enabled'] as bool? ?? false;
+                final config = _connMgr.configs
+                    .where((c) => c.id == serverId)
+                    .firstOrNull;
+                if (config == null) return const SizedBox.shrink();
+
+                final serverColor = config.colorValue != null
+                    ? Color(config.colorValue!)
+                    : Theme.of(ctx).colorScheme.primary;
+
+                String statusText;
+                if (_toggling.contains('$serverId:$pluginId')) {
+                  statusText = 'Updating...';
+                } else if (!installed) {
+                  statusText = 'Not installed';
+                } else if (enabled) {
+                  statusText = 'Installed, enabled';
+                } else {
+                  statusText = 'Installed, disabled';
+                }
+
+                return ListTile(
+                  leading: Icon(Icons.dns, color: serverColor),
+                  title: Text(config.name),
+                  subtitle: Text(
+                    statusText,
+                    style: const TextStyle(fontSize: 12),
                   ),
-                ),
-                ...entries.map((entry) {
-                  final serverId = entry.key;
-                  final pluginId = entry.value['id'] as String? ?? '';
-                  final installed = entry.value['installed'] as bool? ?? false;
-                  final enabled = entry.value['enabled'] as bool? ?? false;
-                  final config = _connMgr.configs
-                      .where((c) => c.id == serverId)
-                      .firstOrNull;
-                  if (config == null) return const SizedBox.shrink();
-
-                  final serverColor = config.colorValue != null
-                      ? Color(config.colorValue!)
-                      : Theme.of(ctx).colorScheme.primary;
-
-                  String statusText;
-                  if (_toggling.contains('$serverId:$pluginId')) {
-                    statusText = 'Updating...';
-                  } else if (!installed) {
-                    statusText = 'Not installed';
-                  } else if (enabled) {
-                    statusText = 'Installed, enabled';
-                  } else {
-                    statusText = 'Installed, disabled';
-                  }
-
-                  return ListTile(
-                    leading: Icon(Icons.dns, color: serverColor),
-                    title: Text(config.name),
-                    subtitle: Text(
-                      statusText,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    trailing: _buildSingleServerAction(
-                      serverId,
-                      pluginId,
-                      installed,
-                      enabled,
-                      onAction: () => sheetSetState(() {}),
-                    ),
-                  );
-                }),
-                const SizedBox(height: 8),
-              ],
-            ),
+                  trailing: _buildSingleServerAction(
+                    serverId,
+                    pluginId,
+                    installed,
+                    enabled,
+                    onAction: () => sheetSetState(() {}),
+                  ),
+                );
+              }),
+            ],
           );
         },
       ),

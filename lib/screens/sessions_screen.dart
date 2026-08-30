@@ -6,12 +6,33 @@ import '../services/websocket_service.dart';
 import '../models/message.dart';
 import '../models/server_config.dart';
 import '../models/session_grouping.dart';
+import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'archive_screen.dart';
 import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
 import 'session_browser_screen.dart';
+
+enum _SessionMenuAction {
+  pin,
+  notifications,
+  rename,
+  fork,
+  teleport,
+  startFresh,
+  tools,
+  archive,
+  delete,
+}
+
+enum _SessionToolsAction {
+  compact,
+  rollback,
+  clearContext,
+  blockedTools,
+  instructions,
+}
 
 class SessionsTab extends StatefulWidget {
   const SessionsTab({super.key});
@@ -29,6 +50,8 @@ class _SessionsTabState extends State<SessionsTab> {
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
   final Set<String> _collapsedDelegatedParents = {};
+  final Set<String> _selectedSessionKeys = {};
+  bool _selectionMode = false;
   Timer? _globalSearchDebounce;
   int _globalSearchGeneration = 0;
   bool _globalSearchLoading = false;
@@ -45,35 +68,26 @@ class _SessionsTabState extends State<SessionsTab> {
     BuildContext context,
     ChatProvider provider,
   ) async {
-    final mode = await showModalBottomSheet<SessionBrowserMode>(
+    final mode = await showAdaptiveActionSheet<SessionBrowserMode>(
       context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const CircleAvatar(
-                child: Icon(Icons.add_comment_outlined),
-              ),
-              title: const Text('New session'),
-              subtitle: const Text('Choose a computer and working folder'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  Navigator.pop(sheetContext, SessionBrowserMode.create),
-            ),
-            ListTile(
-              leading: const CircleAvatar(child: Icon(Icons.history)),
-              title: const Text('Resume session'),
-              subtitle: const Text('Browse Claude and Codex history'),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () =>
-                  Navigator.pop(sheetContext, SessionBrowserMode.resume),
-            ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+      sections: const [
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: SessionBrowserMode.create,
+            label: 'New session',
+            subtitle: 'Choose a computer and working folder',
+            icon: Icons.add_comment_outlined,
+            trailing: Icon(Icons.chevron_right),
+          ),
+          AdaptiveSheetAction(
+            value: SessionBrowserMode.resume,
+            label: 'Resume session',
+            subtitle: 'Browse Claude and Codex history',
+            icon: Icons.history,
+            trailing: Icon(Icons.chevron_right),
+          ),
+        ]),
+      ],
     );
     if (mode == null || !context.mounted) return;
 
@@ -330,6 +344,9 @@ class _SessionsTabState extends State<SessionsTab> {
     return showModalBottomSheet<({String? serverId, String backend})>(
       context: context,
       isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      constraints: adaptiveActionSheetConstraints,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setState) {
@@ -346,139 +363,128 @@ class _SessionsTabState extends State<SessionsTab> {
                 provider.serverConfigs.length > 1 && presetServerId == null;
             final showBackends = supported.length > 1;
 
-            return SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            return AdaptiveSheetBody(
+              title: 'New session',
+              children: [
+                if (showServers) ...[
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                     child: Text(
-                      'New Session',
-                      style: Theme.of(context).textTheme.titleMedium,
+                      'Computer',
+                      style: Theme.of(context).textTheme.labelSmall,
                     ),
                   ),
-                  const Divider(height: 1),
-                  if (showServers) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Text(
-                        'Computer',
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                    ),
-                    RadioGroup<String>(
-                      groupValue: selectedServer,
-                      onChanged: (value) {
-                        if (value != null) {
-                          setState(() => selectedServer = value);
-                        }
-                      },
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final config in provider.serverConfigs)
-                            Builder(
-                              builder: (context) {
-                                final status = provider.connMgr.statusOf(
-                                  config.id,
-                                );
-                                final isConnected =
-                                    status == ConnectionStatus.connected;
-                                return RadioListTile<String>(
-                                  value: config.id,
-                                  enabled: isConnected,
-                                  title: Text(config.name),
-                                  subtitle: Text(
-                                    config.useRelay
-                                        ? 'Relay'
-                                        : '${config.host}:${config.port}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: Theme.of(
-                                        context,
-                                      ).colorScheme.onSurface.withAlpha(128),
-                                    ),
-                                  ),
-                                  secondary: Icon(
-                                    isConnected
-                                        ? Icons.cloud_done
-                                        : Icons.cloud_off,
-                                    color: isConnected
-                                        ? Colors.green
-                                        : Colors.grey,
-                                  ),
-                                  dense: true,
-                                );
-                              },
-                            ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1),
-                  ],
-                  if (showBackends) ...[
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                      child: Text(
-                        'Backend',
-                        style: Theme.of(context).textTheme.labelSmall,
-                      ),
-                    ),
-                    RadioGroup<String>(
-                      groupValue: selectedBackend,
-                      onChanged: (value) {
-                        if (value != null) {
-                          setState(() => selectedBackend = value);
-                        }
-                      },
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final backend in supported)
-                            RadioListTile<String>(
-                              value: backend,
-                              title: Text(_backendLabel(backend)),
-                              subtitle: Text(
-                                _backendSubtitle(backend),
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onSurface.withAlpha(128),
-                                ),
-                              ),
-                              dense: true,
-                            ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 1),
-                  ],
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
+                  RadioGroup<String>(
+                    groupValue: selectedServer,
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => selectedServer = value);
+                      }
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('Cancel'),
-                        ),
-                        const SizedBox(width: 8),
-                        FilledButton(
-                          onPressed: selectedServer == null
-                              ? null
-                              : () => Navigator.pop(ctx, (
-                                  serverId: selectedServer,
-                                  backend: selectedBackend,
-                                )),
-                          child: const Text('Create'),
-                        ),
+                        for (final config in provider.serverConfigs)
+                          Builder(
+                            builder: (context) {
+                              final status = provider.connMgr.statusOf(
+                                config.id,
+                              );
+                              final isConnected =
+                                  status == ConnectionStatus.connected;
+                              return RadioListTile<String>(
+                                value: config.id,
+                                enabled: isConnected,
+                                title: Text(config.name),
+                                subtitle: Text(
+                                  config.useRelay
+                                      ? 'Relay'
+                                      : '${config.host}:${config.port}',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: Theme.of(
+                                      context,
+                                    ).colorScheme.onSurface.withAlpha(128),
+                                  ),
+                                ),
+                                secondary: Icon(
+                                  isConnected
+                                      ? Icons.cloud_done
+                                      : Icons.cloud_off,
+                                  color: isConnected
+                                      ? Colors.green
+                                      : Colors.grey,
+                                ),
+                                dense: true,
+                              );
+                            },
+                          ),
                       ],
                     ),
                   ),
+                  const Divider(height: 1),
                 ],
-              ),
+                if (showBackends) ...[
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                    child: Text(
+                      'Backend',
+                      style: Theme.of(context).textTheme.labelSmall,
+                    ),
+                  ),
+                  RadioGroup<String>(
+                    groupValue: selectedBackend,
+                    onChanged: (value) {
+                      if (value != null) {
+                        setState(() => selectedBackend = value);
+                      }
+                    },
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        for (final backend in supported)
+                          RadioListTile<String>(
+                            value: backend,
+                            title: Text(_backendLabel(backend)),
+                            subtitle: Text(
+                              _backendSubtitle(backend),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurface.withAlpha(128),
+                              ),
+                            ),
+                            dense: true,
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                ],
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx),
+                        child: const Text('Cancel'),
+                      ),
+                      const SizedBox(width: 8),
+                      FilledButton(
+                        onPressed: selectedServer == null
+                            ? null
+                            : () => Navigator.pop(ctx, (
+                                serverId: selectedServer,
+                                backend: selectedBackend,
+                              )),
+                        child: const Text('Create'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             );
           },
         );
@@ -1440,6 +1446,114 @@ class _SessionsTabState extends State<SessionsTab> {
 
   String _sessionKey(Session session) => '${session.serverId}:${session.id}';
 
+  List<Session> _selectedSessions(ChatProvider provider) => provider.sessions
+      .where((session) => _selectedSessionKeys.contains(_sessionKey(session)))
+      .toList();
+
+  void _enterSelection(Session session) {
+    setState(() {
+      _selectionMode = true;
+      _selectedSessionKeys.add(_sessionKey(session));
+    });
+  }
+
+  void _toggleSessionSelection(Session session) {
+    setState(() {
+      final key = _sessionKey(session);
+      if (!_selectedSessionKeys.add(key)) {
+        _selectedSessionKeys.remove(key);
+      }
+    });
+  }
+
+  void _exitSelection() {
+    setState(() {
+      _selectionMode = false;
+      _selectedSessionKeys.clear();
+    });
+  }
+
+  void _selectAllVisible(ChatProvider provider) {
+    final visible = provider.sessions.where(
+      (session) =>
+          _matchesSessionFilters(provider, session) &&
+          provider.isSessionAvailable(session),
+    );
+    setState(() {
+      _selectedSessionKeys.addAll(visible.map(_sessionKey));
+    });
+  }
+
+  Future<void> _archiveSelectedSessions(ChatProvider provider) async {
+    final selected = _selectedSessions(provider);
+    if (selected.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Archive ${selected.length} session${selected.length == 1 ? '' : 's'}?',
+        ),
+        content: const Text(
+          'They will leave the session list but remain available in Archive.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.orange.shade700,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Archive'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    for (final session in selected) {
+      provider.archiveSession(session.id, serverId: session.serverId);
+    }
+    _exitSelection();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${selected.length} sessions archived')),
+    );
+  }
+
+  Future<void> _deleteSelectedSessions(ChatProvider provider) async {
+    final selected = _selectedSessions(provider);
+    if (selected.isEmpty) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          'Delete ${selected.length} session${selected.length == 1 ? '' : 's'}?',
+        ),
+        content: const Text('This permanently deletes their saved history.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    for (final session in selected) {
+      provider.deleteSession(session.id, serverId: session.serverId);
+    }
+    _exitSelection();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('${selected.length} sessions deleted')),
+    );
+  }
+
   String _projectLabelForCwd(String cwd) {
     final parts = cwd
         .split(RegExp(r'[\\/]'))
@@ -1485,7 +1599,10 @@ class _SessionsTabState extends State<SessionsTab> {
         backend.toLowerCase().contains(query);
   }
 
-  void _showServerFilterSheet(BuildContext context, ChatProvider provider) {
+  Future<void> _showServerFilterSheet(
+    BuildContext context,
+    ChatProvider provider,
+  ) async {
     final sortedServers = _sortedServerConfigs(provider);
     final sessions = provider.sessions;
     final connectedCount = provider.serverConfigs
@@ -1501,82 +1618,65 @@ class _SessionsTabState extends State<SessionsTab> {
         .where((session) => session.serverId == serverId && session.running)
         .length;
 
-    showModalBottomSheet<void>(
+    final selected = await showAdaptiveActionSheet<String>(
       context: context,
-      showDragHandle: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: ListView(
-            shrinkWrap: true,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.all_inbox),
-                title: const Text('All computers'),
-                subtitle: Text('${sessions.length} sessions'),
-                selected:
-                    _selectedServerFilterId == null && !_connectedOnlyFilter,
-                onTap: () {
-                  setState(() {
-                    _selectedServerFilterId = null;
-                    _connectedOnlyFilter = false;
-                  });
-                  Navigator.pop(ctx);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.cloud_done),
-                title: const Text('Connected only'),
-                subtitle: Text('$connectedCount online'),
-                selected: _connectedOnlyFilter,
-                onTap: () {
-                  setState(() {
-                    _selectedServerFilterId = null;
-                    _connectedOnlyFilter = true;
-                  });
-                  Navigator.pop(ctx);
-                },
-              ),
-              const Divider(height: 1),
-              ...sortedServers.map((config) {
-                final status = provider.connMgr.statusOf(config.id);
-                final sessionCount = sessionCountFor(config.id);
-                final runningCount = runningCountFor(config.id);
-                final statusColor = _serverStatusColor(status);
-                return ListTile(
-                  leading: Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  title: Text(config.name),
-                  subtitle: Text(
-                    [
-                      _serverStatusLabel(status),
-                      '$sessionCount session${sessionCount == 1 ? '' : 's'}',
-                      if (runningCount > 0) '$runningCount running',
-                    ].join(' · '),
-                  ),
-                  trailing: _selectedServerFilterId == config.id
-                      ? const Icon(Icons.check)
-                      : null,
-                  selected: _selectedServerFilterId == config.id,
-                  onTap: () {
-                    setState(() {
-                      _selectedServerFilterId = config.id;
-                      _connectedOnlyFilter = false;
-                    });
-                    Navigator.pop(ctx);
-                  },
-                );
-              }),
-            ],
+      title: 'Filter by computer',
+      sections: [
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: 'all',
+            label: 'All computers',
+            subtitle: '${sessions.length} sessions',
+            icon: Icons.all_inbox,
+            trailing: _selectedServerFilterId == null && !_connectedOnlyFilter
+                ? const Icon(Icons.check)
+                : null,
           ),
-        );
-      },
+          AdaptiveSheetAction(
+            value: 'connected',
+            label: 'Connected only',
+            subtitle: '$connectedCount online',
+            icon: Icons.cloud_done,
+            trailing: _connectedOnlyFilter ? const Icon(Icons.check) : null,
+          ),
+        ]),
+        AdaptiveSheetSection(
+          sortedServers.map((config) {
+            final status = provider.connMgr.statusOf(config.id);
+            final sessionCount = sessionCountFor(config.id);
+            final runningCount = runningCountFor(config.id);
+            final statusColor = _serverStatusColor(status);
+            return AdaptiveSheetAction(
+              value: 'server:${config.id}',
+              label: config.name,
+              subtitle: [
+                _serverStatusLabel(status),
+                '$sessionCount session${sessionCount == 1 ? '' : 's'}',
+                if (runningCount > 0) '$runningCount running',
+              ].join(' · '),
+              icon: Icons.dns_outlined,
+              iconColor: statusColor,
+              trailing: _selectedServerFilterId == config.id
+                  ? const Icon(Icons.check)
+                  : null,
+            );
+          }).toList(),
+        ),
+      ],
     );
+    if (selected == null || !mounted) return;
+    setState(() {
+      if (selected == 'connected') {
+        _selectedServerFilterId = null;
+        _connectedOnlyFilter = true;
+      } else if (selected.startsWith('server:')) {
+        _selectedServerFilterId = selected.substring('server:'.length);
+        _connectedOnlyFilter = false;
+      } else {
+        _selectedServerFilterId = null;
+        _connectedOnlyFilter = false;
+      }
+    });
   }
 
   Widget _buildFilterChipBar(BuildContext context, ChatProvider provider) {
@@ -1935,17 +2035,66 @@ class _SessionsTabState extends State<SessionsTab> {
         }
         return Scaffold(
           appBar: AppBar(
-            title: const Text('Sessions'),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.inventory_2_outlined),
-                tooltip: 'Archived Sessions',
-                onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const ArchiveScreen()),
-                ),
-              ),
-              _buildConnectionIndicator(provider),
-            ],
+            leading: _selectionMode
+                ? IconButton(
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Cancel selection',
+                    onPressed: _exitSelection,
+                  )
+                : null,
+            title: Text(
+              _selectionMode
+                  ? '${_selectedSessions(provider).length} selected'
+                  : 'Sessions',
+            ),
+            actions: _selectionMode
+                ? [
+                    IconButton(
+                      icon: const Icon(Icons.select_all),
+                      tooltip: 'Select all visible',
+                      onPressed: () => _selectAllVisible(provider),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.archive_outlined),
+                      tooltip: 'Archive selected',
+                      onPressed: _selectedSessions(provider).isEmpty
+                          ? null
+                          : () => _archiveSelectedSessions(provider),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline),
+                      tooltip: 'Delete selected',
+                      onPressed: _selectedSessions(provider).isEmpty
+                          ? null
+                          : () => _deleteSelectedSessions(provider),
+                    ),
+                  ]
+                : [
+                    IconButton(
+                      icon: const Icon(Icons.checklist),
+                      tooltip: 'Select sessions',
+                      onPressed: () => setState(() {
+                        _selectionMode = true;
+                        _searchOpen = false;
+                        _searchQuery = '';
+                        _searchController.clear();
+                        _globalSearchDebounce?.cancel();
+                        _globalSearchGeneration++;
+                        _globalSearchLoading = false;
+                        _globalSearchResults = const [];
+                      }),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.inventory_2_outlined),
+                      tooltip: 'Archived Sessions',
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const ArchiveScreen(),
+                        ),
+                      ),
+                    ),
+                    _buildConnectionIndicator(provider),
+                  ],
           ),
           body: Column(
             children: [
@@ -1959,11 +2108,13 @@ class _SessionsTabState extends State<SessionsTab> {
                 Expanded(child: _buildSectionedSessionList(context, provider)),
             ],
           ),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => _showSessionActionMenu(context, provider),
-            icon: const Icon(Icons.add),
-            label: const Text('Session'),
-          ),
+          floatingActionButton: _selectionMode
+              ? null
+              : FloatingActionButton.extended(
+                  onPressed: () => _showSessionActionMenu(context, provider),
+                  icon: const Icon(Icons.add),
+                  label: const Text('Session'),
+                ),
         );
       },
     );
@@ -2108,216 +2259,182 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  void _showSessionContextMenu(BuildContext context, Session session) {
+  Future<void> _showSessionContextMenu(
+    BuildContext context,
+    Session session,
+  ) async {
     final provider = context.read<ChatProvider>();
     final notifEnabled = provider.isNotifEnabled(session.id);
     final isPinned = provider.isSessionPinned(session.id);
-    showModalBottomSheet(
+    final theme = Theme.of(context);
+    final action = await showAdaptiveActionSheet<_SessionMenuAction>(
       context: context,
-      isScrollControlled: true,
-      builder: (ctx) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: Icon(
-                  isPinned ? Icons.push_pin : Icons.push_pin_outlined,
-                  color: isPinned
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
-                title: Text(isPinned ? 'Unpin Session' : 'Pin Session'),
-                subtitle: Text(
-                  isPinned ? 'Remove from pinned' : 'Keep at the top',
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  provider.toggleSessionPin(session.id);
-                },
-              ),
-              ListTile(
-                leading: Icon(
-                  notifEnabled
-                      ? Icons.notifications_active
-                      : Icons.notifications_off_outlined,
-                  color: notifEnabled
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
-                title: Text(
-                  notifEnabled ? 'Notifications On' : 'Notifications Off',
-                ),
-                subtitle: Text(
-                  notifEnabled ? 'Tap to disable' : 'Tap to enable',
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  provider.toggleSessionNotifications(session.id);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.fork_right),
-                title: Text(
-                  session.backend == 'codex' ? 'Fork Thread' : 'Fork Session',
-                ),
-                subtitle: Text(
-                  session.backend == 'codex'
-                      ? 'Create a copy of this Codex thread'
-                      : 'Create a copy of this conversation',
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _forkSession(context, session);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.move_up_outlined),
-                title: const Text('Teleport Session'),
-                subtitle: const Text(
-                  'Move or clone to another computer or harness',
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showTeleportSessionSheet(context, session);
-                },
-              ),
-              if (session.backend == 'codex') ...[
-                ListTile(
-                  leading: Icon(
-                    session.freshThreadPending
-                        ? Icons.check_circle_outline
-                        : Icons.change_circle_outlined,
-                  ),
-                  title: Text(
-                    session.freshThreadPending
-                        ? 'Fresh Thread Ready'
-                        : 'Start Fresh Thread',
-                  ),
-                  subtitle: Text(
-                    session.freshThreadPending
-                        ? 'This session is ready to continue'
-                        : 'Carry memory and recent runs forward',
-                  ),
-                  onTap: session.freshThreadPending
-                      ? null
-                      : () {
-                          Navigator.pop(ctx);
-                          _confirmStartFreshThread(context, session);
-                        },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.compress),
-                  title: const Text('Compact Thread'),
-                  subtitle: const Text('Ask Codex to compact this thread'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    provider.compactCodexThread(session.id);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Codex compact requested')),
-                    );
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.history),
-                  title: const Text('Rollback Last Turn'),
-                  subtitle: const Text('Drop the newest Codex turn'),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _confirmCodexRollback(context, session);
-                  },
-                ),
-              ],
-              ListTile(
-                leading: const Icon(Icons.refresh),
-                title: const Text('Clear Context'),
-                subtitle: const Text('Archive history and start fresh'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _confirmClearContext(context, session);
-                },
-              ),
-              if (session.backend != 'codex')
-                ListTile(
-                  leading: const Icon(Icons.block),
-                  title: const Text('Blocked Tools'),
-                  subtitle: Text(() {
-                    final blocked = provider.getDisallowedTools(session.id);
-                    return blocked.isEmpty
-                        ? 'None blocked'
-                        : '${blocked.length} blocked';
-                  }()),
-                  onTap: () {
-                    Navigator.pop(ctx);
-                    _showBlockedToolsDialog(context, session);
-                  },
-                ),
-              ListTile(
-                leading: const Icon(Icons.description),
-                title: Text(
-                  session.backend == 'codex'
-                      ? 'Additional Instructions'
-                      : 'System Prompt',
-                ),
-                subtitle: Text(() {
-                  final sp = provider.getSessionSystemPrompt(session.id);
-                  if (sp.isNotEmpty) return 'Custom override set';
-                  final effective = provider.getEffectiveSystemPrompt(
-                    session.id,
-                  );
-                  return effective.isNotEmpty
-                      ? 'Using computer default'
-                      : 'Not set';
-                }()),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showSystemPromptDialog(context, session);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('Rename Session'),
-                subtitle: Text(
-                  session.title == 'Untitled'
-                      ? 'Set a display name'
-                      : session.title,
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showRenameDialog(context, session);
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.archive, color: Colors.orange.shade300),
-                title: Text(
-                  'Archive Session',
-                  style: TextStyle(color: Colors.orange.shade300),
-                ),
-                subtitle: const Text('Remove from list, keep history'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _confirmArchiveSession(context, session);
-                },
-              ),
-              ListTile(
-                leading: Icon(Icons.delete, color: Colors.red.shade300),
-                title: Text(
-                  'Delete Session',
-                  style: TextStyle(color: Colors.red.shade300),
-                ),
-                subtitle: const Text('Permanent — no archive'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _confirmDeleteSession(context, session);
-                },
-              ),
-            ],
+      title: session.title,
+      subtitle: session.backend == 'codex' ? 'Codex session' : 'Claude session',
+      sections: [
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: _SessionMenuAction.pin,
+            label: isPinned ? 'Unpin' : 'Pin',
+            icon: isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+            iconColor: isPinned ? theme.colorScheme.primary : null,
           ),
-        );
-      },
+          AdaptiveSheetAction(
+            value: _SessionMenuAction.notifications,
+            label: notifEnabled
+                ? 'Turn notifications off'
+                : 'Turn notifications on',
+            icon: notifEnabled
+                ? Icons.notifications_active
+                : Icons.notifications_off_outlined,
+            iconColor: notifEnabled ? theme.colorScheme.primary : null,
+          ),
+          const AdaptiveSheetAction(
+            value: _SessionMenuAction.rename,
+            label: 'Rename',
+            icon: Icons.edit_outlined,
+          ),
+        ]),
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: _SessionMenuAction.fork,
+            label: session.backend == 'codex' ? 'Fork thread' : 'Fork session',
+            icon: Icons.fork_right,
+          ),
+          const AdaptiveSheetAction(
+            value: _SessionMenuAction.teleport,
+            label: 'Teleport session',
+            icon: Icons.move_up_outlined,
+          ),
+          if (session.backend == 'codex')
+            AdaptiveSheetAction(
+              value: _SessionMenuAction.startFresh,
+              label: session.freshThreadPending
+                  ? 'Fresh thread ready'
+                  : 'Start fresh thread',
+              icon: session.freshThreadPending
+                  ? Icons.check_circle_outline
+                  : Icons.change_circle_outlined,
+              enabled: !session.freshThreadPending,
+            ),
+          AdaptiveSheetAction(
+            value: _SessionMenuAction.tools,
+            label: session.backend == 'codex'
+                ? 'Thread tools'
+                : 'Session tools',
+            icon: Icons.tune,
+            trailing: const Icon(Icons.chevron_right),
+          ),
+        ]),
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: _SessionMenuAction.archive,
+            label: 'Archive',
+            icon: Icons.archive_outlined,
+            iconColor: Colors.orange.shade300,
+            textColor: Colors.orange.shade300,
+          ),
+          AdaptiveSheetAction(
+            value: _SessionMenuAction.delete,
+            label: 'Delete',
+            icon: Icons.delete_outline,
+            iconColor: Colors.red.shade300,
+            textColor: Colors.red.shade300,
+          ),
+        ]),
+      ],
     );
+    if (action == null || !context.mounted) return;
+
+    switch (action) {
+      case _SessionMenuAction.pin:
+        provider.toggleSessionPin(session.id);
+      case _SessionMenuAction.notifications:
+        provider.toggleSessionNotifications(session.id);
+      case _SessionMenuAction.rename:
+        _showRenameDialog(context, session);
+      case _SessionMenuAction.fork:
+        await _forkSession(context, session);
+      case _SessionMenuAction.teleport:
+        _showTeleportSessionSheet(context, session);
+      case _SessionMenuAction.startFresh:
+        await _confirmStartFreshThread(context, session);
+      case _SessionMenuAction.tools:
+        await _showSessionToolsMenu(context, session);
+      case _SessionMenuAction.archive:
+        await _confirmArchiveSession(context, session);
+      case _SessionMenuAction.delete:
+        await _confirmDeleteSession(context, session);
+    }
   }
 
+  Future<void> _showSessionToolsMenu(
+    BuildContext context,
+    Session session,
+  ) async {
+    final provider = context.read<ChatProvider>();
+    final action = await showAdaptiveActionSheet<_SessionToolsAction>(
+      context: context,
+      title: session.backend == 'codex' ? 'Thread tools' : 'Session tools',
+      sections: [
+        AdaptiveSheetSection([
+          if (session.backend == 'codex') ...[
+            const AdaptiveSheetAction(
+              value: _SessionToolsAction.compact,
+              label: 'Compact thread',
+              icon: Icons.compress,
+            ),
+            const AdaptiveSheetAction(
+              value: _SessionToolsAction.rollback,
+              label: 'Rollback last turn',
+              icon: Icons.history,
+            ),
+          ],
+          const AdaptiveSheetAction(
+            value: _SessionToolsAction.clearContext,
+            label: 'Clear context',
+            icon: Icons.refresh,
+          ),
+          if (session.backend != 'codex')
+            AdaptiveSheetAction(
+              value: _SessionToolsAction.blockedTools,
+              label: 'Blocked tools',
+              subtitle: () {
+                final blocked = provider.getDisallowedTools(session.id);
+                return blocked.isEmpty
+                    ? 'None blocked'
+                    : '${blocked.length} blocked';
+              }(),
+              icon: Icons.block,
+            ),
+          AdaptiveSheetAction(
+            value: _SessionToolsAction.instructions,
+            label: session.backend == 'codex'
+                ? 'Additional instructions'
+                : 'System prompt',
+            icon: Icons.description_outlined,
+          ),
+        ]),
+      ],
+    );
+    if (action == null || !context.mounted) return;
+
+    switch (action) {
+      case _SessionToolsAction.compact:
+        provider.compactCodexThread(session.id);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Codex compact requested')),
+        );
+      case _SessionToolsAction.rollback:
+        await _confirmCodexRollback(context, session);
+      case _SessionToolsAction.clearContext:
+        await _confirmClearContext(context, session);
+      case _SessionToolsAction.blockedTools:
+        _showBlockedToolsDialog(context, session);
+      case _SessionToolsAction.instructions:
+        _showSystemPromptDialog(context, session);
+    }
+  }
   String _sessionTransferStageLabel(SessionTransferStage stage) {
     return switch (stage) {
       SessionTransferStage.exporting => 'Packing session history…',
@@ -2945,7 +3062,10 @@ class _SessionsTabState extends State<SessionsTab> {
             ),
             onPressed: () {
               Navigator.pop(ctx, true);
-              context.read<ChatProvider>().archiveSession(session.id);
+              context.read<ChatProvider>().archiveSession(
+                session.id,
+                serverId: session.serverId,
+              );
             },
             child: const Text('Archive'),
           ),
@@ -2973,7 +3093,10 @@ class _SessionsTabState extends State<SessionsTab> {
             style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
             onPressed: () {
               Navigator.pop(ctx, true);
-              context.read<ChatProvider>().deleteSession(session.id);
+              context.read<ChatProvider>().deleteSession(
+                session.id,
+                serverId: session.serverId,
+              );
             },
             child: const Text('Delete'),
           ),
@@ -3218,6 +3341,7 @@ class _SessionsTabState extends State<SessionsTab> {
         _openSessionKey(sessionId: session.id, serverId: session.serverId);
     final showRunning = session.running && isAvailable;
     final showBusy = showRunning || openingThisSession;
+    final selected = _selectedSessionKeys.contains(_sessionKey(session));
     final timeDiff = DateTime.now().difference(session.lastActive);
     String timeAgo;
     if (timeDiff.inMinutes < 1) {
@@ -3266,7 +3390,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
     return Dismissible(
       key: Key('${session.serverId}:${session.id}'),
-      direction: isAvailable && _openingSessionKey == null
+      direction: !_selectionMode && isAvailable && _openingSessionKey == null
           ? DismissDirection.horizontal
           : DismissDirection.none,
       background: Container(
@@ -3293,7 +3417,11 @@ class _SessionsTabState extends State<SessionsTab> {
         return false;
       },
       child: InkWell(
-        onTap: isAvailable
+        onTap: _selectionMode
+            ? isAvailable
+                ? () => _toggleSessionSelection(session)
+                : () => _showOfflineSessionSnack(context, session)
+            : isAvailable
             ? _openingSessionKey == null
                   ? () => _openSession(
                       context,
@@ -3304,12 +3432,15 @@ class _SessionsTabState extends State<SessionsTab> {
             : () => _showOfflineSessionSnack(context, session),
         onLongPress: isAvailable
             ? _openingSessionKey == null
-                  ? () => _showSessionContextMenu(context, session)
+                  ? () => _enterSelection(session)
                   : null
             : () => _showOfflineSessionSnack(context, session),
         child: Opacity(
           opacity: isAvailable ? 1 : 0.48,
-          child: Padding(
+          child: Container(
+            color: selected
+                ? theme.colorScheme.primary.withAlpha(28)
+                : Colors.transparent,
             padding: EdgeInsets.fromLTRB(
               compact ? 10 : 16,
               compact ? 8 : 12,
@@ -3321,7 +3452,16 @@ class _SessionsTabState extends State<SessionsTab> {
               children: [
                 Padding(
                   padding: EdgeInsets.only(top: 2, right: compact ? 8 : 12),
-                  child: showBusy
+                  child: _selectionMode
+                      ? Checkbox(
+                          value: selected,
+                          onChanged: isAvailable
+                              ? (_) => _toggleSessionSelection(session)
+                              : null,
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        )
+                      : showBusy
                       ? SizedBox(
                           width: 20,
                           height: 20,
@@ -3548,24 +3688,24 @@ class _SessionsTabState extends State<SessionsTab> {
                     ],
                   ),
                 ),
-                // Overflow menu icon (replaces notification bell)
-                IconButton(
-                  icon: Icon(
-                    Icons.more_vert,
-                    size: 18,
-                    color: theme.colorScheme.onSurface.withAlpha(128),
-                  ),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 32,
-                    minHeight: 32,
-                  ),
-                  onPressed: isAvailable
-                      ? _openingSessionKey == null
+                if (!_selectionMode)
+                  IconButton(
+                    icon: Icon(
+                      Icons.more_vert,
+                      size: 18,
+                      color: theme.colorScheme.onSurface.withAlpha(128),
+                    ),
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
+                    onPressed: isAvailable
+                        ? _openingSessionKey == null
                             ? () => _showSessionContextMenu(context, session)
                             : null
-                      : () => _showOfflineSessionSnack(context, session),
-                ),
+                        : () => _showOfflineSessionSnack(context, session),
+                  ),
               ],
             ),
           ),

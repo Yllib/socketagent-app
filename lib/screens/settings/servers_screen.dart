@@ -8,6 +8,7 @@ import '../../services/chat_provider.dart';
 import '../../services/websocket_service.dart';
 import '../../services/window_security_service.dart';
 import '../../services/private_integration_auth_flow.dart';
+import '../../widgets/adaptive_action_sheet.dart';
 import '../pair_screen.dart';
 import '../connect_computer_screen.dart';
 import '../paywall_screen.dart';
@@ -1009,219 +1010,210 @@ class _ServersScreenState extends State<ServersScreen> {
 
     showModalBottomSheet(
       context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                config.name,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
+      isScrollControlled: true,
+      useSafeArea: true,
+      showDragHandle: true,
+      constraints: adaptiveActionSheetConstraints,
+      builder: (ctx) => AdaptiveSheetBody(
+        title: config.name,
+        children: [
+          if (isConnected)
+            ListTile(
+              leading: Icon(
+                pushRegistered
+                    ? Icons.notifications_active_outlined
+                    : pushDisabled
+                    ? Icons.notifications_off_outlined
+                    : Icons.notification_add_outlined,
+                color: pushRegistered ? Colors.green : null,
               ),
-            ),
-            if (isConnected)
-              ListTile(
-                leading: Icon(
-                  pushRegistered
-                      ? Icons.notifications_active_outlined
-                      : pushDisabled
-                      ? Icons.notifications_off_outlined
-                      : Icons.notification_add_outlined,
-                  color: pushRegistered ? Colors.green : null,
-                ),
-                title: Text(
-                  pushRegistered
-                      ? 'Notifications Registered'
-                      : pushDisabled
-                      ? 'Enable Notifications'
-                      : 'Retry Notification Registration',
-                ),
-                subtitle: Text(
-                  pushRegistered
-                      ? 'This phone is registered for ${config.name}'
-                      : pushDisabled
-                      ? 'Notifications are disabled for ${config.name}'
-                      : 'Automatic registration is still pending',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                enabled: !pushRegistered && !pushRegistering,
-                trailing: pushRegistering
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : null,
-                onTap: pushRegistered || pushRegistering
-                    ? null
-                    : () {
-                        Navigator.pop(ctx);
-                        _registerServerNotifications(context, provider, config);
-                      },
+              title: Text(
+                pushRegistered
+                    ? 'Notifications Registered'
+                    : pushDisabled
+                    ? 'Enable Notifications'
+                    : 'Retry Notification Registration',
               ),
-            if (isConnected)
-              ListTile(
-                leading: const Icon(Icons.system_update),
-                title: const Text('Check for Updates'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _showVersionCheck(context, provider, config);
-                },
+              subtitle: Text(
+                pushRegistered
+                    ? 'This phone is registered for ${config.name}'
+                    : pushDisabled
+                    ? 'Notifications are disabled for ${config.name}'
+                    : 'Automatic registration is still pending',
+                style: const TextStyle(fontSize: 12),
               ),
-            if (isConnected)
-              Consumer<ChatProvider>(
-                builder: (context, currentProvider, _) {
-                  final entries = currentProvider.backendHealthForServer(
-                    config.id,
-                  );
-                  final warning = currentProvider.backendWarningForServer(
-                    config.id,
-                  );
-                  final severity = warning?['severity']?.toString();
-                  final label = warning == null
-                      ? entries.isEmpty
-                            ? 'Backend details not loaded yet'
-                            : 'All reported backends are OK'
-                      : '${_backendHealthTitle(warning)} ${severity == 'error' ? 'error' : 'warning'}';
-                  return ListTile(
-                    leading: Icon(
-                      warning == null
-                          ? Icons.health_and_safety_outlined
-                          : severity == 'error'
-                          ? Icons.error_outline
-                          : Icons.warning_amber_outlined,
-                      color: warning == null
-                          ? null
-                          : severity == 'error'
-                          ? Colors.red.shade600
-                          : Colors.orange.shade700,
-                    ),
-                    title: const Text('Backend Status'),
-                    subtitle: Text(label, style: const TextStyle(fontSize: 12)),
-                    onTap: () {
+              enabled: !pushRegistered && !pushRegistering,
+              trailing: pushRegistering
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
+              onTap: pushRegistered || pushRegistering
+                  ? null
+                  : () {
                       Navigator.pop(ctx);
-                      _showBackendHealthDialog(
-                        context,
-                        currentProvider,
-                        config,
-                      );
+                      _registerServerNotifications(context, provider, config);
                     },
-                  );
-                },
-              ),
-            if (isConnected && hasOutlookAuth)
-              ListTile(
-                leading: const Icon(Icons.mail_lock),
-                title: const Text('Outlook Sign-In'),
-                subtitle: const Text(
-                  'Refresh Outlook Web session',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  runPrivateIntegrationAuthFlow(
-                    context: context,
-                    provider: provider,
-                    computer: config,
-                    integration: 'outlook-auth',
-                  );
-                },
-              ),
-            if (isConnected && hasIbsAuth)
-              ListTile(
-                leading: const Icon(Icons.business_center_outlined),
-                title: const Text('IBS Sign-In'),
-                subtitle: const Text(
-                  'Refresh IBS session cookies',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  runPrivateIntegrationAuthFlow(
-                    context: context,
-                    provider: provider,
-                    computer: config,
-                    integration: 'ibs-auth',
-                  );
-                },
-              ),
-            if (!isConnected)
-              const ListTile(
-                leading: Icon(Icons.cloud_off, color: Colors.grey),
-                title: Text(
-                  'Not connected',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ),
-            if (config.useRelay &&
-                config.host.isNotEmpty &&
-                config.serverPubkey.isNotEmpty)
-              ListTile(
-                leading: const Icon(Icons.dns),
-                title: const Text('Use Direct Connection'),
-                subtitle: Text(
-                  '${config.host}:${config.port}',
-                  style: const TextStyle(fontSize: 12),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  await provider.updateServer(config.copyWith(useRelay: false));
-                },
-              ),
-            if (!config.useRelay && config.isRelayPaired)
-              ListTile(
-                leading: const Icon(Icons.cloud),
-                title: const Text('Use Relay Connection'),
-                subtitle: const Text(
-                  'Switch this computer back to relay',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: () async {
-                  Navigator.pop(ctx);
-                  final hasRelayAccess = await _ensureRelayAccess(
-                    context,
-                    provider,
-                  );
-                  if (!mounted || !context.mounted || !hasRelayAccess) return;
-                  await provider.updateServer(config.copyWith(useRelay: true));
-                },
-              ),
-            if (!config.useRelay && !config.isRelayPaired)
-              ListTile(
-                leading: const Icon(Icons.qr_code_scanner),
-                title: const Text('Pair Relay Connection'),
-                subtitle: const Text(
-                  'Scan a relay pairing code for this computer',
-                  style: TextStyle(fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pairServerRelay(context, provider, config);
-                },
-              ),
+            ),
+          if (isConnected)
             ListTile(
-              leading: const Icon(Icons.edit),
-              title: const Text('Edit'),
+              leading: const Icon(Icons.system_update),
+              title: const Text('Check for Updates'),
               onTap: () {
                 Navigator.pop(ctx);
-                _showServerDialog(context, provider, existing: config);
+                _showVersionCheck(context, provider, config);
               },
             ),
+          if (isConnected)
+            Consumer<ChatProvider>(
+              builder: (context, currentProvider, _) {
+                final entries = currentProvider.backendHealthForServer(
+                  config.id,
+                );
+                final warning = currentProvider.backendWarningForServer(
+                  config.id,
+                );
+                final severity = warning?['severity']?.toString();
+                final label = warning == null
+                    ? entries.isEmpty
+                          ? 'Backend details not loaded yet'
+                          : 'All reported backends are OK'
+                    : '${_backendHealthTitle(warning)} ${severity == 'error' ? 'error' : 'warning'}';
+                return ListTile(
+                  leading: Icon(
+                    warning == null
+                        ? Icons.health_and_safety_outlined
+                        : severity == 'error'
+                        ? Icons.error_outline
+                        : Icons.warning_amber_outlined,
+                    color: warning == null
+                        ? null
+                        : severity == 'error'
+                        ? Colors.red.shade600
+                        : Colors.orange.shade700,
+                  ),
+                  title: const Text('Backend Status'),
+                  subtitle: Text(label, style: const TextStyle(fontSize: 12)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    _showBackendHealthDialog(
+                      context,
+                      currentProvider,
+                      config,
+                    );
+                  },
+                );
+              },
+            ),
+          if (isConnected && hasOutlookAuth)
             ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Delete', style: TextStyle(color: Colors.red)),
+              leading: const Icon(Icons.mail_lock),
+              title: const Text('Outlook Sign-In'),
+              subtitle: const Text(
+                'Refresh Outlook Web session',
+                style: TextStyle(fontSize: 12),
+              ),
               onTap: () {
                 Navigator.pop(ctx);
-                _confirmDeleteServer(context, provider, config);
+                runPrivateIntegrationAuthFlow(
+                  context: context,
+                  provider: provider,
+                  computer: config,
+                  integration: 'outlook-auth',
+                );
               },
             ),
-            const SizedBox(height: 8),
-          ],
-        ),
+          if (isConnected && hasIbsAuth)
+            ListTile(
+              leading: const Icon(Icons.business_center_outlined),
+              title: const Text('IBS Sign-In'),
+              subtitle: const Text(
+                'Refresh IBS session cookies',
+                style: TextStyle(fontSize: 12),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                runPrivateIntegrationAuthFlow(
+                  context: context,
+                  provider: provider,
+                  computer: config,
+                  integration: 'ibs-auth',
+                );
+              },
+            ),
+          if (!isConnected)
+            const ListTile(
+              leading: Icon(Icons.cloud_off, color: Colors.grey),
+              title: Text(
+                'Not connected',
+                style: TextStyle(color: Colors.grey),
+              ),
+            ),
+          if (config.useRelay &&
+              config.host.isNotEmpty &&
+              config.serverPubkey.isNotEmpty)
+            ListTile(
+              leading: const Icon(Icons.dns),
+              title: const Text('Use Direct Connection'),
+              subtitle: Text(
+                '${config.host}:${config.port}',
+                style: const TextStyle(fontSize: 12),
+              ),
+              onTap: () async {
+                Navigator.pop(ctx);
+                await provider.updateServer(config.copyWith(useRelay: false));
+              },
+            ),
+          if (!config.useRelay && config.isRelayPaired)
+            ListTile(
+              leading: const Icon(Icons.cloud),
+              title: const Text('Use Relay Connection'),
+              subtitle: const Text(
+                'Switch this computer back to relay',
+                style: TextStyle(fontSize: 12),
+              ),
+              onTap: () async {
+                Navigator.pop(ctx);
+                final hasRelayAccess = await _ensureRelayAccess(
+                  context,
+                  provider,
+                );
+                if (!mounted || !context.mounted || !hasRelayAccess) return;
+                await provider.updateServer(config.copyWith(useRelay: true));
+              },
+            ),
+          if (!config.useRelay && !config.isRelayPaired)
+            ListTile(
+              leading: const Icon(Icons.qr_code_scanner),
+              title: const Text('Pair Relay Connection'),
+              subtitle: const Text(
+                'Scan a relay pairing code for this computer',
+                style: TextStyle(fontSize: 12),
+              ),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pairServerRelay(context, provider, config);
+              },
+            ),
+          ListTile(
+            leading: const Icon(Icons.edit),
+            title: const Text('Edit'),
+            onTap: () {
+              Navigator.pop(ctx);
+              _showServerDialog(context, provider, existing: config);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline, color: Colors.red),
+            title: const Text('Delete', style: TextStyle(color: Colors.red)),
+            onTap: () {
+              Navigator.pop(ctx);
+              _confirmDeleteServer(context, provider, config);
+            },
+          ),
+        ],
       ),
     );
   }

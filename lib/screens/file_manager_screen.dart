@@ -16,6 +16,7 @@ import '../models/file_manager_entry.dart';
 import '../models/server_config.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
+import '../widgets/adaptive_action_sheet.dart';
 
 enum _FilePreviewKind { text, markdown, html, code, image, pdf }
 
@@ -615,67 +616,47 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
         ? null
         : provider.getReceivedFilePath(fileId);
     final hasLocalFile = localPath != null && File(localPath).existsSync();
-    final action = await showModalBottomSheet<String>(
+    final errorColor = Theme.of(context).colorScheme.error;
+    final action = await showAdaptiveActionSheet<String>(
       context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: Icon(_iconForEntry(entry)),
-              title: Text(
-                entry.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-              subtitle: Text(
-                entry.path,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+      title: entry.name,
+      subtitle: entry.path,
+      sections: [
+        AdaptiveSheetSection([
+          if (hasLocalFile)
+            AdaptiveSheetAction(
+              value: 'open',
+              label: 'Open downloaded file',
+              subtitle: localPath,
+              icon: Icons.open_in_new,
             ),
-            if (hasLocalFile)
-              ListTile(
-                leading: const Icon(Icons.open_in_new),
-                title: const Text('Open downloaded file'),
-                subtitle: Text(
-                  localPath,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                onTap: () => Navigator.of(context).pop('open'),
-              ),
-            if (_canPreview(entry))
-              ListTile(
-                leading: const Icon(Icons.visibility_outlined),
-                title: const Text('View'),
-                onTap: () => Navigator.of(context).pop('preview'),
-              ),
-            ListTile(
-              leading: const Icon(Icons.download_outlined),
-              title: Text(hasLocalFile ? 'Download again' : 'Download'),
-              onTap: () => Navigator.of(context).pop('download'),
+          if (_canPreview(entry))
+            const AdaptiveSheetAction(
+              value: 'preview',
+              label: 'View',
+              icon: Icons.visibility_outlined,
             ),
-            ListTile(
-              leading: const Icon(Icons.drive_file_rename_outline),
-              title: const Text('Rename'),
-              onTap: () => Navigator.of(context).pop('rename'),
-            ),
-            ListTile(
-              leading: Icon(
-                Icons.delete_outline,
-                color: Theme.of(context).colorScheme.error,
-              ),
-              title: Text(
-                'Delete',
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-              onTap: () => Navigator.of(context).pop('delete'),
-            ),
-          ],
-        ),
-      ),
+          AdaptiveSheetAction(
+            value: 'download',
+            label: hasLocalFile ? 'Download again' : 'Download',
+            icon: Icons.download_outlined,
+          ),
+          const AdaptiveSheetAction(
+            value: 'rename',
+            label: 'Rename',
+            icon: Icons.drive_file_rename_outline,
+          ),
+        ]),
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: 'delete',
+            label: 'Delete',
+            icon: Icons.delete_outline,
+            iconColor: errorColor,
+            textColor: errorColor,
+          ),
+        ]),
+      ],
     );
     if (!mounted || action == null) return;
 
@@ -973,31 +954,6 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     final separator = base.contains('\\') ? '\\' : '/';
     if (base.endsWith(separator)) return '$base$name';
     return '$base$separator$name';
-  }
-
-  IconData _iconForEntry(FileManagerEntry entry) {
-    if (entry.kind == FileManagerEntryKind.directory) {
-      return Icons.folder_outlined;
-    }
-    if (_normalizedExtension(entry.extension) == 'pdf') {
-      return Icons.picture_as_pdf_outlined;
-    }
-    switch (entry.mediaKind) {
-      case FileManagerMediaKind.image:
-        return Icons.image_outlined;
-      case FileManagerMediaKind.video:
-        return Icons.movie_outlined;
-      case FileManagerMediaKind.audio:
-        return Icons.audio_file_outlined;
-      case FileManagerMediaKind.archive:
-        return Icons.folder_zip_outlined;
-      case FileManagerMediaKind.code:
-        return Icons.code;
-      case FileManagerMediaKind.text:
-        return Icons.description_outlined;
-      case FileManagerMediaKind.other:
-        return Icons.insert_drive_file_outlined;
-    }
   }
 
   bool _canPreview(FileManagerEntry entry) {

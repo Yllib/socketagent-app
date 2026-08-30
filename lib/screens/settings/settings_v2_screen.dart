@@ -20,6 +20,7 @@ import '../../services/push_notification_service.dart';
 import '../../services/private_integration_auth_flow.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
+import '../../widgets/adaptive_action_sheet.dart';
 import '../file_manager_screen.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
@@ -2397,33 +2398,25 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
       return;
     }
 
-    final action = await showModalBottomSheet<_SubscriptionAction>(
+    final action = await showAdaptiveActionSheet<_SubscriptionAction>(
       context: context,
-      showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (provider.subscriptionProvider == 'google_play')
-              ListTile(
-                leading: const Icon(Icons.open_in_new),
-                title: const Text('Manage subscription'),
-                subtitle: const Text('Open Google Play subscription settings'),
-                onTap: () =>
-                    Navigator.pop(sheetContext, _SubscriptionAction.manage),
-              ),
-            ListTile(
-              leading: const Icon(Icons.logout),
-              title: const Text('Sign out of relay'),
-              subtitle: const Text(
-                'Keep your subscription and paired computers',
-              ),
-              onTap: () =>
-                  Navigator.pop(sheetContext, _SubscriptionAction.signOut),
+      sections: [
+        AdaptiveSheetSection([
+          if (provider.subscriptionProvider == 'google_play')
+            const AdaptiveSheetAction(
+              value: _SubscriptionAction.manage,
+              label: 'Manage subscription',
+              subtitle: 'Open Google Play subscription settings',
+              icon: Icons.open_in_new,
             ),
-          ],
-        ),
-      ),
+          const AdaptiveSheetAction(
+            value: _SubscriptionAction.signOut,
+            label: 'Sign out of relay',
+            subtitle: 'Keep your subscription and paired computers',
+            icon: Icons.logout,
+          ),
+        ]),
+      ],
     );
 
     if (!mounted || action == null) return;
@@ -2880,11 +2873,11 @@ void _openConnectComputer(BuildContext context) {
   ).push(MaterialPageRoute(builder: (_) => const ConnectComputerScreen()));
 }
 
-void _openServerList(
+Future<void> _openServerList(
   BuildContext context,
   String title,
   List<ServerConfig> servers,
-) {
+) async {
   if (servers.isEmpty) return;
   if (servers.length == 1) {
     Navigator.of(context).push(
@@ -2896,52 +2889,30 @@ void _openServerList(
     return;
   }
 
-  showModalBottomSheet(
+  final selected = await showAdaptiveActionSheet<ServerConfig>(
     context: context,
-    showDragHandle: true,
-    builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                title,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-              ),
-            ),
-          ),
-          for (final server in servers)
-            Consumer<ChatProvider>(
-              builder: (context, provider, _) {
-                final status = provider.connMgr.statusOf(server.id);
-                return ListTile(
-                  leading: Icon(
-                    server.useRelay ? Icons.cloud_outlined : Icons.dns_outlined,
-                  ),
-                  title: Text(server.name),
-                  subtitle: Text(
-                    '${server.useRelay ? 'Relay' : 'Direct'} · ${_statusLabel(status)}',
-                  ),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () {
-                    Navigator.of(sheetContext).pop();
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            SettingsV2ServerDetailScreen(serverId: server.id),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-        ],
+    title: title,
+    sections: [
+      AdaptiveSheetSection(
+        servers.map((server) {
+          final provider = context.read<ChatProvider>();
+          final status = provider.connMgr.statusOf(server.id);
+          return AdaptiveSheetAction(
+            value: server,
+            label: server.name,
+            subtitle:
+                '${server.useRelay ? 'Relay' : 'Direct'} · ${_statusLabel(status)}',
+            icon: server.useRelay ? Icons.cloud_outlined : Icons.dns_outlined,
+            trailing: const Icon(Icons.chevron_right),
+          );
+        }).toList(),
       ),
+    ],
+  );
+  if (selected == null || !context.mounted) return;
+  Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => SettingsV2ServerDetailScreen(serverId: selected.id),
     ),
   );
 }
