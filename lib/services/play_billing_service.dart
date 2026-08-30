@@ -151,15 +151,37 @@ class PlayBillingService extends ChangeNotifier {
   }
 
   Future<void> purchase() async {
-    final product = _product;
-    if (product == null || _purchaseInProgress) return;
+    if (_product == null || _purchaseInProgress) return;
     _purchaseInProgress = true;
     _error = null;
     notifyListeners();
 
     try {
+      // ProductDetails and offer tokens are short-lived Play Store data. Query
+      // again at purchase time so a stale eligibility result cannot reach the
+      // billing sheet.
+      final response = await _store.queryProductDetails(<String>{
+        subscriptionId,
+      });
+      if (response.error != null) {
+        _setError(response.error!.message);
+        return;
+      }
+      if (response.productDetails.isEmpty) {
+        _setError('The SocketAgent subscription is not available yet.');
+        return;
+      }
+
+      final product = _chooseProduct(response.productDetails);
+      _product = product;
+      final purchaseParam = product is GooglePlayProductDetails
+          ? GooglePlayPurchaseParam(
+              productDetails: product,
+              offerToken: product.offerToken,
+            )
+          : PurchaseParam(productDetails: product);
       final started = await _store.buyNonConsumable(
-        purchaseParam: PurchaseParam(productDetails: product),
+        purchaseParam: purchaseParam,
       );
       if (!started) {
         _purchaseInProgress = false;
