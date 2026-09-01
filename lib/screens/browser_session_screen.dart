@@ -10,8 +10,6 @@ import '../services/window_security_service.dart';
 
 enum _BrowserClipboardAction { pasteIntoPage, sendToBrowser, copyToPhone }
 
-enum _BrowserKeyAction { backspace, tab, enter, escape }
-
 class BrowserSessionScreen extends StatefulWidget {
   const BrowserSessionScreen({
     super.key,
@@ -48,6 +46,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
   bool _installingRuntime = false;
   String? _installMessage;
   bool _readingBrowserClipboard = false;
+  Timer? _backspaceRepeatTimer;
 
   ChatProvider get _provider => context.read<ChatProvider>();
 
@@ -70,6 +69,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
   @override
   void dispose() {
     _subscription?.cancel();
+    _backspaceRepeatTimer?.cancel();
     for (final timer in _followupTimers) {
       timer.cancel();
     }
@@ -467,14 +467,42 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
     }
   }
 
-  void _handleKeyAction(_BrowserKeyAction action) {
-    final key = switch (action) {
-      _BrowserKeyAction.backspace => 'Backspace',
-      _BrowserKeyAction.tab => 'Tab',
-      _BrowserKeyAction.enter => 'Enter',
-      _BrowserKeyAction.escape => 'Escape',
-    };
+  void _sendKey(String key) {
     _send('key', values: {'key': key});
+  }
+
+  void _startBackspaceRepeat() {
+    _sendKey('Backspace');
+    _backspaceRepeatTimer?.cancel();
+    _backspaceRepeatTimer = Timer.periodic(
+      const Duration(milliseconds: 65),
+      (_) => _sendKey('Backspace'),
+    );
+  }
+
+  void _stopBackspaceRepeat() {
+    _backspaceRepeatTimer?.cancel();
+    _backspaceRepeatTimer = null;
+  }
+
+  Widget _buildBackspaceButton() {
+    return Listener(
+      onPointerDown: (_) => _stopBackspaceRepeat(),
+      onPointerUp: (_) => _stopBackspaceRepeat(),
+      onPointerCancel: (_) => _stopBackspaceRepeat(),
+      child: Tooltip(
+        message: 'Backspace. Hold to repeat',
+        child: InkResponse(
+          onTap: () => _sendKey('Backspace'),
+          onLongPress: _startBackspaceRepeat,
+          radius: 24,
+          child: const SizedBox.square(
+            dimension: 48,
+            child: Icon(Icons.backspace_outlined),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _navigate() async {
@@ -601,89 +629,100 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
                       horizontal: 4,
                       vertical: 4,
                     ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        IconButton(
-                          tooltip: 'Back',
-                          onPressed: () => _send('back'),
-                          icon: const Icon(Icons.arrow_back),
-                        ),
-                        IconButton(
-                          tooltip: 'Forward',
-                          onPressed: () => _send('forward'),
-                          icon: const Icon(Icons.arrow_forward),
-                        ),
-                        IconButton(
-                          tooltip: 'Enter text',
-                          onPressed: _enterText,
-                          icon: const Icon(Icons.notes),
-                        ),
-                        IconButton(
-                          tooltip: 'Enter privately',
-                          onPressed: _enterPrivateText,
-                          icon: const Icon(Icons.password),
-                        ),
-                        if (_readingBrowserClipboard)
-                          const Padding(
-                            padding: EdgeInsets.all(14),
-                            child: SizedBox.square(
-                              dimension: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            IconButton(
+                              tooltip: 'Back',
+                              onPressed: () => _send('back'),
+                              icon: const Icon(Icons.arrow_back),
                             ),
-                          )
-                        else
-                          PopupMenuButton<_BrowserClipboardAction>(
-                            tooltip: 'Clipboard',
-                            icon: const Icon(Icons.content_paste),
-                            onSelected: _handleClipboardAction,
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: _BrowserClipboardAction.pasteIntoPage,
-                                child: ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.content_paste_go),
-                                  title: Text('Paste into page'),
+                            IconButton(
+                              tooltip: 'Forward',
+                              onPressed: () => _send('forward'),
+                              icon: const Icon(Icons.arrow_forward),
+                            ),
+                            IconButton(
+                              tooltip: 'Enter text',
+                              onPressed: _enterText,
+                              icon: const Icon(Icons.notes),
+                            ),
+                            IconButton(
+                              tooltip: 'Enter privately',
+                              onPressed: _enterPrivateText,
+                              icon: const Icon(Icons.password),
+                            ),
+                            if (_readingBrowserClipboard)
+                              const Padding(
+                                padding: EdgeInsets.all(14),
+                                child: SizedBox.square(
+                                  dimension: 20,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 ),
+                              )
+                            else
+                              PopupMenuButton<_BrowserClipboardAction>(
+                                tooltip: 'Clipboard',
+                                icon: const Icon(Icons.content_paste),
+                                onSelected: _handleClipboardAction,
+                                itemBuilder: (context) => const [
+                                  PopupMenuItem(
+                                    value:
+                                        _BrowserClipboardAction.pasteIntoPage,
+                                    child: ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      leading: Icon(Icons.content_paste_go),
+                                      title: Text('Paste into page'),
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value:
+                                        _BrowserClipboardAction.sendToBrowser,
+                                    child: ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      leading: Icon(Icons.phone_android),
+                                      title: Text('Send to browser clipboard'),
+                                    ),
+                                  ),
+                                  PopupMenuItem(
+                                    value: _BrowserClipboardAction.copyToPhone,
+                                    child: ListTile(
+                                      contentPadding: EdgeInsets.zero,
+                                      leading: Icon(Icons.content_copy),
+                                      title: Text('Copy browser clipboard'),
+                                    ),
+                                  ),
+                                ],
                               ),
-                              PopupMenuItem(
-                                value: _BrowserClipboardAction.sendToBrowser,
-                                child: ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.phone_android),
-                                  title: Text('Send to browser clipboard'),
-                                ),
+                          ],
+                        ),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            _buildBackspaceButton(),
+                            IconButton(
+                              tooltip: 'Enter',
+                              onPressed: () => _sendKey('Enter'),
+                              icon: const Icon(Icons.keyboard_return),
+                            ),
+                            Tooltip(
+                              message: 'Tab',
+                              child: TextButton(
+                                onPressed: () => _sendKey('Tab'),
+                                child: const Text('Tab'),
                               ),
-                              PopupMenuItem(
-                                value: _BrowserClipboardAction.copyToPhone,
-                                child: ListTile(
-                                  contentPadding: EdgeInsets.zero,
-                                  leading: Icon(Icons.content_copy),
-                                  title: Text('Copy browser clipboard'),
-                                ),
+                            ),
+                            Tooltip(
+                              message: 'Escape',
+                              child: TextButton(
+                                onPressed: () => _sendKey('Escape'),
+                                child: const Text('Esc'),
                               ),
-                            ],
-                          ),
-                        PopupMenuButton<_BrowserKeyAction>(
-                          tooltip: 'Browser keys',
-                          icon: const Icon(Icons.keyboard_alt_outlined),
-                          onSelected: _handleKeyAction,
-                          itemBuilder: (context) => const [
-                            PopupMenuItem(
-                              value: _BrowserKeyAction.backspace,
-                              child: Text('Backspace'),
-                            ),
-                            PopupMenuItem(
-                              value: _BrowserKeyAction.tab,
-                              child: Text('Tab'),
-                            ),
-                            PopupMenuItem(
-                              value: _BrowserKeyAction.enter,
-                              child: Text('Enter'),
-                            ),
-                            PopupMenuItem(
-                              value: _BrowserKeyAction.escape,
-                              child: Text('Escape'),
                             ),
                           ],
                         ),

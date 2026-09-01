@@ -82,4 +82,15 @@ void main() {
     expect(find.text('Send to browser clipboard'), findsOneWidget);
     expect(find.text('Copy browser clipboard'), findsOneWidget);
   });
+
+  testWidgets('editing keys stay directly available', (tester) async {
+    final provider = await pumpBrowser(tester);
+    addTearDown(provider.dispose);
+
+    expect(find.byTooltip('Backspace. Hold to repeat'), findsOneWidget);
+    expect(find.byTooltip('Enter'), findsOneWidget);
+    expect(find.byTooltip('Tab'), findsOneWidget);
+    expect(find.byTooltip('Escape'), findsOneWidget);
+    expect(find.byTooltip('Browser keys'), findsNothing);
+  });
 }
