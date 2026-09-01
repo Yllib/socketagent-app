@@ -4211,6 +4211,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'push_registration_status',
       'private_integration_auth_result',
       'browser_frame',
+      'browser_clipboard',
       'browser_session_error',
       'browser_runtime_install_progress',
       'prompt_received',
@@ -5878,6 +5879,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _handleBrowserSessionOpen(msg);
           break;
         case 'browser_frame':
+        case 'browser_clipboard':
         case 'browser_session_error':
         case 'browser_runtime_install_progress':
           _browserFrameController.add({...msg, '_serverId': serverId});

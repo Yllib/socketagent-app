@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../services/chat_provider.dart';
 import '../services/window_security_service.dart';
+
+enum _BrowserClipboardAction { pasteIntoPage, sendToBrowser, copyToPhone }
+
+enum _BrowserKeyAction { backspace, tab, enter, escape }
 
 class BrowserSessionScreen extends StatefulWidget {
   const BrowserSessionScreen({
@@ -43,6 +47,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
   late bool _runtimeRequired;
   bool _installingRuntime = false;
   String? _installMessage;
+  bool _readingBrowserClipboard = false;
 
   ChatProvider get _provider => context.read<ChatProvider>();
 
@@ -81,6 +86,12 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
       return;
     }
     if (!mounted) return;
+    if (event['type'] == 'browser_clipboard') {
+      final text = event['text'] as String? ?? '';
+      setState(() => _readingBrowserClipboard = false);
+      unawaited(_copyBrowserClipboardToPhone(text));
+      return;
+    }
     if (event['type'] == 'browser_runtime_install_progress') {
       final status = event['status'] as String? ?? '';
       setState(() {
@@ -105,6 +116,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
       final message = event['message'] as String? ?? 'Browser error';
       setState(() {
         _error = message;
+        _readingBrowserClipboard = false;
         if (message.contains('No supported Chrome, Chromium, or Edge')) {
           _runtimeRequired = true;
         }
@@ -275,7 +287,60 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
     );
   }
 
-  Future<void> _enterSensitiveText() async {
+  Future<void> _enterText() async {
+    final controller = TextEditingController();
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Colors.black,
+        title: const Text('Enter text'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 4,
+            maxLines: 10,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
+            decoration: const InputDecoration(
+              hintText: 'Type or paste text',
+              alignLabelWithHint: true,
+            ),
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              final data = await Clipboard.getData(Clipboard.kTextPlain);
+              if (!dialogContext.mounted) return;
+              final text = data?.text;
+              if (text == null || text.isEmpty) return;
+              controller.value = TextEditingValue(
+                text: text,
+                selection: TextSelection.collapsed(offset: text.length),
+              );
+            },
+            icon: const Icon(Icons.content_paste),
+            label: const Text('Paste'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || value.isEmpty || !mounted) return;
+    _send('text', values: {'text': value});
+  }
+
+  Future<void> _enterPrivateText() async {
     final controller = TextEditingController();
     var obscure = true;
     final value = await showDialog<String>(
@@ -283,7 +348,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           backgroundColor: Colors.black,
-          title: const Text('Enter on remote browser'),
+          title: const Text('Enter privately'),
           content: TextField(
             controller: controller,
             autofocus: true,
@@ -291,7 +356,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
             enableSuggestions: false,
             autocorrect: false,
             decoration: InputDecoration(
-              hintText: 'Password, MFA code, or text',
+              hintText: 'Password or verification code',
               suffixIcon: IconButton(
                 onPressed: () => setDialogState(() => obscure = !obscure),
                 icon: Icon(obscure ? Icons.visibility : Icons.visibility_off),
@@ -315,6 +380,101 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
     controller.dispose();
     if (value == null || value.isEmpty || !mounted) return;
     _send('text', values: {'text': value});
+  }
+
+  Future<void> _pastePhoneClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
+    final text = data?.text;
+    if (text == null || text.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Phone clipboard is empty')));
+      return;
+    }
+    _send('text', values: {'text': text});
+  }
+
+  Future<void> _sendPhoneClipboardToBrowser() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
+    final text = data?.text;
+    if (text == null || text.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Phone clipboard is empty')));
+      return;
+    }
+    final sent = _provider.sendBrowserSessionInput(
+      profile: widget.profile,
+      action: 'clipboard_write',
+      serverId: widget.serverId,
+      text: text,
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          sent
+              ? 'Phone clipboard copied to browser'
+              : 'The computer is not connected',
+        ),
+      ),
+    );
+  }
+
+  void _requestBrowserClipboard() {
+    if (_readingBrowserClipboard) return;
+    setState(() => _readingBrowserClipboard = true);
+    final sent = _provider.sendBrowserSessionInput(
+      profile: widget.profile,
+      action: 'clipboard_read',
+      serverId: widget.serverId,
+    );
+    if (!sent && mounted) {
+      setState(() => _readingBrowserClipboard = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('The computer is not connected')),
+      );
+    }
+  }
+
+  Future<void> _copyBrowserClipboardToPhone(String text) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          text.isEmpty
+              ? 'Browser clipboard is empty'
+              : 'Browser clipboard copied to phone',
+        ),
+      ),
+    );
+  }
+
+  void _handleClipboardAction(_BrowserClipboardAction action) {
+    switch (action) {
+      case _BrowserClipboardAction.pasteIntoPage:
+        unawaited(_pastePhoneClipboard());
+        break;
+      case _BrowserClipboardAction.sendToBrowser:
+        unawaited(_sendPhoneClipboardToBrowser());
+        break;
+      case _BrowserClipboardAction.copyToPhone:
+        _requestBrowserClipboard();
+        break;
+    }
+  }
+
+  void _handleKeyAction(_BrowserKeyAction action) {
+    final key = switch (action) {
+      _BrowserKeyAction.backspace => 'Backspace',
+      _BrowserKeyAction.tab => 'Tab',
+      _BrowserKeyAction.enter => 'Enter',
+      _BrowserKeyAction.escape => 'Escape',
+    };
+    _send('key', values: {'key': key});
   }
 
   Future<void> _navigate() async {
@@ -456,23 +616,76 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
                         ),
                         IconButton(
                           tooltip: 'Enter text',
-                          onPressed: _enterSensitiveText,
-                          icon: const Icon(Icons.keyboard),
+                          onPressed: _enterText,
+                          icon: const Icon(Icons.notes),
                         ),
                         IconButton(
-                          tooltip: 'Backspace',
-                          onPressed: () =>
-                              _send('key', values: {'key': 'Backspace'}),
-                          icon: const Icon(Icons.backspace_outlined),
+                          tooltip: 'Enter privately',
+                          onPressed: _enterPrivateText,
+                          icon: const Icon(Icons.password),
                         ),
-                        TextButton(
-                          onPressed: () => _send('key', values: {'key': 'Tab'}),
-                          child: const Text('Tab'),
-                        ),
-                        TextButton(
-                          onPressed: () =>
-                              _send('key', values: {'key': 'Enter'}),
-                          child: const Text('Enter'),
+                        if (_readingBrowserClipboard)
+                          const Padding(
+                            padding: EdgeInsets.all(14),
+                            child: SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        else
+                          PopupMenuButton<_BrowserClipboardAction>(
+                            tooltip: 'Clipboard',
+                            icon: const Icon(Icons.content_paste),
+                            onSelected: _handleClipboardAction,
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: _BrowserClipboardAction.pasteIntoPage,
+                                child: ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.content_paste_go),
+                                  title: Text('Paste into page'),
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: _BrowserClipboardAction.sendToBrowser,
+                                child: ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.phone_android),
+                                  title: Text('Send to browser clipboard'),
+                                ),
+                              ),
+                              PopupMenuItem(
+                                value: _BrowserClipboardAction.copyToPhone,
+                                child: ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  leading: Icon(Icons.content_copy),
+                                  title: Text('Copy browser clipboard'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        PopupMenuButton<_BrowserKeyAction>(
+                          tooltip: 'Browser keys',
+                          icon: const Icon(Icons.keyboard_alt_outlined),
+                          onSelected: _handleKeyAction,
+                          itemBuilder: (context) => const [
+                            PopupMenuItem(
+                              value: _BrowserKeyAction.backspace,
+                              child: Text('Backspace'),
+                            ),
+                            PopupMenuItem(
+                              value: _BrowserKeyAction.tab,
+                              child: Text('Tab'),
+                            ),
+                            PopupMenuItem(
+                              value: _BrowserKeyAction.enter,
+                              child: Text('Enter'),
+                            ),
+                            PopupMenuItem(
+                              value: _BrowserKeyAction.escape,
+                              child: Text('Escape'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
