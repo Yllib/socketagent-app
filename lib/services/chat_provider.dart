@@ -32,6 +32,7 @@ import '../models/private_integration_auth.dart';
 import '../models/codex_goal.dart';
 import '../models/session_memory.dart';
 import '../models/push_delivery_capabilities.dart';
+import '../models/active_browser_session.dart';
 import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
@@ -597,6 +598,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Timer> _backendInstallAckTimers = {};
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
+  final Map<String, ActiveBrowserSession> _activeBrowserSessions = {};
   final Map<String, PushDeliveryCapabilities> _serverPushCapabilities = {};
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
   final SessionLiveState _sessionLiveState = SessionLiveState();
@@ -842,6 +844,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeSessionServerId ?? _connMgr.activeServerId;
   String? get activeSessionCwd => _activeSessionCwd;
   String? get activeSessionTitle => _activeSessionTitle;
+  List<ActiveBrowserSession> get activeBrowserSessions {
+    final sessionId = _activeSessionId;
+    final serverId = activeSessionServerId;
+    if (sessionId == null || serverId == null) return const [];
+    return _activeBrowserSessions.values
+        .where(
+          (browser) =>
+              browser.serverId == serverId && browser.sessionId == sessionId,
+        )
+        .toList(growable: false);
+  }
   SessionRunStats? get activeSessionRunStats {
     final sessionId = _activeSessionId;
     if (sessionId == null) return null;
@@ -4210,6 +4223,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'push_token_unregistered',
       'push_registration_status',
       'private_integration_auth_result',
+      'browser_session_state',
       'browser_frame',
       'browser_clipboard',
       'browser_session_error',
@@ -5384,6 +5398,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'status_sync':
           // Capture per-server plugin list from ALL servers (needed for server settings)
           if (serverId != null) {
+            final rawBrowserSessions = msg['browserSessions'];
+            if (rawBrowserSessions is List) {
+              _replaceActiveBrowserSessions(serverId, rawBrowserSessions);
+            }
             final rateLimits = msg['rateLimits'];
             if (rateLimits is List) {
               _rateLimitStore.replaceServerSnapshot(
@@ -5878,6 +5896,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'browser_session_open':
           _handleBrowserSessionOpen(msg);
           break;
+        case 'browser_session_state':
+          _handleBrowserSessionState(msg, serverId);
+          break;
         case 'browser_frame':
         case 'browser_clipboard':
         case 'browser_session_error':
@@ -6191,6 +6212,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _messages[existingIndex] = card;
     } else {
       _messages.add(card);
+    }
+    notifyListeners();
+  }
+
+  void _replaceActiveBrowserSessions(String serverId, List<dynamic> values) {
+    _activeBrowserSessions.removeWhere(
+      (_, browser) => browser.serverId == serverId,
+    );
+    for (final value in values) {
+      if (value is! Map || value['active'] == false) continue;
+      final browser = ActiveBrowserSession.fromPayload(value, serverId);
+      if (browser != null) _activeBrowserSessions[browser.key] = browser;
+    }
+  }
+
+  void _handleBrowserSessionState(
+    Map<String, dynamic> msg,
+    String? messageServerId,
+  ) {
+    final serverId = messageServerId ?? activeSessionServerId;
+    if (serverId == null || serverId.isEmpty) return;
+    final browser = ActiveBrowserSession.fromPayload(msg, serverId);
+    if (browser == null) return;
+    if (msg['active'] == false) {
+      _activeBrowserSessions.remove(browser.key);
+    } else {
+      _activeBrowserSessions[browser.key] = browser;
     }
     notifyListeners();
   }

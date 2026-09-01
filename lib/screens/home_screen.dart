@@ -7,7 +7,9 @@ import '../services/tts_engine.dart';
 import '../services/kokoro_server_engine.dart';
 import '../services/websocket_service.dart';
 import '../models/harness_rate_limit.dart';
+import '../models/active_browser_session.dart';
 import 'file_manager_screen.dart';
+import 'browser_session_screen.dart';
 import 'project_instructions_screen.dart';
 import 'terminal_screen.dart';
 import 'settings/voice_speech_screen.dart';
@@ -50,6 +52,81 @@ class HomeScreenState extends State<HomeScreen> {
   bool _pttPressed = false;
   bool _pttStartChecking = false;
   bool _followLatest = true;
+
+  Future<void> _openBrowserSession(ActiveBrowserSession browser) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => BrowserSessionScreen(
+          profile: browser.profile,
+          label: browser.label,
+          initialUrl: browser.url,
+          browserWidth: browser.width,
+          browserHeight: browser.height,
+          serverId: browser.serverId,
+          initialRuntimeRequired: browser.runtimeRequired,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openActiveBrowser(List<ActiveBrowserSession> browsers) async {
+    if (browsers.isEmpty) return;
+    if (browsers.length == 1) {
+      await _openBrowserSession(browsers.single);
+      return;
+    }
+    final selected = await showModalBottomSheet<ActiveBrowserSession>(
+      context: context,
+      backgroundColor: Colors.black,
+      builder: (sheetContext) => SafeArea(
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: browsers.length,
+          itemBuilder: (_, index) {
+            final browser = browsers[index];
+            return ListTile(
+              leading: const Icon(Icons.public),
+              title: Text(browser.label),
+              subtitle: Text(
+                browser.url,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => Navigator.pop(sheetContext, browser),
+            );
+          },
+        ),
+      ),
+    );
+    if (selected != null && mounted) await _openBrowserSession(selected);
+  }
+
+  Widget _buildActiveBrowserButton(List<ActiveBrowserSession> browsers) {
+    return IconButton(
+      tooltip: browsers.length == 1
+          ? 'Open active browser'
+          : 'Open active browsers',
+      onPressed: () => unawaited(_openActiveBrowser(browsers)),
+      icon: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          const Icon(Icons.public),
+          if (browsers.length > 1)
+            Positioned(
+              right: -7,
+              top: -7,
+              child: Text(
+                browsers.length.toString(),
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -589,6 +666,10 @@ class HomeScreenState extends State<HomeScreen> {
             resizeToAvoidBottomInset: true,
             appBar: AppBar(
               toolbarHeight: 64,
+              actions: [
+                if (provider.activeBrowserSessions.isNotEmpty)
+                  _buildActiveBrowserButton(provider.activeBrowserSessions),
+              ],
               title: GestureDetector(
                 onLongPress: () {
                   provider.toggleRawMode();
