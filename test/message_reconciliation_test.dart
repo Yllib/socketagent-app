@@ -777,6 +777,52 @@ void main() {
   });
 
   test(
+    'later live cards cannot replace an acknowledged assistant response',
+    () {
+      ChatMessage positionedText(String entryId, int sequence, String text) {
+        return ChatMessage.assistantText('session')
+          ..entryId = entryId
+          ..sessionSeq = sequence
+          ..revision = 1
+          ..textContent = text;
+      }
+
+      final firstResponse = positionedText(
+        'temporarily-colliding-entry',
+        114231,
+        'I will build and test the deployment path.',
+      )..streamId = 'assistant-first';
+      final tool =
+          ChatMessage.toolCall(
+              tool: 'Bash',
+              input: const {'command': 'inspect deployment'},
+              toolUseId: 'tool-114232',
+            )
+            ..entryId = 'tool-entry'
+            ..sessionSeq = 114232
+            ..revision = 1;
+      final secondResponse = positionedText(
+        'temporarily-colliding-entry',
+        114235,
+        'Yes, that is what I am doing.',
+      )..streamId = 'assistant-second';
+
+      final incorrectlyRebuilt = dedupeStableTranscriptMessages([
+        firstResponse,
+        tool,
+        secondResponse,
+      ]);
+      expect(incorrectlyRebuilt, [same(secondResponse), same(tool)]);
+      final repaired = preservePositionedTranscriptMembership(
+        incorrectlyRebuilt,
+        [firstResponse, tool],
+      );
+
+      expect(repaired, [same(firstResponse), same(tool), same(secondResponse)]);
+    },
+  );
+
+  test(
     'non-overlapping stale snapshot keeps a newer acknowledged user prompt',
     () {
       final staleSnapshot = ChatMessage.assistantText('session')

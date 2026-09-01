@@ -176,6 +176,51 @@ List<ChatMessage> orderByTranscriptPosition(Iterable<ChatMessage> messages) {
   return ordered;
 }
 
+/// Keeps transcript rows that the server already assigned a durable identity.
+///
+/// Live events can revise or reorder those rows, but only an explicit history
+/// retraction may remove them. This protects the visible chat from a delayed
+/// snapshot or another reducer pass replacing a row that was already painted
+/// and acknowledged.
+List<ChatMessage> preservePositionedTranscriptMembership(
+  Iterable<ChatMessage> current,
+  Iterable<ChatMessage> previouslyVisible,
+) {
+  final preserved = current.toList();
+  final currentMembership = preserved
+      .map(_positionedMembershipKey)
+      .whereType<String>()
+      .toSet();
+
+  for (final message in previouslyVisible) {
+    final membershipKey = _positionedMembershipKey(message);
+    if (membershipKey == null || currentMembership.contains(membershipKey)) {
+      continue;
+    }
+    preserved.add(message);
+    currentMembership.add(membershipKey);
+  }
+
+  return orderByTranscriptPosition(preserved);
+}
+
+String? _positionedMembershipKey(ChatMessage message) {
+  final entryId = message.entryId;
+  if (entryId == null || entryId.isEmpty || message.sessionSeq == null) {
+    return null;
+  }
+  final eventIdentity = message.streamId?.isNotEmpty == true
+      ? 'stream:${message.streamId}'
+      : message.toolUseId?.isNotEmpty == true
+      ? 'tool:${message.toolUseId}'
+      : message.questionId?.isNotEmpty == true
+      ? 'question:${message.questionId}'
+      : message.uuid?.isNotEmpty == true
+      ? 'uuid:${message.uuid}'
+      : 'entry';
+  return '${message.sender.name}:${message.type.name}:$entryId:$eventIdentity';
+}
+
 /// A replay frame is a complete cached snapshot of one in-flight stream, not
 /// another delta. This matters when a late-joining client receives a new delta
 /// just before the replay frame: appending would put the suffix before the
