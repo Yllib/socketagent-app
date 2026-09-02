@@ -204,6 +204,63 @@ List<ChatMessage> preservePositionedTranscriptMembership(
   return orderByTranscriptPosition(preserved);
 }
 
+/// Collapses the exact twin produced when a native Codex history import races
+/// the authoritative app-server stream. The two rows have different durable
+/// positions, but identical assistant text and only the live row has a stream
+/// identity. The narrow sequence and timestamp checks preserve intentional
+/// repeated replies.
+List<ChatMessage> dedupeNativeLiveAssistantTwins(
+  Iterable<ChatMessage> messages,
+) {
+  final deduped = <ChatMessage>[];
+  for (final message in messages) {
+    if (deduped.isEmpty || !_isNativeLiveAssistantTwin(deduped.last, message)) {
+      deduped.add(message);
+      continue;
+    }
+
+    final previous = deduped.last;
+    final authoritative = previous.streamId?.isNotEmpty == true
+        ? previous
+        : message;
+    final duplicate = identical(authoritative, previous) ? message : previous;
+    _mergeSnapshotStateIntoLive(authoritative, duplicate);
+    deduped[deduped.length - 1] = authoritative;
+  }
+  return deduped;
+}
+
+bool _isNativeLiveAssistantTwin(ChatMessage left, ChatMessage right) {
+  if (left.sender != MessageSender.assistant ||
+      right.sender != MessageSender.assistant ||
+      left.type != MessageType.text ||
+      right.type != MessageType.text ||
+      left.parentToolUseId != right.parentToolUseId ||
+      left.entryId == null ||
+      right.entryId == null ||
+      left.entryId == right.entryId) {
+    return false;
+  }
+  final leftHasStream = left.streamId?.isNotEmpty == true;
+  final rightHasStream = right.streamId?.isNotEmpty == true;
+  if (leftHasStream == rightHasStream) return false;
+
+  final leftSequence = left.sessionSeq;
+  final rightSequence = right.sessionSeq;
+  if (leftSequence == null ||
+      rightSequence == null ||
+      (leftSequence - rightSequence).abs() != 1) {
+    return false;
+  }
+  if ((left.timestamp.difference(right.timestamp).inMilliseconds).abs() >
+      10000) {
+    return false;
+  }
+  final leftText = left.textContent.trim().replaceAll(RegExp(r'\s+'), ' ');
+  final rightText = right.textContent.trim().replaceAll(RegExp(r'\s+'), ' ');
+  return leftText.isNotEmpty && leftText == rightText;
+}
+
 String? _positionedMembershipKey(ChatMessage message) {
   final entryId = message.entryId;
   if (entryId == null || entryId.isEmpty || message.sessionSeq == null) {

@@ -822,6 +822,45 @@ void main() {
     },
   );
 
+  test('native Codex copy beside its live stream collapses', () {
+    final live = ChatMessage.assistantText('session')
+      ..textContent = 'I will deploy and verify the fixes.'
+      ..entryId = 'live-entry'
+      ..sessionSeq = 115922
+      ..revision = 67
+      ..streamId = 'msg-live'
+      ..timestamp = DateTime.parse('2026-09-02T09:51:25.116Z');
+    final native = ChatMessage.assistantText('session')
+      ..textContent = 'I will deploy and verify the fixes.'
+      ..entryId = 'native-entry'
+      ..sessionSeq = 115923
+      ..revision = 1
+      ..timestamp = DateTime.parse('2026-09-02T09:51:21.690Z');
+
+    final deduped = dedupeNativeLiveAssistantTwins([live, native]);
+
+    expect(deduped, [same(live)]);
+    expect(deduped.single.entryId, 'live-entry');
+    expect(deduped.single.streamId, 'msg-live');
+  });
+
+  test('intentional repeated assistant replies remain distinct', () {
+    ChatMessage reply(String entryId, int sequence, DateTime timestamp) {
+      return ChatMessage.assistantText('session')
+        ..textContent = 'Same answer'
+        ..entryId = entryId
+        ..sessionSeq = sequence
+        ..revision = 1
+        ..streamId = 'stream-$entryId'
+        ..timestamp = timestamp;
+    }
+
+    final first = reply('first', 20, DateTime.parse('2026-09-02T10:00:00Z'));
+    final second = reply('second', 21, DateTime.parse('2026-09-02T10:00:02Z'));
+
+    expect(dedupeNativeLiveAssistantTwins([first, second]), [first, second]);
+  });
+
   test(
     'non-overlapping stale snapshot keeps a newer acknowledged user prompt',
     () {

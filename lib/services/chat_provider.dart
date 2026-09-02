@@ -10924,9 +10924,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ..clear()
         ..addAll(historyWorkflowTasks);
     }
-    _messages = preservePositionedTranscriptMembership(
-      orderByTranscriptPosition(dedupeStableTranscriptMessages(_messages)),
-      liveBeforeSnapshot,
+    _messages = dedupeNativeLiveAssistantTwins(
+      preservePositionedTranscriptMembership(
+        orderByTranscriptPosition(dedupeStableTranscriptMessages(_messages)),
+        liveBeforeSnapshot,
+      ),
     );
     _recountPendingInjectedMessages();
     // Fallback: if server didn't include 'todos' field (old server compat),
