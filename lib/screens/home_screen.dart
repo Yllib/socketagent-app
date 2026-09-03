@@ -101,29 +101,59 @@ class HomeScreenState extends State<HomeScreen> {
     if (selected != null && mounted) await _openBrowserSession(selected);
   }
 
-  Widget _buildActiveBrowserButton(List<ActiveBrowserSession> browsers) {
-    return IconButton(
-      tooltip: browsers.length == 1
-          ? 'Open active browser'
-          : 'Open active browsers',
-      onPressed: () => unawaited(_openActiveBrowser(browsers)),
-      icon: Stack(
-        clipBehavior: Clip.none,
-        children: [
-          const Icon(Icons.public),
-          if (browsers.length > 1)
-            Positioned(
-              right: -7,
-              top: -7,
-              child: Text(
-                browsers.length.toString(),
-                style: const TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
+  Widget _buildActiveBrowserStrip(List<ActiveBrowserSession> browsers) {
+    final single = browsers.length == 1 ? browsers.single : null;
+    final title = single?.label ?? '${browsers.length} active browsers';
+    final host = single == null
+        ? 'Tap to choose'
+        : Uri.tryParse(single.url)?.host ?? '';
+    final colors = Theme.of(context).colorScheme;
+    return Material(
+      color: colors.surface,
+      child: InkWell(
+        onTap: () => unawaited(_openActiveBrowser(browsers)),
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          decoration: BoxDecoration(
+            border: Border(
+              bottom: BorderSide(color: colors.outline.withAlpha(70)),
+            ),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.public, size: 17),
+              const SizedBox(width: 9),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
-            ),
-        ],
+              if (host.isNotEmpty) ...[
+                const SizedBox(width: 10),
+                Flexible(
+                  child: Text(
+                    host,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 4),
+              const Icon(Icons.chevron_right, size: 18),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -666,10 +696,6 @@ class HomeScreenState extends State<HomeScreen> {
             resizeToAvoidBottomInset: true,
             appBar: AppBar(
               toolbarHeight: 64,
-              actions: [
-                if (provider.activeBrowserSessions.isNotEmpty)
-                  _buildActiveBrowserButton(provider.activeBrowserSessions),
-              ],
               title: GestureDetector(
                 onLongPress: () {
                   provider.toggleRawMode();
@@ -821,6 +847,8 @@ class HomeScreenState extends State<HomeScreen> {
               color: chatSurfaceColor,
               child: Column(
                 children: [
+                  if (provider.activeBrowserSessions.isNotEmpty)
+                    _buildActiveBrowserStrip(provider.activeBrowserSessions),
                   if (provider.activeSessionId != null ||
                       provider.isPendingNewSession)
                     _buildControlChips(provider),

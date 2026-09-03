@@ -58,6 +58,7 @@ import 'session_transcript_cache.dart';
 import 'hard_stop_target.dart';
 import 'session_live_state.dart';
 import 'session_identity_remap.dart';
+import '../models/session_message_routing.dart';
 import 'ai_response_report_service.dart';
 import '../config/app_distribution.dart';
 
@@ -4164,13 +4165,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final messageSessionId = msg['sessionId'] as String?;
     _cacheDurableLiveEvent(msg, serverId);
-    final isForVisibleSession =
-        messageSessionId != null &&
-        messageSessionId.isNotEmpty &&
-        _viewingSessionId == messageSessionId &&
-        (_viewingServerId == null ||
-            serverId == null ||
-            _viewingServerId == serverId);
+    final isForActiveSession = sessionMessageBelongsToActiveChat(
+      messageSessionId: messageSessionId,
+      messageServerId: serverId,
+      activeSessionId: _activeSessionId,
+      activeServerId: _activeSessionServerId ?? _connMgr.activeServerId,
+    );
 
     // Messages that should be processed from ANY server
     const globalTypes = {
@@ -4258,7 +4258,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Route: only process non-global messages from the active server
     final fromInactiveServer =
         !isGlobalType &&
-        !isForVisibleSession &&
+        !isForActiveSession &&
         serverId != null &&
         _connMgr.activeServerId != null &&
         serverId != _connMgr.activeServerId;
@@ -4283,14 +4283,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         messageSessionId != null &&
         messageSessionId.isNotEmpty) {
       if (_activeSessionId == null) {
-        if (!isForVisibleSession && type != 'session_created') {
+        if (type != 'session_created') {
           _handleNotificationOnlyServerMessage(type, msg, serverId);
           _ackDeferredSessionDelivery(msg, serverId);
           return;
         }
-      } else if (!isForVisibleSession &&
-          messageSessionId != _activeSessionId &&
-          !replacesActiveSession) {
+      } else if (!isForActiveSession && !replacesActiveSession) {
         _handleNotificationOnlyServerMessage(type, msg, serverId);
         _ackDeferredSessionDelivery(msg, serverId);
         return;
@@ -5789,7 +5787,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (msg['sessionCompletion'] == true && sid.isNotEmpty) {
             _markSessionIdle(sid, serverId: serverId);
           }
-          if (msg['kind'] == 'tool_notification' && isForVisibleSession) {
+          if (msg['kind'] == 'tool_notification' && isForActiveSession) {
             final eventId =
                 msg['eventId']?.toString() ??
                 'notify_${DateTime.now().microsecondsSinceEpoch}';
