@@ -82,12 +82,14 @@ void main() {
     final first = browserSessionMessageFromPayload({
       'entryId': 'browser-entry-1',
       'sessionSeq': 42,
+      'revision': 1,
       'profile': 'google-play-rubano',
       'url': 'https://play.google.com/console',
     })!;
     final second = browserSessionMessageFromPayload({
       'entryId': 'browser-entry-2',
       'sessionSeq': 58,
+      'revision': 1,
       'profile': 'google-play-rubano',
       'url': 'https://play.google.com/console',
     })!;
@@ -118,12 +120,27 @@ void main() {
       'entryId': 'entry-1',
       'sessionSeq': 12,
       'revision': 2,
+      'streamId': 'stream-1',
     });
 
     expect(message.timestamp.toUtc(), DateTime.utc(2026, 8, 13, 17, 4, 5, 250));
     expect(message.entryId, 'entry-1');
     expect(message.sessionSeq, 12);
     expect(message.revision, 2);
+    expect(message.streamId, 'stream-1');
+  });
+
+  test('partial durable identity is never applied to a message', () {
+    final message = ChatMessage.assistantText('session');
+
+    applyTranscriptPosition(message, {
+      'entryId': 'entry-without-revision',
+      'sessionSeq': 12,
+    });
+
+    expect(message.entryId, isNull);
+    expect(message.sessionSeq, isNull);
+    expect(message.revision, 0);
   });
 
   test('completed thinking metadata survives history reconciliation', () {
@@ -842,6 +859,27 @@ void main() {
     expect(deduped, [same(live)]);
     expect(deduped.single.entryId, 'live-entry');
     expect(deduped.single.streamId, 'msg-live');
+  });
+
+  test('a revised history row keeps the live stream identity', () {
+    final live = ChatMessage.assistantText('session')
+      ..textContent = 'One response'
+      ..entryId = 'assistant-entry'
+      ..sessionSeq = 120
+      ..revision = 1
+      ..streamId = 'assistant-stream';
+    final revised = ChatMessage.assistantText('session')
+      ..textContent = 'One response'
+      ..entryId = 'assistant-entry'
+      ..sessionSeq = 120
+      ..revision = 2;
+
+    final deduped = dedupeStableTranscriptMessages([live, revised]);
+    final preserved = preservePositionedTranscriptMembership(deduped, [live]);
+
+    expect(preserved, hasLength(1));
+    expect(preserved.single.revision, 2);
+    expect(preserved.single.streamId, 'assistant-stream');
   });
 
   test('intentional repeated assistant replies remain distinct', () {

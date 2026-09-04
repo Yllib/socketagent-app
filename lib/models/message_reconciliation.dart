@@ -77,21 +77,32 @@ bool liveMessageMatchesParent(ChatMessage? message, String? parentToolUseId) {
   return message != null && message.parentToolUseId == parentToolUseId;
 }
 
+bool hasCompleteTranscriptPosition(Map<String, dynamic> source) {
+  final entryId = source['entryId'];
+  final sessionSeq = source['sessionSeq'];
+  final revision = source['revision'];
+  return entryId is String &&
+      entryId.isNotEmpty &&
+      sessionSeq is num &&
+      sessionSeq.toInt() > 0 &&
+      revision is num &&
+      revision.toInt() > 0;
+}
+
 void applyTranscriptPosition(ChatMessage message, Map<String, dynamic> source) {
   final timestamp = source['timestamp'];
   if (timestamp is String && timestamp.isNotEmpty) {
     final parsed = DateTime.tryParse(timestamp);
     if (parsed != null) message.timestamp = parsed.toLocal();
   }
-  final entryId = source['entryId'];
-  if (entryId is String && entryId.isNotEmpty) message.entryId = entryId;
-  final sessionSeq = source['sessionSeq'];
-  if (sessionSeq is num && sessionSeq.toInt() > 0) {
-    message.sessionSeq = sessionSeq.toInt();
+  if (hasCompleteTranscriptPosition(source)) {
+    message.entryId = source['entryId'] as String;
+    message.sessionSeq = (source['sessionSeq'] as num).toInt();
+    message.revision = (source['revision'] as num).toInt();
   }
-  final revision = source['revision'];
-  if (revision is num && revision.toInt() > 0) {
-    message.revision = revision.toInt();
+  final streamId = source['streamId'];
+  if (streamId is String && streamId.isNotEmpty) {
+    message.streamId = streamId;
   }
 }
 
@@ -606,6 +617,7 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
   }
   live.parentToolUseId ??= snapshot.parentToolUseId;
   live.uuid ??= snapshot.uuid;
+  live.streamId ??= snapshot.streamId;
   live.triggerUserMessageUuid ??= snapshot.triggerUserMessageUuid;
   live.triggerUserMessageUuids ??= snapshot.triggerUserMessageUuids;
 }

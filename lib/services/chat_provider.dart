@@ -9617,7 +9617,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
     final rawMessages = normalizeSendFileHistoryEntries(
       msg['messages'] as List? ?? const [],
-    );
+    ).where(hasCompleteTranscriptPosition).toList();
     final rawTaskStates = (msg['taskStates'] as List? ?? const [])
         .whereType<Map>()
         .map((entry) => Map<String, dynamic>.from(entry))

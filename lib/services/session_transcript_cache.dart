@@ -25,8 +25,15 @@ Map<String, dynamic> mergeTranscriptCachePayloads(
         : sequence != null
         ? 'seq:$sequence:${entry['role']}:${entry['toolUseId'] ?? ''}:${entry['uuid'] ?? ''}'
         : 'unsequenced:${unsequencedIndex++}';
-    if (!mergedByIdentity.containsKey(key)) identityOrder.add(key);
-    mergedByIdentity[key] = entry;
+    final existing = mergedByIdentity[key];
+    if (existing == null) {
+      identityOrder.add(key);
+      mergedByIdentity[key] = entry;
+      continue;
+    }
+    final existingRevision = (existing['revision'] as num?)?.toInt() ?? 0;
+    final incomingRevision = (entry['revision'] as num?)?.toInt() ?? 0;
+    if (incomingRevision >= existingRevision) mergedByIdentity[key] = entry;
   }
 
   final mergedEntries =
@@ -145,12 +152,20 @@ Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
 }) {
   final entryId = event['entryId']?.toString() ?? '';
   final sessionSeq = (event['sessionSeq'] as num?)?.toInt();
-  if (entryId.isEmpty || sessionSeq == null || sessionSeq <= 0) return null;
+  final revision = (event['revision'] as num?)?.toInt();
+  if (entryId.isEmpty ||
+      sessionSeq == null ||
+      sessionSeq <= 0 ||
+      revision == null ||
+      revision <= 0) {
+    return null;
+  }
   final type = event['type']?.toString() ?? '';
   final base = <String, dynamic>{
     'entryId': entryId,
     'sessionSeq': sessionSeq,
-    'revision': (event['revision'] as num?)?.toInt() ?? 1,
+    'revision': revision,
+    if (event['streamId'] != null) 'streamId': event['streamId'],
     if (event['uuid'] != null) 'uuid': event['uuid'],
     if (event['parentToolUseId'] != null)
       'parentToolUseId': event['parentToolUseId'],

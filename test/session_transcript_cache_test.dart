@@ -92,6 +92,34 @@ void main() {
     expect(merged['offset'], 8);
   });
 
+  test('stale revisions cannot replace newer cached transcript entries', () {
+    final merged = mergeTranscriptCachePayloads(
+      {
+        'messages': [
+          {
+            'entryId': 'assistant-9',
+            'sessionSeq': 9,
+            'revision': 2,
+            'content': 'complete',
+          },
+        ],
+      },
+      {
+        'messages': [
+          {
+            'entryId': 'assistant-9',
+            'sessionSeq': 9,
+            'revision': 1,
+            'content': 'partial',
+          },
+        ],
+      },
+    );
+
+    expect((merged['messages'] as List).single['content'], 'complete');
+    expect((merged['messages'] as List).single['revision'], 2);
+  });
+
   test('oversized cache keeps a contiguous newest suffix and advances', () {
     final payload = {
       'sessionId': 'bandscan',
@@ -181,6 +209,7 @@ void main() {
       'sessionSeq': 1,
       'revision': 2,
       'content': 'complete',
+      'streamId': 'assistant-stream-1',
       'snapshot': true,
       'finalSnapshot': true,
     });
@@ -188,6 +217,20 @@ void main() {
     expect(partial, isNull);
     expect(complete?['role'], 'assistant');
     expect(complete?['content'], 'complete');
+    expect(complete?['streamId'], 'assistant-stream-1');
+  });
+
+  test('live cache rejects incomplete durable transcript identity', () {
+    expect(
+      transcriptCacheEntryFromServerEvent({
+        'type': 'text',
+        'entryId': 'entry-1',
+        'sessionSeq': 1,
+        'content': 'missing revision',
+        'finalSnapshot': true,
+      }),
+      isNull,
+    );
   });
 
   test('browser cards advance the chronological live transcript cache', () {
