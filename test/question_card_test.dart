@@ -4,6 +4,17 @@ import 'package:app/models/message.dart';
 import 'package:app/widgets/question_card.dart';
 
 void main() {
+  test('retains the async question response behavior', () {
+    expect(
+      ChatMessage.question(
+        questionId: 'async-1',
+        questions: const [],
+        asyncQuestion: true,
+      ).asyncQuestion,
+      true,
+    );
+  });
+
   testWidgets('answered question shows the submitted response', (tester) async {
     final message = ChatMessage.question(
       questionId: 'question-1',

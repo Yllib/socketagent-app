@@ -71,6 +71,7 @@ class ChatMessage {
   // Question fields
   final String? questionId;
   final List<QuestionItem>? questions;
+  final bool asyncQuestion;
   bool answered;
   Map<String, String>? answers;
 
@@ -98,6 +99,8 @@ class ChatMessage {
   String? parentToolUseId;
   String? originToolUseId;
   String? uuid;
+  String? triggerUserMessageUuid;
+  List<String>? triggerUserMessageUuids;
   String? streamId;
   String? messagePhase;
   String? agentId;
@@ -131,6 +134,7 @@ class ChatMessage {
     this.toolElapsedSeconds = 0.0,
     this.questionId,
     this.questions,
+    this.asyncQuestion = false,
     this.answered = false,
     this.answers,
     this.emailPreview,
@@ -141,6 +145,8 @@ class ChatMessage {
     this.parentToolUseId,
     this.originToolUseId,
     this.uuid,
+    this.triggerUserMessageUuid,
+    this.triggerUserMessageUuids,
     this.streamId,
     this.messagePhase,
     this.agentId,
@@ -335,6 +341,7 @@ class ChatMessage {
     required List<QuestionItem> questions,
     Map<String, String>? emailPreview,
     Map<String, String>? answers,
+    bool asyncQuestion = false,
   }) {
     return ChatMessage(
       id: 'question_$questionId',
@@ -343,6 +350,7 @@ class ChatMessage {
       timestamp: DateTime.now(),
       questionId: questionId,
       questions: questions,
+      asyncQuestion: asyncQuestion,
       answers: answers,
       emailPreview: emailPreview,
     );

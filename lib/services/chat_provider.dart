@@ -635,6 +635,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _isRetrying = false;
   Timer? _apiRetryTimer;
   String? _activeHookName;
+  final Map<String, String> _backendAuthRecoveryBySession = {};
   List<String> _promptSuggestions = [];
   List<dynamic>? _supportedCommands;
   List<dynamic>? _supportedAgents;
@@ -856,6 +857,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         )
         .toList(growable: false);
   }
+
   SessionRunStats? get activeSessionRunStats {
     final sessionId = _activeSessionId;
     if (sessionId == null) return null;
@@ -1445,6 +1447,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       weeklyRateLimit?.utilizationPercent;
   bool get isRetrying => _isRetrying;
   String? get activeHookName => _activeHookName;
+  String? get backendAuthRecoveryMessage => _activeSessionId == null
+      ? null
+      : _backendAuthRecoveryBySession[_activeSessionId];
   List<String> serverPlugins(String serverId) => _serverPlugins[serverId] ?? [];
   List<Map<String, dynamic>> backendHealthForServer(String serverId) =>
       _serverBackendHealth[serverId] ?? const <Map<String, dynamic>>[];
@@ -4501,6 +4506,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'backend_auth_required':
           _handleBackendAuthRequired(msg, serverId);
           break;
+        case 'backend_auth_recovery':
+          final recoverySessionId = msg['sessionId']?.toString() ?? '';
+          if (recoverySessionId.isNotEmpty) {
+            if (msg['active'] == true) {
+              _backendAuthRecoveryBySession[recoverySessionId] =
+                  msg['message']?.toString() ??
+                  'Refreshing backend authentication...';
+            } else {
+              _backendAuthRecoveryBySession.remove(recoverySessionId);
+            }
+            notifyListeners();
+          }
+          break;
         case 'terminal_status':
         case 'terminal_output':
         case 'terminal_exited':
@@ -6679,6 +6697,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _applyTurnCorrelation(
+    ChatMessage message,
+    Map<String, dynamic> payload,
+  ) {
+    final primary = payload['triggerUserMessageUuid']?.toString();
+    if (primary != null && primary.isNotEmpty) {
+      message.triggerUserMessageUuid = primary;
+    }
+    final rawAll = payload['triggerUserMessageUuids'];
+    if (rawAll is List) {
+      final all = rawAll
+          .map((value) => value.toString())
+          .where((value) => value.isNotEmpty)
+          .toList(growable: false);
+      if (all.isNotEmpty) message.triggerUserMessageUuids = all;
+    }
+  }
+
   void _handleTextMessage(Map<String, dynamic> msg) {
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
@@ -6728,6 +6764,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _assistantMessagesByStreamKey[streamKey] = existing;
         existing.streamId = streamId;
         existing.messagePhase = msg['messagePhase'] as String?;
+        _applyTurnCorrelation(existing, msg);
         applyTranscriptPosition(existing, msg);
         _currentStreamingMessage = existing;
         _currentStreamingStreamId = streamId;
@@ -6757,6 +6794,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Forward SDK hierarchy fields
       streamMessage.parentToolUseId = parentToolUseId;
       streamMessage.uuid = msg['uuid'] as String?;
+      _applyTurnCorrelation(streamMessage, msg);
       streamMessage.messagePhase = msg['messagePhase'] as String?;
       // Don't add to _messages yet — wait until there's visible content
     } else if (_currentStreamingStreamId == null && streamId != null) {
@@ -6764,6 +6802,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     streamMessage.streamId = streamId;
     streamMessage.messagePhase = msg['messagePhase'] as String?;
+    _applyTurnCorrelation(streamMessage, msg);
     applyTranscriptPosition(streamMessage, msg);
     _streamingMessagesByKey[streamKey] = streamMessage;
     _assistantMessagesByStreamKey[streamKey] = streamMessage;
@@ -6848,6 +6887,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _messages.add(thinkingMessage);
       _currentThinkingMessage = thinkingMessage;
     }
+    _applyTurnCorrelation(thinkingMessage, msg);
     thinkingMessage.thinkingTokens = tokens;
     thinkingMessage.toolStreaming = true;
     notifyListeners();
@@ -6893,6 +6933,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _thinkingMessagesByKey[streamKey] = existing;
         _thinkingMessagesByStreamKey[streamKey] = existing;
         existing.streamId = msg['streamId'] as String?;
+        _applyTurnCorrelation(existing, msg);
         applyTranscriptPosition(existing, msg);
         _currentThinkingMessage = existing;
         notifyListeners();
@@ -6914,9 +6955,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       thinkingMessage = ChatMessage.thinking();
       thinkingMessage.parentToolUseId = parentToolUseId;
       thinkingMessage.uuid = msg['uuid'] as String?;
+      _applyTurnCorrelation(thinkingMessage, msg);
       _messages.add(thinkingMessage);
     }
     thinkingMessage.streamId = msg['streamId'] as String?;
+    _applyTurnCorrelation(thinkingMessage, msg);
     applyTranscriptPosition(thinkingMessage, msg);
     _thinkingMessagesByKey[streamKey] = thinkingMessage;
     _thinkingMessagesByStreamKey[streamKey] = thinkingMessage;
@@ -7450,6 +7493,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       questionId: questionId,
       questions: questions,
       emailPreview: emailPreview,
+      asyncQuestion: msg['asyncQuestion'] == true,
     );
     applyTranscriptPosition(questionMessage, msg);
     _messages.add(questionMessage);
@@ -8279,7 +8323,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'taskId': taskId,
         'agentId': taskId,
         'taskType': taskType,
-        'isBackgrounded': true,
+        'isBackgrounded': msg['isBackgrounded'] != false,
+        if (msg['spawnDepth'] != null) 'spawnDepth': msg['spawnDepth'],
         'source': 'claude',
       };
       _backgroundTasks.remove(taskId);
@@ -8301,10 +8346,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       if (card != null) {
         card.toolStreaming = true;
-        card.isBackgrounded = true;
+        card.isBackgrounded = msg['isBackgrounded'] != false;
         card.backgroundTaskId = taskId;
         card.toolInput?['_task_id'] = taskId;
-        card.toolInput?['_is_backgrounded'] = true;
+        card.toolInput?['_is_backgrounded'] = msg['isBackgrounded'] != false;
+        if (msg['spawnDepth'] != null) {
+          card.toolInput?['_spawn_depth'] = msg['spawnDepth'];
+        }
         card.toolInput?['description'] = description;
         if (subagentType.isNotEmpty) {
           card.toolInput?['subagent_type'] = subagentType;
@@ -9760,6 +9808,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             m.thinkingDurationMs =
                 (entry['thinkingDurationMs'] as num?)?.toInt() ?? 0;
             m.uuid = entry['uuid'] as String?;
+            _applyTurnCorrelation(m, entry);
             m.parentToolUseId = entry['parentToolUseId'] as String?;
             loaded.add(m);
             break;
@@ -10071,6 +10120,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final m = ChatMessage.assistantText('');
               m.textContent = cleaned;
               m.uuid = entry['uuid'] as String?;
+              _applyTurnCorrelation(m, entry);
               m.messagePhase = entry['messagePhase'] as String?;
               m.parentToolUseId = entry['parentToolUseId'] as String?;
               loaded.add(m);
@@ -10644,6 +10694,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             questions: questions,
             emailPreview: emailPreview,
             answers: answers,
+            asyncQuestion: entry['asyncQuestion'] == true,
           );
           qMsg.answered = answered;
           final existingIdx = loaded.lastIndexWhere(

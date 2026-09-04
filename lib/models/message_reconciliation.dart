@@ -584,6 +584,8 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
         : live.toolStreaming || snapshot.toolStreaming;
     live.parentToolUseId ??= snapshot.parentToolUseId;
     live.uuid ??= snapshot.uuid;
+    live.triggerUserMessageUuid ??= snapshot.triggerUserMessageUuid;
+    live.triggerUserMessageUuids ??= snapshot.triggerUserMessageUuids;
     return;
   }
 
@@ -604,6 +606,8 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
   }
   live.parentToolUseId ??= snapshot.parentToolUseId;
   live.uuid ??= snapshot.uuid;
+  live.triggerUserMessageUuid ??= snapshot.triggerUserMessageUuid;
+  live.triggerUserMessageUuids ??= snapshot.triggerUserMessageUuids;
 }
 
 /// Reconciles events received live around an initial/reconnect history

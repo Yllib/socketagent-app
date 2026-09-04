@@ -942,6 +942,10 @@ class HomeScreenState extends State<HomeScreen> {
                   if (provider.fiveHourRateLimit != null)
                     _buildRateLimitBanner(provider.fiveHourRateLimit!),
                   if (provider.isRetrying) _buildRetryingBanner(),
+                  if (provider.backendAuthRecoveryMessage != null)
+                    _buildBackendRecoveryBanner(
+                      provider.backendAuthRecoveryMessage!,
+                    ),
                   if (provider.activeHookName != null)
                     _buildHookBanner(provider.activeHookName!),
                   if (provider.activePaneTasks.isNotEmpty)
@@ -3402,6 +3406,40 @@ class HomeScreenState extends State<HomeScreen> {
               fontSize: 12,
               fontWeight: FontWeight.w500,
               color: Theme.of(context).colorScheme.onSecondaryContainer,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackendRecoveryBanner(String message) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: colors.secondaryContainer,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: colors.onSecondaryContainer,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              message,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: colors.onSecondaryContainer,
+              ),
             ),
           ),
         ],
