@@ -4,6 +4,7 @@ import 'package:flutter/rendering.dart';
 import '../models/message.dart';
 import '../models/ai_response_report.dart';
 import '../models/condensed_chat_rows.dart';
+import '../models/message_reconciliation.dart';
 import '../models/raw_event.dart';
 import '../services/socketagent_link_router.dart';
 import 'message_bubble.dart';
@@ -1458,9 +1459,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       ValueKey<String>('message-row:${widget.sessionStorageKey ?? ''}:$rowKey');
 
   String _messageRowKey(ChatMessage msg) {
-    final entryId = msg.entryId;
-    if (entryId != null && entryId.isNotEmpty) {
-      return '${msg.type.name}:entry:$entryId';
+    final transcriptIdentity = transcriptMessageIdentity(msg);
+    if (transcriptIdentity != null) {
+      return '${msg.type.name}:entry:$transcriptIdentity';
     }
     final toolId = msg.toolUseId ?? '';
     final parentId = msg.parentToolUseId ?? '';

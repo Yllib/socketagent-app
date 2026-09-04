@@ -131,6 +131,11 @@ bool sameBrowserSessionCard(ChatMessage left, ChatMessage right) {
   }
   final leftEntryId = left.entryId;
   final rightEntryId = right.entryId;
+  final leftTranscriptIdentity = transcriptMessageIdentity(left);
+  final rightTranscriptIdentity = transcriptMessageIdentity(right);
+  if (leftTranscriptIdentity != null && rightTranscriptIdentity != null) {
+    return leftTranscriptIdentity == rightTranscriptIdentity;
+  }
   if (leftEntryId != null &&
       leftEntryId.isNotEmpty &&
       rightEntryId != null &&
@@ -155,11 +160,36 @@ bool isStaleTranscriptRevision(
     return false;
   }
   for (final message in messages) {
-    if (message.entryId == entryId) {
+    if (messageMatchesTranscriptPosition(message, incoming)) {
       return message.revision >= revision.toInt();
     }
   }
   return false;
+}
+
+/// The durable identity of one transcript row. An entry ID alone is not enough
+/// while live and persisted events are being reconciled: a remapped event can
+/// briefly reuse an entry ID while already carrying a different sequence.
+String? transcriptMessageIdentity(ChatMessage message) {
+  final entryId = message.entryId;
+  final sessionSeq = message.sessionSeq;
+  if (entryId == null || entryId.isEmpty || sessionSeq == null) return null;
+  return '$entryId:$sessionSeq';
+}
+
+bool messageMatchesTranscriptPosition(
+  ChatMessage message,
+  Map<String, dynamic> incoming,
+) {
+  final entryId = incoming['entryId'];
+  final sessionSeq = incoming['sessionSeq'];
+  if (entryId is! String ||
+      entryId.isEmpty ||
+      sessionSeq is! num ||
+      sessionSeq.toInt() <= 0) {
+    return false;
+  }
+  return message.entryId == entryId && message.sessionSeq == sessionSeq.toInt();
 }
 
 /// Reorders only messages with authoritative server positions. Unpositioned
@@ -273,10 +303,8 @@ bool _isNativeLiveAssistantTwin(ChatMessage left, ChatMessage right) {
 }
 
 String? _positionedMembershipKey(ChatMessage message) {
-  final entryId = message.entryId;
-  if (entryId == null || entryId.isEmpty || message.sessionSeq == null) {
-    return null;
-  }
+  final transcriptIdentity = transcriptMessageIdentity(message);
+  if (transcriptIdentity == null) return null;
   final eventIdentity = message.streamId?.isNotEmpty == true
       ? 'stream:${message.streamId}'
       : message.toolUseId?.isNotEmpty == true
@@ -286,7 +314,7 @@ String? _positionedMembershipKey(ChatMessage message) {
       : message.uuid?.isNotEmpty == true
       ? 'uuid:${message.uuid}'
       : 'entry';
-  return '${message.sender.name}:${message.type.name}:$entryId:$eventIdentity';
+  return '${message.sender.name}:${message.type.name}:$transcriptIdentity:$eventIdentity';
 }
 
 /// A replay frame is a complete cached snapshot of one in-flight stream, not
@@ -454,9 +482,8 @@ String? _stableLiveKey(ChatMessage message) {
       message.toolUseId!.isNotEmpty) {
     return 'run:${message.toolUseId}';
   }
-  if (message.entryId != null && message.entryId!.isNotEmpty) {
-    return 'entry:${message.entryId}';
-  }
+  final transcriptIdentity = transcriptMessageIdentity(message);
+  if (transcriptIdentity != null) return 'entry:$transcriptIdentity';
   final interaction = interactionKey(message);
   if (interaction != null) return interaction;
   if (message.type == MessageType.toolCall &&

@@ -6727,7 +6727,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     ChatMessage? positionedMessage;
     if (entryId != null && entryId.isNotEmpty) {
       for (final message in _messages.reversed) {
-        if (message.entryId == entryId) {
+        if (messageMatchesTranscriptPosition(message, msg)) {
           positionedMessage = message;
           break;
         }
@@ -6908,7 +6908,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     ChatMessage? positionedMessage;
     if (entryId != null && entryId.isNotEmpty) {
       for (final message in _messages.reversed) {
-        if (message.entryId == entryId) {
+        if (messageMatchesTranscriptPosition(message, msg)) {
           positionedMessage = message;
           break;
         }
@@ -7084,7 +7084,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final entryId = msg['entryId'] as String?;
     var existingIndex = entryId == null || entryId.isEmpty
         ? -1
-        : _messages.lastIndexWhere((message) => message.entryId == entryId);
+        : _messages.lastIndexWhere(
+            (message) => messageMatchesTranscriptPosition(message, msg),
+          );
     if (existingIndex < 0 && toolUseId.isNotEmpty) {
       existingIndex = _messages.lastIndexWhere(
         (message) =>

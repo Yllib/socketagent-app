@@ -101,6 +101,29 @@ void main() {
     ]);
   });
 
+  test('browser cards with reused entry ids keep separate sequences', () {
+    final first = ChatMessage.browserSession(
+      profile: 'play-console',
+      label: 'Play Console',
+      url: 'https://play.google.com/console',
+      width: 430,
+      height: 860,
+    )
+      ..entryId = 'temporarily-colliding-entry'
+      ..sessionSeq = 20;
+    final second = ChatMessage.browserSession(
+      profile: 'play-console',
+      label: 'Play Console',
+      url: 'https://play.google.com/console',
+      width: 430,
+      height: 860,
+    )
+      ..entryId = 'temporarily-colliding-entry'
+      ..sessionSeq = 24;
+
+    expect(sameBrowserSessionCard(first, second), isFalse);
+  });
+
   test('a missing live message never matches a root parent', () {
     expect(liveMessageMatchesParent(null, null), isFalse);
 
@@ -343,19 +366,20 @@ void main() {
   test('older replay revision cannot overwrite newer live content', () {
     final current = ChatMessage.assistantText('')
       ..entryId = 'entry-7'
+      ..sessionSeq = 7
       ..revision = 4;
 
     expect(
       isStaleTranscriptRevision(
         [current],
-        {'entryId': 'entry-7', 'revision': 3},
+        {'entryId': 'entry-7', 'sessionSeq': 7, 'revision': 3},
       ),
       isTrue,
     );
     expect(
       isStaleTranscriptRevision(
         [current],
-        {'entryId': 'entry-7', 'revision': 5},
+        {'entryId': 'entry-7', 'sessionSeq': 7, 'revision': 5},
       ),
       isFalse,
     );
@@ -824,20 +848,50 @@ void main() {
         'Yes, that is what I am doing.',
       )..streamId = 'assistant-second';
 
-      final incorrectlyRebuilt = dedupeStableTranscriptMessages([
+      final rebuilt = dedupeStableTranscriptMessages([
         firstResponse,
         tool,
         secondResponse,
       ]);
-      expect(incorrectlyRebuilt, [same(secondResponse), same(tool)]);
-      final repaired = preservePositionedTranscriptMembership(
-        incorrectlyRebuilt,
-        [firstResponse, tool],
-      );
+      expect(rebuilt, [same(firstResponse), same(tool), same(secondResponse)]);
+      final repaired = preservePositionedTranscriptMembership(rebuilt, [
+        firstResponse,
+        tool,
+      ]);
 
       expect(repaired, [same(firstResponse), same(tool), same(secondResponse)]);
     },
   );
+
+  test('stale revisions only match the same transcript sequence', () {
+    final first = ChatMessage.assistantText('session')
+      ..entryId = 'temporarily-colliding-entry'
+      ..sessionSeq = 114231
+      ..revision = 4;
+
+    expect(
+      isStaleTranscriptRevision(
+        [first],
+        {
+          'entryId': 'temporarily-colliding-entry',
+          'sessionSeq': 114231,
+          'revision': 3,
+        },
+      ),
+      isTrue,
+    );
+    expect(
+      isStaleTranscriptRevision(
+        [first],
+        {
+          'entryId': 'temporarily-colliding-entry',
+          'sessionSeq': 114235,
+          'revision': 1,
+        },
+      ),
+      isFalse,
+    );
+  });
 
   test('native Codex copy beside its live stream collapses', () {
     final live = ChatMessage.assistantText('session')
