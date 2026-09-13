@@ -1,3 +1,5 @@
+import 'dart:io';
+import '../widgets/desktop_qr_import_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -17,11 +19,11 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
   final TextEditingController _pasteController = TextEditingController();
   bool _processing = false;
   String? _error;
-  bool _showManualInput = false;
+  bool _showManualInput = Platform.isWindows;
 
   @override
   void dispose() {
-    _controller.dispose();
+    if (!Platform.isWindows) _controller.dispose();
     _pasteController.dispose();
     super.dispose();
   }
@@ -80,16 +82,11 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
         scannerPaused = true;
         await _controller.stop();
       }
-      final imported = await _showConfirmDialog(payload.servers);
-      if (imported != null && imported > 0 && mounted) {
-        // Save subscriber token if present
-        final provider = context.read<ChatProvider>();
-        if (payload.subscriberToken.isNotEmpty) {
-          await provider.saveSubscriberToken(
-            payload.subscriberToken,
-            payload.subscriberEmail,
-          );
-        }
+      final confirmed = await _showConfirmDialog(payload);
+      if (confirmed == true && mounted) {
+        final imported = await context
+            .read<ChatProvider>()
+            .importTransferredConfigs(payload);
         if (mounted) Navigator.of(context).pop(imported);
       } else if (mounted) {
         // User cancelled, resume scanning
@@ -163,8 +160,9 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
     ).whenComplete(passphraseCtrl.dispose);
   }
 
-  Future<int?> _showConfirmDialog(List<Map<String, dynamic>> configs) {
-    return showDialog<int>(
+  Future<bool?> _showConfirmDialog(ExportPayload payload) {
+    final configs = payload.servers;
+    return showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (ctx) {
@@ -176,9 +174,19 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
             width: double.maxFinite,
             child: ListView.builder(
               shrinkWrap: true,
-              itemCount: configs.length,
+              itemCount: configs.length + 1,
               itemBuilder: (_, i) {
-                final c = configs[i];
+                if (i == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      payload.subscriberToken.isNotEmpty
+                          ? 'Relay access is included and will be restored even if these computers are already listed.'
+                          : 'This export does not include relay access. Any existing access on this device will be kept.',
+                    ),
+                  );
+                }
+                final c = configs[i - 1];
                 final name = c['name'] as String? ?? 'Unnamed';
                 final isRelay = c['useRelay'] as bool? ?? false;
                 final host = c['host'] as String? ?? '';
@@ -204,11 +212,7 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () async {
-                final provider = context.read<ChatProvider>();
-                final imported = await provider.importServerConfigs(configs);
-                if (ctx.mounted) Navigator.of(ctx).pop(imported);
-              },
+              onPressed: () => Navigator.of(ctx).pop(true),
               child: const Text('Import All'),
             ),
           ],
@@ -236,12 +240,13 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       appBar: AppBar(
         title: Text(_showManualInput ? 'Paste Config Data' : 'Scan Config QR'),
         actions: [
-          IconButton(
-            icon: Icon(_showManualInput ? Icons.qr_code_scanner : Icons.edit),
-            tooltip: _showManualInput ? 'Scan QR' : 'Paste manually',
-            onPressed: () =>
-                setState(() => _showManualInput = !_showManualInput),
-          ),
+          if (!Platform.isWindows)
+            IconButton(
+              icon: Icon(_showManualInput ? Icons.qr_code_scanner : Icons.edit),
+              tooltip: _showManualInput ? 'Scan QR' : 'Paste manually',
+              onPressed: () =>
+                  setState(() => _showManualInput = !_showManualInput),
+            ),
         ],
       ),
       body: Column(
@@ -264,6 +269,10 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
                       'Paste the config export data:',
                       style: TextStyle(color: Colors.grey),
                     ),
+                    if (Platform.isWindows) ...[
+                      const SizedBox(height: 12),
+                      DesktopQrImportButton(onDecoded: _processQrData),
+                    ],
                     const SizedBox(height: 12),
                     Expanded(
                       child: TextField(

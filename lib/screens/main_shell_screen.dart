@@ -1,9 +1,13 @@
+import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/app_distribution.dart';
 import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
+import '../services/desktop_workspace_controller.dart';
+import '../widgets/desktop_split_view.dart';
+import 'home_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/update_service.dart';
 import '../services/websocket_service.dart';
@@ -29,6 +33,8 @@ class MainShellScreenState extends State<MainShellScreen>
   static const _updateCheckInterval = Duration(minutes: 5);
   static const _foregroundUpdateThrottle = Duration(minutes: 1);
   late int _currentIndex;
+  DesktopWorkspaceController? _desktopController;
+  bool _desktopRouteVisible = true;
   StreamSubscription? _backendAuthRequiredSub;
   StreamSubscription? _backendAuthResolvedSub;
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
@@ -164,6 +170,10 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    if (Platform.isWindows && _desktopController == null) {
+      _desktopController = context.read<DesktopWorkspaceController>();
+      _desktopController!.addListener(_openDesktopConversation);
+    }
     final route = ModalRoute.of(context);
     if (route != null) {
       routeObserver.subscribe(this, route);
@@ -172,6 +182,7 @@ class MainShellScreenState extends State<MainShellScreen>
 
   @override
   void dispose() {
+    _desktopController?.removeListener(_openDesktopConversation);
     WidgetsBinding.instance.removeObserver(this);
     _updateCheckTimer?.cancel();
     _scheduledTaskRefreshTimer?.cancel();
@@ -199,8 +210,20 @@ class MainShellScreenState extends State<MainShellScreen>
     }
   }
 
+  void _openDesktopConversation() {
+    if (!mounted) return;
+    _onTabChanged(sessionsIndex);
+    setState(() {});
+  }
+
+  @override
+  void didPushNext() {
+    if (Platform.isWindows) setState(() => _desktopRouteVisible = false);
+  }
+
   @override
   void didPopNext() {
+    if (Platform.isWindows) setState(() => _desktopRouteVisible = true);
     // Returning from HomeScreen — refresh sessions
     context.read<ChatProvider>().requestSessionList();
   }
@@ -291,6 +314,38 @@ class MainShellScreenState extends State<MainShellScreen>
     );
   }
 
+  Widget _desktopSessions() {
+    final controller = _desktopController!;
+    return DesktopSplitView(
+      hasConversation: controller.hasConversation,
+      openRevision: controller.revision,
+      active: _currentIndex == sessionsIndex && _desktopRouteVisible,
+      sidebar: const SessionsTab(sidebar: true),
+      conversationBuilder: (context, visible, sidebarVisible, toggleSidebar) {
+        if (!controller.hasConversation) {
+          return const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.forum_outlined, size: 48),
+                SizedBox(height: 16),
+                Text('Choose a session', style: TextStyle(fontSize: 22)),
+                SizedBox(height: 8),
+                Text('Or start a new session from the sidebar.'),
+              ],
+            ),
+          );
+        }
+        return HomeScreen(
+          embedded: true,
+          visible: visible,
+          sidebarVisible: sidebarVisible,
+          onToggleSidebar: toggleSidebar,
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -301,50 +356,88 @@ class MainShellScreenState extends State<MainShellScreen>
         }
       },
       child: Scaffold(
-        body: IndexedStack(
-          index: _currentIndex,
+        body: Row(
           children: [
-            const SessionsTab(),
-            const ScheduledTasksScreen(),
-            SettingsV2Screen(updateService: _updateService),
+            if (Platform.isWindows) ...[
+              NavigationRail(
+                minWidth: 76,
+                selectedIndex: _currentIndex,
+                onDestinationSelected: _onTabChanged,
+                labelType: NavigationRailLabelType.all,
+                leading: const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Icon(Icons.computer, size: 32),
+                ),
+                destinations: const [
+                  NavigationRailDestination(
+                    icon: Icon(Icons.chat_bubble_outline),
+                    label: Text('Sessions'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.schedule),
+                    label: Text('Tasks'),
+                  ),
+                  NavigationRailDestination(
+                    icon: Icon(Icons.settings_outlined),
+                    label: Text('Settings'),
+                  ),
+                ],
+              ),
+              const VerticalDivider(width: 1),
+            ],
+            Expanded(
+              child: IndexedStack(
+                index: _currentIndex,
+                children: [
+                  if (Platform.isWindows)
+                    _desktopSessions()
+                  else
+                    const SessionsTab(),
+                  const ScheduledTasksScreen(),
+                  SettingsV2Screen(updateService: _updateService),
+                ],
+              ),
+            ),
           ],
         ),
-        bottomNavigationBar: Consumer<ChatProvider>(
-          builder: (context, provider, _) {
-            final unreadTasks = provider.unreadScheduledTaskCount;
-            return NavigationBar(
-              selectedIndex: _currentIndex,
-              onDestinationSelected: _onTabChanged,
-              destinations: [
-                const NavigationDestination(
-                  icon: Icon(Icons.chat_bubble_outline),
-                  selectedIcon: Icon(Icons.chat_bubble),
-                  label: 'Sessions',
-                ),
-                NavigationDestination(
-                  icon: unreadTasks > 0
-                      ? Badge(
-                          label: Text('$unreadTasks'),
-                          child: const Icon(Icons.schedule_outlined),
-                        )
-                      : const Icon(Icons.schedule_outlined),
-                  selectedIcon: unreadTasks > 0
-                      ? Badge(
-                          label: Text('$unreadTasks'),
-                          child: const Icon(Icons.schedule),
-                        )
-                      : const Icon(Icons.schedule),
-                  label: 'Tasks',
-                ),
-                const NavigationDestination(
-                  icon: Icon(Icons.settings_outlined),
-                  selectedIcon: Icon(Icons.settings),
-                  label: 'Settings',
-                ),
-              ],
-            );
-          },
-        ),
+        bottomNavigationBar: Platform.isWindows
+            ? null
+            : Consumer<ChatProvider>(
+                builder: (context, provider, _) {
+                  final unreadTasks = provider.unreadScheduledTaskCount;
+                  return NavigationBar(
+                    selectedIndex: _currentIndex,
+                    onDestinationSelected: _onTabChanged,
+                    destinations: [
+                      const NavigationDestination(
+                        icon: Icon(Icons.chat_bubble_outline),
+                        selectedIcon: Icon(Icons.chat_bubble),
+                        label: 'Sessions',
+                      ),
+                      NavigationDestination(
+                        icon: unreadTasks > 0
+                            ? Badge(
+                                label: Text('$unreadTasks'),
+                                child: const Icon(Icons.schedule_outlined),
+                              )
+                            : const Icon(Icons.schedule_outlined),
+                        selectedIcon: unreadTasks > 0
+                            ? Badge(
+                                label: Text('$unreadTasks'),
+                                child: const Icon(Icons.schedule),
+                              )
+                            : const Icon(Icons.schedule),
+                        label: 'Tasks',
+                      ),
+                      const NavigationDestination(
+                        icon: Icon(Icons.settings_outlined),
+                        selectedIcon: Icon(Icons.settings),
+                        label: 'Settings',
+                      ),
+                    ],
+                  );
+                },
+              ),
       ),
     );
   }

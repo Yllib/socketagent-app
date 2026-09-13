@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
@@ -35,7 +36,9 @@ enum _SessionToolsAction {
 }
 
 class SessionsTab extends StatefulWidget {
-  const SessionsTab({super.key});
+  const SessionsTab({super.key, this.sidebar = false});
+
+  final bool sidebar;
 
   @override
   State<SessionsTab> createState() => _SessionsTabState();
@@ -298,9 +301,7 @@ class _SessionsTabState extends State<SessionsTab> {
         );
       }
 
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+      await openConversation(context);
     } finally {
       if (mounted && _openingSessionKey == openKey) {
         setState(() => _openingSessionKey = null);
@@ -1679,6 +1680,63 @@ class _SessionsTabState extends State<SessionsTab> {
     });
   }
 
+  Widget _desktopFilters(BuildContext context, ChatProvider provider) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => _showServerFilterSheet(context, provider),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+              child: Text(
+                _serverFilterLabel(provider),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: PopupMenuButton<String>(
+              tooltip: 'Backend filter',
+              initialValue: _backendFilter ?? 'all',
+              onSelected: (value) => setState(
+                () => _backendFilter = value == 'all' ? null : value,
+              ),
+              itemBuilder: (_) => const [
+                PopupMenuItem(value: 'all', child: Text('All backends')),
+                PopupMenuItem(value: 'codex', child: Text('Codex')),
+                PopupMenuItem(value: 'claude', child: Text('Claude')),
+              ],
+              child: Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Center(
+                  child: Text(
+                    _backendLabelForFilter(_backendFilter),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildFilterChipBar(BuildContext context, ChatProvider provider) {
     final theme = Theme.of(context);
     final activeFilters =
@@ -1692,96 +1750,102 @@ class _SessionsTabState extends State<SessionsTab> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-            child: Row(
-              children: [
-                ActionChip(
-                  avatar: Icon(
-                    _connectedOnlyFilter
-                        ? Icons.cloud_done
-                        : _selectedServerFilterId == null
-                        ? Icons.all_inbox
-                        : Icons.dns,
-                    size: 18,
-                  ),
-                  label: Text(_serverFilterLabel(provider)),
-                  onPressed: () => _showServerFilterSheet(context, provider),
-                ),
-                const SizedBox(width: 8),
-                PopupMenuButton<String>(
-                  tooltip: 'Backend filter',
-                  initialValue: _backendFilter ?? 'all',
-                  onSelected: (value) {
-                    setState(() {
-                      _backendFilter = value == 'all' ? null : value;
-                    });
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'all', child: Text('All backends')),
-                    PopupMenuItem(value: 'codex', child: Text('Codex')),
-                    PopupMenuItem(value: 'claude', child: Text('Claude')),
-                  ],
-                  child: Chip(
+          if (widget.sidebar)
+            _desktopFilters(context, provider)
+          else
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+              child: Row(
+                children: [
+                  ActionChip(
                     avatar: Icon(
-                      _backendFilter == 'codex'
-                          ? Icons.code
-                          : _backendFilter == 'claude'
-                          ? Icons.psychology_alt
-                          : Icons.hub,
+                      _connectedOnlyFilter
+                          ? Icons.cloud_done
+                          : _selectedServerFilterId == null
+                          ? Icons.all_inbox
+                          : Icons.dns,
                       size: 18,
                     ),
-                    label: Text(_backendLabelForFilter(_backendFilter)),
+                    label: Text(_serverFilterLabel(provider)),
+                    onPressed: () => _showServerFilterSheet(context, provider),
                   ),
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: Icon(_searchOpen ? Icons.search_off : Icons.search),
-                  tooltip: _searchOpen ? 'Hide search' : 'Search sessions',
-                  onPressed: () {
-                    setState(() {
-                      _searchOpen = !_searchOpen;
-                      if (!_searchOpen) {
-                        _searchQuery = '';
-                        _searchController.clear();
-                        _globalSearchDebounce?.cancel();
-                        _globalSearchGeneration++;
-                        _globalSearchLoading = false;
-                        _globalSearchResults = const [];
-                      }
-                    });
-                  },
-                ),
-                if (activeFilters)
-                  IconButton(
-                    icon: const Icon(Icons.clear_all),
-                    tooltip: 'Clear filters',
-                    onPressed: () {
+                  const SizedBox(width: 8),
+                  PopupMenuButton<String>(
+                    tooltip: 'Backend filter',
+                    initialValue: _backendFilter ?? 'all',
+                    onSelected: (value) {
                       setState(() {
-                        _selectedServerFilterId = null;
-                        _connectedOnlyFilter = false;
-                        _backendFilter = null;
-                        _searchQuery = '';
-                        _searchController.clear();
-                        _globalSearchDebounce?.cancel();
-                        _globalSearchGeneration++;
-                        _globalSearchLoading = false;
-                        _globalSearchResults = const [];
+                        _backendFilter = value == 'all' ? null : value;
                       });
                     },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'all', child: Text('All backends')),
+                      PopupMenuItem(value: 'codex', child: Text('Codex')),
+                      PopupMenuItem(value: 'claude', child: Text('Claude')),
+                    ],
+                    child: Chip(
+                      avatar: Icon(
+                        _backendFilter == 'codex'
+                            ? Icons.code
+                            : _backendFilter == 'claude'
+                            ? Icons.psychology_alt
+                            : Icons.hub,
+                        size: 18,
+                      ),
+                      label: Text(_backendLabelForFilter(_backendFilter)),
+                    ),
                   ),
-              ],
+                  const SizedBox(width: 4),
+                  if (!widget.sidebar)
+                    IconButton(
+                      icon: Icon(_searchOpen ? Icons.search_off : Icons.search),
+                      tooltip: _searchOpen ? 'Hide search' : 'Search sessions',
+                      onPressed: () {
+                        setState(() {
+                          _searchOpen = !_searchOpen;
+                          if (!_searchOpen) {
+                            _searchQuery = '';
+                            _searchController.clear();
+                            _globalSearchDebounce?.cancel();
+                            _globalSearchGeneration++;
+                            _globalSearchLoading = false;
+                            _globalSearchResults = const [];
+                          }
+                        });
+                      },
+                    ),
+                  if (activeFilters)
+                    IconButton(
+                      icon: const Icon(Icons.clear_all),
+                      tooltip: 'Clear filters',
+                      onPressed: () {
+                        setState(() {
+                          _selectedServerFilterId = null;
+                          _connectedOnlyFilter = false;
+                          _backendFilter = null;
+                          _searchQuery = '';
+                          _searchController.clear();
+                          _globalSearchDebounce?.cancel();
+                          _globalSearchGeneration++;
+                          _globalSearchLoading = false;
+                          _globalSearchResults = const [];
+                        });
+                      },
+                    ),
+                ],
+              ),
             ),
-          ),
-          if (_searchOpen)
+          if (_searchOpen || widget.sidebar)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
               child: TextField(
                 controller: _searchController,
-                autofocus: true,
+                autofocus: !widget.sidebar,
                 decoration: InputDecoration(
-                  hintText: 'Search every computer and session...',
+                  hintText: widget.sidebar
+                      ? 'Search sessions'
+                      : 'Search every computer and session...',
                   prefixIcon: const Icon(Icons.search),
                   suffixIcon: _searchQuery.isEmpty
                       ? null
@@ -2035,6 +2099,11 @@ class _SessionsTabState extends State<SessionsTab> {
         }
         return Scaffold(
           appBar: AppBar(
+            automaticallyImplyLeading: false,
+            toolbarHeight: widget.sidebar ? 56 : null,
+            titleTextStyle: widget.sidebar
+                ? Theme.of(context).textTheme.titleMedium
+                : null,
             leading: _selectionMode
                 ? IconButton(
                     icon: const Icon(Icons.close),
@@ -2099,6 +2168,19 @@ class _SessionsTabState extends State<SessionsTab> {
           body: Column(
             children: [
               _buildUpdateBanner(context),
+              if (widget.sidebar && !_selectionMode)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: () =>
+                          _showSessionActionMenu(context, provider),
+                      icon: const Icon(Icons.add, size: 18),
+                      label: const Text('New session'),
+                    ),
+                  ),
+                ),
               _buildFilterChipBar(context, provider),
               if (_searchQuery.trim().isNotEmpty)
                 Expanded(child: _buildGlobalSearchResults(context, provider))
@@ -2108,7 +2190,7 @@ class _SessionsTabState extends State<SessionsTab> {
                 Expanded(child: _buildSectionedSessionList(context, provider)),
             ],
           ),
-          floatingActionButton: _selectionMode
+          floatingActionButton: _selectionMode || widget.sidebar
               ? null
               : FloatingActionButton.extended(
                   onPressed: () => _showSessionActionMenu(context, provider),
@@ -2261,14 +2343,16 @@ class _SessionsTabState extends State<SessionsTab> {
 
   Future<void> _showSessionContextMenu(
     BuildContext context,
-    Session session,
-  ) async {
+    Session session, {
+    Rect? anchor,
+  }) async {
     final provider = context.read<ChatProvider>();
     final notifEnabled = provider.isNotifEnabled(session.id);
     final isPinned = provider.isSessionPinned(session.id);
     final theme = Theme.of(context);
     final action = await showAdaptiveActionSheet<_SessionMenuAction>(
       context: context,
+      anchor: anchor,
       title: session.title,
       subtitle: session.backend == 'codex' ? 'Codex session' : 'Claude session',
       sections: [
@@ -2360,7 +2444,7 @@ class _SessionsTabState extends State<SessionsTab> {
       case _SessionMenuAction.startFresh:
         await _confirmStartFreshThread(context, session);
       case _SessionMenuAction.tools:
-        await _showSessionToolsMenu(context, session);
+        await _showSessionToolsMenu(context, session, anchor: anchor);
       case _SessionMenuAction.archive:
         await _confirmArchiveSession(context, session);
       case _SessionMenuAction.delete:
@@ -2370,11 +2454,13 @@ class _SessionsTabState extends State<SessionsTab> {
 
   Future<void> _showSessionToolsMenu(
     BuildContext context,
-    Session session,
-  ) async {
+    Session session, {
+    Rect? anchor,
+  }) async {
     final provider = context.read<ChatProvider>();
     final action = await showAdaptiveActionSheet<_SessionToolsAction>(
       context: context,
+      anchor: anchor,
       title: session.backend == 'codex' ? 'Thread tools' : 'Session tools',
       sections: [
         AdaptiveSheetSection([
@@ -2435,6 +2521,7 @@ class _SessionsTabState extends State<SessionsTab> {
         _showSystemPromptDialog(context, session);
     }
   }
+
   String _sessionTransferStageLabel(SessionTransferStage stage) {
     return switch (stage) {
       SessionTransferStage.exporting => 'Packing session history…',
@@ -3187,9 +3274,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
     final provider = context.read<ChatProvider>();
     provider.forkSession(session.id);
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+    openConversation(context);
   }
 
   Future<void> _confirmCodexRollback(
@@ -3342,6 +3427,11 @@ class _SessionsTabState extends State<SessionsTab> {
     final showRunning = session.running && isAvailable;
     final showBusy = showRunning || openingThisSession;
     final selected = _selectedSessionKeys.contains(_sessionKey(session));
+    final active =
+        widget.sidebar &&
+        session.id == provider.activeSessionId &&
+        session.serverId == provider.activeSessionServerId;
+    compact = compact || widget.sidebar;
     final timeDiff = DateTime.now().difference(session.lastActive);
     String timeAgo;
     if (timeDiff.inMinutes < 1) {
@@ -3417,10 +3507,24 @@ class _SessionsTabState extends State<SessionsTab> {
         return false;
       },
       child: InkWell(
+        onSecondaryTapUp:
+            Platform.isWindows && !_selectionMode && _openingSessionKey == null
+            ? (details) {
+                if (isAvailable) {
+                  _showSessionContextMenu(
+                    context,
+                    session,
+                    anchor: details.globalPosition & Size.zero,
+                  );
+                } else {
+                  _showOfflineSessionSnack(context, session);
+                }
+              }
+            : null,
         onTap: _selectionMode
             ? isAvailable
-                ? () => _toggleSessionSelection(session)
-                : () => _showOfflineSessionSnack(context, session)
+                  ? () => _toggleSessionSelection(session)
+                  : () => _showOfflineSessionSnack(context, session)
             : isAvailable
             ? _openingSessionKey == null
                   ? () => _openSession(
@@ -3438,9 +3542,18 @@ class _SessionsTabState extends State<SessionsTab> {
         child: Opacity(
           opacity: isAvailable ? 1 : 0.48,
           child: Container(
-            color: selected
-                ? theme.colorScheme.primary.withAlpha(28)
-                : Colors.transparent,
+            decoration: BoxDecoration(
+              color: selected || active
+                  ? theme.colorScheme.primary.withAlpha(28)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(widget.sidebar ? 8 : 0),
+              border: active
+                  ? Border.all(color: theme.colorScheme.primary.withAlpha(90))
+                  : null,
+            ),
+            margin: widget.sidebar
+                ? const EdgeInsets.symmetric(horizontal: 6, vertical: 2)
+                : null,
             padding: EdgeInsets.fromLTRB(
               compact ? 10 : 16,
               compact ? 8 : 12,
@@ -3459,7 +3572,8 @@ class _SessionsTabState extends State<SessionsTab> {
                               ? (_) => _toggleSessionSelection(session)
                               : null,
                           visualDensity: VisualDensity.compact,
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
                         )
                       : showBusy
                       ? SizedBox(
@@ -3517,106 +3631,149 @@ class _SessionsTabState extends State<SessionsTab> {
                       ],
                       // Line 3: status/time, path, and compact badges.
                       const SizedBox(height: 3),
-                      Row(
-                        children: [
-                          Flexible(
-                            child: Text(
-                              metaText,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                      if (widget.sidebar)
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 3,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Text(
+                              statusText,
                               style: TextStyle(
                                 fontSize: 11,
-                                color: showBusy
-                                    ? theme.colorScheme.primary
-                                    : theme.colorScheme.onSurface.withAlpha(
-                                        128,
-                                      ),
+                                color: theme.colorScheme.onSurfaceVariant,
                               ),
                             ),
-                          ),
-                          if (session.serverName.isNotEmpty &&
-                              provider.serverConfigs.length > 1) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 1,
-                              ),
-                              decoration: BoxDecoration(
-                                color: session.serverColor != null
-                                    ? Color(
-                                        session.serverColor!,
-                                      ).withAlpha(showBusy ? 200 : 140)
-                                    : theme.colorScheme.primaryContainer
-                                          .withAlpha(120),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                session.serverName,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: session.serverColor != null
-                                      ? FontWeight.w500
-                                      : null,
-                                  color: session.serverColor != null
-                                      ? Colors.white
-                                      : theme.colorScheme.onPrimaryContainer,
+                            _BackendBadge(backend: session.backend ?? 'claude'),
+                            if (provider.serverConfigs.length > 1)
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 130,
+                                ),
+                                child: Text(
+                                  session.serverName,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
                                 ),
                               ),
-                            ),
-                          ],
-                          if (!isAvailable) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 1,
+                            if (!isAvailable)
+                              Text(
+                                _serverStatusLabel(status),
+                                style: const TextStyle(fontSize: 11),
                               ),
-                              decoration: BoxDecoration(
-                                color:
-                                    theme.colorScheme.surfaceContainerHighest,
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                _serverStatusLabel(status).toUpperCase(),
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.5,
-                                  color: theme.colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ),
-                          ],
-                          // Always identify the harness so mixed and
-                          // single-backend lists use the same visual language.
-                          const SizedBox(width: 6),
-                          _BackendBadge(backend: session.backend ?? 'claude'),
-                          if (delegated) ...[
-                            const SizedBox(width: 6),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 5,
-                                vertical: 1,
-                              ),
-                              decoration: BoxDecoration(
-                                color: theme.colorScheme.secondaryContainer
-                                    .withAlpha(170),
-                                borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Text(
+                            if (delegated)
+                              const Text(
                                 'AGENT',
+                                style: TextStyle(fontSize: 10),
+                              ),
+                          ],
+                        )
+                      else
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                metaText,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                  letterSpacing: 0.5,
-                                  color: theme.colorScheme.onSecondaryContainer,
+                                  fontSize: 11,
+                                  color: showBusy
+                                      ? theme.colorScheme.primary
+                                      : theme.colorScheme.onSurface.withAlpha(
+                                          128,
+                                        ),
                                 ),
                               ),
                             ),
+                            if (session.serverName.isNotEmpty &&
+                                provider.serverConfigs.length > 1) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: session.serverColor != null
+                                      ? Color(
+                                          session.serverColor!,
+                                        ).withAlpha(showBusy ? 200 : 140)
+                                      : theme.colorScheme.primaryContainer
+                                            .withAlpha(120),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  session.serverName,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: session.serverColor != null
+                                        ? FontWeight.w500
+                                        : null,
+                                    color: session.serverColor != null
+                                        ? Colors.white
+                                        : theme.colorScheme.onPrimaryContainer,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            if (!isAvailable) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color:
+                                      theme.colorScheme.surfaceContainerHighest,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  _serverStatusLabel(status).toUpperCase(),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.5,
+                                    color: theme.colorScheme.onSurfaceVariant,
+                                  ),
+                                ),
+                              ),
+                            ],
+                            // Always identify the harness so mixed and
+                            // single-backend lists use the same visual language.
+                            const SizedBox(width: 6),
+                            _BackendBadge(backend: session.backend ?? 'claude'),
+                            if (delegated) ...[
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.secondaryContainer
+                                      .withAlpha(170),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  'AGENT',
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    letterSpacing: 0.5,
+                                    color:
+                                        theme.colorScheme.onSecondaryContainer,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ],
-                        ],
-                      ),
+                        ),
                       if (session.backend == 'codex' &&
                           session.freshThreadPending) ...[
                         const SizedBox(height: 7),
@@ -3689,22 +3846,39 @@ class _SessionsTabState extends State<SessionsTab> {
                   ),
                 ),
                 if (!_selectionMode)
-                  IconButton(
-                    icon: Icon(
-                      Icons.more_vert,
-                      size: 18,
-                      color: theme.colorScheme.onSurface.withAlpha(128),
+                  Builder(
+                    builder: (buttonContext) => IconButton(
+                      tooltip: 'Session actions',
+                      icon: Icon(
+                        Icons.more_vert,
+                        size: 18,
+                        color: theme.colorScheme.onSurface.withAlpha(128),
+                      ),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(
+                        minWidth: 32,
+                        minHeight: 32,
+                      ),
+                      onPressed: isAvailable
+                          ? _openingSessionKey == null
+                                ? () {
+                                    final box =
+                                        buttonContext.findRenderObject()!
+                                            as RenderBox;
+                                    _showSessionContextMenu(
+                                      context,
+                                      session,
+                                      anchor: Platform.isWindows
+                                          ? box.localToGlobal(
+                                                  Offset(0, box.size.height),
+                                                ) &
+                                                Size(box.size.width, 0)
+                                          : null,
+                                    );
+                                  }
+                                : null
+                          : () => _showOfflineSessionSnack(context, session),
                     ),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 32,
-                      minHeight: 32,
-                    ),
-                    onPressed: isAvailable
-                        ? _openingSessionKey == null
-                            ? () => _showSessionContextMenu(context, session)
-                            : null
-                        : () => _showOfflineSessionSnack(context, session),
                   ),
               ],
             ),

@@ -1,10 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'config/app_distribution.dart';
 import 'services/chat_provider.dart';
+import 'services/desktop_workspace_controller.dart';
+import 'services/desktop_window_service.dart';
+import 'widgets/desktop_window_frame.dart';
 import 'services/work_review_repository.dart';
 import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
@@ -24,22 +28,35 @@ final routeObserver = RouteObserver<ModalRoute<void>>();
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await _verifyDistribution();
-  await FirebaseProjectConfigurationService.instance.initialize();
+  if (Platform.isWindows) await DesktopWindowService.instance.initialize();
+  if (Platform.isAndroid) {
+    await FirebaseProjectConfigurationService.instance.initialize();
+  }
   await NotificationService().initialize();
   final chatProvider = ChatProvider();
   await chatProvider.settingsReady;
-  PlayBillingService.instance.initialize(chatProvider.verifyGooglePlayPurchase);
+  if (AppBuild.supportsPlayBilling) {
+    PlayBillingService.instance.initialize(
+      chatProvider.verifyGooglePlayPurchase,
+    );
+  }
   final workReviews = WorkReviewRepository(
     transport: ConnectionManagerWorkReviewTransport(chatProvider.connMgr),
   );
   await workReviews.initialize();
-  await PushNotificationService().initialize();
+  if (Platform.isAndroid) await PushNotificationService().initialize();
   runApp(
     ClaudeAssistantApp(chatProvider: chatProvider, workReviews: workReviews),
   );
 }
 
 Future<void> _verifyDistribution() async {
+  if (Platform.isWindows) {
+    if (AppBuild.distribution != AppDistribution.windows) {
+      throw StateError('Build Windows with build-app.sh --windows.');
+    }
+    return;
+  }
   const channel = MethodChannel('com.socketagent.app/intent');
   final nativeDistribution = await channel.invokeMethod<String>(
     'getDistribution',
@@ -66,11 +83,19 @@ class ClaudeAssistantApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        ChangeNotifierProvider(create: (_) => DesktopWorkspaceController()),
         ChangeNotifierProvider.value(value: chatProvider),
         ChangeNotifierProvider.value(value: workReviews),
       ],
       child: MaterialApp(
-        title: 'SocketAgent',
+        title: Platform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
+        builder: (context, child) => Platform.isWindows
+            ? Overlay.wrap(
+                child: DesktopWindowFrame(
+                  child: child ?? const SizedBox.shrink(),
+                ),
+              )
+            : child ?? const SizedBox.shrink(),
         debugShowCheckedModeBanner: false,
         navigatorObservers: [routeObserver],
         theme: ThemeData(
@@ -98,6 +123,7 @@ class _AppLauncherState extends State<AppLauncher>
     with SingleTickerProviderStateMixin {
   static const _channel = MethodChannel('com.socketagent.app/intent');
   bool _checked = false;
+  int _navigationIntentVersion = 0;
   bool _splashDone = false;
   late final AnimationController _fadeController;
   final GlobalKey<MainShellScreenState> _mainShellKey = GlobalKey();
@@ -142,6 +168,7 @@ class _AppLauncherState extends State<AppLauncher>
   }
 
   Future<void> _checkLaunchIntent() async {
+    final intentVersion = _navigationIntentVersion;
     bool launchedFromAssist = false;
     String? deepLink;
     try {
@@ -157,10 +184,12 @@ class _AppLauncherState extends State<AppLauncher>
     final provider = context.read<ChatProvider>();
     provider.connectToServer();
 
-    final launchPayload =
-        NotificationService().takeLaunchPayload() ??
-        PushNotificationService().takeLaunchPayload();
-    if (_handleSessionDeepLink(deepLink)) {
+    final localLaunchPayload = NotificationService().takeLaunchPayload();
+    final pushLaunchPayload = PushNotificationService().takeLaunchPayload();
+    final launchPayload = localLaunchPayload ?? pushLaunchPayload;
+    if (intentVersion != _navigationIntentVersion) {
+      // A newer tap already chose its destination during asynchronous startup.
+    } else if (_handleSessionDeepLink(deepLink)) {
       // The explicit session link takes precedence over other launch intents.
     } else if (launchPayload != null) {
       _handleNotificationPayload(launchPayload);
@@ -178,6 +207,7 @@ class _AppLauncherState extends State<AppLauncher>
     if (!mounted) return false;
     final link = SessionDeepLink.parse(value);
     if (link == null) return false;
+    _navigationIntentVersion++;
     final provider = context.read<ChatProvider>();
     provider.resumeSdkSession(
       link.sessionId,
@@ -255,13 +285,12 @@ class _AppLauncherState extends State<AppLauncher>
 
   void _navigateToHome(bool autoVoice) {
     if (!mounted) return;
-    Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => HomeScreen(autoStartVoice: autoVoice)),
-    );
+    openConversation(context, autoStartVoice: autoVoice);
   }
 
   void _handleNotificationPayload(String? payload) {
     if (!mounted || payload == null || payload.isEmpty) return;
+    _navigationIntentVersion++;
     if (payload.startsWith('notification_action:')) {
       _handleNotificationAction(payload);
       return;
@@ -414,6 +443,10 @@ class _AppLauncherState extends State<AppLauncher>
 
   void _navigateToNotificationSession() {
     if (!mounted) return;
+    if (Platform.isWindows) {
+      openConversation(context);
+      return;
+    }
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
       (route) => route.isFirst,
@@ -464,15 +497,11 @@ class _AppLauncherState extends State<AppLauncher>
             // App icon
             ClipRRect(
               borderRadius: BorderRadius.circular(24),
-              child: Image.asset(
-                'android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png',
-                width: 96,
-                height: 96,
-              ),
+              child: Image.asset('assets/app_icon.png', width: 96, height: 96),
             ),
             const SizedBox(height: 20),
             Text(
-              'SocketAgent',
+              Platform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w600,

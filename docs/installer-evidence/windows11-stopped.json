@@ -1,0 +1,5 @@
+{
+    "output":  "PASS: stopped server left stopped when skipped; explicit Start restarted existing server without reinstall or pairing change\r\n",
+    "ok":  true,
+    "id":  "stopped-server-choices-confirm"
+}

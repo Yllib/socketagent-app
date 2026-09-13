@@ -46,6 +46,12 @@ NotificationNavigationTarget? parseNotificationNavigationPayload(
   final notificationKind = query['kind']?.trim();
   final scheduledTaskId = query['scheduledTaskId']?.trim();
 
+  if (routePayload == 'sessions' || routePayload.startsWith('reminder_')) {
+    return const NotificationNavigationTarget(
+      parent: NotificationParentDestination.sessions,
+    );
+  }
+
   if (routePayload.startsWith('session_')) {
     final sessionId = routePayload.substring('session_'.length);
     if (sessionId.isEmpty) return null;

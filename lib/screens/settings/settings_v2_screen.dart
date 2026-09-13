@@ -447,7 +447,14 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                       ),
                     ),
                   ),
-                  _NotificationSummaryTile(),
+                  if (Platform.isAndroid)
+                    _NotificationSummaryTile()
+                  else
+                    const ListTile(
+                      leading: Icon(Icons.notifications_outlined),
+                      title: Text('Desktop notifications'),
+                      subtitle: Text('Keep SocketAgent open to receive session alerts.'),
+                    ),
                 ],
               ),
               _SettingsGroup(
@@ -503,7 +510,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                   _NavTile(
                     icon: Icons.qr_code_scanner,
                     title: 'Import Computers',
-                    subtitle: 'Scan or paste an encrypted config export',
+                    subtitle: Platform.isWindows
+                        ? 'Open a QR image or paste an encrypted export'
+                        : 'Scan or paste an encrypted config export',
                     trailing: Icons.chevron_right,
                     onTap: _openConfigImport,
                   ),
@@ -620,7 +629,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
         ),
       );
     }
-    if (missingPush.isNotEmpty) {
+    if (Platform.isAndroid && missingPush.isNotEmpty) {
       items.add(
         _AttentionItem(
           icon: Icons.notifications_none,
@@ -909,7 +918,7 @@ class _SettingsV2ServerDetailScreenState
                           ),
                       ],
               ),
-              _SettingsGroup(
+              if (Platform.isAndroid) _SettingsGroup(
                 title: 'Notifications',
                 children: [
                   FutureBuilder<bool>(
@@ -3436,6 +3445,12 @@ Future<bool> _ensureRelayAccess(
   if (provider.hasCachedRelayAccess) {
     provider.refreshSubscriptionStatusIfStale();
     return true;
+  }
+
+  if (provider.subscriberToken.isNotEmpty) {
+    final active = await provider.checkSubscriptionStatus();
+    if (!context.mounted) return false;
+    if (active) return true;
   }
 
   final signedIn = await Navigator.of(

@@ -4,6 +4,7 @@ import 'package:app/widgets/chat_view.dart';
 import 'package:app/widgets/message_bubble.dart';
 import 'package:app/widgets/tool_output_block.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -451,6 +452,55 @@ void main() {
     await tester.fling(list, const Offset(0, -1800), 4000);
     await tester.pumpAndSettle();
     expect(key.currentState!.followLatest, isTrue);
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+  });
+
+  testWidgets('mouse wheel pauses AUTO and restores it at the bottom', (
+    tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 80,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final list = find.byType(ListView).first;
+    final position = tester
+        .state<ScrollableState>(find.byType(Scrollable).first)
+        .position;
+    expect(key.currentState!.followLatest, isTrue);
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(list),
+        scrollDelta: const Offset(0, -180),
+      ),
+    );
+    await tester.pump();
+    expect(key.currentState!.followLatest, isFalse);
+    final held = position.pixels;
+    key.currentState!.appendStreamingText(40);
+    await tester.pump();
+    await tester.pump();
+    expect(position.pixels, closeTo(held, 0.5));
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(list),
+        scrollDelta: const Offset(0, 1000000),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
+    await tester.pump();
+    expect(key.currentState!.followLatest, isTrue);
+    expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    key.currentState!.appendStreamingText(40);
+    await tester.pump();
+    await tester.pump();
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
   });
 

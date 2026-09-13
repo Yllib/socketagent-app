@@ -1,11 +1,13 @@
 package com.socketagent.app
 
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.os.Build
 import android.net.Uri
 import android.provider.Settings
 import android.webkit.CookieManager
+import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -34,6 +36,34 @@ class MainActivity : FlutterActivity() {
                     pendingDeepLink = null
                 }
                 "getDistribution" -> result.success(BuildConfig.DISTRIBUTION)
+                "openDownloadedFile" -> {
+                    try {
+                        val file = File(call.argument<String>("path") ?: "").canonicalFile
+                        if (!file.isFile) {
+                            result.error("FILE_NOT_FOUND", "The downloaded file is no longer available.", null)
+                        } else if (!file.canRead()) {
+                            result.error("FILE_ACCESS_DENIED", "Android denied access to this file.", null)
+                        } else {
+                            // FileProvider limits the accessible roots. Grant only this URI,
+                            // never broad access to the user's photo or video library.
+                            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+                            val mime = call.argument<String>("type")
+                                ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase())
+                                ?: "application/octet-stream"
+                            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                                setDataAndType(uri, mime)
+                                clipData = ClipData.newRawUri(file.name, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            }
+                            startActivity(viewIntent)
+                            result.success(true)
+                        }
+                    } catch (e: ActivityNotFoundException) {
+                        result.error("NO_FILE_VIEWER", "No installed app can open this file type.", null)
+                    } catch (e: Exception) {
+                        result.error("OPEN_FILE_ERROR", e.message, null)
+                    }
+                }
                 "canRequestPackageInstalls" -> {
                     result.success(
                         Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||

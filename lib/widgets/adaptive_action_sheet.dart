@@ -39,7 +39,58 @@ Future<T?> showAdaptiveActionSheet<T>({
   required List<AdaptiveSheetSection<T>> sections,
   String? title,
   String? subtitle,
+  Rect? anchor,
 }) {
+  if (anchor != null) {
+    final overlay =
+        Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final localAnchor = Rect.fromPoints(
+      overlay.globalToLocal(anchor.topLeft),
+      overlay.globalToLocal(anchor.bottomRight),
+    );
+    return showMenu<T>(
+      context: context,
+      position: RelativeRect.fromRect(localAnchor, Offset.zero & overlay.size),
+      semanticLabel: title,
+      constraints: const BoxConstraints(minWidth: 240, maxWidth: 320),
+      items: [
+        for (var i = 0; i < sections.length; i++) ...[
+          if (i > 0) const PopupMenuDivider(),
+          for (final action in sections[i].actions)
+            PopupMenuItem<T>(
+              key: action.key,
+              value: action.value,
+              enabled: action.enabled,
+              height: 36,
+              child: Row(
+                children: [
+                  Icon(action.icon, size: 18, color: action.iconColor),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          action.label,
+                          style: TextStyle(color: action.textColor),
+                        ),
+                        if (action.subtitle != null)
+                          Text(
+                            action.subtitle!,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (action.trailing != null) action.trailing!,
+                ],
+              ),
+            ),
+        ],
+      ],
+    );
+  }
   return showModalBottomSheet<T>(
     context: context,
     isScrollControlled: true,

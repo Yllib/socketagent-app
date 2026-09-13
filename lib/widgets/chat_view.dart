@@ -64,6 +64,11 @@ class ChatView extends StatefulWidget {
   final VoidCallback? onLoadMore;
   final void Function(String taskId)? onStopTask;
   final VoidCallback? onDismissTodos;
+  final bool showCodexPlan;
+  final bool showTodos;
+  final Widget? tasksHidingNotice;
+  final Widget? codexPlanHidingNotice;
+  final VoidCallback? onDismissCodexPlan;
   final void Function(Map<String, dynamic> todo)? onDismissTodo;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
@@ -108,6 +113,11 @@ class ChatView extends StatefulWidget {
     this.onLoadMore,
     this.onStopTask,
     this.onDismissTodos,
+    this.showCodexPlan = true,
+    this.showTodos = true,
+    this.tasksHidingNotice,
+    this.codexPlanHidingNotice,
+    this.onDismissCodexPlan,
     this.onDismissTodo,
     this.onRewindConversation,
     this.onBranch,
@@ -1025,31 +1035,35 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   bool _handleUserScrollNotification(ScrollNotification notification) {
-    if (notification is ScrollStartNotification &&
-        notification.dragDetails != null) {
+    // Nested tool output can scroll independently of the transcript.
+    if (notification.depth != 0) return false;
+    final userDirection =
+        notification is UserScrollNotification &&
+        notification.direction != ScrollDirection.idle;
+    if (userDirection ||
+        (notification is ScrollStartNotification &&
+            notification.dragDetails != null)) {
       _userScrollInProgress = true;
       _cancelFollowBottom();
       _scrollController.rebasePreservedPosition();
     }
 
-    if (_userScrollInProgress &&
-        notification is ScrollUpdateNotification &&
-        notification.dragDetails != null) {
-      // A history page and a drag delta can land in adjacent layout passes.
+    if (_userScrollInProgress && notification is ScrollUpdateNotification) {
+      // A history page and a user scroll can land in adjacent layout passes.
       // Keep any pending anchor based on the latest user-owned pixels so its
       // correction adds only the prepended height, never a stale drag offset.
       _scrollController.rebasePreservedPosition();
     }
 
     if (_userScrollInProgress && _effectiveFollowLatest) {
-      final movedByDrag =
+      final movedByUser =
           notification is ScrollUpdateNotification &&
           (notification.scrollDelta?.abs() ?? 0) > 0;
       final overscrollingAway =
           notification is OverscrollNotification &&
           notification.metrics.extentAfter > 2;
-      if (movedByDrag || overscrollingAway) {
-        // The first real drag delta transfers ownership immediately. Waiting
+      if (movedByUser || overscrollingAway) {
+        // The first real drag or wheel delta transfers ownership. Waiting
         // for extentAfter is racy while entry-time history is still changing
         // the content dimensions underneath the gesture.
         _requestFollowLatest(false);
@@ -1199,16 +1213,31 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       color: chatSurfaceColor,
       child: Column(
         children: [
-          if (widget.todos.isNotEmpty)
+          if (widget.todos.isNotEmpty && widget.showTodos)
             TodoListCard(
+              key: ValueKey((
+                'tasks',
+                widget.serverId,
+                widget.sessionStorageKey,
+              )),
               todos: widget.todos,
+              hidingNotice: widget.tasksHidingNotice,
               onDismiss: widget.onDismissTodos,
               onDismissTodo: widget.onDismissTodo,
             ),
-          if (activeCodexPlan != null)
+          if (activeCodexPlan != null && widget.showCodexPlan)
             CodexPlanCard(
-              key: ValueKey(activeCodexPlan.id),
+              key: ValueKey((
+                'plan',
+                widget.serverId,
+                widget.sessionStorageKey,
+                activeCodexPlan.id,
+              )),
               msg: activeCodexPlan,
+              serverId: widget.serverId,
+              sessionId: widget.sessionStorageKey,
+              hidingNotice: widget.codexPlanHidingNotice,
+              onDismiss: widget.onDismissCodexPlan,
             ),
           Expanded(
             child: ColoredBox(

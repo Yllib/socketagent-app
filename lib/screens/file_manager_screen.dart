@@ -7,7 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
-import 'package:open_filex/open_filex.dart';
+import '../services/file_open_service.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -663,7 +663,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     switch (action) {
       case 'open':
         if (localPath != null) {
-          await OpenFilex.open(localPath);
+          await FileOpenService.openPlatformFile(localPath);
         }
         break;
       case 'download':

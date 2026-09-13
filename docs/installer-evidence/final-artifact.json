@@ -1,0 +1,5 @@
+{
+    "output":  "{\"ready\":true,\"pid\":3444}\r\nPASS: final installer upgrade, local link, animated progress path, server remains running. SHA256=1FF44E87B09291CDF1752F06C994BD0F8151E75F15EE9D55FA5B780A14780ACA\r\n",
+    "ok":  true,
+    "id":  "final-artifact-check"
+}

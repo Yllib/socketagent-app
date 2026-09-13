@@ -36,7 +36,7 @@ class PlayBillingService extends ChangeNotifier {
   static const subscriptionId = 'socketagent_relay';
   static const trialOfferId = 'seven-day-trial';
 
-  final InAppPurchase _store = InAppPurchase.instance;
+  late final InAppPurchase _store = InAppPurchase.instance;
   final StreamController<PlayBillingEvent> _events =
       StreamController<PlayBillingEvent>.broadcast();
   final Set<String> _verificationInFlight = <String>{};

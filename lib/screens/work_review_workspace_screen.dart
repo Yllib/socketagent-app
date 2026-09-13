@@ -549,9 +549,7 @@ class _WorkReviewWorkspaceScreenState extends State<WorkReviewWorkspaceScreen> {
         target.uri,
         serverId: _review.serverId,
       );
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+      await openConversation(context);
       return;
     }
     if (uri != null) {
@@ -1083,9 +1081,7 @@ class _WorkReviewTargetViewState extends State<_WorkReviewTargetView> {
         target.uri,
         serverId: widget.serverId,
       );
-      await Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+      await openConversation(context);
       return;
     }
     if (uri != null) {

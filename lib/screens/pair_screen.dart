@@ -1,3 +1,5 @@
+import 'dart:io';
+import '../widgets/desktop_qr_import_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -34,11 +36,11 @@ class _PairScreenState extends State<PairScreen> {
   final TextEditingController _pasteController = TextEditingController();
   bool _processing = false;
   String? _error;
-  bool _showManualInput = false;
+  bool _showManualInput = Platform.isWindows;
 
   @override
   void dispose() {
-    _controller.dispose();
+    if (!Platform.isWindows) _controller.dispose();
     _pasteController.dispose();
     super.dispose();
   }
@@ -119,7 +121,7 @@ class _PairScreenState extends State<PairScreen> {
           _showManualInput ? 'Paste Pairing Data' : 'Scan Pairing QR',
         ),
         actions: [
-          IconButton(
+          if (!Platform.isWindows) IconButton(
             icon: Icon(_showManualInput ? Icons.qr_code_scanner : Icons.edit),
             tooltip: _showManualInput ? 'Scan QR' : 'Paste manually',
             onPressed: () =>
@@ -147,6 +149,10 @@ class _PairScreenState extends State<PairScreen> {
                       'Paste the pairing code shown by SocketAgent on the computer:',
                       style: TextStyle(color: Colors.grey),
                     ),
+                    if (Platform.isWindows) ...[
+                      const SizedBox(height: 12),
+                      DesktopQrImportButton(onDecoded: _processPairingData),
+                    ],
                     const SizedBox(height: 12),
                     Expanded(
                       child: TextField(

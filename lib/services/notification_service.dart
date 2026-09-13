@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,7 @@ import 'package:timezone/data/latest_all.dart' as tzdata;
 import 'package:flutter_timezone/flutter_timezone.dart';
 import '../models/notification_navigation.dart';
 import '../config/app_distribution.dart';
+import 'desktop_window_service.dart';
 
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
@@ -119,9 +121,16 @@ class NotificationService {
     const androidSettings = AndroidInitializationSettings(
       '@mipmap/ic_launcher',
     );
-    const initSettings = InitializationSettings(android: androidSettings);
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      windows: WindowsInitializationSettings(
+        appName: 'SocketAgent Desktop',
+        appUserModelId: 'RubanoEnterprises.SocketAgent',
+        guid: 'b572d92e-3848-43ee-9a70-c6a8f981b4ba',
+      ),
+    );
 
-    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    final launchDetails = Platform.isWindows ? null : await _plugin.getNotificationAppLaunchDetails();
     if (launchDetails?.didNotificationLaunchApp == true) {
       _launchPayload = payloadForResponse(launchDetails?.notificationResponse);
     }
@@ -129,9 +138,14 @@ class NotificationService {
     await _plugin.initialize(
       settings: initSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
+        if (Platform.isWindows) unawaited(DesktopWindowService.instance.show());
         final payload = payloadForResponse(response);
         debugPrint('[Notification] tapped: $payload');
-        onNotificationTap?.call(payload);
+        if (onNotificationTap != null) {
+          onNotificationTap!(payload);
+        } else {
+          _launchPayload = payload;
+        }
       },
     );
 
@@ -300,7 +314,7 @@ class NotificationService {
           styleInformation: BigTextStyleInformation(body, contentTitle: title),
           actions: actions,
         );
-        final details = NotificationDetails(android: androidDetails);
+        final details = NotificationDetails(android: androidDetails, windows: const WindowsNotificationDetails());
 
         await _plugin.show(
           id: id,
@@ -408,6 +422,7 @@ class NotificationService {
         ? 'Unread Completed Sessions'
         : 'Completed Sessions';
     final details = NotificationDetails(
+      windows: const WindowsNotificationDetails(),
       android: AndroidNotificationDetails(
         channelId,
         channelName,
@@ -437,6 +452,7 @@ class NotificationService {
   }
 
   Future<void> _refreshCompletedSessionSummary() {
+    if (Platform.isWindows) return Future<void>.value();
     final refresh = _groupRefreshTail.then((_) async {
       try {
         final active = await _plugin.getActiveNotifications();
@@ -466,6 +482,7 @@ class NotificationService {
   }
 
   Future<bool> syncActiveSessionSummary(int count) {
+    if (Platform.isWindows) return Future<bool>.value(true);
     return _enqueueForId(activeSessionsSummaryId, () async {
       if (!_isInitialized) await initialize();
       try {
@@ -560,6 +577,7 @@ class NotificationService {
         ? 'Completed session notifications already opened'
         : 'Ongoing session and download progress';
     final details = NotificationDetails(
+      windows: const WindowsNotificationDetails(),
       android: AndroidNotificationDetails(
         channelId,
         channelName,
@@ -584,6 +602,7 @@ class NotificationService {
       title: title,
       body: body,
       notificationDetails: details,
+      payload: 'sessions',
     );
   }
 
@@ -598,6 +617,7 @@ class NotificationService {
     List<AndroidNotificationAction>? actions,
     String? groupKey,
   }) {
+    if (Platform.isWindows) return Future<bool>.value(true);
     return _enqueueForId(id, () async {
       if (!_isInitialized) await initialize();
 
@@ -627,7 +647,7 @@ class NotificationService {
           styleInformation: BigTextStyleInformation(body, contentTitle: title),
           actions: actions,
         );
-        final details = NotificationDetails(android: androidDetails);
+        final details = NotificationDetails(android: androidDetails, windows: const WindowsNotificationDetails());
         await _plugin.show(
           id: id,
           title: title,
@@ -676,6 +696,7 @@ class NotificationService {
     required String title,
     required String body,
     required DateTime scheduledTime,
+    String? payload,
   }) async {
     if (!_isInitialized) await initialize();
     await _ensureTimeZoneInitialized();
@@ -691,7 +712,7 @@ class NotificationService {
         enableVibration: true,
         channelShowBadge: false,
       );
-      const details = NotificationDetails(android: androidDetails);
+      const details = NotificationDetails(android: androidDetails, windows: WindowsNotificationDetails());
 
       final scheduledTz = tz.TZDateTime.from(scheduledTime, tz.local);
 
@@ -704,7 +725,7 @@ class NotificationService {
         androidScheduleMode: AppBuild.supportsExactAlarms
             ? AndroidScheduleMode.exactAllowWhileIdle
             : AndroidScheduleMode.inexactAllowWhileIdle,
-        payload: 'reminder_$id',
+        payload: payload ?? 'sessions',
       );
 
       debugPrint(

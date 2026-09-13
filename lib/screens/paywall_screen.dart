@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../config/app_distribution.dart';
 import '../services/chat_provider.dart';
 import '../services/play_billing_service.dart';
+import 'config_import_screen.dart';
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
@@ -31,6 +32,34 @@ class _PaywallScreenState extends State<PaywallScreen> {
     super.initState();
     _billing.addListener(_onBillingChanged);
     _eventSubscription = _billing.events.listen(_handleBillingEvent);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreSavedAccess());
+  }
+
+  Future<void> _restoreSavedAccess() async {
+    if (!mounted) return;
+    final provider = context.read<ChatProvider>();
+    if (provider.subscriberToken.isEmpty) return;
+    final active = await provider.checkSubscriptionStatus();
+    if (mounted && active && ModalRoute.of(context)?.isCurrent == true) {
+      Navigator.of(context).pop(true);
+    }
+  }
+
+  Future<void> _importAccess() async {
+    final imported = await Navigator.of(
+      context,
+    ).push<int>(MaterialPageRoute(builder: (_) => const ConfigImportScreen()));
+    if (!mounted || imported == null) return;
+    final provider = context.read<ChatProvider>();
+    if (provider.hasCachedRelayAccess) {
+      Navigator.of(context).pop(true);
+    } else {
+      setState(
+        () => _message =
+            'Relay access was not restored. On your phone, check that relay access '
+            'is active, then create a new computer export and import it here.',
+      );
+    }
   }
 
   @override
@@ -361,6 +390,21 @@ class _PaywallScreenState extends State<PaywallScreen> {
   Widget _buildDirectActions() {
     return Column(
       children: [
+        if (AppBuild.distribution == AppDistribution.windows) ...[
+          const Text(
+            'Already subscribed on Android? Export computers from your phone '
+            'and import them here to use the same relay subscription.',
+            style: TextStyle(color: Colors.white70),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: _directLoading ? null : _importAccess,
+            icon: const Icon(Icons.qr_code),
+            label: const Text('Import access from phone'),
+          ),
+          const SizedBox(height: 24),
+        ],
         TextField(
           controller: _emailController,
           keyboardType: TextInputType.emailAddress,

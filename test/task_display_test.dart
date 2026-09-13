@@ -62,7 +62,7 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('20/20'));
+    await tester.tap(find.byTooltip('Expand tasks'));
     await tester.pumpAndSettle();
 
     final list = find.byType(ListView);
@@ -77,6 +77,18 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('dismiss-task-claude_tasks:19')),
     );
+    await tester.pumpAndSettle();
+    expect(dismissed, isNull);
+    expect(find.text('Dismiss completed task?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(dismissed, isNull);
+    await tester.tap(
+      find.byKey(const ValueKey('dismiss-task-claude_tasks:19')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Dismiss'));
+    await tester.pumpAndSettle();
     expect(dismissed?['id'], '19');
   });
 }

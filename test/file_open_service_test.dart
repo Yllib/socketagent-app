@@ -13,6 +13,49 @@ void main() {
         .setMockMethodCallHandler(channel, null);
   });
 
+  for (final extension in ['jpg', 'mp4', 'mp3']) {
+    test(
+      'downloaded $extension uses the native file grant without a media permission request',
+      () async {
+        final calls = <MethodCall>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(channel, (call) async {
+              calls.add(call);
+              return true;
+            });
+        final service = FileOpenService(
+          nativeChannel: channel,
+          isAndroid: true,
+        );
+        final path = '/storage/emulated/0/Download/test.$extension';
+        expect((await service.open(path)).outcome, FileOpenOutcome.opened);
+        expect(calls.map((call) => call.method), ['openDownloadedFile']);
+        expect(calls.single.arguments, {'path': path});
+      },
+    );
+  }
+
+  test(
+    'native missing viewer and missing download have distinct errors',
+    () async {
+      var errorCode = 'NO_FILE_VIEWER';
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (_) async {
+            throw PlatformException(code: errorCode);
+          });
+      final service = FileOpenService(nativeChannel: channel, isAndroid: true);
+      expect(
+        (await service.open('/storage/emulated/0/Download/test.mp4')).message,
+        'No installed app can open this file type.',
+      );
+      errorCode = 'FILE_NOT_FOUND';
+      expect(
+        (await service.open('/storage/emulated/0/Download/test.mp4')).message,
+        'The downloaded file is no longer available.',
+      );
+    },
+  );
+
   test('APK opening requests Android installer authorization first', () async {
     var openerCalled = false;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

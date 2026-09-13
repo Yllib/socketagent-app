@@ -1,6 +1,16 @@
+import 'dart:io';
+import '../services/desktop_composer_keys.dart';
+import '../services/desktop_workspace_controller.dart';
+import '../widgets/desktop_split_view.dart';
+import '../widgets/adaptive_control_bar.dart';
+import '../widgets/codex_account_usage.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import '../services/session_panel_preferences.dart';
+import '../services/pending_panel_hides.dart';
+import '../widgets/panel_hide_notice.dart';
 import '../main.dart' show assistVoiceTrigger;
 import '../services/chat_provider.dart';
 import '../services/tts_engine.dart';
@@ -15,6 +25,8 @@ import 'terminal_screen.dart';
 import 'settings/voice_speech_screen.dart';
 import '../widgets/chat_view.dart';
 import '../widgets/active_tasks_pane.dart';
+import '../widgets/active_browser_strip.dart';
+import '../widgets/session_actions_sheet.dart';
 import '../widgets/voice_button.dart';
 import '../widgets/secret_manager_sheet.dart';
 import '../widgets/html_plan_manager_sheet.dart';
@@ -32,10 +44,37 @@ class _BarSegment {
   const _BarSegment(this.label, this.tokens, this.color);
 }
 
+Future<void> openConversation(
+  BuildContext context, {
+  bool autoStartVoice = false,
+}) async {
+  if (Platform.isWindows) {
+    context.read<DesktopWorkspaceController>().openConversation();
+    Navigator.of(context).popUntil((route) => route.isFirst);
+    return;
+  }
+  await Navigator.of(context).push(
+    MaterialPageRoute(
+      builder: (_) => HomeScreen(autoStartVoice: autoStartVoice),
+    ),
+  );
+}
+
 class HomeScreen extends StatefulWidget {
   final bool autoStartVoice;
 
-  const HomeScreen({super.key, this.autoStartVoice = false});
+  final bool embedded;
+  final bool visible;
+  final bool sidebarVisible;
+  final VoidCallback? onToggleSidebar;
+  const HomeScreen({
+    super.key,
+    this.autoStartVoice = false,
+    this.embedded = false,
+    this.visible = true,
+    this.sidebarVisible = false,
+    this.onToggleSidebar,
+  });
 
   @override
   State<HomeScreen> createState() => HomeScreenState();
@@ -52,6 +91,65 @@ class HomeScreenState extends State<HomeScreen> {
   bool _pttPressed = false;
   bool _pttStartChecking = false;
   bool _followLatest = true;
+  SessionPanelPreferences? _panelPreferences;
+  final _pendingPanelHides = PendingPanelHides();
+
+  void _panelHidesChanged() {
+    if (mounted) setState(() {});
+  }
+
+  bool _panelHiding(ChatProvider provider, SessionPanel panel) =>
+      _pendingPanelHides.contains(
+        provider.activeSessionServerId,
+        provider.activeSessionId,
+        panel,
+      );
+
+  Widget? _panelHideNotice(
+    ChatProvider provider,
+    SessionPanel panel,
+    String label,
+  ) {
+    final server = provider.activeSessionServerId;
+    final session = provider.activeSessionId;
+    if (!_pendingPanelHides.contains(server, session, panel)) return null;
+    return PanelHideNotice(
+      label: label,
+      onCancel: () => _pendingPanelHides.cancel(server, session, panel),
+    );
+  }
+
+  bool _panelHidden(ChatProvider provider, SessionPanel panel) =>
+      _panelPreferences?.isHidden(
+        provider.activeSessionServerId,
+        provider.activeSessionId,
+        panel,
+      ) ??
+      false;
+
+  void _setPanelHidden(ChatProvider provider, SessionPanel panel, bool hidden) {
+    final preferences = _panelPreferences;
+    final server = provider.activeSessionServerId;
+    final session = provider.activeSessionId;
+    if (preferences == null || server == null || session == null) return;
+    if (hidden) {
+      _pendingPanelHides.request(server, session, panel, () {
+        unawaited(preferences.setHidden(server, session, panel, true));
+      });
+      return;
+    }
+    _pendingPanelHides.cancel(server, session, panel);
+    setState(() {
+      unawaited(
+        preferences.setHidden(
+          provider.activeSessionServerId,
+          provider.activeSessionId,
+          panel,
+          hidden,
+        ),
+      );
+    });
+  }
 
   Future<void> _openBrowserSession(ActiveBrowserSession browser) async {
     await Navigator.of(context).push(
@@ -101,70 +199,30 @@ class HomeScreenState extends State<HomeScreen> {
     if (selected != null && mounted) await _openBrowserSession(selected);
   }
 
-  Widget _buildActiveBrowserStrip(List<ActiveBrowserSession> browsers) {
-    final single = browsers.length == 1 ? browsers.single : null;
-    final title = single?.label ?? '${browsers.length} active browsers';
-    final host = single == null
-        ? 'Tap to choose'
-        : Uri.tryParse(single.url)?.host ?? '';
-    final colors = Theme.of(context).colorScheme;
-    return Material(
-      color: colors.surface,
-      child: InkWell(
-        onTap: () => unawaited(_openActiveBrowser(browsers)),
-        child: Container(
-          height: 38,
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(color: colors.outline.withAlpha(70)),
-            ),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.public, size: 17),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              if (host.isNotEmpty) ...[
-                const SizedBox(width: 10),
-                Flexible(
-                  child: Text(
-                    host,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: colors.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ],
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_right, size: 18),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   void initState() {
     super.initState();
+    _pendingPanelHides.addListener(_panelHidesChanged);
+    SharedPreferences.getInstance().then((preferences) {
+      if (!mounted) return;
+      setState(() => _panelPreferences = SessionPanelPreferences(preferences));
+    });
     final provider = context.read<ChatProvider>();
+    if (Platform.isWindows) {
+      _focusNode.onKeyEvent = (focus, event) => handleDesktopComposerKey(
+        event,
+        context: focus.context!,
+        controller: _textController,
+        onSend: () => _sendMessage(
+          provider,
+          priority: provider.isProcessing ? 'next' : null,
+        ),
+      );
+    }
 
     // Listen to speech results and fill text field
     _speechSub = provider.speech.onResult.listen((text) {
+      if (!widget.visible) return;
       _textController.text = text;
       _textController.selection = TextSelection.fromPosition(
         TextPosition(offset: text.length),
@@ -194,7 +252,10 @@ class HomeScreenState extends State<HomeScreen> {
 
     // Track active session for draft swapping and notifications
     _trackedSessionId = provider.activeSessionId;
-    provider.setViewingSession(provider.activeSessionId);
+    provider.setViewingSession(
+      provider.activeSessionId,
+      chatScreenVisible: widget.visible,
+    );
 
     // Restore saved draft for this session
     final draft = provider.getDraft();
@@ -218,11 +279,27 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   void _onAssistVoiceTrigger() {
+    if (!widget.visible) return;
     startVoiceInput();
   }
 
   @override
+  void didUpdateWidget(covariant HomeScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.visible != widget.visible) {
+      final provider = context.read<ChatProvider>();
+      provider.setViewingSession(
+        provider.activeSessionId,
+        chatScreenVisible: widget.visible,
+      );
+      if (!widget.visible) _focusNode.unfocus();
+    }
+  }
+
+  @override
   void dispose() {
+    _pendingPanelHides.removeListener(_panelHidesChanged);
+    _pendingPanelHides.dispose();
     // Save draft before disposing
     final provider = context.read<ChatProvider>();
     provider.saveDraft(_textController.text.trim());
@@ -647,6 +724,9 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _conversationLayout(Widget child) =>
+      Platform.isWindows ? DesktopConversationWidth(child: child) : child;
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -660,7 +740,10 @@ class HomeScreenState extends State<HomeScreen> {
           }
           _trackedSessionId = currentSessionId;
           _followLatest = true;
-          provider.setViewingSession(currentSessionId);
+          provider.setViewingSession(
+            currentSessionId,
+            chatScreenVisible: widget.visible,
+          );
           // Restore draft for the new session
           final draft = provider.getDraft();
           if (draft != _textController.text.trim()) {
@@ -696,6 +779,16 @@ class HomeScreenState extends State<HomeScreen> {
             resizeToAvoidBottomInset: true,
             appBar: AppBar(
               toolbarHeight: 64,
+              automaticallyImplyLeading: !widget.embedded,
+              leading: widget.embedded
+                  ? IconButton(
+                      tooltip: widget.sidebarVisible
+                          ? 'Hide sessions'
+                          : 'Show sessions',
+                      icon: const Icon(Icons.view_sidebar_outlined),
+                      onPressed: widget.onToggleSidebar,
+                    )
+                  : null,
               title: GestureDetector(
                 onLongPress: () {
                   provider.toggleRawMode();
@@ -731,7 +824,7 @@ class HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 1),
                     Row(
                       children: [
-                        Flexible(
+                        Expanded(
                           child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -759,7 +852,7 @@ class HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
-                        const Spacer(),
+                        const SizedBox(width: 8),
                         if (provider.lastUsage != null)
                           _buildUsageIndicator(provider.lastUsage!),
                         _buildConnectionIndicator(provider.connectionStatus),
@@ -814,9 +907,8 @@ class HomeScreenState extends State<HomeScreen> {
                               ],
                             ),
                           ),
-                        const Spacer(),
                         if (provider.activeSessionCwd != null)
-                          Flexible(
+                          Expanded(
                             child: Tooltip(
                               message: provider.activeSessionCwd!,
                               child: Text(
@@ -845,126 +937,187 @@ class HomeScreenState extends State<HomeScreen> {
             ),
             body: ColoredBox(
               color: chatSurfaceColor,
-              child: Column(
-                children: [
-                  if (provider.activeBrowserSessions.isNotEmpty)
-                    _buildActiveBrowserStrip(provider.activeBrowserSessions),
-                  if (provider.activeSessionId != null ||
-                      provider.isPendingNewSession)
-                    _buildControlChips(provider),
-                  if (provider.ttsPlaybackState.visible)
-                    TtsPlaybackBar(
-                      state: provider.ttsPlaybackState,
-                      onPause: () => unawaited(provider.pauseReplaySpeak()),
-                      onResume: () => unawaited(provider.resumeReplaySpeak()),
-                      onRestart: () => unawaited(provider.restartReplaySpeak()),
-                      onSeek: (fraction) =>
-                          unawaited(provider.seekReplaySpeak(fraction)),
-                      onClose: () => unawaited(provider.closeReplaySpeak()),
-                      speed: provider.ttsEngineMode == TtsEngineMode.elevenLabs
-                          ? provider.elevenLabsSpeechRate
-                          : null,
-                      onSpeedChanged:
-                          provider.ttsEngineMode == TtsEngineMode.elevenLabs
-                          ? (speed) => unawaited(
-                              provider.setElevenLabsSpeechRate(speed),
-                            )
-                          : null,
+              child: _conversationLayout(
+                Column(
+                  children: [
+                    if (provider.weeklyRateLimit != null)
+                      _buildRateLimitBanner(provider.weeklyRateLimit!),
+                    if (provider.fiveHourRateLimit != null)
+                      _buildRateLimitBanner(provider.fiveHourRateLimit!),
+                    if (provider.activeSessionId != null ||
+                        provider.isPendingNewSession)
+                      _buildControlChips(provider),
+                    if (_panelPreferences != null &&
+                        !_panelHidden(provider, SessionPanel.browser) &&
+                        provider.activeBrowserSessions.isNotEmpty)
+                      ActiveBrowserStrip(
+                        browsers: provider.activeBrowserSessions,
+                        hidingNotice: _panelHideNotice(
+                          provider,
+                          SessionPanel.browser,
+                          'browser',
+                        ),
+                        onHide: () => _setPanelHidden(
+                          provider,
+                          SessionPanel.browser,
+                          true,
+                        ),
+                        onOpen: () => unawaited(
+                          _openActiveBrowser(provider.activeBrowserSessions),
+                        ),
+                      ),
+                    if (provider.ttsPlaybackState.visible)
+                      TtsPlaybackBar(
+                        state: provider.ttsPlaybackState,
+                        onPause: () => unawaited(provider.pauseReplaySpeak()),
+                        onResume: () => unawaited(provider.resumeReplaySpeak()),
+                        onRestart: () =>
+                            unawaited(provider.restartReplaySpeak()),
+                        onSeek: (fraction) =>
+                            unawaited(provider.seekReplaySpeak(fraction)),
+                        onClose: () => unawaited(provider.closeReplaySpeak()),
+                        speed:
+                            provider.ttsEngineMode == TtsEngineMode.elevenLabs
+                            ? provider.elevenLabsSpeechRate
+                            : null,
+                        onSpeedChanged:
+                            provider.ttsEngineMode == TtsEngineMode.elevenLabs
+                            ? (speed) => unawaited(
+                                provider.setElevenLabsSpeechRate(speed),
+                              )
+                            : null,
+                      ),
+                    if (provider.isRefreshingHistory)
+                      const LinearProgressIndicator(minHeight: 2),
+                    Expanded(
+                      child: ChatView(
+                        key: _chatViewKey,
+                        messages: provider.filteredMessages,
+                        serverId: provider.activeSessionServerId,
+                        sessionStorageKey:
+                            '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
+                        isProcessing: provider.isProcessing,
+                        followLatest: _followLatest,
+                        condensedToolUsage: provider.condensedToolUsage,
+                        onFollowLatestChanged: (follow) {
+                          if (_followLatest != follow) {
+                            setState(() => _followLatest = follow);
+                          }
+                        },
+                        processingElapsed: provider.currentPromptElapsed,
+                        isCompacting: provider.isCompacting,
+                        isLoadingHistory: provider.isLoadingHistory,
+                        isLoadingMore: provider.isLoadingMore,
+                        hasMoreHistory: provider.hasMoreHistory,
+                        historyWindowRevision: provider.historyWindowRevision,
+                        targetEntryId: notificationFocus?.entryId,
+                        targetSessionSeq: notificationFocus?.sessionSeq,
+                        onTranscriptTargetReached: notificationFocus == null
+                            ? null
+                            : () => provider.clearNotificationTranscriptFocus(
+                                notificationFocus,
+                              ),
+                        todos: provider.todos,
+                        onAnswer: provider.answerQuestion,
+                        onSecureInputSubmit: provider.submitSecureInput,
+                        onSecureInputUseStored:
+                            provider.submitStoredSecureInput,
+                        onSecureInputCancel: provider.cancelSecureInput,
+                        availableSecrets: provider.secretInventory,
+                        onLoadMore: provider.loadMoreHistory,
+                        onStopTask: provider.stopTask,
+                        onDismissTodos: () =>
+                            _setPanelHidden(provider, SessionPanel.tasks, true),
+                        showTodos:
+                            _panelPreferences != null &&
+                            !_panelHidden(provider, SessionPanel.tasks),
+                        tasksHidingNotice: _panelHideNotice(
+                          provider,
+                          SessionPanel.tasks,
+                          'tasks',
+                        ),
+                        codexPlanHidingNotice: _panelHideNotice(
+                          provider,
+                          SessionPanel.codexPlan,
+                          'plan',
+                        ),
+                        showCodexPlan:
+                            _panelPreferences != null &&
+                            !_panelHidden(provider, SessionPanel.codexPlan),
+                        onDismissCodexPlan: () => _setPanelHidden(
+                          provider,
+                          SessionPanel.codexPlan,
+                          true,
+                        ),
+                        onDismissTodo: provider.dismissTodo,
+                        onRewindConversation:
+                            provider.activeSessionBackend == 'codex'
+                            ? null
+                            : provider.rewindConversation,
+                        onBranch: provider.activeSessionBackend == 'codex'
+                            ? null
+                            : provider.branchFromMessage,
+                        onRetractQueuedMessage: (messageId) {
+                          final text = provider.retractQueuedMessage(messageId);
+                          if (text == null) return;
+                          _textController.text = text;
+                          _textController.selection =
+                              TextSelection.fromPosition(
+                                TextPosition(offset: text.length),
+                              );
+                          provider.saveDraft(text.trim());
+                          _focusNode.requestFocus();
+                        },
+                        onReadAloud: provider.replaySpeak,
+                        onReportAiResponse: provider.reportAiResponse,
+                        rawMode: provider.rawMode,
+                        rawItems: provider.rawItems,
+                        subagentTasks: provider.subagentTasks,
+                        workflowTasks: provider.workflowTasks,
+                        allMessages: provider.messages,
+                      ),
                     ),
-                  if (provider.weeklyRateLimit != null)
-                    _buildRateLimitBanner(provider.weeklyRateLimit!),
-                  if (provider.isRefreshingHistory)
-                    const LinearProgressIndicator(minHeight: 2),
-                  Expanded(
-                    child: ChatView(
-                      key: _chatViewKey,
-                      messages: provider.filteredMessages,
-                      serverId: provider.activeSessionServerId,
-                      sessionStorageKey:
-                          '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
-                      isProcessing: provider.isProcessing,
-                      followLatest: _followLatest,
-                      condensedToolUsage: provider.condensedToolUsage,
-                      onFollowLatestChanged: (follow) {
-                        if (_followLatest != follow) {
-                          setState(() => _followLatest = follow);
-                        }
-                      },
-                      processingElapsed: provider.currentPromptElapsed,
-                      isCompacting: provider.isCompacting,
-                      isLoadingHistory: provider.isLoadingHistory,
-                      isLoadingMore: provider.isLoadingMore,
-                      hasMoreHistory: provider.hasMoreHistory,
-                      historyWindowRevision: provider.historyWindowRevision,
-                      targetEntryId: notificationFocus?.entryId,
-                      targetSessionSeq: notificationFocus?.sessionSeq,
-                      onTranscriptTargetReached: notificationFocus == null
-                          ? null
-                          : () => provider.clearNotificationTranscriptFocus(
-                              notificationFocus,
-                            ),
-                      todos: provider.todos,
-                      onAnswer: provider.answerQuestion,
-                      onSecureInputSubmit: provider.submitSecureInput,
-                      onSecureInputUseStored: provider.submitStoredSecureInput,
-                      onSecureInputCancel: provider.cancelSecureInput,
-                      availableSecrets: provider.secretInventory,
-                      onLoadMore: provider.loadMoreHistory,
-                      onStopTask: provider.stopTask,
-                      onDismissTodos: provider.dismissTodos,
-                      onDismissTodo: provider.dismissTodo,
-                      onRewindConversation:
-                          provider.activeSessionBackend == 'codex'
-                          ? null
-                          : provider.rewindConversation,
-                      onBranch: provider.activeSessionBackend == 'codex'
-                          ? null
-                          : provider.branchFromMessage,
-                      onRetractQueuedMessage: (messageId) {
-                        final text = provider.retractQueuedMessage(messageId);
-                        if (text == null) return;
-                        _textController.text = text;
-                        _textController.selection = TextSelection.fromPosition(
-                          TextPosition(offset: text.length),
-                        );
-                        provider.saveDraft(text.trim());
-                        _focusNode.requestFocus();
-                      },
-                      onReadAloud: provider.replaySpeak,
-                      onReportAiResponse: provider.reportAiResponse,
-                      rawMode: provider.rawMode,
-                      rawItems: provider.rawItems,
-                      subagentTasks: provider.subagentTasks,
-                      workflowTasks: provider.workflowTasks,
-                      allMessages: provider.messages,
-                    ),
-                  ),
-                  if (provider.fiveHourRateLimit != null)
-                    _buildRateLimitBanner(provider.fiveHourRateLimit!),
-                  if (provider.isRetrying) _buildRetryingBanner(),
-                  if (provider.backendAuthRecoveryMessage != null)
-                    _buildBackendRecoveryBanner(
-                      provider.backendAuthRecoveryMessage!,
-                    ),
-                  if (provider.activeHookName != null)
-                    _buildHookBanner(provider.activeHookName!),
-                  if (provider.activePaneTasks.isNotEmpty)
-                    ActiveTasksPane(
-                      backgroundTasks: provider.backgroundTasks,
-                      subagentTasks: provider.subagentTasks,
-                      workflowTasks: provider.workflowTasks,
-                      messages: provider.messages,
-                      sourceServerId: provider.activeSessionServerId,
-                      onStopTask: provider.stopTask,
-                      onScrollToTask: (toolUseId) {
-                        _chatViewKey.currentState?.scrollToTask(toolUseId);
-                      },
-                      onDismissSubagent: provider.dismissSubagent,
-                      onDismissWorkflow: provider.dismissWorkflow,
-                      onReadAloud: provider.replaySpeak,
-                    ),
-                  _buildInputBar(provider),
-                ],
+                    if (provider.isRetrying) _buildRetryingBanner(),
+                    if (provider.backendAuthRecoveryMessage != null)
+                      _buildBackendRecoveryBanner(
+                        provider.backendAuthRecoveryMessage!,
+                      ),
+                    if (provider.activeHookName != null)
+                      _buildHookBanner(provider.activeHookName!),
+                    if (provider.activePaneTasks.isNotEmpty &&
+                        _panelPreferences != null &&
+                        !_panelHidden(provider, SessionPanel.activity))
+                      ActiveTasksPane(
+                        key: ValueKey((
+                          'activity',
+                          provider.activeSessionServerId,
+                          provider.activeSessionId,
+                        )),
+                        sessionId: provider.activeSessionId,
+                        onHide: () => _setPanelHidden(
+                          provider,
+                          SessionPanel.activity,
+                          true,
+                        ),
+                        hidingNotice: _panelHideNotice(
+                          provider,
+                          SessionPanel.activity,
+                          'activity',
+                        ),
+                        backgroundTasks: provider.backgroundTasks,
+                        subagentTasks: provider.subagentTasks,
+                        workflowTasks: provider.workflowTasks,
+                        messages: provider.messages,
+                        sourceServerId: provider.activeSessionServerId,
+                        onStopTask: provider.stopTask,
+                        onScrollToTask: (toolUseId) {
+                          _chatViewKey.currentState?.scrollToTask(toolUseId);
+                        },
+                        onReadAloud: provider.replaySpeak,
+                      ),
+                    _buildInputBar(provider),
+                  ],
+                ),
               ),
             ),
           ),
@@ -1050,40 +1203,28 @@ class HomeScreenState extends State<HomeScreen> {
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Center(
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (provider.supportedModels.isNotEmpty)
-                  _buildModelChip(provider)
-                else if (provider.isLoadingNewSessionModels)
-                  _buildLoadingModelChip(),
-                const SizedBox(width: 6),
-                _buildEffortChip(provider),
-                const SizedBox(width: 6),
-                if (provider.activeSessionBackend != 'codex') ...[
-                  _buildThinkingChip(provider),
-                  const SizedBox(width: 6),
-                ],
-                if (provider.rawMode) ...[
-                  const SizedBox(width: 6),
-                  _buildChipBody(
-                    Icons.code,
-                    'RAW',
-                    iconColor: Colors.orange.shade300,
-                    labelColor: Colors.orange.shade300,
-                  ),
-                ],
-                const SizedBox(width: 6),
-                _buildFollowLatestChip(),
-                const SizedBox(width: 6),
-                _buildSessionMoreChip(provider),
-              ],
-            ),
-          ),
+        child: AdaptiveControlBar(
+          hasModel:
+              provider.supportedModels.isNotEmpty ||
+              provider.isLoadingNewSessionModels,
+          children: [
+            if (provider.supportedModels.isNotEmpty)
+              _buildModelChip(provider)
+            else if (provider.isLoadingNewSessionModels)
+              _buildLoadingModelChip(),
+            _buildEffortChip(provider),
+            if (provider.activeSessionBackend != 'codex')
+              _buildThinkingChip(provider),
+            if (provider.rawMode)
+              _buildChipBody(
+                Icons.code,
+                'RAW',
+                iconColor: Colors.orange.shade300,
+                labelColor: Colors.orange.shade300,
+              ),
+            _buildFollowLatestChip(),
+            _buildSessionMoreChip(provider),
+          ],
         ),
       ),
     );
@@ -1095,36 +1236,13 @@ class HomeScreenState extends State<HomeScreen> {
     Color? iconColor,
     Color? labelColor,
     bool active = false,
-  }) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: active
-            ? theme.colorScheme.primaryContainer.withAlpha(180)
-            : theme.colorScheme.surfaceContainerHighest,
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            icon,
-            size: 14,
-            color: iconColor ?? theme.colorScheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: labelColor ?? theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  }) => AdaptiveControlChip(
+    icon: icon,
+    label: label,
+    iconColor: iconColor,
+    labelColor: labelColor,
+    active: active,
+  );
 
   Widget _buildFollowLatestChip() {
     final theme = Theme.of(context);
@@ -1151,681 +1269,441 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildLoadingModelChip() {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(16),
-        color: theme.colorScheme.surfaceContainerHighest,
+  Widget _buildLoadingModelChip() => const Tooltip(
+    message: 'Loading models',
+    child: AdaptiveControlChip(
+      icon: Icons.hourglass_empty,
+      label: 'Loading models',
+      leading: SizedBox(
+        width: 14,
+        height: 14,
+        child: CircularProgressIndicator(strokeWidth: 2),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          SizedBox(
-            width: 12,
-            height: 12,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            'Loading models',
-            style: TextStyle(
-              fontSize: 12,
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
+    ),
+  );
+
+  Widget _buildSessionMoreChip(ChatProvider provider) {
+    Offset? pointer;
+    return Builder(
+      builder: (buttonContext) => Tooltip(
+        message: 'Session actions',
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTapDown: (details) => pointer = details.globalPosition,
+          onTapCancel: () => pointer = null,
+          onTap: () {
+            final box = buttonContext.findRenderObject()! as RenderBox;
+            final anchor =
+                pointer ?? box.localToGlobal(Offset(0, box.size.height));
+            pointer = null;
+            unawaited(
+              _showSessionActions(
+                provider,
+                anchor: Platform.isWindows ? anchor : null,
+              ),
+            );
+          },
+          child: _buildChipBody(Icons.more_horiz, 'More'),
+        ),
       ),
     );
   }
 
-  Widget _buildSessionMoreChip(ChatProvider provider) {
-    final projectPath = _projectFilesPath(provider);
-    final showCodexMode = provider.activeSessionBackend == 'codex';
+  Future<void> _showSessionActions(
+    ChatProvider provider, {
+    Offset? anchor,
+  }) async {
+    final sessionId = provider.activeSessionId;
     final serverId = provider.activeSessionServerId;
-    final reviewRepository = context.watch<WorkReviewRepository>();
-    final pendingReviews = serverId == null
-        ? 0
-        : reviewRepository.pendingCount(serverId);
-    final supportsReviews =
-        serverId != null && reviewRepository.supportsServer(serverId);
-    return PopupMenuButton<String>(
-      onOpened: () {
-        if (showCodexMode) {
-          provider.requestCodexCollaborationModes();
-        }
-      },
-      onSelected: (value) {
-        if (value.startsWith('codex_mode:')) {
-          provider.setCodexCollaborationMode(
-            value.substring('codex_mode:'.length),
-          );
-          return;
-        }
-        switch (value) {
-          case 'project_files':
-            _openProjectFiles(provider, projectPath);
-            break;
-          case 'project_instructions':
-            _openProjectInstructions(provider, projectPath);
-            break;
-          case 'manage_secrets':
-            Future.microtask(() {
-              if (mounted) _showSecretManager(provider);
-            });
-            break;
-          case 'manage_html_plans':
-            Future.microtask(() {
-              if (mounted) _showHtmlPlanManager(provider);
-            });
-            break;
-          case 'manage_codex_goal':
-            Future.microtask(() {
-              if (mounted) showCodexGoalManagerSheet(context, provider);
-            });
-            break;
-          case 'session_analytics':
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SessionAnalyticsScreen()),
-            );
-            break;
-          case 'session_memory':
-            Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SessionMemoryScreen()),
-            );
-            break;
-          case 'work_reviews':
-            if (serverId != null) {
-              final config = provider.serverConfigs
-                  .where((item) => item.id == serverId)
-                  .firstOrNull;
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => WorkReviewsScreen(
-                    serverId: serverId,
-                    serverLabel: config?.name,
-                  ),
-                ),
-              );
-            }
-            break;
-          case 'terminal':
-            _openTerminal(provider, projectPath);
-            break;
-          case 'tts_toggle':
-            provider.setTtsEnabled(!provider.ttsEnabled);
-            break;
-          case 'tts_voice':
-            Future.microtask(() {
-              if (!mounted) return;
-              if (provider.ttsEngineMode == TtsEngineMode.kokoroServer ||
-                  provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
-                _showKokoroVoicePicker(context, provider);
-              } else if (provider.ttsEngineMode == TtsEngineMode.elevenLabs) {
-                unawaited(_showElevenLabsVoicePicker(context, provider));
-              } else {
-                _showVoicePicker(context, provider);
+    if (provider.activeSessionBackend == 'codex') {
+      provider.requestCodexCollaborationModes();
+    }
+    final value = await showSessionActionsMenu(
+      context: context,
+      anchor: anchor,
+      builder: (_) => StatefulBuilder(
+        builder: (_, updateSheet) => ListenableBuilder(
+          listenable: Listenable.merge([provider, _pendingPanelHides]),
+          builder: (_, _) => _sessionActions(
+            provider,
+            onSettingChanged: (action) {
+              if (!mounted ||
+                  sessionId != provider.activeSessionId ||
+                  serverId != provider.activeSessionServerId) {
+                return;
               }
-            });
-            break;
-          case 'notifications_toggle':
-            final sessionId = provider.activeSessionId;
-            if (sessionId != null) {
-              provider.toggleSessionNotifications(sessionId);
-            }
-            break;
-          case 'codex_fast_mode':
-            provider.setCodexFastMode(!provider.codexFastMode);
-            break;
-          case 'claude_auto_compact':
-            provider.setClaudeAutoCompactEnabled(
-              !provider.claudeAutoCompactEnabled,
-            );
-            break;
-          case 'claude_auto_compact_window':
-            Future.microtask(() {
-              if (mounted) _showClaudeAutoCompactWindowDialog(provider);
-            });
-            break;
-        }
-      },
-      tooltip: 'Session options',
-      padding: EdgeInsets.zero,
-      position: PopupMenuPosition.under,
-      child: _buildChipBody(Icons.more_horiz, 'More'),
-      itemBuilder: (context) => [
-        PopupMenuItem(
-          value: 'project_files',
-          enabled: projectPath != null && projectPath.isNotEmpty,
-          child: Row(
-            children: [
-              const Icon(Icons.folder_open_outlined, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Project files'),
-                    if (projectPath != null && projectPath.isNotEmpty)
-                      Text(
-                        projectPath,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withAlpha(140),
-                        ),
-                      )
-                    else
-                      Text(
-                        'No project directory available',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withAlpha(140),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ],
+              _handleSessionAction(provider, action);
+              updateSheet(() {});
+            },
           ),
         ),
-        PopupMenuItem(
-          value: 'project_instructions',
-          enabled: projectPath != null && projectPath.isNotEmpty,
-          child: const Row(
-            children: [
-              Icon(Icons.description_outlined, size: 18),
-              SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Project instructions'),
-                    Text(
-                      'View or edit AGENTS.md and CLAUDE.md',
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+      ),
+    );
+    if (!mounted ||
+        value == null ||
+        sessionId != provider.activeSessionId ||
+        serverId != provider.activeSessionServerId) {
+      return;
+    }
+    _handleSessionAction(provider, value);
+  }
+
+  Widget _sessionActions(
+    ChatProvider provider, {
+    ValueChanged<String>? onSettingChanged,
+  }) {
+    final projectPath = _projectFilesPath(provider);
+    final hasProject = projectPath != null && projectPath.isNotEmpty;
+    final hasSession = provider.activeSessionId != null;
+    final codex = provider.activeSessionBackend == 'codex';
+    final serverId = provider.activeSessionServerId;
+    final reviews = context.read<WorkReviewRepository>();
+    final supportsReviews =
+        serverId != null && reviews.supportsServer(serverId);
+    final reviewCount = serverId == null ? 0 : reviews.pendingCount(serverId);
+    final browserHiding = _panelHiding(provider, SessionPanel.browser);
+    final planHiding = _panelHiding(provider, SessionPanel.codexPlan);
+    final tasksHiding = _panelHiding(provider, SessionPanel.tasks);
+    final activityHiding = _panelHiding(provider, SessionPanel.activity);
+    final activityHidden =
+        _panelHidden(provider, SessionPanel.activity) || activityHiding;
+    final browserHidden =
+        _panelHidden(provider, SessionPanel.browser) || browserHiding;
+    final planHidden =
+        _panelHidden(provider, SessionPanel.codexPlan) || planHiding;
+    final tasksHidden =
+        _panelHidden(provider, SessionPanel.tasks) || tasksHiding;
+    return SessionActionsSheet(
+      onSettingChanged: onSettingChanged,
+      quickActions: [
+        SessionAction(
+          'project_files',
+          'Files',
+          Icons.folder_open_outlined,
+          enabled: hasProject,
         ),
-        PopupMenuItem(
-          value: 'manage_secrets',
-          child: const Row(
-            children: [
-              Icon(Icons.password_outlined, size: 18),
-              SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Manage secrets'),
-                    Text(
-                      'Browse, create, replace, or delete',
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+        SessionAction(
+          'terminal',
+          'Terminal',
+          Icons.terminal,
+          enabled: serverId != null,
         ),
-        PopupMenuItem(
-          value: 'manage_html_plans',
-          enabled: provider.activeSessionId != null,
-          child: const Row(
-            children: [
-              Icon(Icons.view_quilt_outlined, size: 18),
-              SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('HTML plans'),
-                    Text(
-                      'View, rename, or delete session plans',
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (showCodexMode)
-          PopupMenuItem(
-            value: 'manage_codex_goal',
-            enabled:
-                provider.activeSessionId != null &&
-                provider.activeServerSupportsCodexGoals,
-            child: Row(
-              children: [
-                const Icon(Icons.flag_outlined, size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Goal'),
-                      Text(
-                        !provider.activeServerSupportsCodexGoals
-                            ? 'Requires an updated computer'
-                            : provider.activeCodexGoal == null
-                            ? 'View, start, stop, or clear'
-                            : '${provider.activeCodexGoal!.status.wireValue} · manage durable goal',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right, size: 20),
-              ],
+        if (provider.activeBrowserSessions.isNotEmpty)
+          const SessionAction('open_browser', 'Browser', Icons.public),
+      ],
+      groups: [
+        SessionActionGroup(
+          'Project tools',
+          'Instructions and secure credentials',
+          Icons.folder_outlined,
+          [
+            SessionAction(
+              'project_instructions',
+              'Project instructions',
+              Icons.description_outlined,
+              subtitle: 'AGENTS.md and CLAUDE.md',
+              enabled: hasProject,
             ),
-          ),
-        if (showCodexMode)
-          PopupMenuItem(
-            value: 'session_memory',
-            enabled:
-                provider.activeSessionId != null &&
-                provider.activeServerSupportsSessionMemory,
-            child: Row(
-              children: [
-                const Icon(Icons.memory_outlined, size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Session memory'),
-                      Text(
-                        provider.activeServerSupportsSessionMemory
-                            ? 'Durable facts and context rollover'
-                            : 'Requires an updated computer',
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right, size: 20),
-              ],
+            const SessionAction(
+              'manage_secrets',
+              'Manage secrets',
+              Icons.password_outlined,
             ),
-          ),
-        PopupMenuItem(
-          value: 'session_analytics',
-          enabled: provider.activeSessionId != null,
-          child: const Row(
-            children: [
-              Icon(Icons.insights_outlined, size: 18),
-              SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text('Session analytics'),
-                    Text(
-                      'Run times and history',
-                      style: TextStyle(fontSize: 11),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          ],
         ),
-        PopupMenuItem(
-          value: 'work_reviews',
-          enabled: supportsReviews,
-          child: Row(
-            children: [
-              const Icon(Icons.fact_check_outlined, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Work reviews'),
-                    Text(
-                      pendingReviews == 0
-                          ? supportsReviews
-                                ? 'Review agent work on this computer'
-                                : 'Requires a computer with Work Reviews'
-                          : '$pendingReviews awaiting review',
-                      style: const TextStyle(fontSize: 11),
-                    ),
-                  ],
-                ),
+        SessionActionGroup(
+          'Plans & progress',
+          'Plans, reviews, memory and activity',
+          Icons.fact_check_outlined,
+          [
+            SessionAction(
+              'manage_html_plans',
+              'HTML plans',
+              Icons.view_quilt_outlined,
+              enabled: hasSession,
+            ),
+            if (codex)
+              SessionAction(
+                'manage_codex_goal',
+                'Goal',
+                Icons.flag_outlined,
+                enabled: hasSession && provider.activeServerSupportsCodexGoals,
+                subtitle: provider.activeServerSupportsCodexGoals
+                    ? null
+                    : 'Requires an updated computer',
               ),
-              if (pendingReviews > 0) Badge(label: Text('$pendingReviews')),
-            ],
-          ),
+            SessionAction(
+              'work_reviews',
+              'Work reviews',
+              Icons.fact_check_outlined,
+              enabled: supportsReviews,
+              subtitle: reviewCount > 0 ? '$reviewCount awaiting review' : null,
+            ),
+            if (codex)
+              SessionAction(
+                'session_memory',
+                'Session memory',
+                Icons.memory_outlined,
+                enabled:
+                    hasSession && provider.activeServerSupportsSessionMemory,
+              ),
+            SessionAction(
+              'session_analytics',
+              'Session analytics',
+              Icons.insights_outlined,
+              enabled: hasSession,
+            ),
+          ],
         ),
-        PopupMenuItem(
-          value: 'terminal',
-          enabled: provider.activeServerId != null,
-          child: Row(
-            children: [
-              const Icon(Icons.terminal, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Open terminal'),
-                    Text(
-                      projectPath != null && projectPath.isNotEmpty
-                          ? projectPath
-                          : 'Active computer shell',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withAlpha(140),
-                      ),
-                    ),
-                  ],
-                ),
+        SessionActionGroup(
+          'Voice & notifications',
+          'Speech, voice and session alerts',
+          Icons.volume_up_outlined,
+          [
+            SessionAction(
+              'tts_toggle',
+              'Text to speech',
+              Icons.volume_up_outlined,
+              selected: provider.ttsEnabled,
+              subtitle: provider.ttsEnabled ? 'On' : 'Off',
+            ),
+            SessionAction(
+              'tts_voice',
+              'Voice',
+              Icons.record_voice_over_outlined,
+              subtitle: _selectedVoiceLabel(provider),
+            ),
+            if (hasSession)
+              SessionAction(
+                'notifications_toggle',
+                'Session notifications',
+                Icons.notifications_outlined,
+                selected: provider.isNotifEnabled(provider.activeSessionId!),
+                subtitle: provider.isNotifEnabled(provider.activeSessionId!)
+                    ? 'On'
+                    : 'Muted',
               ),
-            ],
-          ),
+          ],
         ),
-        const PopupMenuDivider(),
-        PopupMenuItem(
-          value: 'tts_toggle',
-          child: Row(
-            children: [
-              Icon(
-                provider.ttsEnabled ? Icons.volume_up : Icons.volume_off,
-                size: 18,
+        SessionActionGroup(
+          'Session settings',
+          'Visible panels and agent behavior',
+          Icons.tune,
+          [
+            SessionAction(
+              browserHidden ? 'show_browser_strip' : 'hide_browser_strip',
+              'Browser strip',
+              Icons.public,
+              selected: !browserHidden,
+              enabled: hasSession && _panelPreferences != null,
+              subtitle: browserHiding
+                  ? 'Hiding… Tap to cancel'
+                  : browserHidden
+                  ? 'Hidden. Tap to show'
+                  : 'Shown when a browser is active. Tap to hide',
+            ),
+            if (codex)
+              SessionAction(
+                planHidden ? 'show_codex_plan' : 'hide_codex_plan',
+                'Codex plan',
+                Icons.fact_check_outlined,
+                selected: !planHidden,
+                enabled: hasSession && _panelPreferences != null,
+                subtitle: planHiding
+                    ? 'Hiding… Tap to cancel'
+                    : planHidden
+                    ? 'Hidden. Tap to show'
+                    : 'Shown. Tap to hide',
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Text to speech'),
-                    Text(
-                      provider.ttsEnabled ? 'On' : 'Off',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withAlpha(140),
-                      ),
-                    ),
-                  ],
+            SessionAction(
+              tasksHidden ? 'show_tasks' : 'hide_tasks',
+              'Tasks panel',
+              Icons.checklist,
+              selected: !tasksHidden,
+              enabled: hasSession && _panelPreferences != null,
+              subtitle: tasksHiding
+                  ? 'Hiding… Tap to cancel'
+                  : tasksHidden
+                  ? 'Hidden. Tap to show'
+                  : 'Shown. Tap to hide',
+            ),
+            SessionAction(
+              activityHidden ? 'show_activity' : 'hide_activity',
+              'Activity panel',
+              Icons.account_tree_outlined,
+              selected: !activityHidden,
+              enabled: hasSession && _panelPreferences != null,
+              subtitle: activityHiding
+                  ? 'Hiding… Tap to cancel'
+                  : activityHidden
+                  ? 'Hidden. Tap to show'
+                  : 'Agents and background work. Tap to hide',
+            ),
+            if (codex)
+              SessionAction(
+                'codex_fast_mode',
+                'Fast mode',
+                Icons.flash_on_outlined,
+                selected: provider.codexFastMode,
+                subtitle: provider.codexFastMode ? 'On' : 'Off',
+              ),
+            if (!codex)
+              SessionAction(
+                'claude_auto_compact',
+                'Auto compact',
+                Icons.memory_outlined,
+                selected: provider.claudeAutoCompactEnabled,
+                subtitle: provider.claudeAutoCompactEnabled ? 'On' : 'Off',
+              ),
+            if (!codex)
+              SessionAction(
+                'claude_auto_compact_window',
+                'Auto-compact window',
+                Icons.straighten_outlined,
+                subtitle: provider.claudeAutoCompactWindowOverride == null
+                    ? provider.claudeAutoCompactWindowEffective == null
+                          ? 'Inherit model default'
+                          : 'Inherit computer: ${provider.claudeAutoCompactWindowEffective} tokens'
+                    : 'Session override: ${provider.claudeAutoCompactWindowOverride} tokens',
+              ),
+            if (codex)
+              for (final mode in provider.codexCollaborationModes)
+                SessionAction(
+                  'codex_mode:${mode['id'] as String? ?? 'default'}',
+                  mode['name'] as String? ??
+                      _formatModeName(mode['id'] as String? ?? 'default'),
+                  Icons.groups_outlined,
+                  subtitle: 'Codex collaboration mode',
+                  selected:
+                      (mode['id'] as String? ?? 'default') ==
+                      provider.codexCollaborationMode,
                 ),
-              ),
-              Icon(
-                provider.ttsEnabled
-                    ? Icons.toggle_on_outlined
-                    : Icons.toggle_off_outlined,
-                size: 34,
-                color: provider.ttsEnabled
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-            ],
-          ),
+          ],
         ),
-        PopupMenuItem(
-          value: 'tts_voice',
-          child: Row(
-            children: [
-              const Icon(Icons.record_voice_over_outlined, size: 18),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Voice'),
-                    Text(
-                      _selectedVoiceLabel(provider),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.onSurface.withAlpha(140),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (provider.activeSessionId != null)
-          PopupMenuItem(
-            value: 'notifications_toggle',
-            child: Row(
-              children: [
-                Icon(
-                  provider.isNotifEnabled(provider.activeSessionId!)
-                      ? Icons.notifications_active
-                      : Icons.notifications_off_outlined,
-                  size: 18,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Notifications'),
-                      Text(
-                        provider.isNotifEnabled(provider.activeSessionId!)
-                            ? 'On for this session'
-                            : 'Muted for this session',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withAlpha(140),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  provider.isNotifEnabled(provider.activeSessionId!)
-                      ? Icons.toggle_on_outlined
-                      : Icons.toggle_off_outlined,
-                  size: 34,
-                  color: provider.isNotifEnabled(provider.activeSessionId!)
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ],
-            ),
-          ),
-        if (provider.activeSessionBackend == 'codex')
-          PopupMenuItem(
-            value: 'codex_fast_mode',
-            child: Row(
-              children: [
-                Icon(
-                  provider.codexFastMode
-                      ? Icons.flash_on_outlined
-                      : Icons.flash_off_outlined,
-                  size: 18,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Fast mode'),
-                      Text(
-                        provider.codexFastMode
-                            ? 'On for this Codex session'
-                            : 'Off for this Codex session',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withAlpha(140),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  provider.codexFastMode
-                      ? Icons.toggle_on_outlined
-                      : Icons.toggle_off_outlined,
-                  size: 34,
-                  color: provider.codexFastMode
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ],
-            ),
-          ),
-        if (provider.activeSessionBackend != 'codex')
-          PopupMenuItem(
-            value: 'claude_auto_compact',
-            child: Row(
-              children: [
-                Icon(
-                  provider.claudeAutoCompactEnabled
-                      ? Icons.memory_outlined
-                      : Icons.memory,
-                  size: 18,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Auto compact'),
-                      Text(
-                        provider.claudeAutoCompactEnabled
-                            ? 'On for this Claude session'
-                            : 'Off for this Claude session',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withAlpha(140),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Icon(
-                  provider.claudeAutoCompactEnabled
-                      ? Icons.toggle_on_outlined
-                      : Icons.toggle_off_outlined,
-                  size: 34,
-                  color: provider.claudeAutoCompactEnabled
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-              ],
-            ),
-          ),
-        if (provider.activeSessionBackend != 'codex')
-          PopupMenuItem(
-            value: 'claude_auto_compact_window',
-            child: Row(
-              children: [
-                const Icon(Icons.straighten_outlined, size: 18),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text('Auto-compact window'),
-                      Text(
-                        provider.claudeAutoCompactWindowOverride == null
-                            ? provider.claudeAutoCompactWindowEffective == null
-                                  ? 'Inherit Claude SDK/model default'
-                                  : 'Inherit computer: ${provider.claudeAutoCompactWindowEffective} tokens'
-                            : 'Session override: ${provider.claudeAutoCompactWindowOverride} tokens',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.onSurface.withAlpha(140),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Icon(Icons.chevron_right, size: 20),
-              ],
-            ),
-          ),
-        if (showCodexMode) ...[
-          const PopupMenuDivider(),
-          PopupMenuItem(
-            enabled: false,
-            child: Text(
-              'Codex mode',
-              style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurface.withAlpha(140),
-              ),
-            ),
-          ),
-          for (final mode in provider.codexCollaborationModes)
-            PopupMenuItem(
-              value: 'codex_mode:${mode['id'] as String? ?? 'default'}',
-              child: Row(
-                children: [
-                  if ((mode['id'] as String? ?? 'default') ==
-                      provider.codexCollaborationMode)
-                    Icon(
-                      Icons.check,
-                      size: 16,
-                      color: Theme.of(context).colorScheme.primary,
-                    )
-                  else
-                    const SizedBox(width: 16),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.groups_outlined, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      mode['name'] as String? ??
-                          _formatModeName(mode['id'] as String? ?? 'default'),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-        ],
       ],
     );
+  }
+
+  void _handleSessionAction(ChatProvider provider, String value) {
+    final projectPath = _projectFilesPath(provider);
+    final serverId = provider.activeSessionServerId;
+    if (value.startsWith('codex_mode:')) {
+      provider.setCodexCollaborationMode(value.substring('codex_mode:'.length));
+      return;
+    }
+    switch (value) {
+      case 'hide_activity':
+        _setPanelHidden(provider, SessionPanel.activity, true);
+        break;
+      case 'show_activity':
+        _setPanelHidden(provider, SessionPanel.activity, false);
+        break;
+      case 'hide_tasks':
+        _setPanelHidden(provider, SessionPanel.tasks, true);
+        break;
+      case 'show_tasks':
+        _setPanelHidden(provider, SessionPanel.tasks, false);
+        break;
+      case 'open_browser':
+        unawaited(_openActiveBrowser(provider.activeBrowserSessions));
+        break;
+      case 'hide_browser_strip':
+        _setPanelHidden(provider, SessionPanel.browser, true);
+        break;
+      case 'hide_codex_plan':
+        _setPanelHidden(provider, SessionPanel.codexPlan, true);
+        break;
+      case 'show_browser_strip':
+        _setPanelHidden(provider, SessionPanel.browser, false);
+        break;
+      case 'show_codex_plan':
+        _setPanelHidden(provider, SessionPanel.codexPlan, false);
+        break;
+      case 'project_files':
+        _openProjectFiles(provider, projectPath);
+        break;
+      case 'project_instructions':
+        _openProjectInstructions(provider, projectPath);
+        break;
+      case 'manage_secrets':
+        Future.microtask(() {
+          if (mounted) _showSecretManager(provider);
+        });
+        break;
+      case 'manage_html_plans':
+        Future.microtask(() {
+          if (mounted) _showHtmlPlanManager(provider);
+        });
+        break;
+      case 'manage_codex_goal':
+        Future.microtask(() {
+          if (mounted) showCodexGoalManagerSheet(context, provider);
+        });
+        break;
+      case 'session_analytics':
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const SessionAnalyticsScreen()),
+        );
+        break;
+      case 'session_memory':
+        Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const SessionMemoryScreen()));
+        break;
+      case 'work_reviews':
+        if (serverId != null) {
+          final config = provider.serverConfigs
+              .where((item) => item.id == serverId)
+              .firstOrNull;
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => WorkReviewsScreen(
+                serverId: serverId,
+                serverLabel: config?.name,
+              ),
+            ),
+          );
+        }
+        break;
+      case 'terminal':
+        _openTerminal(provider, projectPath);
+        break;
+      case 'tts_toggle':
+        provider.setTtsEnabled(!provider.ttsEnabled);
+        break;
+      case 'tts_voice':
+        Future.microtask(() {
+          if (!mounted) return;
+          if (provider.ttsEngineMode == TtsEngineMode.kokoroServer ||
+              provider.ttsEngineMode == TtsEngineMode.kokoroDevice) {
+            _showKokoroVoicePicker(context, provider);
+          } else if (provider.ttsEngineMode == TtsEngineMode.elevenLabs) {
+            unawaited(_showElevenLabsVoicePicker(context, provider));
+          } else {
+            _showVoicePicker(context, provider);
+          }
+        });
+        break;
+      case 'notifications_toggle':
+        final sessionId = provider.activeSessionId;
+        if (sessionId != null) {
+          provider.toggleSessionNotifications(sessionId);
+        }
+        break;
+      case 'codex_fast_mode':
+        provider.setCodexFastMode(!provider.codexFastMode);
+        break;
+      case 'claude_auto_compact':
+        provider.setClaudeAutoCompactEnabled(
+          !provider.claudeAutoCompactEnabled,
+        );
+        break;
+      case 'claude_auto_compact_window':
+        Future.microtask(() {
+          if (mounted) _showClaudeAutoCompactWindowDialog(provider);
+        });
+        break;
+    }
   }
 
   String? _projectFilesPath(ChatProvider provider) {
@@ -2403,6 +2281,8 @@ class HomeScreenState extends State<HomeScreen> {
 
   Future<void> _showContextDialog(Map<String, dynamic> usage) async {
     final provider = context.read<ChatProvider>();
+    final accountSessionId = provider.activeSessionId;
+    final accountServerId = provider.connMgr.activeServerId;
     Map<String, dynamic>? codexStatus = provider.codexStatus;
     if (provider.activeSessionBackend == 'codex') {
       final navigator = Navigator.of(context, rootNavigator: true);
@@ -2506,6 +2386,9 @@ class HomeScreenState extends State<HomeScreen> {
     showDialog(
       context: context,
       builder: (dlgCtx) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        titlePadding: const EdgeInsets.fromLTRB(16, 8, 4, 0),
+        contentPadding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
         title: Row(
           children: [
             Icon(Icons.donut_small, size: 20, color: theme.colorScheme.primary),
@@ -2516,6 +2399,11 @@ class HomeScreenState extends State<HomeScreen> {
                 style: const TextStyle(fontSize: 16),
                 overflow: TextOverflow.ellipsis,
               ),
+            ),
+            IconButton(
+              tooltip: 'Close',
+              onPressed: () => Navigator.pop(dlgCtx),
+              icon: const Icon(Icons.close, size: 20),
             ),
           ],
         ),
@@ -2551,13 +2439,13 @@ class HomeScreenState extends State<HomeScreen> {
                     ),
                   ),
                 ],
-                const SizedBox(height: 16),
+                const SizedBox(height: 8),
                 // Stacked context bar
                 if (maxTokens > 0)
                   ClipRRect(
                     borderRadius: BorderRadius.circular(6),
                     child: SizedBox(
-                      height: 24,
+                      height: 12,
                       child: Row(
                         children: segments.map((seg) {
                           final ratio = seg.tokens / maxTokens;
@@ -2695,11 +2583,19 @@ class HomeScreenState extends State<HomeScreen> {
                 ],
 
                 if (codexStatus != null) ...[
-                  const Divider(height: 24),
-                  _buildCodexStatusContextSection(codexStatus, theme),
+                  const Divider(height: 12),
+                  CodexAccountUsage(
+                    status: codexStatus,
+                    consumeReset: provider.activeSessionBackend == 'codex'
+                        ? (attemptId) => provider.consumeCodexReset(
+                            attemptId,
+                            sessionId: accountSessionId,
+                            serverId: accountServerId,
+                          )
+                        : null,
+                  ),
                 ],
 
-                const Divider(height: 24),
                 // Metadata
                 if (numTurns != null)
                   _contextDetailRow('Turns', '$numTurns', theme),
@@ -2715,12 +2611,6 @@ class HomeScreenState extends State<HomeScreen> {
             ),
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dlgCtx),
-            child: const Text('Close'),
-          ),
-        ],
       ),
     );
   }
@@ -2762,194 +2652,6 @@ class HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
-  }
-
-  Widget _buildCodexStatusContextSection(
-    Map<String, dynamic> status,
-    ThemeData theme,
-  ) {
-    final config = status['config'] is Map
-        ? Map<String, dynamic>.from(status['config'] as Map)
-        : <String, dynamic>{};
-    final limits = status['limits'] is List
-        ? status['limits'] as List
-        : const [];
-    final usage = status['usage'] is Map
-        ? Map<String, dynamic>.from(status['usage'] as Map)
-        : <String, dynamic>{};
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Codex Account',
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-            color: theme.colorScheme.onSurface.withAlpha(200),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            _contextPill(
-              'Model',
-              config['model']?.toString() ?? 'default',
-              theme,
-            ),
-            _contextPill(
-              'Effort',
-              config['effort']?.toString() ?? 'default',
-              theme,
-            ),
-            if ((config['serviceTier']?.toString() ?? '').isNotEmpty)
-              _contextPill('Tier', config['serviceTier'].toString(), theme),
-          ],
-        ),
-        if (limits.isNotEmpty) ...[
-          const SizedBox(height: 12),
-          ...limits.map(
-            (limit) => _contextLimitBlock(
-              Map<String, dynamic>.from(limit as Map),
-              theme,
-            ),
-          ),
-        ],
-        if (usage.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _contextPill(
-                'Today',
-                _formatContextNumber(usage['todayTokens']),
-                theme,
-              ),
-              _contextPill(
-                'Lifetime',
-                _formatContextNumber(usage['lifetimeTokens']),
-                theme,
-              ),
-              _contextPill(
-                'Peak day',
-                _formatContextNumber(usage['peakDailyTokens']),
-                theme,
-              ),
-              _contextPill(
-                'Streak',
-                '${usage['currentStreakDays'] ?? 'unknown'}d',
-                theme,
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _contextLimitBlock(Map<String, dynamic> limit, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            limit['label']?.toString() ?? 'Codex',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 4),
-          _contextLimitBar('Weekly', limit['secondary'], theme),
-          const SizedBox(height: 4),
-          _contextLimitBar('5h', limit['primary'], theme),
-        ],
-      ),
-    );
-  }
-
-  Widget _contextLimitBar(String label, dynamic raw, ThemeData theme) {
-    if (raw is! Map) return const SizedBox.shrink();
-    final data = Map<String, dynamic>.from(raw);
-    final pct = (data['usedPercent'] as num?)?.toDouble();
-    final value = pct == null ? 0.0 : (pct / 100).clamp(0.0, 1.0);
-    final reset = data['resetLabel']?.toString() ?? '';
-    final window = data['window']?.toString() ?? '';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              '$label ${pct?.round() ?? 0}%',
-              style: TextStyle(
-                fontSize: 11,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const Spacer(),
-            Flexible(
-              child: Text(
-                [window, if (reset.isNotEmpty) 'resets $reset'].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 3),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: value,
-            minHeight: 6,
-            backgroundColor: theme.colorScheme.surfaceContainerHighest,
-            valueColor: AlwaysStoppedAnimation<Color>(
-              value >= 0.85
-                  ? theme.colorScheme.error
-                  : theme.colorScheme.tertiary,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _contextPill(String label, String value, ThemeData theme) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
-      ),
-      child: Text(
-        '$label: $value',
-        style: TextStyle(
-          fontSize: 11,
-          color: theme.colorScheme.onSurfaceVariant,
-        ),
-      ),
-    );
-  }
-
-  String _formatContextNumber(dynamic value) {
-    final n = value is num
-        ? value.toDouble()
-        : double.tryParse(value?.toString() ?? '');
-    if (n == null || n.isNaN) return 'unknown';
-    if (n >= 1000000000) return '${(n / 1000000000).toStringAsFixed(1)}B';
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return n.round().toString();
   }
 
   Widget _contextDetailRow(String label, String value, ThemeData theme) {

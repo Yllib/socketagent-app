@@ -6,13 +6,15 @@ SocketAgent
 
 ## Short description
 
-Use Claude Code or OpenAI Codex from your Android phone.
+Use Claude Code and OpenAI Codex from your Android phone.
 
 ## Full description
 
-SocketAgent lets you use Claude Code or OpenAI Codex from your Android phone while the agent runs on a computer you control.
+SocketAgent connects your Android phone to Claude Code and OpenAI Codex installed on your computer.
 
-Pair the Android app with the free SocketAgent companion server, then start and resume coding sessions, send text or voice prompts, follow live responses and tool activity, manage sessions, and transfer files without staying at your desk.
+Send instructions, follow the agent’s work, approve requests, and pick up existing sessions from your phone. Your agent keeps working on your computer, with access to your projects and tools.
+
+Install the free, open-source SocketAgent server software on your computer and pair it with this app. Connect over your local network, or use the optional encrypted relay when you’re away.
 
 Features include:
 
@@ -22,14 +24,18 @@ Features include:
 • Text and voice input
 • File transfer between your phone and computer
 • Direct local-network connections
-• Optional encrypted relay access for remote connections and notifications
-• Scheduled tasks and reminders
+• Optional encrypted relay access for remote connections
+• Notifications, scheduled tasks, and reminders
 
-SocketAgent does not provide an AI model or AI subscription. A computer running the SocketAgent companion server is required. Claude Code and OpenAI Codex require their own supported accounts and are governed by their providers' terms. SocketAgent is not affiliated with or endorsed by Anthropic or OpenAI.
+Messages, tool output, and files sent through the relay are end-to-end encrypted. They are encrypted on the sending device and decrypted on the receiving device. The relay, if used, forwards the encrypted data without being able to read its contents.
 
-Your relay traffic is end-to-end encrypted between your phone and companion server. Direct local connections remain on your network. Remote relay access may require a Google Play subscription.
+Your chosen AI provider processes agent requests. Push notifications use Google Firebase and are handled separately from the encrypted connection.
 
-Learn how to install and pair the companion server at:
+SocketAgent does not provide an AI model or AI subscription. A computer running the SocketAgent server software is required. Claude Code and OpenAI Codex require their own supported accounts and are governed by their providers’ terms. Remote relay access may require a Google Play subscription.
+
+SocketAgent is not affiliated with or endorsed by Anthropic or OpenAI.
+
+Installation instructions and open-source server code:
 https://github.com/Yllib/socketagent
 
 ## Category

@@ -1,0 +1,5 @@
+{
+    "output":  "PASS: desktop-only installation with no server\r\nPASS: optional server installed in custom folder and ready for automatic pairing\r\n2026-09-13 17:38:38.331   Detected previous administrative 32-bit install? No\r\n2026-09-13 17:38:38.347   Installation process succeeded.\r\n2026-09-13 17:41:18.092   Need to restart Windows? No\r\n2026-09-13 17:41:18.092   Deinitializing Setup.\r\n2026-09-13 17:41:18.108   Log closed.\r\n[OK] Generated run-service.bat\r\n[OK] Generated run-recovery.bat\r\n[OK] Registered as scheduled task \u0027SocketAgent\u0027 (interactive logon)\r\n[!] Could not add firewall rule (requires admin). You may need to allow port 8085 manually.\r\n[OK] SocketAgent is ready\r\nPhase 7: Install CLI\r\n[OK] Installed socketagent command to C:\\Users\\sockettest\\AppData\\Local\\SocketAgent\\bin\r\nPhase 8: Finish\r\n{\r\n    \"TaskName\":  \"DesktopInstallerLab\",\r\n    \"State\":  3\r\n}\r\n",
+    "ok":  true,
+    "id":  "fresh-status-5"
+}

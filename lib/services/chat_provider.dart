@@ -1,3 +1,6 @@
+import 'windows_local_server.dart';
+import 'desktop_window_service.dart';
+import 'codex_reset_attempts.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -6,7 +9,7 @@ import 'package:flutter/widgets.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
-import 'package:open_filex/open_filex.dart';
+import 'file_open_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
@@ -53,6 +56,7 @@ import 'relay_push_service.dart';
 import 'crypto_service.dart';
 import 'server_connection_probe.dart';
 import 'secure_storage_service.dart';
+import 'config_transfer.dart';
 import 'tool_event_reconciler.dart';
 import 'session_transcript_cache.dart';
 import 'hard_stop_target.dart';
@@ -811,6 +815,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _pendingVersionCheckServerId;
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
   Completer<Map<String, dynamic>?>? _pendingCodexStatus;
+  final Map<String, Completer<Map<String, dynamic>>> _pendingCodexResets = {};
+  final Map<String, String?> _codexResetServers = {};
+  final _codexResetAttempts = CodexResetAttempts();
   final Map<String, Completer<bool>> _pushRegistrationCompleters = {};
   final Map<String, Timer> _pushRegistrationRetryTimers = {};
   final Map<String, int> _pushRegistrationRetryAttempts = {};
@@ -1146,6 +1153,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   bool _isViewingSession(String sessionId, {String? serverId}) {
     if (!_appInForeground || _viewingSessionId != sessionId) return false;
+    if (Platform.isWindows &&
+        (!DesktopWindowService.instance.value.visible ||
+            !DesktopWindowService.instance.value.active)) return false;
     final viewingServerId = _viewingServerId;
     if (serverId != null &&
         serverId.isNotEmpty &&
@@ -1261,6 +1271,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _markSessionIdle(String? sessionId, {String? serverId}) {
     if (sessionId == null || sessionId.isEmpty) return;
+    if (Platform.isWindows) {
+      final sid = serverId ?? _connMgr.activeServerId ?? '';
+      final running = _runningSessionNotifications[_runningSessionKey(sid, sessionId)];
+      if (running != null && !running.suppressOngoingNotification &&
+          !_isViewingSession(sessionId, serverId: sid)) {
+        unawaited(_notifications.showSessionCompletion(
+          id: _sessionCompletionNotificationId(sessionId, serverId: sid),
+          title: running.title,
+          body: 'Agent finished. Open the session to review.',
+          payload: 'session:${Uri.encodeComponent(sessionId)}:${Uri.encodeComponent(sid)}',
+        ));
+      }
+    }
     final matchingKeys = _runningSessionNotifications.keys.where((key) {
       final info = _runningSessionNotifications[key];
       if (info == null || info.sessionId != sessionId) return false;
@@ -2189,6 +2212,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _saveServerConfigs();
     }
 
+    if (Platform.isWindows) {
+      final seen = (prefs.getStringList('windows_local_servers_seen') ?? []).toSet();
+      try {
+        for (final candidate in await WindowsLocalServer().discover()) {
+          final identity = '${candidate.port}:${candidate.serverPubkey}';
+          if (seen.contains(identity)) continue;
+          if (_serverConfigs.any((c) => c.serverPubkey == candidate.serverPubkey &&
+              c.port == candidate.port && !c.useRelay)) {
+            seen.add(identity);
+            continue;
+          }
+          final probe = await const ServerConnectionProbe().verify(candidate,
+              subscriberToken: '', timeout: const Duration(seconds: 3));
+          if (!probe.success) continue;
+          _serverConfigs.add(candidate.copyWith(id: ServerConfig.generateId()));
+          await _saveServerConfigs();
+          seen.add(identity);
+        }
+        await prefs.setStringList('windows_local_servers_seen', seen.toList());
+      } catch (_) {
+        debugPrint('[Desktop] Local computer discovery unavailable; use Add computer.');
+      }
+    }
+
     _loadServerBuildCache(prefs);
     await _loadSessionCache(prefs);
     unawaited(
@@ -3007,6 +3054,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _serverConfigs.map((c) => c.toJson()).toList();
   }
 
+  /// Restore relay access before any imported computer opens a connection.
+  /// The credential must also be restored when all computers are duplicates.
+  Future<int> importTransferredConfigs(ExportPayload payload) async {
+    if (payload.subscriberToken.isNotEmpty) {
+      await saveSubscriberToken(
+        payload.subscriberToken,
+        payload.subscriberEmail,
+      );
+    }
+    final imported = await importServerConfigs(payload.servers);
+    if (payload.subscriberToken.isNotEmpty) {
+      await checkSubscriptionStatus();
+    }
+    return imported;
+  }
+
   /// Import server configs from compact maps (from QR decode).
   /// Returns the number of servers imported (skips duplicates).
   Future<int> importServerConfigs(List<Map<String, dynamic>> configs) async {
@@ -3463,9 +3526,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _subscriptionActive;
   }
 
-  Future<Map<String, dynamic>> createDirectCheckoutSession(
-    String email,
-  ) async {
+  Future<Map<String, dynamic>> createDirectCheckoutSession(String email) async {
     final normalizedEmail = email.trim();
     if (normalizedEmail.isEmpty) return {'error': 'Enter your email address.'};
 
@@ -3481,7 +3542,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             .timeout(const Duration(seconds: 20));
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         if (response.statusCode == 200) return data;
-        return {'error': data['error']?.toString() ?? 'Could not start checkout.'};
+        return {
+          'error': data['error']?.toString() ?? 'Could not start checkout.',
+        };
       } catch (error) {
         lastError = error;
         debugPrint('[Subscription] Direct checkout failed: $error');
@@ -3519,10 +3582,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         return null;
       } catch (error) {
         lastError = error;
-        debugPrint('[Subscription] Direct checkout verification failed: $error');
+        debugPrint(
+          '[Subscription] Direct checkout verification failed: $error',
+        );
       }
     }
-    debugPrint('[Subscription] Direct checkout verification unavailable: $lastError');
+    debugPrint(
+      '[Subscription] Direct checkout verification unavailable: $lastError',
+    );
     return 'Could not reach the relay to verify checkout.';
   }
 
@@ -3704,9 +3771,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Save subscriber token and email
   Future<void> saveSubscriberToken(String token, [String email = '']) async {
     _subscriberToken = token;
-    _subscriptionActive = true;
-    _subscriptionChecked = true;
-    _subscriptionCheckedAt = DateTime.now();
     _subscriberEmail = email;
     await _secureStorage.setSubscriberToken(token);
     if (email.isEmpty) {
@@ -3717,6 +3781,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Update subscriber token on all relay connections
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
+    // Old connections can report a rejection while credentials are being
+    // persisted and replaced. Set the new credential's state only after every
+    // connection has been reconfigured, and allow an immediate status refresh.
+    _subscriptionActive = true;
+    _subscriptionChecked = false;
+    _subscriptionCheckedAt = null;
+    _subscriptionCheckInFlight = null;
+    _subscriptionStatus = '';
+    _subscriptionProvider = '';
+    _trialEnd = null;
+    _periodEnd = null;
+    _cancelAtPeriodEnd = false;
     _connMgr.connectAll();
     await _registerPushNotifications();
     notifyListeners();
@@ -4237,6 +4313,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'prompt_failed',
       'abort_ack',
       'scheduled_task_notification',
+      'codex_reset_result',
       'reminder',
       'rate_limit_event',
       'session_transfer_export_result',
@@ -4590,6 +4667,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               ),
             );
             notifyListeners();
+            break;
+          }
+        case 'codex_reset_result':
+          {
+            final requestId = msg['requestId']?.toString();
+            if (requestId != null &&
+                _codexResetServers[requestId] == serverId) {
+              _pendingCodexResets
+                  .remove(requestId)
+                  ?.complete(Map<String, dynamic>.from(msg));
+              _codexResetServers.remove(requestId);
+            }
             break;
           }
         case 'codex_status':
@@ -5746,7 +5835,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           break;
         case 'reminder':
-          _handleReminder(msg);
+          _handleReminder(msg, serverId);
           break;
         case 'scheduled_task_list':
           if (serverId != null) {
@@ -8158,7 +8247,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> _handleReminder(Map<String, dynamic> msg) async {
+  Future<void> _handleReminder(
+    Map<String, dynamic> msg,
+    String? serverId,
+  ) async {
     final title = msg['title'] as String? ?? 'Reminder';
     final body = msg['body'] as String? ?? '';
     final scheduledTimeStr = msg['scheduledTime'] as String? ?? '';
@@ -8175,6 +8267,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       title: title,
       body: body,
       scheduledTime: scheduledTime,
+      payload:
+          PushNotificationService.payloadForData({
+            ...msg,
+            if (serverId != null) 'serverId': serverId,
+          }) ??
+          'sessions',
     );
   }
 
@@ -13123,6 +13221,78 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _sendCodexGoalRequest('codex_goal_clear');
   }
 
+  Future<Map<String, dynamic>> consumeCodexReset(
+    String attemptId, {
+    required String? sessionId,
+    required String? serverId,
+  }) async {
+    if (sessionId == null ||
+        serverId == null ||
+        _activeSessionId != sessionId ||
+        _connMgr.activeServerId != serverId ||
+        _activeSessionBackend != 'codex') {
+      throw StateError(
+        'The selected account/session changed. Reopen account usage.',
+      );
+    }
+    return _codexResetAttempts.run(
+      serverId,
+      attemptId,
+      (savedAttempt) => _sendCodexReset(
+        savedAttempt,
+        sessionId: sessionId,
+        serverId: serverId,
+      ),
+    );
+  }
+
+  Future<Map<String, dynamic>> _sendCodexReset(
+    String attemptId, {
+    required String sessionId,
+    required String serverId,
+  }) async {
+    if (_activeSessionId != sessionId || _connMgr.activeServerId != serverId) {
+      throw StateError(
+        'The selected account/session changed. Reopen account usage.',
+      );
+    }
+    final requestId = 'reset_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<Map<String, dynamic>>();
+    _pendingCodexResets[requestId] = completer;
+    _codexResetServers[requestId] = serverId;
+    try {
+      final sent = _connMgr.sendToServer(serverId, {
+        'type': 'consume_codex_reset',
+        'sessionId': sessionId,
+        'requestId': requestId,
+        'idempotencyKey': attemptId,
+        'confirmed': true,
+      });
+      if (!sent) {
+        throw StateError(
+          'Server disconnected. Reconnect and retry this reset.',
+        );
+      }
+      final result = await completer.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw StateError(
+          'Reset result was not received. Retry to check the same reset without spending another.',
+        ),
+      );
+      if (result['error'] != null) throw StateError(result['error'].toString());
+      if (_activeSessionId == sessionId &&
+          _connMgr.activeServerId == serverId &&
+          result['payload'] is Map) {
+        _codexStatus = Map<String, dynamic>.from(result['payload']);
+        notifyListeners();
+      }
+      return result;
+    } finally {
+      _pendingCodexResets.remove(requestId);
+      _codexResetServers.remove(requestId);
+    }
+  }
+
   Future<Map<String, dynamic>?> requestCodexStatus() {
     _pendingCodexStatus?.complete(null);
     final completer = Completer<Map<String, dynamic>?>();
@@ -13409,6 +13579,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void resumeSession(String sessionId, {String? serverId}) {
+    _codexStatus = null;
     _messages = [];
     _pendingInjectedMessageCount = 0;
     _pendingLocalUserMessageIds.clear();
@@ -13451,17 +13622,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _clearAttachment();
     _clearRawState();
     // Look up which server owns this session and switch active server
-    final session =
-        _sessions
-            .where(
-              (s) =>
-                  s.id == sessionId &&
-                  (serverId == null ||
-                      serverId.isEmpty ||
-                      s.serverId == serverId),
-            )
-            .firstOrNull ??
-        _sessions.where((s) => s.id == sessionId).firstOrNull;
+    final session = _sessions
+        .where(
+          (s) =>
+              s.id == sessionId &&
+              (serverId == null || serverId.isEmpty || s.serverId == serverId),
+        )
+        .firstOrNull;
     if (session != null) {
       _activeSessionTitle = session.title;
       _activeSessionCwd = session.cwd;
@@ -13470,6 +13637,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ? session.serverId
           : serverId ?? _connMgr.activeServerId;
     } else {
+      _activeSessionTitle = null;
+      _activeSessionCwd = null;
       _activeSessionBackend = null; // legacy session without backend tag
       _activeSessionServerId = serverId ?? _connMgr.activeServerId;
     }
@@ -13550,6 +13719,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? targetEntryId,
     int? targetSessionSeq,
   }) {
+    final previousServerId = _activeSessionServerId ?? _connMgr.activeServerId;
     if (serverId != null && serverId.isNotEmpty) {
       _connMgr.activeServerId = serverId;
     }
@@ -13569,10 +13739,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     final sameSession =
         _activeSessionId == sessionId &&
-        (serverId == null ||
-            serverId.isEmpty ||
-            _activeSessionServerId == null ||
-            _activeSessionServerId == serverId);
+        (serverId == null || serverId.isEmpty || previousServerId == serverId);
     if (sameSession) {
       notifyListeners();
       return;
@@ -15942,7 +16109,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ? localPath!
         : _receivedFiles[fileId];
     if (path == null || path.isEmpty) return;
-    final result = await OpenFilex.open(path);
+    final result = await FileOpenService.openPlatformFile(path);
     debugPrint(
       '[File] Open downloaded file result: ${result.type} (${result.message}) path=$path',
     );

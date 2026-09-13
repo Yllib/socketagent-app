@@ -36,18 +36,51 @@ class FileOpenService {
     bool? isAndroid,
     bool? supportsApkInstalls,
   }) : _nativeChannel = nativeChannel,
-       _platformFileOpener = platformFileOpener ?? _openWithPlatform,
+       _platformFileOpener = platformFileOpener,
        _isAndroid = isAndroid ?? Platform.isAndroid,
        _supportsApkInstalls =
            supportsApkInstalls ?? AppBuild.supportsApkInstalls;
 
   final MethodChannel _nativeChannel;
-  final PlatformFileOpener _platformFileOpener;
+  final PlatformFileOpener? _platformFileOpener;
   final bool _isAndroid;
   final bool _supportsApkInstalls;
 
-  static Future<OpenResult> _openWithPlatform(String path, {String? type}) =>
-      OpenFilex.open(path, type: type);
+  static Future<OpenResult> openPlatformFile(
+    String path, {
+    String? type,
+    MethodChannel nativeChannel = const MethodChannel(
+      'com.socketagent.app/intent',
+    ),
+    bool? isAndroid,
+  }) async {
+    if (!(isAndroid ?? Platform.isAndroid) ||
+        path.toLowerCase().endsWith('.apk')) {
+      return OpenFilex.open(path, type: type);
+    }
+    try {
+      final opened = await nativeChannel.invokeMethod<bool>(
+        'openDownloadedFile',
+        {'path': path, if (type != null) 'type': type},
+      );
+      return opened == true
+          ? OpenResult()
+          : OpenResult(
+              type: ResultType.error,
+              message: 'Could not open the file.',
+            );
+    } on PlatformException catch (error) {
+      return OpenResult(
+        type: switch (error.code) {
+          'FILE_NOT_FOUND' => ResultType.fileNotFound,
+          'FILE_ACCESS_DENIED' => ResultType.permissionDenied,
+          'NO_FILE_VIEWER' => ResultType.noAppToOpen,
+          _ => ResultType.error,
+        },
+        message: error.message ?? 'Could not open the file.',
+      );
+    }
+  }
 
   Future<FileOpenResult> open(String path) async {
     final isApk = path.toLowerCase().endsWith('.apk');
@@ -74,10 +107,15 @@ class FileOpenService {
     }
 
     try {
-      final result = await _platformFileOpener(
-        path,
-        type: isApk ? 'application/vnd.android.package-archive' : null,
-      );
+      final type = isApk ? 'application/vnd.android.package-archive' : null;
+      final result = _platformFileOpener != null
+          ? await _platformFileOpener(path, type: type)
+          : await openPlatformFile(
+              path,
+              type: type,
+              nativeChannel: _nativeChannel,
+              isAndroid: _isAndroid,
+            );
       return switch (result.type) {
         ResultType.done => const FileOpenResult.opened(),
         ResultType.fileNotFound => const FileOpenResult.failed(

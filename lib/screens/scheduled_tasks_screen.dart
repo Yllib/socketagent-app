@@ -1057,9 +1057,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                     Navigator.pop(ctx);
                     provider.markScheduledTaskRead(task['id'] as String);
                     provider.resumeSession(sessionId, serverId: taskServerId);
-                    Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const HomeScreen()),
-                    );
+                    openConversation(context);
                   },
                 ),
               if (status == 'pending')
@@ -1605,9 +1603,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     final provider = context.read<ChatProvider>();
     provider.markScheduledTaskRead(taskId);
     provider.resumeSession(sessionId, serverId: serverId);
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const HomeScreen()));
+    openConversation(context);
   }
 
   Widget _buildRunHistory(Map<String, dynamic> task) {

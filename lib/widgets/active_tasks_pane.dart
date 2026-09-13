@@ -8,6 +8,7 @@ import 'message_bubble.dart';
 import 'speak_card.dart';
 import 'file_card.dart';
 import 'reminder_card.dart';
+import 'dismissible_panel_items.dart';
 
 class ActiveTasksPane extends StatefulWidget {
   final Map<String, Map<String, dynamic>> backgroundTasks;
@@ -15,10 +16,11 @@ class ActiveTasksPane extends StatefulWidget {
   final Map<String, Map<String, dynamic>> workflowTasks;
   final List<ChatMessage> messages;
   final String? sourceServerId;
+  final String? sessionId;
+  final VoidCallback? onHide;
+  final Widget? hidingNotice;
   final void Function(String taskId)? onStopTask;
   final void Function(String toolUseId)? onScrollToTask;
-  final void Function(String toolUseId)? onDismissSubagent;
-  final void Function(String taskId)? onDismissWorkflow;
   final ValueChanged<String>? onReadAloud;
 
   const ActiveTasksPane({
@@ -28,10 +30,11 @@ class ActiveTasksPane extends StatefulWidget {
     required this.workflowTasks,
     required this.messages,
     this.sourceServerId,
+    this.sessionId,
+    this.onHide,
+    this.hidingNotice,
     this.onStopTask,
     this.onScrollToTask,
-    this.onDismissSubagent,
-    this.onDismissWorkflow,
     this.onReadAloud,
   });
 
@@ -54,6 +57,52 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
   int _indexedMessageCount = -1;
   ChatMessage? _indexedFirstMessage;
   ChatMessage? _indexedLastMessage;
+  bool _confirming = false;
+
+  Future<void> _confirmAction(
+    _TaskEntry entry,
+    VoidCallback action, {
+    required bool stop,
+  }) async {
+    if (_confirming) return;
+    _confirming = true;
+    final scope = (widget.sourceServerId, widget.sessionId);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(stop ? 'Stop running work?' : 'Dismiss finished item?'),
+        content: SingleChildScrollView(
+          child: Text(
+            stop
+                ? 'Stop "${entry.description}"? This interrupts the running work.'
+                : 'Dismiss "${entry.description}" from this panel? Its history is kept.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(stop ? 'Stop' : 'Dismiss'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    _confirming = false;
+    final current = _entries.where((e) => e.itemId == entry.itemId).firstOrNull;
+    if (confirmed == true &&
+        scope == (widget.sourceServerId, widget.sessionId) &&
+        current != null &&
+        current.description == entry.description &&
+        (stop
+            ? current.stoppable && !isFinishedPanelItem(current.status)
+            : isFinishedPanelItem(current.status))) {
+      action();
+    }
+  }
 
   @override
   void initState() {
@@ -187,7 +236,20 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
 
   @override
   Widget build(BuildContext context) {
-    final entries = _entries;
+    return DismissiblePanelItems(
+      scope: widget.sourceServerId == null || widget.sessionId == null
+          ? null
+          : [widget.sourceServerId!, widget.sessionId!, 'activity'],
+      items: {for (final entry in _entries) entry.itemId: entry.status},
+      builder: (dismissed, dismiss) => _buildPane(dismissed, dismiss),
+    );
+  }
+
+  Widget _buildPane(Set<String> dismissed, ValueChanged<String> dismiss) {
+    if (widget.hidingNotice != null) return widget.hidingNotice!;
+    final entries = _entries
+        .where((e) => !dismissed.contains(e.itemId))
+        .toList();
     if (entries.isEmpty) return const SizedBox.shrink();
 
     final provider = context.read<ChatProvider>();
@@ -249,10 +311,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
               InkWell(
                 onTap: () => provider.taskPaneCollapsed = !paneCollapsed,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
                   child: Row(
                     children: [
                       if (entries.any(
@@ -276,41 +335,64 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                           color: Colors.green.shade400,
                         ),
                       const SizedBox(width: 8),
-                      Text(
-                        () {
-                          final running = entries
-                              .where(
-                                (e) =>
-                                    e.status == 'running' ||
-                                    e.status == 'pending' ||
-                                    e.status == 'paused',
-                              )
-                              .length;
-                          final done = entries
-                              .where(
-                                (e) =>
-                                    e.status != 'running' &&
-                                    e.status != 'pending' &&
-                                    e.status != 'paused',
-                              )
-                              .length;
-                          final parts = <String>[];
-                          if (running > 0) parts.add('$running running');
-                          if (done > 0) parts.add('$done done');
-                          return parts.join(', ');
-                        }(),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.blue.shade200,
+                      Expanded(
+                        child: Text(
+                          () {
+                            final running = entries
+                                .where(
+                                  (e) =>
+                                      e.status == 'running' ||
+                                      e.status == 'pending' ||
+                                      e.status == 'paused',
+                                )
+                                .length;
+                            final done = entries
+                                .where(
+                                  (e) =>
+                                      e.status != 'running' &&
+                                      e.status != 'pending' &&
+                                      e.status != 'paused',
+                                )
+                                .length;
+                            final parts = <String>[];
+                            if (running > 0) parts.add('$running running');
+                            if (done > 0) parts.add('$done done');
+                            return 'Activity  ${parts.join(', ')}';
+                          }(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: Colors.blue.shade200,
+                          ),
                         ),
                       ),
-                      const Spacer(),
                       Icon(
                         paneCollapsed ? Icons.expand_less : Icons.expand_more,
                         size: 16,
                         color: Colors.blue.shade300,
                       ),
+                      if (widget.onHide != null)
+                        IconButton(
+                          tooltip: 'Hide activity',
+                          onPressed: widget.onHide,
+                          padding: EdgeInsets.zero,
+                          style: IconButton.styleFrom(
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            minimumSize: const Size(24, 24),
+                            maximumSize: const Size(24, 24),
+                          ),
+                          constraints: const BoxConstraints.tightFor(
+                            width: 24,
+                            height: 24,
+                          ),
+                          icon: const Icon(
+                            Icons.visibility_off_outlined,
+                            size: 16,
+                            color: Color(0xFF6C7086),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -322,7 +404,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                     padding: EdgeInsets.zero,
                     itemCount: entries.length,
                     itemBuilder: (context, index) =>
-                        _buildEntry(entries[index]),
+                        _buildEntry(entries[index], dismiss),
                   ),
                 ),
             ],
@@ -332,12 +414,9 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
     );
   }
 
-  Widget _buildEntry(_TaskEntry entry) {
+  Widget _buildEntry(_TaskEntry entry, ValueChanged<String> dismiss) {
     final isExpanded = _expandedIds.contains(entry.id);
-    final isCompleted =
-        entry.status == 'completed' ||
-        entry.status == 'failed' ||
-        entry.status == 'stopped';
+    final isCompleted = isFinishedPanelItem(entry.status);
     final terminalColor = entry.status == 'failed'
         ? const Color(0xFFF38BA8)
         : entry.status == 'stopped'
@@ -459,45 +538,35 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                     ),
                   ),
                 ),
-                // Stop button (bash) or dismiss button (completed subagent)
-                if (entry.stoppable && widget.onStopTask != null)
-                  GestureDetector(
-                    onTap: () => widget.onStopTask!(entry.id),
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Icon(
-                        Icons.stop_circle_outlined,
-                        size: 16,
-                        color: Colors.red.shade300,
-                      ),
+                if (isCompleted ||
+                    (entry.stoppable && widget.onStopTask != null))
+                  IconButton(
+                    tooltip: isCompleted
+                        ? 'Dismiss finished item'
+                        : 'Stop running work',
+                    onPressed: () => _confirmAction(
+                      entry,
+                      isCompleted
+                          ? () => dismiss(entry.itemId)
+                          : () => widget.onStopTask?.call(entry.id),
+                      stop: !isCompleted,
                     ),
-                  )
-                else if (isCompleted &&
-                    entry.kind == 'workflow' &&
-                    widget.onDismissWorkflow != null)
-                  GestureDetector(
-                    onTap: () => widget.onDismissWorkflow!(entry.id),
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Icon(
-                        Icons.close,
-                        size: 14,
-                        color: Colors.blue.shade400,
-                      ),
+                    padding: EdgeInsets.zero,
+                    style: IconButton.styleFrom(
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      minimumSize: const Size(24, 24),
+                      maximumSize: const Size(24, 24),
                     ),
-                  )
-                else if (isCompleted &&
-                    entry.kind == 'subagent' &&
-                    widget.onDismissSubagent != null)
-                  GestureDetector(
-                    onTap: () => widget.onDismissSubagent!(entry.id),
-                    child: Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Icon(
-                        Icons.close,
-                        size: 14,
-                        color: Colors.blue.shade400,
-                      ),
+                    constraints: const BoxConstraints.tightFor(
+                      width: 24,
+                      height: 24,
+                    ),
+                    icon: Icon(
+                      isCompleted ? Icons.close : Icons.stop_circle_outlined,
+                      size: isCompleted ? 14 : 16,
+                      color: isCompleted
+                          ? const Color(0xFF6C7086)
+                          : Colors.red.shade300,
                     ),
                   ),
               ],
@@ -745,6 +814,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
 }
 
 class _TaskEntry {
+  String get itemId => '$kind:$id';
   final String id;
   final String kind; // 'bash' or 'subagent'
   final String description;

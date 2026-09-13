@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
+    <external-path name="downloaded_files" path="Download/" />
+    <cache-path name="cached_files" path="." />
+    <files-path name="app_files" path="." />
+    <external-files-path name="external_app_files" path="." />
     <cache-path name="apk_cache" path="updates/" />
     <cache-path name="html_plan_exports" path="html_plans/" />
 </paths>

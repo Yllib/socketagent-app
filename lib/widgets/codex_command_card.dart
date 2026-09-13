@@ -1,3 +1,4 @@
+import 'codex_account_usage.dart';
 import 'package:flutter/material.dart';
 
 import '../models/message.dart';
@@ -112,12 +113,6 @@ class CodexCommandCard extends StatelessWidget {
     final config = payload['config'] is Map
         ? Map<String, dynamic>.from(payload['config'] as Map)
         : <String, dynamic>{};
-    final limits = payload['limits'] is List
-        ? payload['limits'] as List
-        : const [];
-    final usage = payload['usage'] is Map
-        ? Map<String, dynamic>.from(payload['usage'] as Map)
-        : <String, dynamic>{};
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -149,130 +144,7 @@ class CodexCommandCard extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        if (limits.isNotEmpty) ...[
-          Text(
-            'Limits',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 6),
-          ...limits.map(
-            (limit) =>
-                _limitBlock(theme, Map<String, dynamic>.from(limit as Map)),
-          ),
-        ],
-        if (usage.isNotEmpty) ...[
-          const SizedBox(height: 8),
-          Text(
-            'Usage',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _metricPill(theme, 'Today', _formatTokens(usage['todayTokens'])),
-              _metricPill(
-                theme,
-                'Lifetime',
-                _formatTokens(usage['lifetimeTokens']),
-              ),
-              _metricPill(
-                theme,
-                'Peak day',
-                _formatTokens(usage['peakDailyTokens']),
-              ),
-              _metricPill(
-                theme,
-                'Streak',
-                '${usage['currentStreakDays'] ?? 'unknown'}d',
-              ),
-            ],
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _limitBlock(ThemeData theme, Map<String, dynamic> limit) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            limit['label']?.toString() ?? 'Codex',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface,
-            ),
-          ),
-          const SizedBox(height: 4),
-          _limitBar(theme, 'Primary', limit['primary']),
-          const SizedBox(height: 4),
-          _limitBar(theme, 'Secondary', limit['secondary']),
-        ],
-      ),
-    );
-  }
-
-  Widget _limitBar(ThemeData theme, String label, dynamic raw) {
-    if (raw is! Map) return const SizedBox.shrink();
-    final data = Map<String, dynamic>.from(raw);
-    final pct = (data['usedPercent'] as num?)?.toDouble();
-    final value = pct == null ? 0.0 : (pct / 100).clamp(0.0, 1.0);
-    final reset = data['resetLabel']?.toString() ?? '';
-    final window = data['window']?.toString() ?? '';
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              '$label ${pct?.round() ?? 0}%',
-              style: TextStyle(
-                fontSize: 11,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const Spacer(),
-            Flexible(
-              child: Text(
-                [window, if (reset.isNotEmpty) 'resets $reset'].join(' · '),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: 10,
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 3),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: value,
-            minHeight: 6,
-            backgroundColor: theme.colorScheme.surfaceContainerHighest,
-            valueColor: AlwaysStoppedAnimation<Color>(
-              value >= 0.85
-                  ? theme.colorScheme.error
-                  : theme.colorScheme.tertiary,
-            ),
-          ),
-        ),
+        CodexAccountUsage(status: payload),
       ],
     );
   }
@@ -406,16 +278,5 @@ class CodexCommandCard extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  String _formatTokens(dynamic value) {
-    final n = value is num
-        ? value.toDouble()
-        : double.tryParse(value?.toString() ?? '');
-    if (n == null || n.isNaN) return 'unknown';
-    if (n >= 1000000000) return '${(n / 1000000000).toStringAsFixed(1)}B';
-    if (n >= 1000000) return '${(n / 1000000).toStringAsFixed(1)}M';
-    if (n >= 1000) return '${(n / 1000).toStringAsFixed(1)}K';
-    return n.round().toString();
   }
 }

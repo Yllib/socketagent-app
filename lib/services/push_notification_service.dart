@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -53,6 +54,7 @@ class PushNotificationService {
   }
 
   Future<bool> initialize() async {
+    if (!Platform.isAndroid) return false;
     if (_initialized) return _available;
     final inFlight = _initializationInFlight;
     if (inFlight != null) return inFlight;
@@ -87,7 +89,12 @@ class PushNotificationService {
         unawaited(handleRemoteMessage(message, foreground: true));
       });
       _openedSub = FirebaseMessaging.onMessageOpenedApp.listen((message) {
-        onNotificationTap?.call(_payloadFor(message));
+        final payload = _payloadFor(message);
+        if (onNotificationTap != null) {
+          onNotificationTap!(payload);
+        } else {
+          _launchPayload = payload;
+        }
       });
       _available = true;
       _initialized = true;
