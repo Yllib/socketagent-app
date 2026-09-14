@@ -190,7 +190,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
       final children =
           _childMessagesByParent[toolUseId] ?? const <ChatMessage>[];
       // Find the tool call message to get the result output
-      final resultOutput = status == 'completed'
+      final resultOutput = status != 'running' && status != 'pending'
           ? _toolCallsById[toolUseId]?.toolOutput
           : null;
       entries.add(

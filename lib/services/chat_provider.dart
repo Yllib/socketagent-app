@@ -7232,6 +7232,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final pendingStream = _toolEventReconciler.takeStream(toolUseId);
     if (pendingResult != null) {
       toolMsg.toolOutput = pendingResult.output;
+      if (pendingResult.subagentStatus != null) {
+        toolMsg.toolInput?['_task_status'] = subagentDisplayStatus(
+          pendingResult.subagentStatus,
+        );
+      }
       toolMsg.toolStreaming = pendingResult.backgroundPending;
       toolMsg.isBackgrounded = pendingResult.backgroundPending;
       if (pendingResult.backgroundPending) {
@@ -7265,7 +7270,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ? previous!['status']
           : toolMsg.toolStreaming
           ? 'running'
-          : 'completed';
+          : (toolMsg.toolInput?['_task_status'] ?? 'completed');
       _subagentTasks[toolUseId] = mergeSubagentTaskState(previous, {
         'description': desc,
         'prompt': input['prompt'] as String? ?? '',
@@ -7313,7 +7318,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_subagentTasks.containsKey(toolUseId)) {
         _subagentTasks[toolUseId]!['status'] = backgroundPending
             ? 'running'
-            : 'completed';
+            : subagentDisplayStatus(msg['subagentStatus']);
+        if (msg['subagentStatus'] != null) {
+          _messages[toolCallIdx].toolInput?['_task_status'] =
+              subagentDisplayStatus(msg['subagentStatus']);
+          _subagentTasks[toolUseId]!['terminalStatus'] = msg['subagentStatus'];
+        }
         _subagentTasks[toolUseId]!['isBackgrounded'] = backgroundPending;
         if (backgroundPending) {
           _subagentTasks[toolUseId]!['taskId'] ??= toolUseId;
@@ -7323,6 +7333,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _toolEventReconciler.bufferResult(
         toolUseId,
         output,
+        subagentStatus: msg['subagentStatus'] as String?,
         parentToolUseId: msg['parentToolUseId'] as String?,
         backgroundPending: backgroundPending,
       );
@@ -8091,7 +8102,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _closeLiveStreamsForParent(parentToolUseId);
     // Mark the subagent task as completed
     if (_subagentTasks.containsKey(parentToolUseId)) {
-      _subagentTasks[parentToolUseId]!['status'] = 'completed';
+      _subagentTasks[parentToolUseId]!['status'] = subagentDisplayStatus(
+        msg['subagentStatus'],
+      );
+      _subagentTasks[parentToolUseId]!['terminalStatus'] =
+          msg['subagentStatus'] ?? 'completed';
       if (msg['durationMs'] != null) {
         _subagentTasks[parentToolUseId]!['durationMs'] = msg['durationMs'];
       }
@@ -8124,14 +8139,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final subagentType = t['subagentType'] as String? ?? '';
       final rawStatus = t['status'] as String? ?? 'running';
       if (toolUseId.isEmpty) continue;
+      incomingIds.add(toolUseId);
 
       final isActive = rawStatus == 'running' || rawStatus == 'pending';
       if (!isActive) {
-        final status = rawStatus == 'errored'
-            ? 'failed'
-            : rawStatus == 'interrupted'
-            ? 'stopped'
-            : 'completed';
+        final status = subagentDisplayStatus(rawStatus);
         final existing = _subagentTasks[toolUseId];
         _subagentTasks[toolUseId] = mergeSubagentTaskState(existing, {
           'description': description,
@@ -8165,15 +8177,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         continue;
       }
-      incomingIds.add(toolUseId);
-
       final previous = _subagentTasks[toolUseId];
       _subagentTasks[toolUseId] = mergeSubagentTaskState(previous, {
         'description': description,
         'prompt': t['prompt'] as String? ?? previous?['prompt'] ?? '',
         'subagentType': subagentType,
         'status': 'running',
-        'terminalStatus': rawStatus,
+        'terminalStatus': null,
+        if (previous != null && !isActiveSubagentStatus(previous['status']))
+          'dismissed': false,
         'toolUseId': toolUseId,
         'source': source ?? previous?['source'],
         'taskId': t['agentId'] ?? previous?['taskId'],
@@ -8227,6 +8239,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .where(
             (entry) =>
                 entry.value['source'] == source &&
+                isActiveSubagentStatus(entry.value['status']) &&
                 !incomingIds.contains(entry.key),
           )
           .map((entry) => entry.key)
@@ -10666,6 +10679,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final orphanResult = _toolEventReconciler.takeResult(toolUseId);
           if (orphanResult != null) {
             toolCallMsg.toolOutput = orphanResult.output;
+            if (orphanResult.subagentStatus != null) {
+              toolCallMsg.toolInput?['_task_status'] = subagentDisplayStatus(
+                orphanResult.subagentStatus,
+              );
+            }
             toolCallMsg.toolStreaming = orphanResult.backgroundPending;
             toolCallMsg.isBackgrounded = orphanResult.backgroundPending;
             if (orphanResult.backgroundPending) {
@@ -10686,6 +10704,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
           if (idx >= 0) {
             loaded[idx].toolOutput = output;
+            if (entry['subagentStatus'] != null) {
+              loaded[idx].toolInput?['_task_status'] = subagentDisplayStatus(
+                entry['subagentStatus'],
+              );
+            }
             loaded[idx].toolStreaming = backgroundPending;
             loaded[idx].isBackgrounded = backgroundPending;
             if (backgroundPending) {
@@ -10701,6 +10724,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 : -1;
             if (existingIdx >= 0) {
               _messages[existingIdx].toolOutput = output;
+              if (entry['subagentStatus'] != null) {
+                _messages[existingIdx].toolInput?['_task_status'] =
+                    subagentDisplayStatus(entry['subagentStatus']);
+              }
               _messages[existingIdx].toolStreaming = backgroundPending;
               _messages[existingIdx].isBackgrounded = backgroundPending;
               if (backgroundPending) {
@@ -10710,6 +10737,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _toolEventReconciler.bufferResult(
                 toolUseId,
                 output,
+                subagentStatus: entry['subagentStatus'] as String?,
                 parentToolUseId: entry['parentToolUseId'] as String?,
                 backgroundPending: backgroundPending,
               );
@@ -11100,17 +11128,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final previous = _subagentTasks[m.toolUseId!];
         final historyStatus =
             restoredStatus ?? (hasTerminalResult ? 'completed' : 'running');
+        // A native child can run several turns on the same card. Its current
+        // runtime snapshot outranks a result loaded from an earlier turn.
+        final nativeSnapshot = previous?['source'] == 'codex';
         final mergedStatus =
-            restoredStatus == null &&
-                isActiveSubagentStatus(previous?['status'])
+            nativeSnapshot ||
+                (restoredStatus == null &&
+                    isActiveSubagentStatus(previous?['status']))
             ? previous!['status']
             : historyStatus;
+        if (nativeSnapshot) {
+          m.toolStreaming = isActiveSubagentStatus(mergedStatus);
+          m.toolInput?['_task_status'] = mergedStatus;
+        }
         _subagentTasks[m.toolUseId!] = mergeSubagentTaskState(previous, {
           'description': desc,
           'prompt': m.toolInput?['prompt'] as String? ?? '',
           'subagentType': m.toolInput?['subagent_type'] as String? ?? '',
           'status': mergedStatus,
-          if (restoredStatus != null) 'terminalStatus': restoredStatus,
+          if (nativeSnapshot)
+            'terminalStatus': previous?['terminalStatus']
+          else if (restoredStatus != null)
+            'terminalStatus': restoredStatus,
           'toolUseId': m.toolUseId!,
           'isBackgrounded': m.isBackgrounded,
           if (m.backgroundTaskId != null) 'taskId': m.backgroundTaskId,

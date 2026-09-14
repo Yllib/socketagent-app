@@ -16,7 +16,9 @@ String? acknowledgedSessionEventKey(Map<String, dynamic> message) {
       return '$type:$sessionId:$toolUseId:${message['tool']}:${message['input']}';
     }
     final output = message['output'] as String? ?? '';
-    return '$type:$sessionId:$toolUseId:${output.length}:${output.hashCode}';
+    final outcome = message['subagentStatus'];
+    return '$type:$sessionId:$toolUseId:${output.length}:${output.hashCode}'
+        '${outcome == null ? '' : ':$outcome'}';
   }
 
   if (type == 'user_message_uuid') {
@@ -362,6 +364,13 @@ bool isActiveSubagentStatus(Object? status) {
   final value = status?.toString();
   return value == 'running' || value == 'pending' || value == 'paused';
 }
+
+String subagentDisplayStatus(Object? status) => switch (status?.toString()) {
+  'errored' || 'failed' || 'systemError' => 'failed',
+  'interrupted' || 'shutdown' || 'unavailable' || 'stopped' => 'stopped',
+  'running' || 'active' || 'pending' || 'pendingInit' => 'running',
+  _ => 'completed',
+};
 
 /// A reconnect replay is useful for reconstructing the active-task pane, but
 /// it is not a new transcript event. If the original launch card is outside

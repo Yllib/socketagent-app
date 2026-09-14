@@ -5,11 +5,13 @@ class PendingToolResult {
     required this.output,
     this.parentToolUseId,
     this.backgroundPending = false,
+    this.subagentStatus,
   });
 
   final String output;
   final String? parentToolUseId;
   final bool backgroundPending;
+  final String? subagentStatus;
 }
 
 /// Settles tool cards when the server says the visible session is idle.
@@ -61,6 +63,7 @@ class ToolEventReconciler {
     String output, {
     String? parentToolUseId,
     bool backgroundPending = false,
+    String? subagentStatus,
   }) {
     if (toolUseId.isEmpty) return;
     _streams.remove(toolUseId);
@@ -68,6 +71,7 @@ class ToolEventReconciler {
       output: output,
       parentToolUseId: parentToolUseId,
       backgroundPending: backgroundPending,
+      subagentStatus: subagentStatus,
     );
   }
 

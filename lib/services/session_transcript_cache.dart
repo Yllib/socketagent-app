@@ -216,6 +216,8 @@ Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
         'toolOutput': output,
         'toolUseId': event['toolUseId']?.toString() ?? '',
         if (event['backgroundPending'] == true) 'backgroundPending': true,
+        if (event['subagentStatus'] != null)
+          'subagentStatus': event['subagentStatus'],
       };
     case 'work_review_card':
       return {
