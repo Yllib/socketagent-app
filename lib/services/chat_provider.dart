@@ -815,6 +815,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _pendingVersionCheckServerId;
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
   Completer<Map<String, dynamic>?>? _pendingCodexStatus;
+  Completer<Map<String, dynamic>?>? _pendingClaudeUsage;
   final Map<String, Completer<Map<String, dynamic>>> _pendingCodexResets = {};
   final Map<String, String?> _codexResetServers = {};
   final _codexResetAttempts = CodexResetAttempts();
@@ -4692,6 +4693,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _pendingCodexStatus?.complete(null);
               _pendingCodexStatus = null;
             }
+            break;
+          }
+        case 'claude_usage':
+          {
+            final usage = msg['error'] == null && msg['usage'] is Map
+                ? Map<String, dynamic>.from(msg['usage'] as Map)
+                : null;
+            _pendingClaudeUsage?.complete(usage);
+            _pendingClaudeUsage = null;
             break;
           }
         case 'usage_restore':
@@ -13330,6 +13340,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _pendingCodexResets.remove(requestId);
       _codexResetServers.remove(requestId);
     }
+  }
+
+  /// The Claude plan's rate-limit windows, fetched on demand.
+  ///
+  /// Null when the session is not Claude, the server is older, or the account
+  /// has no plan limits (API key, Bedrock, Vertex).
+  Future<Map<String, dynamic>?> requestClaudeUsage() {
+    _pendingClaudeUsage?.complete(null);
+    final completer = Completer<Map<String, dynamic>?>();
+    _pendingClaudeUsage = completer;
+    _connMgr.send({'type': 'get_claude_usage'});
+    return completer.future.timeout(
+      const Duration(seconds: 6),
+      onTimeout: () {
+        if (_pendingClaudeUsage == completer) _pendingClaudeUsage = null;
+        return null;
+      },
+    );
   }
 
   Future<Map<String, dynamic>?> requestCodexStatus() {

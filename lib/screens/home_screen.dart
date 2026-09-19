@@ -3,6 +3,7 @@ import '../services/desktop_composer_keys.dart';
 import '../services/desktop_workspace_controller.dart';
 import '../widgets/desktop_split_view.dart';
 import '../widgets/adaptive_control_bar.dart';
+import '../widgets/claude_account_usage.dart';
 import '../widgets/codex_account_usage.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -2320,6 +2321,11 @@ class HomeScreenState extends State<HomeScreen> {
         navigator.pop();
       }
     }
+    // Started before the dialog so the panel fills in without blocking the
+    // tap; a FutureBuilder below renders it when it lands.
+    final claudeUsageFuture = provider.activeSessionBackend == 'codex'
+        ? null
+        : provider.requestClaudeUsage();
     final ctx = provider.contextUsage;
     final inputTokens = (usage['inputTokens'] as num?)?.toInt() ?? 0;
     final outputTokens = (usage['outputTokens'] as num?)?.toInt() ?? 0;
@@ -2476,9 +2482,10 @@ class HomeScreenState extends State<HomeScreen> {
                   ),
                 ],
                 const SizedBox(height: 12),
-                // Category legend
+                // Legend: only what occupies the window. The bar already
+                // shows buffer, deferred and free as their own segments.
                 ...segments
-                    .where((s) => s.color != Colors.transparent)
+                    .where((s) => s.color != Colors.transparent && s.tokens > 0)
                     .map(
                       (seg) => _contextLegendRow(
                         seg.label,
@@ -2487,100 +2494,39 @@ class HomeScreenState extends State<HomeScreen> {
                         theme,
                       ),
                     ),
-                // Output tokens
-                _contextLegendRow(
-                  'Output',
-                  outputTokens,
-                  const Color(0xFFCBA6F7),
-                  theme,
-                ),
-                // Free space
-                if (freeTokens > 0)
-                  _contextLegendRow('Free', freeTokens, null, theme),
+                if (outputTokens > 0)
+                  _contextLegendRow(
+                    'Output',
+                    outputTokens,
+                    const Color(0xFFCBA6F7),
+                    theme,
+                  ),
 
-                // Message breakdown (from SDK detailed context)
+                // Messages, sliced. Only the non-zero rows: most are
+                // zero on any given turn, and listing them all buried the
+                // few that carried real weight.
                 if (msgBreakdown != null) ...[
-                  const Divider(height: 24),
-                  Text(
-                    'Message Breakdown',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSurface.withAlpha(200),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  if ((msgBreakdown['userMessageTokens'] as num?)?.toInt() !=
-                      null)
-                    _contextDetailRow(
-                      'User messages',
-                      _formatTokenCount(
-                        (msgBreakdown['userMessageTokens'] as num).toInt(),
-                      ),
-                      theme,
-                    ),
-                  if ((msgBreakdown['assistantMessageTokens'] as num?)
-                          ?.toInt() !=
-                      null)
-                    _contextDetailRow(
-                      'Assistant messages',
-                      _formatTokenCount(
-                        (msgBreakdown['assistantMessageTokens'] as num).toInt(),
-                      ),
-                      theme,
-                    ),
-                  if ((msgBreakdown['toolCallTokens'] as num?)?.toInt() != null)
-                    _contextDetailRow(
-                      'Tool calls',
-                      _formatTokenCount(
-                        (msgBreakdown['toolCallTokens'] as num).toInt(),
-                      ),
-                      theme,
-                    ),
-                  if ((msgBreakdown['toolResultTokens'] as num?)?.toInt() !=
-                      null)
-                    _contextDetailRow(
-                      'Tool results',
-                      _formatTokenCount(
-                        (msgBreakdown['toolResultTokens'] as num).toInt(),
-                      ),
-                      theme,
-                    ),
-                  if ((msgBreakdown['attachmentTokens'] as num?)?.toInt() !=
-                          null &&
-                      (msgBreakdown['attachmentTokens'] as num).toInt() > 0)
-                    _contextDetailRow(
-                      'Attachments',
-                      _formatTokenCount(
-                        (msgBreakdown['attachmentTokens'] as num).toInt(),
-                      ),
-                      theme,
-                    ),
+                  ..._msgBreakdownRows(msgBreakdown, theme),
                 ],
 
-                // MCP tools
-                if (ctx?['mcpTools'] != null &&
-                    (ctx!['mcpTools'] as List).isNotEmpty) ...[
-                  const Divider(height: 24),
-                  Text(
-                    'MCP Tools',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                      color: theme.colorScheme.onSurface.withAlpha(200),
-                    ),
+                // One line each. These lists run to dozens of entries once
+                // MCP servers and skills load, which is what made this
+                // dialog too long to read.
+                ..._contextInventoryRows(ctx, theme),
+
+                if (claudeUsageFuture != null)
+                  FutureBuilder<Map<String, dynamic>?>(
+                    future: claudeUsageFuture,
+                    builder: (_, snap) => snap.data == null
+                        ? const SizedBox.shrink()
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Divider(height: 20),
+                              ClaudeAccountUsage(usage: snap.data!),
+                            ],
+                          ),
                   ),
-                  const SizedBox(height: 8),
-                  ...(ctx['mcpTools'] as List)
-                      .where((t) => ((t['tokens'] as num?)?.toInt() ?? 0) > 0)
-                      .map(
-                        (tool) => _contextDetailRow(
-                          '${tool['serverName']}: ${tool['name']}',
-                          _formatTokenCount((tool['tokens'] as num).toInt()),
-                          theme,
-                        ),
-                      ),
-                ],
 
                 if (codexStatus != null) ...[
                   const Divider(height: 12),
@@ -2613,6 +2559,83 @@ class HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  /// Non-zero slices of the Messages category, largest first.
+  List<Widget> _msgBreakdownRows(
+    Map<String, dynamic> breakdown,
+    ThemeData theme,
+  ) {
+    const labels = {
+      'userMessageTokens': 'User messages',
+      'assistantMessageTokens': 'Assistant messages',
+      'toolCallTokens': 'Tool calls',
+      'toolResultTokens': 'Tool results',
+      'attachmentTokens': 'Attachments',
+      'redirectedContextTokens': 'Redirected context',
+    };
+    final rows = labels.entries
+        .map((e) => (e.value, (breakdown[e.key] as num?)?.toInt() ?? 0))
+        .where((row) => row.$2 > 0)
+        .toList()
+      ..sort((a, b) => b.$2.compareTo(a.$2));
+    if (rows.isEmpty) return const [];
+    return [
+      const Divider(height: 20),
+      for (final row in rows)
+        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+    ];
+  }
+
+  /// What is loaded into the window, one summary line per kind rather than
+  /// one line per tool, skill or file.
+  List<Widget> _contextInventoryRows(
+    Map<String, dynamic>? ctx,
+    ThemeData theme,
+  ) {
+    if (ctx == null) return const [];
+    int sumTokens(dynamic list) => list is List
+        ? list.fold<int>(
+            0,
+            (total, e) => total + (((e as Map?)?['tokens'] as num?)?.toInt() ?? 0),
+          )
+        : 0;
+    int countOf(dynamic list) => list is List ? list.length : 0;
+
+    final rows = <(String, String)>[];
+    void add(String label, int count, int tokens, {String? noun}) {
+      if (count <= 0 && tokens <= 0) return;
+      final unit = noun ?? '';
+      rows.add((
+        label,
+        '$count$unit  ·  ${_formatTokenCount(tokens)}',
+      ));
+    }
+
+    add('MCP tools', countOf(ctx['mcpTools']), sumTokens(ctx['mcpTools']));
+    add('Memory files', countOf(ctx['memoryFiles']), sumTokens(ctx['memoryFiles']));
+    add('Agents', countOf(ctx['agents']), sumTokens(ctx['agents']));
+    final skills = ctx['skills'] as Map?;
+    if (skills != null) {
+      add(
+        'Skills',
+        (skills['includedSkills'] as num?)?.toInt() ?? 0,
+        (skills['tokens'] as num?)?.toInt() ?? 0,
+      );
+    }
+    final commands = ctx['slashCommands'] as Map?;
+    if (commands != null) {
+      add(
+        'Commands',
+        (commands['includedCommands'] as num?)?.toInt() ?? 0,
+        (commands['tokens'] as num?)?.toInt() ?? 0,
+      );
+    }
+    if (rows.isEmpty) return const [];
+    return [
+      const Divider(height: 20),
+      for (final row in rows) _contextDetailRow(row.$1, row.$2, theme),
+    ];
   }
 
   Widget _contextLegendRow(
