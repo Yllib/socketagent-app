@@ -12757,7 +12757,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleBackendAuthRequired(Map<String, dynamic> msg, String? serverId) {
     if (serverId == null || serverId.isEmpty) return;
     final backend = msg['backend'] as String? ?? 'codex';
-    final backendName = backend == 'codex' ? 'Codex' : 'Backend';
+    final backendName = backend == 'codex'
+        ? 'Codex'
+        : backend == 'claude'
+        ? 'Claude'
+        : 'Backend';
     final authScope = msg['authScope']?.toString() ?? 'openai';
     final targetSessionId = msg['sessionId']?.toString();
     final mcpServerName = msg['mcpServerName']?.toString();
@@ -12774,6 +12778,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'enabled': true,
       'available': false,
       'severity': 'error',
+      'kind': 'auth',
       'reason': '$backendName authentication is invalid or expired.',
       if (detail != null && detail.isNotEmpty) 'detail': detail,
     };

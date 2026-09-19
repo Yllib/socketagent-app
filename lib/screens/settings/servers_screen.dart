@@ -793,6 +793,23 @@ class _ServersScreenState extends State<ServersScreen> {
     return backend == 'codex' ? 'Codex' : 'Claude';
   }
 
+  /// What went wrong, in two words. Servers older than the auth-tracking build
+  /// send no kind, so anything unlabelled stays a generic backend error.
+  String? _backendHealthStatus(Map<String, dynamic> entry) {
+    switch (entry['severity']?.toString()) {
+      case 'ok':
+        return null;
+      case 'warning':
+        return 'Warning';
+      case 'disabled':
+        return 'Disabled';
+      default:
+        return entry['kind']?.toString() == 'auth'
+            ? 'Auth error'
+            : 'Backend error';
+    }
+  }
+
   IconData _backendHealthIcon(Map<String, dynamic> entry) {
     switch (entry['severity']) {
       case 'error':
@@ -869,7 +886,10 @@ class _ServersScreenState extends State<ServersScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  _backendHealthTitle(entry),
+                  [
+                    _backendHealthTitle(entry),
+                    ?_backendHealthStatus(entry),
+                  ].join(' · '),
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 if (reason != null && reason.isNotEmpty)

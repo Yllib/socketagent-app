@@ -1821,6 +1821,18 @@ class _BackendDetailTile extends StatelessWidget {
     final reason = entry['reason']?.toString();
     final detail = entry['detail']?.toString();
     final ok = severity == 'ok';
+    // Servers older than the auth-tracking build send no kind, so anything
+    // unlabelled stays a generic backend error.
+    final isAuthProblem = !ok && entry['kind']?.toString() == 'auth';
+    final status = ok
+        ? 'OK'
+        : severity == 'warning'
+        ? 'Warning'
+        : severity == 'disabled'
+        ? 'Disabled'
+        : isAuthProblem
+        ? 'Auth error'
+        : 'Backend error';
 
     return Consumer<ChatProvider>(
       builder: (context, provider, _) {
@@ -1829,9 +1841,8 @@ class _BackendDetailTile extends StatelessWidget {
         final subtitle = running
             ? state?.message ?? 'Running backend operation'
             : [
+                status,
                 if (reason != null && reason.isNotEmpty) reason,
-                if ((reason == null || reason.isEmpty) && severity.isNotEmpty)
-                  severity,
                 if (detail != null && detail.isNotEmpty) detail,
               ].join(' · ');
 
@@ -1890,8 +1901,18 @@ class _BackendDetailTile extends StatelessWidget {
           child: Row(
             children: [
               Icon(
-                ok ? Icons.check_circle_outline : Icons.error_outline,
-                color: ok ? Colors.green.shade600 : Colors.orange.shade700,
+                ok
+                    ? Icons.check_circle_outline
+                    : isAuthProblem
+                    ? Icons.lock_outline
+                    : severity == 'warning'
+                    ? Icons.warning_amber_outlined
+                    : Icons.error_outline,
+                color: ok
+                    ? Colors.green.shade600
+                    : severity == 'warning'
+                    ? Colors.orange.shade700
+                    : Colors.red.shade400,
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -1912,29 +1933,55 @@ class _BackendDetailTile extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              OutlinedButton.icon(
-                icon: const Icon(Icons.login, size: 18),
-                label: const Text('Sign In'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: const Size(0, 40),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
+              if (isAuthProblem)
+                FilledButton.icon(
+                  icon: const Icon(Icons.login, size: 18),
+                  label: const Text('Sign In'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    minimumSize: const Size(0, 40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: canRun ? signIn : null,
+                )
+              else
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.login, size: 18),
+                  label: const Text('Sign In'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: canRun ? signIn : null,
                 ),
-                onPressed: canRun ? signIn : null,
-              ),
               const SizedBox(width: 8),
-              FilledButton.icon(
-                icon: const Icon(Icons.build, size: 18),
-                label: const Text('Repair'),
-                style: FilledButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  minimumSize: const Size(0, 40),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
+              if (isAuthProblem)
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.build, size: 18),
+                  label: const Text('Repair'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 10),
+                    minimumSize: const Size(0, 40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: canRun ? repair : null,
+                )
+              else
+                FilledButton.icon(
+                  icon: const Icon(Icons.build, size: 18),
+                  label: const Text('Repair'),
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    minimumSize: const Size(0, 40),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: canRun ? repair : null,
                 ),
-                onPressed: canRun ? repair : null,
-              ),
             ],
           ),
         );
