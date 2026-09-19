@@ -39,6 +39,131 @@ import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
 import 'session_memory_screen.dart';
 
+/// One row of the context dialog, optionally opening onto its own rows.
+///
+/// Used for both the legend (swatch and share of the fill) and the plain
+/// rows under it. A category's breakdown belongs here, under the category,
+/// rather than in a separate block further down repeating its name.
+class _ContextRow extends StatefulWidget {
+  const _ContextRow({
+    required this.label,
+    required this.value,
+    this.color,
+    this.share,
+    this.children = const [],
+  });
+
+  final String label;
+  final String value;
+
+  /// Legend swatch, matching this category's segment in the bar.
+  final Color? color;
+
+  /// Percent of the bar's filled part, for legend rows.
+  final double? share;
+
+  final List<Widget> children;
+
+  @override
+  State<_ContextRow> createState() => _ContextRowState();
+}
+
+class _ContextRowState extends State<_ContextRow> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isLegend = widget.color != null;
+    final canExpand = widget.children.isNotEmpty;
+
+    final row = Padding(
+      padding: EdgeInsets.symmetric(vertical: isLegend ? 3 : 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 18,
+            child: canExpand
+                ? Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_down
+                        : Icons.keyboard_arrow_right,
+                    size: 16,
+                    color: theme.colorScheme.onSurface.withAlpha(150),
+                  )
+                : null,
+          ),
+          if (isLegend) ...[
+            Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                color: widget.color,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+          Expanded(
+            child: Text(
+              widget.label,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: isLegend ? 13 : 12,
+                color: isLegend
+                    ? theme.colorScheme.onSurface
+                    : theme.colorScheme.onSurface.withAlpha(178),
+              ),
+            ),
+          ),
+          Text(
+            widget.value,
+            style: TextStyle(
+              fontSize: isLegend ? 13 : 12,
+              fontWeight: isLegend ? FontWeight.w500 : FontWeight.normal,
+              color: theme.colorScheme.onSurface.withAlpha(isLegend ? 178 : 200),
+            ),
+          ),
+          if (widget.share != null)
+            SizedBox(
+              width: 44,
+              child: Text(
+                '${widget.share!.toStringAsFixed(0)}%',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: theme.colorScheme.onSurface.withAlpha(128),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        canExpand
+            ? InkWell(
+                onTap: () => setState(() => _expanded = !_expanded),
+                child: row,
+              )
+            : row,
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 18, bottom: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: widget.children,
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 /// A block of context rows behind its own header.
 ///
 /// Collapsed by default: all three run long enough to bury the bar and the
@@ -2464,8 +2589,6 @@ class HomeScreenState extends State<HomeScreen> {
     final usedTokens = breakdown.isEmpty ? totalTokens : breakdown.usedTokens;
     final usedRatio = maxTokens > 0 ? usedTokens / maxTokens : 0.0;
 
-    // Message breakdown from SDK
-    final msgBreakdown = ctx?['messageBreakdown'] as Map<String, dynamic>?;
     final autoCompactThreshold = (ctx?['autoCompactThreshold'] as num?)
         ?.toInt();
     final isAutoCompact = ctx?['isAutoCompactEnabled'] == true;
@@ -2551,36 +2674,31 @@ class HomeScreenState extends State<HomeScreen> {
                 ],
                 const SizedBox(height: 14),
                 // Legend for the bar above, in the same order and colours.
+                // A category that has a breakdown opens to show it in place,
+                // rather than repeating the category further down the dialog
+                // under a heading of its own.
                 ...breakdown.used.map(
-                  (category) => _contextLegendRow(
-                    category.name,
-                    category.tokens,
-                    category.color,
-                    usedTokens,
-                    theme,
+                  (category) => _ContextRow(
+                    label: category.name,
+                    value: _formatTokenCount(category.tokens),
+                    color: category.color,
+                    share: usedTokens > 0
+                        ? category.tokens / usedTokens * 100
+                        : null,
+                    children: _categoryDetail(category.name, ctx, theme),
                   ),
                 ),
 
                 // Inside the window but unoccupied, plus the tool schemas
-                // held outside it. None of these count toward the
-                // percentage, which is why they are not in the bar.
+                // held outside it. None of these have a legend row to nest
+                // under, because none of them count toward the percentage.
                 ..._contextReserveRows(
                   breakdown,
                   freeTokens,
                   usedRatio,
+                  ctx,
                   theme,
                 ),
-
-                // Slices of the Messages row above, not categories of their
-                // own. Only the non-zero ones: most are zero on any given
-                // turn and listing them all buried the few that carried
-                // real weight.
-                if (msgBreakdown != null)
-                  ..._msgBreakdownRows(msgBreakdown, theme),
-
-                // One line per kind. These lists run to dozens of entries
-                // once MCP servers and skills load.
-                ..._contextInventoryRows(ctx, theme),
 
                 if (claudeUsageFuture != null)
                   FutureBuilder<Map<String, dynamic>?>(
@@ -2639,19 +2757,28 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   /// The parts of the window the percentage does not count.
+  ///
+  /// Deferred tools opens onto the MCP tools held outside the window, which
+  /// is where nearly all of them live: they are listed but their schemas are
+  /// not loaded, so they cost the session nothing until one is called.
   List<Widget> _contextReserveRows(
     ContextBreakdown breakdown,
     int fallbackFree,
     double usedRatio,
+    Map<String, dynamic>? ctx,
     ThemeData theme,
   ) {
     final free = breakdown.freeTokens > 0 ? breakdown.freeTokens : fallbackFree;
-    final rows = <(String, int)>[
-      if (free > 0) ('Free space', free),
+    final rows = <(String, int, List<Widget>)>[
+      if (free > 0) ('Free space', free, const <Widget>[]),
       if (breakdown.bufferTokens > 0)
-        ('Compact buffer', breakdown.bufferTokens),
+        ('Compact buffer', breakdown.bufferTokens, const <Widget>[]),
       if (breakdown.deferredTokens > 0)
-        ('Deferred tools', breakdown.deferredTokens),
+        (
+          'Deferred tools',
+          breakdown.deferredTokens,
+          _tokenRows(_mcpTools(ctx, loaded: false), theme),
+        ),
     ];
     if (rows.isEmpty) return const [];
     return [
@@ -2664,9 +2791,79 @@ class HomeScreenState extends State<HomeScreen> {
             'something calls for them.',
         children: [
           for (final row in rows)
-            _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+            _ContextRow(
+              label: row.$1,
+              value: _formatTokenCount(row.$2),
+              children: row.$3,
+            ),
         ],
       ),
+    ];
+  }
+
+  /// What a legend category opens onto, or nothing when the payload carries
+  /// no breakdown for it.
+  ///
+  /// System prompt and System tools have none: the SDK itemises those only at
+  /// `detail: 'full'`, which token-counts every category over the API, and
+  /// this runs on every session init.
+  List<Widget> _categoryDetail(
+    String name,
+    Map<String, dynamic>? ctx,
+    ThemeData theme,
+  ) {
+    switch (name) {
+      case 'Messages':
+        final breakdown = ctx?['messageBreakdown'] as Map<String, dynamic>?;
+        return breakdown == null ? const [] : _msgBreakdownRows(breakdown, theme);
+      case 'Skills':
+        return _tokenRows(
+          (ctx?['skills'] as Map?)?['skillFrontmatter'],
+          theme,
+        );
+      case 'Memory files':
+        return _tokenRows(ctx?['memoryFiles'], theme, labelKey: 'path');
+      case 'MCP tools':
+        return _tokenRows(_mcpTools(ctx, loaded: true), theme);
+      case 'Agents':
+        return _tokenRows(ctx?['agents'], theme, labelKey: 'agentType');
+      default:
+        return const [];
+    }
+  }
+
+  /// The MCP tools whose schemas are loaded into the window, or the ones
+  /// held back. Tools predating `isLoaded` count as loaded.
+  List<dynamic> _mcpTools(Map<String, dynamic>? ctx, {required bool loaded}) {
+    final tools = ctx?['mcpTools'];
+    if (tools is! List) return const [];
+    return tools
+        .where((tool) => ((tool as Map?)?['isLoaded'] != false) == loaded)
+        .toList();
+  }
+
+  /// `{name, tokens}` records as rows, largest first. Paths show their last
+  /// segment, since the directories are identical and eat the width.
+  List<Widget> _tokenRows(
+    dynamic list,
+    ThemeData theme, {
+    String labelKey = 'name',
+  }) {
+    if (list is! List) return const [];
+    final rows = list
+        .whereType<Map>()
+        .map(
+          (entry) => (
+            '${entry[labelKey] ?? entry['name'] ?? ''}'.split('/').last,
+            (entry['tokens'] as num?)?.toInt() ?? 0,
+          ),
+        )
+        .where((row) => row.$1.isNotEmpty && row.$2 > 0)
+        .toList()
+      ..sort((a, b) => b.$2.compareTo(a.$2));
+    return [
+      for (final row in rows)
+        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
     ];
   }
 
@@ -2688,135 +2885,10 @@ class HomeScreenState extends State<HomeScreen> {
         .where((row) => row.$2 > 0)
         .toList()
       ..sort((a, b) => b.$2.compareTo(a.$2));
-    if (rows.isEmpty) return const [];
     return [
-      _ContextSection(
-        title: 'Inside Messages',
-        total: _formatTokenCount(rows.fold(0, (sum, row) => sum + row.$2)),
-        hint:
-            'The Messages row above, split by what produced those tokens. '
-            'Not extra usage.',
-        children: [
-          for (final row in rows)
-            _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
-        ],
-      ),
+      for (final row in rows)
+        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
     ];
-  }
-
-  /// What is loaded into the window, one summary line per kind rather than
-  /// one line per tool, skill or file.
-  List<Widget> _contextInventoryRows(
-    Map<String, dynamic>? ctx,
-    ThemeData theme,
-  ) {
-    if (ctx == null) return const [];
-    int sumTokens(dynamic list) => list is List
-        ? list.fold<int>(
-            0,
-            (total, e) => total + (((e as Map?)?['tokens'] as num?)?.toInt() ?? 0),
-          )
-        : 0;
-    int countOf(dynamic list) => list is List ? list.length : 0;
-
-    final rows = <(String, String)>[];
-    var loadedCount = 0;
-    void add(String label, int count, int tokens, {String? noun}) {
-      if (count <= 0 && tokens <= 0) return;
-      final unit = noun ?? '';
-      loadedCount += count;
-      rows.add((
-        label,
-        '$count$unit  ·  ${_formatTokenCount(tokens)}',
-      ));
-    }
-
-    add('MCP tools', countOf(ctx['mcpTools']), sumTokens(ctx['mcpTools']));
-    add('Memory files', countOf(ctx['memoryFiles']), sumTokens(ctx['memoryFiles']));
-    add('Agents', countOf(ctx['agents']), sumTokens(ctx['agents']));
-    final skills = ctx['skills'] as Map?;
-    if (skills != null) {
-      add(
-        'Skills',
-        (skills['includedSkills'] as num?)?.toInt() ?? 0,
-        (skills['tokens'] as num?)?.toInt() ?? 0,
-      );
-    }
-    final commands = ctx['slashCommands'] as Map?;
-    if (commands != null) {
-      add(
-        'Commands',
-        (commands['includedCommands'] as num?)?.toInt() ?? 0,
-        (commands['tokens'] as num?)?.toInt() ?? 0,
-      );
-    }
-    if (rows.isEmpty) return const [];
-    return [
-      _ContextSection(
-        title: 'Available to this session',
-        total: '$loadedCount items',
-        hint:
-            'How many of each this session can reach, and what listing them '
-            'costs. Counted above under System tools, Skills and MCP tools.',
-        children: [
-          for (final row in rows) _contextDetailRow(row.$1, row.$2, theme),
-        ],
-      ),
-    ];
-  }
-
-  /// One category of the bar: its swatch, its size, and how much of the
-  /// filled part of the bar it accounts for.
-  Widget _contextLegendRow(
-    String label,
-    int tokens,
-    Color? color,
-    int usedTokens,
-    ThemeData theme,
-  ) {
-    final share = usedTokens > 0 ? tokens / usedTokens * 100 : 0.0;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(
-              color: color ?? theme.colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(2),
-              border: color == null
-                  ? Border.all(
-                      color: theme.colorScheme.outlineVariant,
-                      width: 1,
-                    )
-                  : null,
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
-          Text(
-            _formatTokenCount(tokens),
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: theme.colorScheme.onSurface.withAlpha(178),
-            ),
-          ),
-          SizedBox(
-            width: 44,
-            child: Text(
-              '${share.toStringAsFixed(0)}%',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                fontSize: 13,
-                color: theme.colorScheme.onSurface.withAlpha(128),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
   }
 
   Widget _contextDetailRow(String label, String value, ThemeData theme) {
