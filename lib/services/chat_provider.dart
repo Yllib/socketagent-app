@@ -1,6 +1,7 @@
 import 'windows_local_server.dart';
 import 'desktop_window_service.dart';
 import 'codex_reset_attempts.dart';
+import 'downloads_directory.dart';
 import 'backend_warning.dart';
 import 'dart:async';
 import 'dart:convert';
@@ -16246,13 +16247,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  String _socketDownloadTempPath(String fileId) {
+  Future<String> _socketDownloadTempPath(String fileId) async {
+    await downloadsDirectory();
+    return _socketDownloadTempPathSync(fileId);
+  }
+
+  /// Only for [_handleFileChunk], which cannot await. See
+  /// [downloadsDirectorySync].
+  String _socketDownloadTempPathSync(String fileId) {
     final safeId = _safeDownloadTempId(fileId);
-    return '/storage/emulated/0/Download/.$safeId.tmp';
+    final dir = downloadsDirectorySync();
+    return '${dir.path}${Platform.pathSeparator}.$safeId.tmp';
   }
 
   Future<int> _socketDownloadOffset(String fileId) async {
-    final tempFile = File(_socketDownloadTempPath(fileId));
+    final tempFile = File(await _socketDownloadTempPath(fileId));
     try {
       return await tempFile.exists() ? await tempFile.length() : 0;
     } catch (_) {
@@ -16311,14 +16320,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String safeName,
   }) async {
     final name = safeName.isEmpty ? 'file' : safeName;
-    var targetFile = File('${downloadsDir.path}/$name');
+    var targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$name');
     var counter = 1;
     while (targetFile.existsSync()) {
       final ext = name.contains('.') ? '.${name.split('.').last}' : '';
       final base = name.contains('.')
           ? name.substring(0, name.lastIndexOf('.'))
           : name;
-      targetFile = File('${downloadsDir.path}/$base ($counter)$ext');
+      targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext');
       counter++;
     }
 
@@ -16382,9 +16391,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         .split('\\')
         .last
         .replaceAll('..', '');
-    final downloadsDir = Directory('/storage/emulated/0/Download');
+    final downloadsDir = await downloadsDirectory();
     final safeId = _safeDownloadTempId(fileId);
-    final tempPath = '${downloadsDir.path}/.$safeId.http.tmp';
+    final tempPath =
+        '${downloadsDir.path}${Platform.pathSeparator}.$safeId.http.tmp';
     final tempFile = File(tempPath);
     const maxAttempts = 5;
     const connectTimeout = Duration(seconds: 10);
@@ -16628,12 +16638,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     try {
-      final downloadsDir = Directory('/storage/emulated/0/Download');
-      if (!downloadsDir.existsSync()) {
-        downloadsDir.createSync(recursive: true);
-      }
+      final downloadsDir = await downloadsDirectory();
 
-      var targetFile = File('${downloadsDir.path}/$fileName');
+      var targetFile = File(
+        '${downloadsDir.path}${Platform.pathSeparator}$fileName',
+      );
       var counter = 1;
       while (targetFile.existsSync()) {
         final ext = fileName.contains('.')
@@ -16642,7 +16651,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final base = fileName.contains('.')
             ? fileName.substring(0, fileName.lastIndexOf('.'))
             : fileName;
-        targetFile = File('${downloadsDir.path}/$base ($counter)$ext');
+        targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext');
         counter++;
       }
 
@@ -16714,7 +16723,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       // Open temp file on first chunk
       if (!_activeDownloads.containsKey(fileId)) {
-        final tempPath = _socketDownloadTempPath(fileId);
+        final tempPath = _socketDownloadTempPathSync(fileId);
         final tempFile = File(tempPath);
         final shouldAppend = chunkIndex > 0 && tempFile.existsSync();
         final existingBytes = shouldAppend ? tempFile.lengthSync() : 0;
@@ -16902,8 +16911,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
 
       // Rename temp file to final name (handle duplicates)
-      final downloadsDir = Directory('/storage/emulated/0/Download');
-      var targetFile = File('${downloadsDir.path}/$fileName');
+      final downloadsDir = await downloadsDirectory();
+      var targetFile = File(
+        '${downloadsDir.path}${Platform.pathSeparator}$fileName',
+      );
       var counter = 1;
       while (targetFile.existsSync()) {
         final ext = fileName.contains('.')
@@ -16912,7 +16923,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final base = fileName.contains('.')
             ? fileName.substring(0, fileName.lastIndexOf('.'))
             : fileName;
-        targetFile = File('${downloadsDir.path}/$base ($counter)$ext');
+        targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext');
         counter++;
       }
 

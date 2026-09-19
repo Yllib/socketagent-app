@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:app/services/file_open_service.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -145,5 +147,74 @@ void main() {
     final service = FileOpenService(nativeChannel: channel);
 
     expect(await service.openApkPermissionSettings(), isTrue);
+  });
+
+  // open_filex registers no desktop implementation, so before this every
+  // desktop open called a plugin that was not there.
+  group('desktop', () {
+    late Directory dir;
+
+    setUp(() => dir = Directory.systemTemp.createTempSync('file-open'));
+    tearDown(() => dir.deleteSync(recursive: true));
+
+    File write(String name) =>
+        File('${dir.path}/$name')..writeAsStringSync('x');
+
+    ({String executable, List<String> arguments})? ran;
+
+    FileOpenService serviceFor(String platform) => FileOpenService(
+      isAndroid: false,
+      desktopPlatform: platform,
+      desktopCommandRunner: (executable, arguments) async {
+        ran = (executable: executable, arguments: arguments);
+        return true;
+      },
+    );
+
+    // The case this was written for: tapping Open on a downloaded installer
+    // must not run it.
+    test('an executable is revealed, never launched', () async {
+      final file = write('socketagent_desktop_installer.exe');
+      expect(
+        (await serviceFor('windows').open(file.path)).outcome,
+        FileOpenOutcome.opened,
+      );
+      expect(ran!.executable, 'explorer');
+      expect(ran!.arguments, ['/select,${file.path}']);
+
+      await serviceFor('macos').open(file.path);
+      expect(ran!.arguments, ['-R', file.path]);
+
+      await serviceFor('linux').open(file.path);
+      expect(ran!.arguments, [dir.path]);
+    });
+
+    test('an ordinary file opens in its default app', () async {
+      final file = write('report.txt');
+      await serviceFor('windows').open(file.path);
+      expect(ran!.arguments, [file.path]);
+
+      await serviceFor('linux').open(file.path);
+      expect(ran!.executable, 'xdg-open');
+      expect(ran!.arguments, [file.path]);
+    });
+
+    test('a missing file says so rather than shelling out', () async {
+      ran = null;
+      final result = await serviceFor('linux').open('${dir.path}/gone.txt');
+      expect(result.outcome, FileOpenOutcome.failed);
+      expect(result.message, contains('no longer available'));
+      expect(ran, isNull);
+    });
+
+    test('a file manager that will not start is reported', () async {
+      final file = write('report.txt');
+      final service = FileOpenService(
+        isAndroid: false,
+        desktopPlatform: 'linux',
+        desktopCommandRunner: (_, _) async => false,
+      );
+      expect((await service.open(file.path)).outcome, FileOpenOutcome.failed);
+    });
   });
 }
