@@ -6358,6 +6358,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _sendToActiveSessionServer(message);
   }
 
+  /// Ask the computer to stream the profile while a viewer is open.
+  ///
+  /// The server expires a watch that stops being renewed, so callers repeat
+  /// this while their viewer is showing rather than relying on the stop
+  /// reaching the computer.
+  bool watchBrowserSession({
+    required String profile,
+    required bool watching,
+    String? serverId,
+  }) {
+    final message = {
+      'type': 'browser_watch',
+      'profile': profile,
+      'watching': watching,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
+  }
+
   bool installBrowserRuntime({
     required String profile,
     required String url,

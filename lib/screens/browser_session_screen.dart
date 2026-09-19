@@ -34,8 +34,14 @@ class BrowserSessionScreen extends StatefulWidget {
   State<BrowserSessionScreen> createState() => _BrowserSessionScreenState();
 }
 
-class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
+/// Renewed well inside the server's watch expiry so a slow round trip never
+/// drops the stream mid-view.
+const _watchRenewalInterval = Duration(seconds: 8);
+
+class _BrowserSessionScreenState extends State<BrowserSessionScreen>
+    with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _subscription;
+  Timer? _watchTimer;
   final List<Timer> _followupTimers = [];
   Uint8List? _frame;
   String _url = '';
@@ -48,20 +54,26 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
   bool _readingBrowserClipboard = false;
   Timer? _backspaceRepeatTimer;
 
-  ChatProvider get _provider => context.read<ChatProvider>();
+  /// Cached at mount because `dispose` has to tell the computer to stop
+  /// streaming, and reading a provider off a deactivated element is not
+  /// allowed.
+  late final ChatProvider _provider;
 
   @override
   void initState() {
     super.initState();
+    _provider = context.read<ChatProvider>();
     _url = widget.initialUrl;
     _runtimeRequired = widget.initialRuntimeRequired;
     WindowSecurityService.enableScreenshotProtection();
+    WidgetsBinding.instance.addObserver(this);
     _subscription = _provider.browserFrameEvents.listen(_handleEvent);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (!_runtimeRequired) {
         _requestFrame();
         _scheduleFollowups();
+        _startWatching();
       }
     });
   }
@@ -70,11 +82,50 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
   void dispose() {
     _subscription?.cancel();
     _backspaceRepeatTimer?.cancel();
+    _stopWatching();
     for (final timer in _followupTimers) {
       timer.cancel();
     }
+    WidgetsBinding.instance.removeObserver(this);
     WindowSecurityService.disableScreenshotProtection();
     super.dispose();
+  }
+
+  /// Nobody is looking at a backgrounded viewer, so stop paying for frames.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (!_runtimeRequired) {
+        _requestFrame();
+        _startWatching();
+      }
+    } else {
+      _stopWatching();
+    }
+  }
+
+  void _startWatching() {
+    if (_watchTimer != null) return;
+    _sendWatch(true);
+    _watchTimer = Timer.periodic(
+      _watchRenewalInterval,
+      (_) => _sendWatch(true),
+    );
+  }
+
+  void _stopWatching() {
+    if (_watchTimer == null) return;
+    _watchTimer!.cancel();
+    _watchTimer = null;
+    _sendWatch(false);
+  }
+
+  void _sendWatch(bool watching) {
+    _provider.watchBrowserSession(
+      profile: widget.profile,
+      watching: watching,
+      serverId: widget.serverId,
+    );
   }
 
   void _handleEvent(Map<String, dynamic> event) {
@@ -109,6 +160,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen> {
       if (status == 'ready') {
         _requestFrame();
         _scheduleFollowups();
+        _startWatching();
       }
       return;
     }
