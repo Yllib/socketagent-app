@@ -24,6 +24,7 @@ import '../models/hard_stop_protocol.dart';
 import '../models/composer_attachment.dart';
 import '../models/html_plan.dart';
 import '../models/archive_entry.dart';
+import '../models/user_prompt_text.dart';
 import '../models/file_manager_entry.dart';
 import '../models/server_config.dart';
 import '../models/raw_event.dart';
@@ -6194,11 +6195,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _pendingCacheUserPromptContent.containsKey(clientMessageId)
           ? clientMessageId
           : localMessage?.id;
+      // A prompt sent from another client has no local bubble to read, but the
+      // event carries the stored text, which is what history holds anyway.
       userContent =
           (cacheMessageId == null
               ? null
               : _pendingCacheUserPromptContent.remove(cacheMessageId)) ??
-          localMessage?.textContent;
+          localMessage?.textContent ??
+          msg['content']?.toString();
     }
     final entry = transcriptCacheEntryFromServerEvent(
       msg,
@@ -6772,16 +6776,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     r'</task-notification>',
     dotAll: true,
   );
-  // Regex to match system-injected XML blocks that should not appear in chat
-  static final _systemReminderRegex = RegExp(
-    r'<system-reminder>.*?</system-reminder>'
-    r'|<local-command-caveat>.*?</local-command-caveat>'
-    r'|<command-name>.*?</command-name>'
-    r'|<command-message>.*?</command-message>'
-    r'|<command-args>.*?</command-args>'
-    r'|<local-command-stdout>.*?</local-command-stdout>',
-    dotAll: true,
-  );
 
   String _hierarchyStreamKey(Map<String, dynamic> msg) {
     final streamId = msg['streamId'] as String?;
@@ -6981,7 +6975,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Strip system-reminder blocks
     streamMessage.textContent = streamMessage.textContent.replaceAll(
-      _systemReminderRegex,
+      systemNoiseRegex,
       '',
     );
 
@@ -9515,13 +9509,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
     }
-    // Find the most recent user text message without a UUID and assign it
+    // Several clients can watch one session at once, so the prompt text rides
+    // along with the UUID. On the client that sent it the bubble is already
+    // there and this only stamps it; anywhere else it is the whole message.
+    final rawContent = msg['content'] as String? ?? '';
+    final prompt = rawContent.isEmpty ? null : _parseUserPrompt(rawContent);
+    if (prompt != null && (prompt.hidden || prompt.text.isEmpty)) {
+      // A prompt with nothing to show has no bubble on any client, so there is
+      // nothing here to stamp either.
+      return;
+    }
+    final arrived = prompt == null
+        ? null
+        : _buildUserDisplayMessage(prompt.text);
+
+    // Find the most recent matching user text message without a UUID and
+    // assign it. Matching on the text keeps a prompt sent from another client
+    // from stamping a bubble this client is still waiting to have accepted.
     for (int i = _messages.length - 1; i >= 0; i--) {
       final m = _messages[i];
       if (m.sender == MessageSender.user &&
           (m.type == MessageType.text ||
               m.type == MessageType.skillInvocation) &&
-          m.uuid == null) {
+          m.uuid == null &&
+          (arrived == null ||
+              (m.type == arrived.type &&
+                  m.textContent == arrived.textContent))) {
         _pendingPromptDispatches.remove(m.id);
         m.uuid = uuid;
         applyTranscriptPosition(m, msg);
@@ -9533,10 +9546,49 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         return;
       }
     }
+
+    if (arrived == null) return;
+    arrived.uuid = uuid;
+    applyTranscriptPosition(arrived, msg);
+    _messages = orderByTranscriptPosition([..._messages, arrived]);
+    notifyListeners();
   }
 
   void interruptQuery() {
     _ws.sendInterrupt();
+  }
+
+  /// Unwraps the markers the server bakes into a stored prompt. Used by both
+  /// readers of a prompt: history on load, and a prompt another client sent.
+  ParsedUserPrompt _parseUserPrompt(String content) => parseUserPrompt(
+    content,
+    decodeSecret: (json) {
+      try {
+        final metadata = Map<String, dynamic>.from(jsonDecode(json) as Map);
+        return (
+          label: metadata['label'] as String? ?? 'Secret',
+          scope: metadata['scope'] as String? ?? 'session',
+        );
+      } catch (_) {
+        return null;
+      }
+    },
+  );
+
+  ChatMessage _userPromptNoticeCard(
+    UserPromptNotice notice,
+    int offset,
+    int index,
+  ) {
+    return ChatMessage(
+      id: '${notice.toolName}_${DateTime.now().microsecondsSinceEpoch}'
+          '_${offset}_$index',
+      sender: MessageSender.system,
+      type: MessageType.taskNotification,
+      timestamp: DateTime.now(),
+      textContent: notice.text,
+      toolName: notice.toolName,
+    );
   }
 
   ChatMessage _buildUserDisplayMessage(String text) {
@@ -9839,119 +9891,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
       switch (role) {
         case 'user':
-          var userText = content;
-
-          // Strip cancel prefix and show a cancel indicator
-          final cancelMatch = RegExp(
-            r'^\[The user cancelled your previous action\. Follow their instructions below\.\][\s]*',
-          ).firstMatch(userText);
-          if (cancelMatch != null) {
-            userText = userText.substring(cancelMatch.end);
-            loaded.add(
-              ChatMessage(
-                id: 'cancel_${DateTime.now().microsecondsSinceEpoch}_$offset',
-                sender: MessageSender.system,
-                type: MessageType.taskNotification,
-                timestamp: DateTime.now(),
-                textContent: 'Action cancelled',
-                toolName: 'cancelled',
-              ),
-            );
+          final prompt = _parseUserPrompt(content);
+          for (var i = 0; i < prompt.notices.length; i++) {
+            loaded.add(_userPromptNoticeCard(prompt.notices[i], offset, i));
           }
-
-          // Strip [System: ...] messages (e.g. restart continuation prompts) — hide entirely
-          final systemMatch = RegExp(
-            r'^\[System: [^\]]*\][\s]*',
-          ).firstMatch(userText);
-          if (systemMatch != null) {
-            userText = userText.substring(systemMatch.end);
-            if (userText.trim().isEmpty) break; // nothing left to show
-          }
-
-          // Strip todo dismiss prefix and show a dismiss indicator
-          final todoDismissMatch = RegExp(
-            r'^\[The user dismissed the task list\..*?\][\s]*',
-          ).firstMatch(userText);
-          if (todoDismissMatch != null) {
-            userText = userText.substring(todoDismissMatch.end);
-            loaded.add(
-              ChatMessage(
-                id: 'todo_dismiss_${DateTime.now().microsecondsSinceEpoch}_$offset',
-                sender: MessageSender.system,
-                type: MessageType.taskNotification,
-                timestamp: DateTime.now(),
-                textContent: 'Task list dismissed',
-                toolName: 'dismissed',
-              ),
-            );
-          }
-
-          // Strip all queued attachment prefixes and recreate their visible
-          // metadata-only cards. Secret values are never part of this text.
-          var attachmentIndex = 0;
-          while (true) {
-            final fileMatch = RegExp(
-              r'^\[Attached file: (.+?)\]\n?',
-            ).firstMatch(userText);
-            if (fileMatch != null) {
-              final filePath = fileMatch.group(1)!;
-              final fileName = filePath.split('/').last;
-              userText = userText.substring(fileMatch.end);
-              loaded.add(
-                ChatMessage(
-                  id: 'upload_${DateTime.now().microsecondsSinceEpoch}_${offset}_$attachmentIndex',
-                  sender: MessageSender.system,
-                  type: MessageType.taskNotification,
-                  timestamp: DateTime.now(),
-                  textContent: 'Uploaded: $fileName',
-                  toolName: 'uploaded',
-                ),
-              );
-              attachmentIndex++;
-              continue;
-            }
-            final secretMatch = RegExp(
-              r'^\[Attached secret: (.+)\]\n?',
-            ).firstMatch(userText);
-            if (secretMatch != null) {
-              try {
-                final metadata = Map<String, dynamic>.from(
-                  jsonDecode(secretMatch.group(1)!) as Map,
-                );
-                final label = metadata['label'] as String? ?? 'Secret';
-                final scope = metadata['scope'] as String? ?? 'session';
-                loaded.add(
-                  ChatMessage(
-                    id: 'secret_attach_${DateTime.now().microsecondsSinceEpoch}_${offset}_$attachmentIndex',
-                    sender: MessageSender.system,
-                    type: MessageType.taskNotification,
-                    timestamp: DateTime.now(),
-                    textContent: 'Attached secret: $label ($scope)',
-                    toolName: 'secure_attached',
-                  ),
-                );
-              } catch (_) {
-                // The prefix is still hidden if metadata was malformed.
-              }
-              userText = userText.substring(secretMatch.end);
-              attachmentIndex++;
-              continue;
-            }
-            break;
-          }
-
-          // Strip monitor injection messages — these are displayed as MonitorCards via monitor_output
-          if (userText.startsWith('[Monitor: ')) break;
-          // Delegated-agent completion reports are internal context delivered
-          // to the supervising agent; the child's own session retains the
-          // readable transcript and the supervisor's reply communicates it.
-          if (userText.startsWith('<socketagent_delegation_report ')) break;
-
-          // Strip system XML tags from user messages (e.g. /exit command output)
-          userText = userText.replaceAll(_systemReminderRegex, '').trim();
-
-          if (userText.trim().isNotEmpty) {
-            final userMsg = _buildUserDisplayMessage(userText);
+          if (prompt.text.isNotEmpty) {
+            final userMsg = _buildUserDisplayMessage(prompt.text);
             // Restore uuid directly from history entry (for rewind support)
             userMsg.uuid = entry['uuid'] as String?;
             loaded.add(userMsg);
@@ -10272,7 +10217,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
             // Strip system XML from history text
             var cleaned = content
-                .replaceAll(_systemReminderRegex, '')
+                .replaceAll(systemNoiseRegex, '')
                 .replaceAll(_taskNotifRegex, '')
                 .trim();
             if (cleaned.isNotEmpty) {
