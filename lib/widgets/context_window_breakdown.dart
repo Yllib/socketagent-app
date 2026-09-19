@@ -168,6 +168,10 @@ class ContextUsageBar extends StatelessWidget {
                 child: ClipRRect(
                   borderRadius: radius,
                   child: Row(
+                    // Without this the segments get loose vertical
+                    // constraints and a childless ColoredBox collapses to
+                    // zero height, leaving the bar empty.
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       for (final category in breakdown.used)
                         SizedBox(

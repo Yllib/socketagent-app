@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:app/widgets/context_window_breakdown.dart';
 
@@ -108,5 +109,57 @@ void main() {
   test('a session with no categories reports empty', () {
     expect(classifyContextCategories(null).isEmpty, isTrue);
     expect(classifyContextCategories(const []).isEmpty, isTrue);
+  });
+
+  // The first cut laid the segments out in a Row that gave them loose
+  // vertical constraints, so every childless ColoredBox collapsed to zero
+  // height and the bar rendered empty while the legend looked right.
+  testWidgets('the bar draws a visible segment per category', (tester) async {
+    final breakdown = classifyContextCategories(_withKind);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 400,
+              child: ContextUsageBar(
+                breakdown: breakdown,
+                maxTokens: 355000,
+                autoCompactThreshold: 322000,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final segments = tester
+        .widgetList<SizedBox>(
+          find.descendant(
+            of: find.byType(ClipRRect),
+            matching: find.byType(SizedBox),
+          ),
+        )
+        .toList();
+    expect(segments.length, breakdown.used.length);
+
+    for (var i = 0; i < segments.length; i++) {
+      final size = tester.getSize(
+        find.byWidget(segments[i], skipOffstage: false),
+      );
+      expect(size.height, greaterThan(0), reason: 'segment $i has no height');
+      expect(
+        size.width,
+        closeTo(400 * breakdown.used[i].tokens / 355000, 2.1),
+        reason: 'segment $i is not its share of the window',
+      );
+    }
+
+    // Together they cover the used share of the window, not more.
+    final filled = segments.fold<double>(
+      0,
+      (sum, s) => sum + tester.getSize(find.byWidget(s)).width,
+    );
+    expect(filled, closeTo(400 * breakdown.usedTokens / 355000, 6));
   });
 }

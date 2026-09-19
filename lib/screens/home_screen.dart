@@ -39,6 +39,104 @@ import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
 import 'session_memory_screen.dart';
 
+/// A block of context rows behind its own header.
+///
+/// Collapsed by default: all three run long enough to bury the bar and the
+/// legend, which are what the dialog is for. The header carries the block's
+/// total so the useful number reads without opening it, and opening it leads
+/// with a line saying what the block is, because the row names alone did not
+/// say.
+class _ContextSection extends StatefulWidget {
+  const _ContextSection({
+    required this.title,
+    required this.total,
+    required this.hint,
+    required this.children,
+  });
+
+  final String title;
+  final String total;
+  final String hint;
+  final List<Widget> children;
+
+  @override
+  State<_ContextSection> createState() => _ContextSectionState();
+}
+
+class _ContextSectionState extends State<_ContextSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              children: [
+                Icon(
+                  _expanded
+                      ? Icons.keyboard_arrow_down
+                      : Icons.keyboard_arrow_right,
+                  size: 18,
+                  color: theme.colorScheme.onSurface.withAlpha(150),
+                ),
+                const SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    widget.title,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: theme.colorScheme.onSurface.withAlpha(200),
+                    ),
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  widget.total,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: theme.colorScheme.onSurface.withAlpha(150),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.only(left: 22, bottom: 6),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    widget.hint,
+                    style: TextStyle(
+                      fontSize: 11,
+                      height: 1.35,
+                      color: theme.colorScheme.onSurface.withAlpha(140),
+                    ),
+                  ),
+                ),
+                ...widget.children,
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
 Future<void> openConversation(
   BuildContext context, {
   bool autoStartVoice = false,
@@ -2466,7 +2564,12 @@ class HomeScreenState extends State<HomeScreen> {
                 // Inside the window but unoccupied, plus the tool schemas
                 // held outside it. None of these count toward the
                 // percentage, which is why they are not in the bar.
-                ..._contextReserveRows(breakdown, freeTokens, theme),
+                ..._contextReserveRows(
+                  breakdown,
+                  freeTokens,
+                  usedRatio,
+                  theme,
+                ),
 
                 // Slices of the Messages row above, not categories of their
                 // own. Only the non-zero ones: most are zero on any given
@@ -2535,26 +2638,11 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  /// Names a block of rows, so a list of numbers is not left to speak for
-  /// itself. Every block under the legend needed one.
-  Widget _contextSectionHeader(String label, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 16, bottom: 6),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: theme.colorScheme.onSurface.withAlpha(200),
-        ),
-      ),
-    );
-  }
-
   /// The parts of the window the percentage does not count.
   List<Widget> _contextReserveRows(
     ContextBreakdown breakdown,
     int fallbackFree,
+    double usedRatio,
     ThemeData theme,
   ) {
     final free = breakdown.freeTokens > 0 ? breakdown.freeTokens : fallbackFree;
@@ -2567,9 +2655,18 @@ class HomeScreenState extends State<HomeScreen> {
     ];
     if (rows.isEmpty) return const [];
     return [
-      _contextSectionHeader('Not in use', theme),
-      for (final row in rows)
-        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+      _ContextSection(
+        title: "Not in the ${(usedRatio * 100).toStringAsFixed(0)}%",
+        total: _formatTokenCount(rows.fold(0, (sum, row) => sum + row.$2)),
+        hint:
+            'Window space nothing is using, the amount held back to run a '
+            'compaction, and tool definitions kept outside the window until '
+            'something calls for them.',
+        children: [
+          for (final row in rows)
+            _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+        ],
+      ),
     ];
   }
 
@@ -2593,9 +2690,17 @@ class HomeScreenState extends State<HomeScreen> {
       ..sort((a, b) => b.$2.compareTo(a.$2));
     if (rows.isEmpty) return const [];
     return [
-      _contextSectionHeader('Messages, by type', theme),
-      for (final row in rows)
-        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+      _ContextSection(
+        title: 'Inside Messages',
+        total: _formatTokenCount(rows.fold(0, (sum, row) => sum + row.$2)),
+        hint:
+            'The Messages row above, split by what produced those tokens. '
+            'Not extra usage.',
+        children: [
+          for (final row in rows)
+            _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+        ],
+      ),
     ];
   }
 
@@ -2615,9 +2720,11 @@ class HomeScreenState extends State<HomeScreen> {
     int countOf(dynamic list) => list is List ? list.length : 0;
 
     final rows = <(String, String)>[];
+    var loadedCount = 0;
     void add(String label, int count, int tokens, {String? noun}) {
       if (count <= 0 && tokens <= 0) return;
       final unit = noun ?? '';
+      loadedCount += count;
       rows.add((
         label,
         '$count$unit  ·  ${_formatTokenCount(tokens)}',
@@ -2645,8 +2752,16 @@ class HomeScreenState extends State<HomeScreen> {
     }
     if (rows.isEmpty) return const [];
     return [
-      _contextSectionHeader('Loaded  ·  count and cost', theme),
-      for (final row in rows) _contextDetailRow(row.$1, row.$2, theme),
+      _ContextSection(
+        title: 'Available to this session',
+        total: '$loadedCount items',
+        hint:
+            'How many of each this session can reach, and what listing them '
+            'costs. Counted above under System tools, Skills and MCP tools.',
+        children: [
+          for (final row in rows) _contextDetailRow(row.$1, row.$2, theme),
+        ],
+      ),
     ];
   }
 
