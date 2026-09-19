@@ -91,16 +91,25 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
     super.dispose();
   }
 
-  /// Nobody is looking at a backgrounded viewer, so stop paying for frames.
+  /// Nobody is looking at a hidden viewer, so stop paying for frames.
+  ///
+  /// Only the states that mean the window is actually gone count. On desktop
+  /// `inactive` merely means another window has focus, and someone watching
+  /// the browser view while they work elsewhere still wants it live.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      if (!_runtimeRequired) {
-        _requestFrame();
-        _startWatching();
-      }
-    } else {
-      _stopWatching();
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _stopWatching();
+      case AppLifecycleState.resumed:
+        if (!_runtimeRequired) {
+          _requestFrame();
+          _startWatching();
+        }
+      case AppLifecycleState.inactive:
+        break;
     }
   }
 
