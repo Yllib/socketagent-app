@@ -42,6 +42,12 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
     with WidgetsBindingObserver {
   StreamSubscription<Map<String, dynamic>>? _subscription;
   Timer? _watchTimer;
+  Timer? _resizeDebounce;
+  /// The page size the server is serving, which taps are mapped through. It
+  /// changes when anyone switches the profile between mobile and desktop.
+  late Size _browserSize;
+  bool _desktopLayout = false;
+  Size? _lastViewerSize;
   final List<Timer> _followupTimers = [];
   Uint8List? _frame;
   String _url = '';
@@ -63,6 +69,11 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
   void initState() {
     super.initState();
     _provider = context.read<ChatProvider>();
+    _browserSize = Size(
+      widget.browserWidth.toDouble(),
+      widget.browserHeight.toDouble(),
+    );
+    _desktopLayout = _browserSize.width > _browserSize.height;
     _url = widget.initialUrl;
     _runtimeRequired = widget.initialRuntimeRequired;
     WindowSecurityService.enableScreenshotProtection();
@@ -82,6 +93,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
   void dispose() {
     _subscription?.cancel();
     _backspaceRepeatTimer?.cancel();
+    _resizeDebounce?.cancel();
     _stopWatching();
     for (final timer in _followupTimers) {
       timer.cancel();
@@ -184,6 +196,11 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
       });
       return;
     }
+    _adoptBrowserSize(event);
+    if (event['type'] == 'browser_session_state') {
+      setState(() {});
+      return;
+    }
     final encoded = event['imageBase64'] as String?;
     if (encoded == null || encoded.isEmpty) return;
     Uint8List decoded;
@@ -199,6 +216,51 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
       _title = event['title'] as String? ?? _title;
       _error = null;
     });
+  }
+
+  void _adoptBrowserSize(Map<String, dynamic> event) {
+    final width = (event['width'] as num?)?.toDouble();
+    final height = (event['height'] as num?)?.toDouble();
+    if (width == null || height == null || width <= 0 || height <= 0) return;
+    if (width == _browserSize.width && height == _browserSize.height) return;
+    _browserSize = Size(width, height);
+    _desktopLayout = width > height;
+  }
+
+  /// Phone-shaped, or as wide as this viewer can show.
+  ///
+  /// On a desktop window the page fills it, so the layout matches what the
+  /// window can actually display. A phone has no useful desktop size of its
+  /// own, so it asks for a standard one and scales it down to fit.
+  Size _desiredViewport({required bool desktop}) {
+    if (!desktop) return const Size(430, 860);
+    final viewer = _lastViewerSize;
+    if (viewer == null || viewer.width < 700) return const Size(1280, 800);
+    return Size(viewer.width, viewer.height);
+  }
+
+  void _setLayout({required bool desktop}) {
+    final target = _desiredViewport(desktop: desktop);
+    setState(() => _desktopLayout = desktop);
+    _provider.setBrowserViewport(
+      profile: widget.profile,
+      width: target.width.round(),
+      height: target.height.round(),
+      serverId: widget.serverId,
+    );
+  }
+
+  /// Follow a resized desktop window, once it has stopped moving.
+  void _onViewerSizeChanged(Size size) {
+    if (_lastViewerSize == size) return;
+    final first = _lastViewerSize == null;
+    _lastViewerSize = size;
+    if (first || !_desktopLayout || size.width < 700) return;
+    _resizeDebounce?.cancel();
+    _resizeDebounce = Timer(
+      const Duration(milliseconds: 400),
+      () => _setLayout(desktop: true),
+    );
   }
 
   void _requestFrame() {
@@ -319,10 +381,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
   }
 
   void _tapAt(Offset localPosition, Size viewportSize) {
-    final browserSize = Size(
-      widget.browserWidth.toDouble(),
-      widget.browserHeight.toDouble(),
-    );
+    final browserSize = _browserSize;
     final scale = (viewportSize.width / browserSize.width).clamp(
       0.0,
       viewportSize.height / browserSize.height,
@@ -649,6 +708,9 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
                         constraints.maxWidth,
                         constraints.maxHeight,
                       );
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (mounted) _onViewerSizeChanged(size);
+                      });
                       return GestureDetector(
                         behavior: HitTestBehavior.opaque,
                         onTapUp: (details) =>
@@ -705,6 +767,18 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
                               tooltip: 'Forward',
                               onPressed: () => _send('forward'),
                               icon: const Icon(Icons.arrow_forward),
+                            ),
+                            IconButton(
+                              tooltip: _desktopLayout
+                                  ? 'Switch to mobile layout'
+                                  : 'Switch to desktop layout',
+                              onPressed: () =>
+                                  _setLayout(desktop: !_desktopLayout),
+                              icon: Icon(
+                                _desktopLayout
+                                    ? Icons.phone_iphone
+                                    : Icons.desktop_windows,
+                              ),
                             ),
                             IconButton(
                               tooltip: 'Enter text',

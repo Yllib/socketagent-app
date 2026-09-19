@@ -6359,6 +6359,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _sendToActiveSessionServer(message);
   }
 
+  /// Switch the profile between a mobile and a desktop page layout.
+  ///
+  /// Viewers share one browser, so this sets the mode for the profile rather
+  /// than for this viewer, and it sticks until something asks otherwise.
+  bool setBrowserViewport({
+    required String profile,
+    required int width,
+    required int height,
+    String? serverId,
+  }) {
+    final message = {
+      'type': 'browser_viewport',
+      'profile': profile,
+      'width': width,
+      'height': height,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
+  }
+
   /// Ask the computer to stream the profile while a viewer is open.
   ///
   /// The server expires a watch that stops being renewed, so callers repeat
