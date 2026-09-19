@@ -4,6 +4,7 @@ import '../services/desktop_workspace_controller.dart';
 import '../widgets/desktop_split_view.dart';
 import '../widgets/adaptive_control_bar.dart';
 import '../widgets/claude_account_usage.dart';
+import '../widgets/context_window_breakdown.dart';
 import '../widgets/codex_account_usage.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -37,13 +38,6 @@ import '../services/work_review_repository.dart';
 import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
 import 'session_memory_screen.dart';
-
-class _BarSegment {
-  final String label;
-  final int tokens;
-  final Color color;
-  const _BarSegment(this.label, this.tokens, this.color);
-}
 
 Future<void> openConversation(
   BuildContext context, {
@@ -2343,43 +2337,34 @@ class HomeScreenState extends State<HomeScreen> {
         (ctx?['maxTokens'] as num?)?.toInt() ??
         (usage['contextWindow'] as num?)?.toInt() ??
         0;
-    final fillRatio = maxTokens > 0 ? totalTokens / maxTokens : 0.0;
     final freeTokens = maxTokens > totalTokens ? maxTokens - totalTokens : 0;
     final model = ctx?['model'] as String?;
 
-    // Build segments from SDK categories if available, else basic breakdown
-    final segments = <_BarSegment>[];
-    final categories = ctx?['categories'] as List?;
-    if (categories != null && categories.isNotEmpty) {
-      for (final cat in categories) {
-        final name = cat['name'] as String? ?? '';
-        final tokens = (cat['tokens'] as num?)?.toInt() ?? 0;
-        final colorHex = cat['color'] as String? ?? '#888888';
-        if (tokens <= 0) continue;
-        // Parse hex color
-        final colorVal =
-            int.tryParse(colorHex.replaceFirst('#', 'FF'), radix: 16) ??
-            0xFF888888;
-        segments.add(_BarSegment(name, tokens, Color(colorVal)));
-      }
-    } else {
-      if (cacheRead > 0) {
-        segments.add(_BarSegment('Cached', cacheRead, const Color(0xFF89B4FA)));
-      }
-      if (cacheCreate > 0) {
-        segments.add(
-          _BarSegment('New cache', cacheCreate, const Color(0xFFA6E3A1)),
-        );
-      }
-      if (inputTokens > 0) {
-        segments.add(
-          _BarSegment('Uncached', inputTokens, const Color(0xFFF9E2AF)),
-        );
-      }
+    // Split the window by what each row is. Only the `used` rows occupy it,
+    // and they are the only ones the bar and the headline may count.
+    var breakdown = classifyContextCategories(ctx?['categories']);
+    if (breakdown.isEmpty) {
+      // Codex and pre-SDK sessions report no categories, only raw counts.
+      final fallback = <ContextCategory>[
+        if (cacheRead > 0)
+          ContextCategory('Cached', cacheRead, const Color(0xFF89B4FA)),
+        if (cacheCreate > 0)
+          ContextCategory('New cache', cacheCreate, const Color(0xFFA6E3A1)),
+        if (inputTokens > 0)
+          ContextCategory('Uncached', inputTokens, const Color(0xFFF9E2AF)),
+      ];
+      breakdown = ContextBreakdown(
+        used: fallback,
+        usedTokens: fallback.fold(0, (sum, c) => sum + c.tokens),
+        bufferTokens: 0,
+        freeTokens: freeTokens,
+        deferredTokens: 0,
+      );
     }
-    if (freeTokens > 0) {
-      segments.add(_BarSegment('Free', freeTokens, Colors.transparent));
-    }
+    // The headline reads off the same number the bar is drawn from, so the
+    // two cannot disagree.
+    final usedTokens = breakdown.isEmpty ? totalTokens : breakdown.usedTokens;
+    final usedRatio = maxTokens > 0 ? usedTokens / maxTokens : 0.0;
 
     // Message breakdown from SDK
     final msgBreakdown = ctx?['messageBreakdown'] as Map<String, dynamic>?;
@@ -2423,14 +2408,14 @@ class HomeScreenState extends State<HomeScreen> {
                 // Fill percentage headline
                 Text(
                   maxTokens > 0
-                      ? '${(fillRatio * 100).toStringAsFixed(0)}% used'
+                      ? '${(usedRatio * 100).toStringAsFixed(0)}% used'
                       : 'No context data',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
-                    color: fillRatio > 0.8
+                    color: usedRatio > 0.8
                         ? Colors.red.shade300
-                        : fillRatio > 0.5
+                        : usedRatio > 0.5
                         ? Colors.orange.shade300
                         : theme.colorScheme.onSurface,
                   ),
@@ -2438,80 +2423,60 @@ class HomeScreenState extends State<HomeScreen> {
                 if (maxTokens > 0) ...[
                   const SizedBox(height: 4),
                   Text(
-                    '${_formatTokenCount(totalTokens)} / ${_formatTokenCount(maxTokens)} tokens',
+                    '${_formatTokenCount(usedTokens)} / ${_formatTokenCount(maxTokens)} tokens',
                     style: TextStyle(
                       fontSize: 13,
                       color: theme.colorScheme.onSurface.withAlpha(178),
                     ),
                   ),
                 ],
-                const SizedBox(height: 8),
-                // Stacked context bar
+                const SizedBox(height: 10),
                 if (maxTokens > 0)
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: SizedBox(
-                      height: 12,
-                      child: Row(
-                        children: segments.map((seg) {
-                          final ratio = seg.tokens / maxTokens;
-                          if (ratio <= 0) return const SizedBox.shrink();
-                          return Expanded(
-                            flex: (ratio * 1000).round().clamp(1, 1000),
-                            child: Container(
-                              color: seg.color == Colors.transparent
-                                  ? theme.colorScheme.surfaceContainerHighest
-                                  : seg.color,
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    ),
+                  ContextUsageBar(
+                    breakdown: breakdown,
+                    maxTokens: maxTokens,
+                    autoCompactThreshold: isAutoCompact
+                        ? autoCompactThreshold
+                        : null,
                   ),
-                // Auto-compact threshold indicator
                 if (isAutoCompact &&
                     autoCompactThreshold != null &&
                     maxTokens > 0) ...[
                   const SizedBox(height: 4),
                   Text(
-                    'Auto-compact at ${(autoCompactThreshold / maxTokens * 100).toStringAsFixed(0)}%',
+                    'Tick marks auto-compact at ${(autoCompactThreshold / maxTokens * 100).toStringAsFixed(0)}%',
                     style: TextStyle(
                       fontSize: 11,
                       color: theme.colorScheme.onSurface.withAlpha(128),
                     ),
                   ),
                 ],
-                const SizedBox(height: 12),
-                // Legend: only what occupies the window. The bar already
-                // shows buffer, deferred and free as their own segments.
-                ...segments
-                    .where((s) => s.color != Colors.transparent && s.tokens > 0)
-                    .map(
-                      (seg) => _contextLegendRow(
-                        seg.label,
-                        seg.tokens,
-                        seg.color,
-                        theme,
-                      ),
-                    ),
-                if (outputTokens > 0)
-                  _contextLegendRow(
-                    'Output',
-                    outputTokens,
-                    const Color(0xFFCBA6F7),
+                const SizedBox(height: 14),
+                // Legend for the bar above, in the same order and colours.
+                ...breakdown.used.map(
+                  (category) => _contextLegendRow(
+                    category.name,
+                    category.tokens,
+                    category.color,
+                    usedTokens,
                     theme,
                   ),
+                ),
 
-                // Messages, sliced. Only the non-zero rows: most are
-                // zero on any given turn, and listing them all buried the
-                // few that carried real weight.
-                if (msgBreakdown != null) ...[
+                // Inside the window but unoccupied, plus the tool schemas
+                // held outside it. None of these count toward the
+                // percentage, which is why they are not in the bar.
+                ..._contextReserveRows(breakdown, freeTokens, theme),
+
+                // Slices of the Messages row above, not categories of their
+                // own. Only the non-zero ones: most are zero on any given
+                // turn and listing them all buried the few that carried
+                // real weight.
+                if (msgBreakdown != null)
                   ..._msgBreakdownRows(msgBreakdown, theme),
-                ],
 
-                // One line each. These lists run to dozens of entries once
-                // MCP servers and skills load, which is what made this
-                // dialog too long to read.
+                // One line per kind. These lists run to dozens of entries
+                // once MCP servers and skills load.
                 ..._contextInventoryRows(ctx, theme),
 
                 if (claudeUsageFuture != null)
@@ -2545,6 +2510,15 @@ class HomeScreenState extends State<HomeScreen> {
                 // Metadata
                 if (numTurns != null)
                   _contextDetailRow('Turns', '$numTurns', theme),
+                // Last reply's output tokens. Not part of the window, which
+                // is why it is here and no longer a legend row with a
+                // colour that matched nothing in the bar.
+                if (outputTokens > 0)
+                  _contextDetailRow(
+                    'Last output',
+                    _formatTokenCount(outputTokens),
+                    theme,
+                  ),
                 if (stopReason != null)
                   _contextDetailRow('Stop reason', stopReason, theme),
                 if (resultSubtype != null && resultSubtype.startsWith('error_'))
@@ -2559,6 +2533,44 @@ class HomeScreenState extends State<HomeScreen> {
         ),
       ),
     );
+  }
+
+  /// Names a block of rows, so a list of numbers is not left to speak for
+  /// itself. Every block under the legend needed one.
+  Widget _contextSectionHeader(String label, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16, bottom: 6),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: theme.colorScheme.onSurface.withAlpha(200),
+        ),
+      ),
+    );
+  }
+
+  /// The parts of the window the percentage does not count.
+  List<Widget> _contextReserveRows(
+    ContextBreakdown breakdown,
+    int fallbackFree,
+    ThemeData theme,
+  ) {
+    final free = breakdown.freeTokens > 0 ? breakdown.freeTokens : fallbackFree;
+    final rows = <(String, int)>[
+      if (free > 0) ('Free space', free),
+      if (breakdown.bufferTokens > 0)
+        ('Compact buffer', breakdown.bufferTokens),
+      if (breakdown.deferredTokens > 0)
+        ('Deferred tools', breakdown.deferredTokens),
+    ];
+    if (rows.isEmpty) return const [];
+    return [
+      _contextSectionHeader('Not in use', theme),
+      for (final row in rows)
+        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+    ];
   }
 
   /// Non-zero slices of the Messages category, largest first.
@@ -2581,7 +2593,7 @@ class HomeScreenState extends State<HomeScreen> {
       ..sort((a, b) => b.$2.compareTo(a.$2));
     if (rows.isEmpty) return const [];
     return [
-      const Divider(height: 20),
+      _contextSectionHeader('Messages, by type', theme),
       for (final row in rows)
         _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
     ];
@@ -2633,17 +2645,21 @@ class HomeScreenState extends State<HomeScreen> {
     }
     if (rows.isEmpty) return const [];
     return [
-      const Divider(height: 20),
+      _contextSectionHeader('Loaded  ·  count and cost', theme),
       for (final row in rows) _contextDetailRow(row.$1, row.$2, theme),
     ];
   }
 
+  /// One category of the bar: its swatch, its size, and how much of the
+  /// filled part of the bar it accounts for.
   Widget _contextLegendRow(
     String label,
     int tokens,
     Color? color,
+    int usedTokens,
     ThemeData theme,
   ) {
+    final share = usedTokens > 0 ? tokens / usedTokens * 100 : 0.0;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -2670,6 +2686,17 @@ class HomeScreenState extends State<HomeScreen> {
               fontSize: 13,
               fontWeight: FontWeight.w500,
               color: theme.colorScheme.onSurface.withAlpha(178),
+            ),
+          ),
+          SizedBox(
+            width: 44,
+            child: Text(
+              '${share.toStringAsFixed(0)}%',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                fontSize: 13,
+                color: theme.colorScheme.onSurface.withAlpha(128),
+              ),
             ),
           ),
         ],
