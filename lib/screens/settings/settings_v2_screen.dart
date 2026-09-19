@@ -1726,7 +1726,9 @@ class _ServerTile extends StatelessWidget {
               _statusLabel(status),
               if (!build.isEmpty) build.compactLabel,
               config.expectedOnline ? 'always on' : 'on demand',
-              if (warning != null) 'backend ${warning['severity']}',
+              if (warning != null)
+                warning['label']?.toString().toLowerCase() ??
+                    'backend ${warning['severity']}',
               if (connected && push) 'notifications',
             ].join(' · '),
             maxLines: 2,

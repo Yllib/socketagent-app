@@ -1,6 +1,7 @@
 import 'windows_local_server.dart';
 import 'desktop_window_service.dart';
 import 'codex_reset_attempts.dart';
+import 'backend_warning.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -1480,18 +1481,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Map<String, dynamic> serverRuntimeInfo(String serverId) =>
       Map.unmodifiable(_serverRuntimeInfo[serverId] ?? const {});
 
-  Map<String, dynamic>? backendWarningForServer(String serverId) {
-    final health = backendHealthForServer(serverId);
-    for (final item in health) {
-      final severity = item['severity'] as String?;
-      if (severity == 'error') return item;
-    }
-    for (final item in health) {
-      final severity = item['severity'] as String?;
-      if (severity == 'warning') return item;
-    }
-    return null;
-  }
+  /// See [backendWarningFor] for the rule.
+  Map<String, dynamic>? backendWarningForServer(String serverId) =>
+      backendWarningFor(backendHealthForServer(serverId));
 
   Map<String, dynamic>? get contextUsage => _contextUsage;
   List<String> get promptSuggestions => _promptSuggestions;

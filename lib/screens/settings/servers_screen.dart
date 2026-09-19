@@ -174,9 +174,12 @@ class _ServersScreenState extends State<ServersScreen> {
                     );
                     final backendWarningLabel = backendWarning == null
                         ? null
-                        : backendWarning['severity'] == 'error'
-                        ? 'Backend error'
-                        : 'Backend warning';
+                        : backendWarning['label']?.toString() ??
+                              (backendWarning['severity'] == 'error'
+                                  ? backendWarning['kind'] == 'auth'
+                                        ? 'Auth error'
+                                        : 'Backend error'
+                                  : 'Backend warning');
                     return ListTile(
                       leading: Icon(
                         transportIcon,
@@ -1100,7 +1103,8 @@ class _ServersScreenState extends State<ServersScreen> {
                     ? entries.isEmpty
                           ? 'Backend details not loaded yet'
                           : 'All reported backends are OK'
-                    : '${_backendHealthTitle(warning)} ${severity == 'error' ? 'error' : 'warning'}';
+                    : warning['label']?.toString() ??
+                          '${_backendHealthTitle(warning)} ${_backendHealthStatus(warning) ?? 'error'}';
                 return ListTile(
                   leading: Icon(
                     warning == null
