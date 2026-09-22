@@ -209,6 +209,23 @@ void main() {
           provider.messages.where((m) => m.toolUseId == id).last.toolStreaming,
           true,
         );
+        provider.rewindConversation('outside-window');
+        expect(provider.conversationRewindStatus?.pending, true);
+        await send({
+          'type': 'rewind_conversation_result',
+          'success': false,
+          'error': 'Native transcript read timed out',
+        });
+        expect(provider.conversationRewindStatus?.pending, false);
+        expect(provider.conversationRewindStatus?.failed, true);
+        expect(
+          provider.conversationRewindStatus?.message,
+          contains('timed out'),
+        );
+        expect(provider.subagentTasks[id]?['status'], 'running');
+        provider.dismissConversationRewindNotice();
+        expect(provider.conversationRewindStatus, isNull);
+        provider.rewindConversation('outside-window');
         await send({
           'type': 'rewind_conversation_result',
           'sessionId': 'another-session',
@@ -217,6 +234,7 @@ void main() {
           'rewindIncludesTarget': true,
         });
         expect(provider.subagentTasks[id]?['status'], 'running');
+        expect(provider.conversationRewindStatus?.pending, true);
         await send({
           'type': 'rewind_conversation_result',
           'success': true,
@@ -231,12 +249,21 @@ void main() {
           'total': 0,
           'offset': 0,
         });
+        expect(provider.conversationRewindStatus?.pending, false);
+        expect(provider.conversationRewindStatus?.failed, false);
+        expect(
+          provider.conversationRewindStatus?.message,
+          contains('2 messages removed'),
+        );
         expect(provider.subagentTasks, isEmpty);
         expect(provider.messages.where((m) => m.toolUseId == id), isEmpty);
         Map<String, dynamic>? diskCache;
         final deadline = DateTime.now().add(const Duration(seconds: 5));
         do {
-          diskCache = await SessionTranscriptCache().load('audit-server', 'audit-root');
+          diskCache = await SessionTranscriptCache().load(
+            'audit-server',
+            'audit-root',
+          );
           if (diskCache != null) break;
           await Future<void>.delayed(const Duration(milliseconds: 20));
         } while (DateTime.now().isBefore(deadline));

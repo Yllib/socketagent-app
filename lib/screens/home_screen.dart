@@ -26,6 +26,7 @@ import 'project_instructions_screen.dart';
 import 'terminal_screen.dart';
 import 'settings/voice_speech_screen.dart';
 import '../widgets/chat_view.dart';
+import '../widgets/conversation_rewind_notice.dart';
 import '../widgets/active_tasks_pane.dart';
 import '../widgets/active_browser_strip.dart';
 import '../widgets/session_actions_sheet.dart';
@@ -1162,6 +1163,11 @@ class HomeScreenState extends State<HomeScreen> {
                       _buildRateLimitBanner(provider.weeklyRateLimit!),
                     if (provider.fiveHourRateLimit != null)
                       _buildRateLimitBanner(provider.fiveHourRateLimit!),
+                    if (provider.conversationRewindStatus != null)
+                      ConversationRewindNotice(
+                        status: provider.conversationRewindStatus!,
+                        onDismiss: provider.dismissConversationRewindNotice,
+                      ),
                     if (provider.activeSessionId != null ||
                         provider.isPendingNewSession)
                       _buildControlChips(provider),

@@ -15,6 +15,7 @@ import 'file_open_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
+import '../models/conversation_rewind_status.dart';
 import '../models/ai_response_report.dart';
 import '../models/message_reconciliation.dart';
 import '../models/file_event_routing.dart';
@@ -741,6 +742,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Completer<HtmlPlanRevisionDetail>>
   _htmlPlanRevisionDetailCompleters = {};
   final Map<String, Completer<HtmlPlan>> _htmlPlanRollbackCompleters = {};
+  final Map<String, ConversationRewindStatus> _conversationRewinds = {};
+  final Map<String, Timer> _conversationRewindTimers = {};
   double? _uploadProgress;
   String? _pendingUploadId;
   Completer<String>? _uploadCompleter;
@@ -9397,12 +9400,43 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _ws.sendRewind(uuid);
   }
 
+  String get _activeRewindKey =>
+      '${_activeSessionServerId ?? activeServerId}:$_activeSessionId';
+
+  ConversationRewindStatus? get conversationRewindStatus =>
+      _conversationRewinds[_activeRewindKey];
+
+  void dismissConversationRewindNotice() {
+    if (conversationRewindStatus?.pending == true) return;
+    _conversationRewinds.remove(_activeRewindKey);
+    notifyListeners();
+  }
+
   void rewindConversation(String uuid, {bool rewindFiles = true}) {
+    if (_activeSessionId == null || conversationRewindStatus?.pending == true) {
+      return;
+    }
+    final key = _activeRewindKey;
+    _conversationRewinds[key] = const ConversationRewindStatus(
+      pending: true,
+      message: 'Rewinding conversation…',
+    );
+    _conversationRewindTimers.remove(key)?.cancel();
+    _conversationRewindTimers[key] = Timer(const Duration(minutes: 2), () {
+      _conversationRewindTimers.remove(key);
+      _conversationRewinds[key] = const ConversationRewindStatus(
+        failed: true,
+        message:
+            'No rewind confirmation received. Reopen the session to check its history before retrying.',
+      );
+      notifyListeners();
+    });
     _ws.sendRewindConversation(
       uuid,
       sessionId: _activeSessionId,
       rewindFiles: activeSessionBackend == 'codex' ? false : rewindFiles,
     );
+    notifyListeners();
   }
 
   void branchFromMessage(String uuid) {
@@ -9417,6 +9451,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final sessionId = msg['sessionId'] as String?;
     final ownerServerId = serverId ?? _activeSessionServerId;
+    if (msg['dryRun'] != true && sessionId != null && ownerServerId != null) {
+      final key = '$ownerServerId:$sessionId';
+      _conversationRewindTimers.remove(key)?.cancel();
+      _conversationRewinds[key] = ConversationRewindStatus(
+        failed: msg['success'] != true,
+        message: msg['success'] == true
+            ? 'Conversation rewound. ${msg['messagesRemoved'] ?? 0} messages removed.'
+            : 'Rewind failed: ${msg['error'] ?? 'Unknown error'}',
+      );
+    }
     if (msg['success'] == true &&
         msg['dryRun'] != true &&
         sessionId != null &&
@@ -17300,6 +17344,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    for (final timer in _conversationRewindTimers.values) {
+      timer.cancel();
+    }
+    _conversationRewindTimers.clear();
     PushNotificationService.onTokenRefresh = null;
     PushNotificationService.shouldDisplayForegroundNotification = null;
     _promptRuntimeTimer?.cancel();
