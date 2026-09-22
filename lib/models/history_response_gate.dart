@@ -27,6 +27,9 @@ SessionHistoryDecision gateSessionHistoryResponse({
   }
 
   switch (historyKind) {
+    case 'rewind':
+      // A user-confirmed server rewind is an authoritative replacement.
+      return const SessionHistoryDecision(accept: true, kind: SessionHistoryKind.initial);
     case 'initial':
       return SessionHistoryDecision(
         accept: requestId != null && requestId == expectedInitialRequestId,

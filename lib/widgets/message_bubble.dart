@@ -11,6 +11,7 @@ class MessageBubble extends StatelessWidget {
   static const _nativeChannel = MethodChannel('com.socketagent.app/intent');
 
   final ChatMessage message;
+  final bool codexRewind;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractPending;
@@ -25,6 +26,7 @@ class MessageBubble extends StatelessWidget {
   const MessageBubble({
     super.key,
     required this.message,
+    this.codexRewind = false,
     this.onRewindConversation,
     this.onBranch,
     this.onRetractPending,
@@ -311,9 +313,9 @@ class MessageBubble extends StatelessWidget {
                 ClipboardData(text: _plainText(message.textContent)),
               );
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Message copied')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('Message copied')));
             },
           ),
           ListTile(
@@ -323,13 +325,11 @@ class MessageBubble extends StatelessWidget {
             subtitle: const Text('Copy the original formatting source'),
             onTap: () async {
               Navigator.pop(sheetContext);
-              await Clipboard.setData(
-                ClipboardData(text: message.textContent),
-              );
+              await Clipboard.setData(ClipboardData(text: message.textContent));
               if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Markdown copied')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('Markdown copied')));
             },
           ),
           ListTile(
@@ -362,9 +362,7 @@ class MessageBubble extends StatelessWidget {
               key: const ValueKey<String>('read-whole-message'),
               leading: const Icon(Icons.volume_up_outlined),
               title: const Text('Read aloud'),
-              subtitle: const Text(
-                'Use your selected text-to-speech voice',
-              ),
+              subtitle: const Text('Use your selected text-to-speech voice'),
               onTap: () {
                 Navigator.pop(sheetContext);
                 onReadAloud!(_plainText(message.textContent));
@@ -540,20 +538,29 @@ class MessageBubble extends StatelessWidget {
           if (onRewindConversation != null)
             ListTile(
               leading: Icon(Icons.history, color: Colors.orange.shade400),
-              title: const Text('Rewind Conversation'),
-              subtitle: const Text(
-                'Remove messages after this point, keep files',
+              title: Text(
+                codexRewind ? 'Rewind to here' : 'Rewind Conversation',
+              ),
+              subtitle: Text(
+                codexRewind
+                    ? 'Remove this turn and later turns, keep files'
+                    : 'Remove messages after this point, keep files',
               ),
               onTap: () {
                 Navigator.pop(ctx);
                 _confirmAction(
                   context,
-                  title: 'Rewind Conversation',
-                  body:
-                      'Rewind the conversation to this message?\n\n'
-                      'All messages after this point will be removed. '
-                      'File changes will be kept as-is. '
-                      'You can then send a new message to take a different path.',
+                  title: codexRewind
+                      ? 'Rewind to here?'
+                      : 'Rewind Conversation',
+                  body: codexRewind
+                      ? 'Remove this prompt, its response, and every later turn from the active conversation?\n\n'
+                            'Files and commands are not undone. A transcript backup is kept. '
+                            'Messages sent during a turn can only be rewound from that turn’s first prompt.'
+                      : 'Rewind the conversation to this message?\n\n'
+                            'All messages after this point will be removed. '
+                            'File changes will be kept as-is. '
+                            'You can then send a new message to take a different path.',
                   actionLabel: 'Rewind',
                   color: Colors.orange,
                   onConfirmed: () =>
@@ -561,7 +568,7 @@ class MessageBubble extends StatelessWidget {
                 );
               },
             ),
-          if (onRewindConversation != null)
+          if (onRewindConversation != null && !codexRewind)
             ListTile(
               leading: Icon(Icons.restore, color: Colors.deepOrange.shade400),
               title: const Text('Rewind Everything'),

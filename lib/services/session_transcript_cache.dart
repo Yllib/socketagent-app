@@ -355,12 +355,24 @@ class SessionTranscriptCache {
     final key = _key(serverId, sessionId);
     _memory.remove(key);
     _liveWriteTimers.remove(key)?.cancel();
-    try {
+    final previousWrite = _pendingWrites[key];
+    final deletion = () async {
+      if (previousWrite != null) {
+        try {
+          await previousWrite;
+        } catch (_) {}
+      }
       final directory = await _cacheDirectory();
       final file = File('${directory.path}/${_fileName(key)}');
       if (await file.exists()) await file.delete();
+    }();
+    _pendingWrites[key] = deletion;
+    try {
+      await deletion;
     } catch (_) {
       // Cache failures never block an authoritative refresh from the server.
+    } finally {
+      if (identical(_pendingWrites[key], deletion)) _pendingWrites.remove(key);
     }
   }
 

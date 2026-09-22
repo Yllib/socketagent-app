@@ -65,6 +65,7 @@ class ChatView extends StatefulWidget {
   final void Function(String taskId)? onStopTask;
   final VoidCallback? onDismissTodos;
   final bool showCodexPlan;
+  final bool codexRewind;
   final bool showTodos;
   final Widget? tasksHidingNotice;
   final Widget? codexPlanHidingNotice;
@@ -114,6 +115,7 @@ class ChatView extends StatefulWidget {
     this.onStopTask,
     this.onDismissTodos,
     this.showCodexPlan = true,
+    this.codexRewind = false,
     this.showTodos = true,
     this.tasksHidingNotice,
     this.codexPlanHidingNotice,
@@ -1504,6 +1506,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           message: msg,
           sourceServerId: widget.serverId,
           onRewindConversation: widget.onRewindConversation,
+          codexRewind: widget.codexRewind,
           onBranch: widget.onBranch,
           onRetractPending: widget.onRetractQueuedMessage,
           onReadAloud: widget.onReadAloud,

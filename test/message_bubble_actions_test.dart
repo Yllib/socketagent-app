@@ -40,6 +40,62 @@ void main() {
     );
   }
 
+  testWidgets(
+    'Codex rewind requires confirmation and never offers file restoration',
+    (tester) async {
+      String? selected;
+      bool? files;
+      final message = ChatMessage(
+        id: 'prompt',
+        sender: MessageSender.user,
+        type: MessageType.text,
+        timestamp: DateTime(2026),
+        textContent: 'Try again',
+        uuid: 'prompt-uuid',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: MessageBubble(
+              message: message,
+              codexRewind: true,
+              onRewindConversation: (uuid, {bool rewindFiles = true}) {
+                selected = uuid;
+                files = rewindFiles;
+              },
+            ),
+          ),
+        ),
+      );
+      void openMenu() => tester
+          .widget<GestureDetector>(
+            find.byKey(const ValueKey<String>('message-bubble-actions-prompt')),
+          )
+          .onLongPress!();
+      openMenu();
+      await tester.pumpAndSettle();
+      expect(find.text('Rewind Everything'), findsNothing);
+      await tester.tap(find.text('Rewind to here'));
+      await tester.pumpAndSettle();
+      expect(selected, isNull);
+      expect(
+        find.textContaining('Files and commands are not undone'),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(selected, isNull);
+      openMenu();
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rewind to here'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Rewind'));
+      await tester.pumpAndSettle();
+      expect(selected, 'prompt-uuid');
+      expect(files, false);
+    },
+  );
+
   testWidgets('assistant markdown uses one cross-block selection area', (
     tester,
   ) async {

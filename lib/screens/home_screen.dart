@@ -1268,10 +1268,8 @@ class HomeScreenState extends State<HomeScreen> {
                           true,
                         ),
                         onDismissTodo: provider.dismissTodo,
-                        onRewindConversation:
-                            provider.activeSessionBackend == 'codex'
-                            ? null
-                            : provider.rewindConversation,
+                        onRewindConversation: provider.rewindConversation,
+                        codexRewind: provider.activeSessionBackend == 'codex',
                         onBranch: provider.activeSessionBackend == 'codex'
                             ? null
                             : provider.branchFromMessage,

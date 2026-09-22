@@ -6045,7 +6045,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _handleRewindResult(msg);
           break;
         case 'rewind_conversation_result':
-          _handleRewindConversationResult(msg);
+          _handleRewindConversationResult(msg, serverId: serverId);
           break;
         case 'branch_result':
           _handleBranchResult(msg);
@@ -9398,7 +9398,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void rewindConversation(String uuid, {bool rewindFiles = true}) {
-    _ws.sendRewindConversation(uuid, rewindFiles: rewindFiles);
+    _ws.sendRewindConversation(
+      uuid,
+      sessionId: _activeSessionId,
+      rewindFiles: activeSessionBackend == 'codex' ? false : rewindFiles,
+    );
   }
 
   void branchFromMessage(String uuid) {
@@ -9407,7 +9411,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _ws.sendBranchFromMessage(sessionId, uuid);
   }
 
-  void _handleRewindConversationResult(Map<String, dynamic> msg) {
+  void _handleRewindConversationResult(
+    Map<String, dynamic> msg, {
+    String? serverId,
+  }) {
+    final sessionId = msg['sessionId'] as String?;
+    final ownerServerId = serverId ?? _activeSessionServerId;
+    if (msg['success'] == true &&
+        msg['dryRun'] != true &&
+        sessionId != null &&
+        ownerServerId != null) {
+      unawaited(_transcriptCache.invalidate(ownerServerId, sessionId));
+    }
+    if (sessionId != null && sessionId != _activeSessionId) return;
+    if (serverId != null &&
+        _activeSessionServerId != null &&
+        serverId != _activeSessionServerId) {
+      return;
+    }
     final success = msg['success'] == true;
     final dryRun = msg['dryRun'] == true;
     final error = msg['error'] as String?;
@@ -9416,14 +9437,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (dryRun) return; // dry-run previews are not shown as messages
 
     if (success) {
+      if (msg['rewindIncludesTarget'] == true) {
+        // The following authoritative history must not merge removed cards back.
+        _subagentTasks.clear();
+        _backgroundTasks.clear();
+        _workflowTasks.clear();
+        _todos = [];
+        _contextUsage = null;
+        _initialHistoryRequestId = null;
+        _olderHistoryRequestId = null;
+        _isLoadingMore = false;
+      }
       // Truncate local messages at the rewind point
       final uuid = msg['userMessageUuid'] as String?;
       if (uuid != null) {
         final idx = _messages.indexWhere((m) => m.uuid == uuid);
         if (idx >= 0) {
-          _messages.removeRange(idx + 1, _messages.length);
+          _messages.removeRange(
+            msg['rewindIncludesTarget'] == true ? idx : idx + 1,
+            _messages.length,
+          );
         }
       }
+      if (msg['rewindIncludesTarget'] == true) _messages.clear();
       _isProcessing = false;
       _stopPromptRuntime();
       _clearLiveMessageStreams();
@@ -9581,7 +9617,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     int index,
   ) {
     return ChatMessage(
-      id: '${notice.toolName}_${DateTime.now().microsecondsSinceEpoch}'
+      id:
+          '${notice.toolName}_${DateTime.now().microsecondsSinceEpoch}'
           '_${offset}_$index',
       sender: MessageSender.system,
       type: MessageType.taskNotification,
@@ -16294,7 +16331,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final base = name.contains('.')
           ? name.substring(0, name.lastIndexOf('.'))
           : name;
-      targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext');
+      targetFile = File(
+        '${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext',
+      );
       counter++;
     }
 
@@ -16618,7 +16657,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final base = fileName.contains('.')
             ? fileName.substring(0, fileName.lastIndexOf('.'))
             : fileName;
-        targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext');
+        targetFile = File(
+          '${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext',
+        );
         counter++;
       }
 
@@ -16890,7 +16931,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final base = fileName.contains('.')
             ? fileName.substring(0, fileName.lastIndexOf('.'))
             : fileName;
-        targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext');
+        targetFile = File(
+          '${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext',
+        );
         counter++;
       }
 

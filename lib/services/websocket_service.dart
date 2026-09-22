@@ -895,11 +895,13 @@ class WebSocketService {
 
   void sendRewindConversation(
     String userMessageUuid, {
+    String? sessionId,
     bool dryRun = false,
     bool rewindFiles = true,
   }) {
     send({
       'type': 'rewind_conversation',
+      if (sessionId != null) 'sessionId': sessionId,
       'userMessageUuid': userMessageUuid,
       'dryRun': dryRun,
       'rewindFiles': rewindFiles,

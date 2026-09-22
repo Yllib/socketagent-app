@@ -15,6 +15,44 @@ void main() {
     );
   });
 
+  testWidgets(
+    'transcript access is not submitted until the user chooses and confirms',
+    (tester) async {
+      Map<String, String>? response;
+      const question =
+          'The agent would like to access historical transcripts from all sessions. Allow this request only?';
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: QuestionCard(
+              message: ChatMessage.question(
+                questionId: 'transcript_access_test',
+                questions: [
+                  QuestionItem(
+                    question: question,
+                    header: 'Transcript access',
+                    options: [
+                      QuestionOption(label: 'Allow once'),
+                      QuestionOption(label: 'Deny'),
+                    ],
+                  ),
+                ],
+              ),
+              onAnswer: (_, answers) => response = answers,
+            ),
+          ),
+        ),
+      );
+      expect(response, isNull);
+      await tester.tap(find.text('Allow once'));
+      await tester.pump();
+      expect(response, isNull);
+      await tester.tap(find.text('Submit'));
+      await tester.pump();
+      expect(response, {question: 'Allow once'});
+    },
+  );
+
   testWidgets('answered question shows the submitted response', (tester) async {
     final message = ChatMessage.question(
       questionId: 'question-1',

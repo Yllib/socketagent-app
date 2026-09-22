@@ -209,6 +209,38 @@ void main() {
           provider.messages.where((m) => m.toolUseId == id).last.toolStreaming,
           true,
         );
+        await send({
+          'type': 'rewind_conversation_result',
+          'sessionId': 'another-session',
+          'success': true,
+          'userMessageUuid': 'outside-window',
+          'rewindIncludesTarget': true,
+        });
+        expect(provider.subagentTasks[id]?['status'], 'running');
+        await send({
+          'type': 'rewind_conversation_result',
+          'success': true,
+          'userMessageUuid': 'outside-window',
+          'rewindIncludesTarget': true,
+          'messagesRemoved': 2,
+        });
+        await send({
+          'type': 'session_history',
+          'historyKind': 'rewind',
+          'messages': [],
+          'total': 0,
+          'offset': 0,
+        });
+        expect(provider.subagentTasks, isEmpty);
+        expect(provider.messages.where((m) => m.toolUseId == id), isEmpty);
+        Map<String, dynamic>? diskCache;
+        final deadline = DateTime.now().add(const Duration(seconds: 5));
+        do {
+          diskCache = await SessionTranscriptCache().load('audit-server', 'audit-root');
+          if (diskCache != null) break;
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        } while (DateTime.now().isBefore(deadline));
+        expect(diskCache?['messages'], isEmpty);
       } finally {
         provider.dispose();
         await socket?.close();
