@@ -1,3 +1,5 @@
+import 'download_part.dart';
+import 'resumable_http_download.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -200,7 +202,10 @@ class UpdateService extends ChangeNotifier {
       // Delete old APKs
       if (await updateDir.exists()) {
         for (final f in updateDir.listSync()) {
-          if (f is File && f.path != apkPath && f.path != partFile.path) {
+          if (f is File &&
+              f.path != apkPath &&
+              f.path != partFile.path &&
+              f.path != '${partFile.path}.json') {
             f.deleteSync();
           }
         }
@@ -309,110 +314,29 @@ class UpdateService extends ChangeNotifier {
     required File partFile,
     required File finalFile,
   }) async {
-    const maxAttempts = 5;
-    const connectTimeout = Duration(seconds: 12);
-    const idleTimeout = Duration(seconds: 15);
-    Object? lastError;
-
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      var existingBytes = await partFile.exists() ? await partFile.length() : 0;
-      final request = http.Request('GET', Uri.parse(url));
-      if (existingBytes > 0) {
-        request.headers['Range'] = 'bytes=$existingBytes-';
-      }
-
-      final client = http.Client();
-      IOSink? sink;
-      try {
-        final response = await client.send(request).timeout(connectTimeout);
-
-        if (response.statusCode == 416 && existingBytes > 0) {
-          final serverSize = _contentRangeTotal(response.headers);
-          if (serverSize != null && serverSize == existingBytes) {
-            if (await finalFile.exists()) await finalFile.delete();
-            await partFile.rename(finalFile.path);
-            return true;
-          }
-          await _deleteIfExists(partFile);
-          throw Exception('Server rejected resume range');
-        }
-
-        var resume = false;
-        if (response.statusCode == 206) {
-          resume = existingBytes > 0;
-        } else if (response.statusCode == 200) {
-          if (existingBytes > 0) {
-            await _deleteIfExists(partFile);
-            existingBytes = 0;
-          }
-        } else {
-          throw Exception('Download failed (${response.statusCode})');
-        }
-
-        final contentLength = response.contentLength ?? 0;
-        final totalBytes = response.statusCode == 206
-            ? _contentRangeTotal(response.headers) ??
-                  existingBytes + contentLength
-            : contentLength;
-        var receivedBytes = resume ? existingBytes : 0;
-        _downloadProgress = totalBytes > 0 ? receivedBytes / totalBytes : null;
+    final download = ResumableHttpDownload();
+    await download.download(
+      uri: Uri.parse(url),
+      part: DownloadPart(partFile),
+      immutableIdentity: _updateInfo?.sha256,
+      onProgress: (received, total) {
+        _downloadProgress = total != null && total > 0
+            ? received / total
+            : null;
+        _error = null;
         notifyListeners();
-
-        sink = partFile.openWrite(
-          mode: resume ? FileMode.append : FileMode.write,
-        );
-        await for (final chunk in response.stream.timeout(idleTimeout)) {
-          sink.add(chunk);
-          receivedBytes += chunk.length;
-          if (totalBytes > 0) {
-            _downloadProgress = (receivedBytes / totalBytes).clamp(0.0, 1.0);
-            notifyListeners();
-          }
-        }
-
-        await sink.flush();
-        await sink.close();
-        sink = null;
-
-        final savedBytes = await partFile.length();
-        if (totalBytes > 0 && savedBytes < totalBytes) {
-          throw Exception('Download ended early');
-        }
-
-        if (await finalFile.exists()) await finalFile.delete();
-        await partFile.rename(finalFile.path);
-        return true;
-      } catch (e) {
-        lastError = e;
-        try {
-          await sink?.flush();
-          await sink?.close();
-        } catch (_) {}
-        if (attempt >= maxAttempts) break;
-        final partialBytes = await partFile.exists()
-            ? await partFile.length()
-            : 0;
-        _error = partialBytes > 0
-            ? 'Download interrupted, retrying from ${_formatBytes(partialBytes)}...'
-            : 'Download interrupted, retrying...';
+      },
+      onRetry: (attempt, received) {
+        _error =
+            'Connection interrupted. Retrying from ${_formatBytes(received)}...';
         notifyListeners();
-        final retryDelaySeconds = attempt < 4 ? attempt * 2 : 8;
-        await Future.delayed(Duration(seconds: retryDelaySeconds));
-      } finally {
-        client.close();
-      }
-    }
-
-    throw Exception(lastError ?? 'Download failed');
-  }
-
-  int? _contentRangeTotal(Map<String, String> headers) {
-    final value = headers['content-range'] ?? headers['Content-Range'];
-    if (value == null) return null;
-    final match = RegExp(r'bytes\s+\d+-\d+/(\d+|\*)').firstMatch(value);
-    final total = match?.group(1);
-    if (total == null || total == '*') return null;
-    return int.tryParse(total);
+      },
+    );
+    if (await finalFile.exists()) await finalFile.delete();
+    await partFile.rename(finalFile.path);
+    final manifest = File('${partFile.path}.json');
+    if (await manifest.exists()) await manifest.delete();
+    return true;
   }
 
   String _formatBytes(int bytes) {

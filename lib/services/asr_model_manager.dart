@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+import 'download_part.dart';
+import 'resumable_http_download.dart';
 import 'package:path_provider/path_provider.dart';
 
 class AsrModelManager {
@@ -43,12 +44,22 @@ class AsrModelManager {
 
   Future<bool> isModelInstalled() async {
     final dir = await modelDir;
-    return File('$dir/$encoderFile').existsSync();
+    return !File('$dir/.installing').existsSync() &&
+        [
+          encoderFile,
+          decoderFile,
+          joinerFile,
+          tokensFile,
+        ].every((name) => File('$dir/$name').existsSync());
   }
 
   Future<bool> isPunctInstalled() async {
     final dir = await punctDir;
-    return File('$dir/$punctModelFile').existsSync();
+    return !File('$dir/.installing').existsSync() &&
+        [
+          punctModelFile,
+          punctVocabFile,
+        ].every((name) => File('$dir/$name').existsSync());
   }
 
   /// Download both ASR and punctuation models from GitHub releases.
@@ -115,41 +126,35 @@ class AsrModelManager {
     final archivePath = '$basePath/$dirName.tar.bz2';
     debugPrint('[AsrModel] Downloading $dirName from $url');
 
-    final client = http.Client();
-    try {
-      final request = http.Request('GET', Uri.parse(url));
-      var response = await client.send(request);
-
-      // Follow redirect if needed (GitHub releases)
-      if (response.statusCode == 302 || response.statusCode == 301) {
-        final redirectUrl = response.headers['location'];
-        if (redirectUrl == null) throw Exception('Redirect without location');
-        final redirectReq = http.Request('GET', Uri.parse(redirectUrl));
-        response = await http.Client().send(redirectReq);
-      }
-
-      if (response.statusCode != 200) {
-        throw Exception('HTTP ${response.statusCode}: ${response.reasonPhrase}');
-      }
-
-      final sink = File(archivePath).openWrite();
-      int received = 0;
-      final total = response.contentLength ?? 200 * 1024 * 1024;
-      final progressRange = progressEnd - progressStart;
-
-      await for (final chunk in response.stream) {
-        sink.add(chunk);
-        received += chunk.length;
-        downloadProgress.value = progressStart + (received / total).clamp(0.0, 1.0) * progressRange;
-      }
-      await sink.close();
-      debugPrint('[AsrModel] Downloaded $dirName ($received bytes), extracting...');
-    } finally {
-      client.close();
+    final part = DownloadPart(File('$archivePath.part'));
+    if (!File(archivePath).existsSync()) {
+      await ResumableHttpDownload().download(
+        uri: Uri.parse(url),
+        part: part,
+        onProgress: (received, total) {
+          if (total != null && total > 0) {
+            downloadProgress.value =
+                progressStart +
+                (received / total).clamp(0.0, 1.0) *
+                    (progressEnd - progressStart);
+          }
+        },
+      );
+      await part.file.rename(archivePath);
+      if (await part.manifest.exists()) await part.manifest.delete();
     }
 
     // Extract
-    final result = await Process.run('tar', ['xjf', archivePath, '-C', basePath]);
+    await targetDir.create(recursive: true);
+    await File(
+      '${targetDir.path}/.installing',
+    ).writeAsString('Installing', flush: true);
+    final result = await Process.run('tar', [
+      'xjf',
+      archivePath,
+      '-C',
+      basePath,
+    ]);
     if (result.exitCode != 0) {
       throw Exception('tar extraction failed for $dirName: ${result.stderr}');
     }
@@ -157,8 +162,11 @@ class AsrModelManager {
 
     // Verify
     if (!File('$basePath/$dirName/$verifyFile').existsSync()) {
-      throw Exception('Extraction succeeded but $verifyFile not found in $dirName');
+      throw Exception(
+        'Extraction succeeded but $verifyFile not found in $dirName',
+      );
     }
+    await File('${targetDir.path}/.installing').delete();
     debugPrint('[AsrModel] $dirName installed');
   }
 

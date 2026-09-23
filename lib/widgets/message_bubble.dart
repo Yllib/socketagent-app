@@ -6,6 +6,8 @@ import '../models/message.dart';
 import '../models/ai_response_report.dart';
 import '../services/socketagent_link_router.dart';
 import 'adaptive_action_sheet.dart';
+import 'inline_chat_images.dart';
+import 'message_timestamp.dart';
 
 class MessageBubble extends StatelessWidget {
   static const _nativeChannel = MethodChannel('com.socketagent.app/intent');
@@ -71,6 +73,10 @@ class MessageBubble extends StatelessWidget {
             priorityLabel,
             hasActions,
             hasMessageActions,
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
+            child: MessageTimestamp(timestamp: message.timestamp),
           ),
           if (isUploading)
             _buildUploadIndicator(context, theme, isUser, uploadProgress),
@@ -142,6 +148,19 @@ class MessageBubble extends StatelessWidget {
                           message.textContent,
                         ),
                         selectable: false,
+                        imageBuilder: (uri, title, alt) =>
+                            buildChatMarkdownImage(
+                              uri,
+                              title,
+                              alt,
+                              sourceServerId,
+                            ),
+                        blockSyntaxes: const [ChatCompareSyntax()],
+                        builders: {
+                          'socketagent-compare': ChatCompareBuilder(
+                            sourceServerId,
+                          ),
+                        },
                         onTapLink: (text, href, title) {
                           SocketAgentLinkRouter.open(
                             context,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import 'progress_panel.dart';
+import 'message_timestamp.dart';
 import 'dismissible_panel_items.dart';
 
 class CodexPlanCard extends StatelessWidget {
@@ -82,21 +83,24 @@ class CodexPlanCard extends StatelessWidget {
               ),
         ];
         if (visible.isEmpty) return const SizedBox.shrink();
-        return ProgressPanel(
-          label: 'Plan',
-          totalCount: steps.length,
-          completedCount: steps
-              .where((step) => step['status'] == 'completed')
-              .length,
-          icon: Icons.route_outlined,
-          accent: const Color(0xFFCBA6F7),
-          explanation:
-              (msg.toolInput?['explanation'] as String? ?? msg.textContent)
-                  .trim(),
-          onDismiss: onDismiss,
-          hidingNotice: hidingNotice,
-          dismissTooltip: 'Hide Codex plan',
-          entries: visible,
+        return TimestampedChatCard(
+          timestamp: msg.timestamp,
+          child: ProgressPanel(
+            label: 'Plan',
+            totalCount: steps.length,
+            completedCount: steps
+                .where((step) => step['status'] == 'completed')
+                .length,
+            icon: Icons.route_outlined,
+            accent: const Color(0xFFCBA6F7),
+            explanation:
+                (msg.toolInput?['explanation'] as String? ?? msg.textContent)
+                    .trim(),
+            onDismiss: onDismiss,
+            hidingNotice: hidingNotice,
+            dismissTooltip: 'Hide Codex plan',
+            entries: visible,
+          ),
         );
       },
     );

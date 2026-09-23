@@ -143,8 +143,21 @@ bool isCondensedConversationMessage(ChatMessage message) {
         'Speak',
         'ScheduleReminder',
       }.contains(message.toolName);
-    case MessageType.toolResult:
     case MessageType.taskNotification:
+      if (message.toolName == 'restarted' ||
+          message.toolInput?['notificationKind'] == 'server_recovery') {
+        return true;
+      }
+      // Older servers saved recovery notices as plain info notifications.
+      return message.toolName == 'info' &&
+          const {
+            'Server restart prepared. Interrupted work will resume after startup.',
+            'Attempting to resume interrupted work.',
+            'Recovery run failed. Open the session to review the error and retry.',
+            'Could not resume after five attempts. Send a message to retry.',
+            'Could not start the backend. Recovery will retry automatically.',
+          }.contains(message.textContent.trim());
+    case MessageType.toolResult:
     case MessageType.compactBoundary:
     case MessageType.toolSummary:
     case MessageType.thinking:

@@ -979,6 +979,9 @@ void main() {
 
     position.jumpTo(position.maxScrollExtent);
     await tester.pump();
+    // Card heights can change as rows are measured after the jump.
+    await tester.ensureVisible(find.byType(ToolOutputBlock));
+    await tester.pumpAndSettle();
     await tester.tap(find.byType(ToolOutputBlock));
     await tester.pump();
     expect(

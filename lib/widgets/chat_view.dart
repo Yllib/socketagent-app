@@ -8,6 +8,7 @@ import '../models/message_reconciliation.dart';
 import '../models/raw_event.dart';
 import '../services/socketagent_link_router.dart';
 import 'message_bubble.dart';
+import 'message_timestamp.dart';
 import 'tool_output_block.dart';
 import 'speak_card.dart';
 import 'file_card.dart';
@@ -1398,6 +1399,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
                             ),
+                          if (row.messages.isNotEmpty)
+                            MessageTimestamp(
+                              timestamp: row.messages.first.timestamp,
+                            ),
                         ],
                       ),
                     ),
@@ -1500,6 +1505,23 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   Widget _buildMessageContent(ChatMessage msg, String rowKey) {
+    final content = _buildMessageCard(msg, rowKey);
+    // Dividers separate conversation sections; they are not chat cards.
+    if (msg.type == MessageType.runBoundary ||
+        msg.type == MessageType.compactBoundary) {
+      return content;
+    }
+    // These widgets put the timestamp beside their content themselves. Plans
+    // can hide all their steps, so their footer follows that visibility too.
+    if (msg.type == MessageType.text ||
+        msg.type == MessageType.result ||
+        msg.type == MessageType.codexPlan) {
+      return content;
+    }
+    return TimestampedChatCard(timestamp: msg.timestamp, child: content);
+  }
+
+  Widget _buildMessageCard(ChatMessage msg, String rowKey) {
     switch (msg.type) {
       case MessageType.text:
         return MessageBubble(

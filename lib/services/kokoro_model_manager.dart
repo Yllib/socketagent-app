@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
+import 'download_part.dart';
+import 'resumable_http_download.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -38,8 +39,11 @@ class KokoroModelManager {
   /// Whether a specific model is installed.
   Future<bool> isModelVersionInstalled(KokoroModel model) async {
     final dir = await modelDirFor(model);
-    return File('$dir/model.onnx').existsSync() &&
-        File('$dir/voices.bin').existsSync();
+    return !File('$dir/.installing').existsSync() &&
+        File('$dir/model.onnx').existsSync() &&
+        File('$dir/voices.bin').existsSync() &&
+        File('$dir/tokens.txt').existsSync() &&
+        Directory('$dir/espeak-ng-data').existsSync();
   }
 
   /// Whether the active model is installed (backwards compat).
@@ -94,32 +98,22 @@ class KokoroModelManager {
     );
     debugPrint('[KokoroModel] Downloading $fileName from $modelDirName');
 
-    final request = http.Request('GET', url);
-    final response = await http.Client().send(request);
-
-    if (response.statusCode != 200) {
-      throw Exception(
-        'SocketAgent returned ${response.statusCode} for $fileName',
-      );
-    }
-
-    final total = response.contentLength ?? 0;
-    final tmpPath = '$savePath.tmp';
-    final sink = File(tmpPath).openWrite();
-    int received = 0;
-
-    await for (final chunk in response.stream) {
-      sink.add(chunk);
-      received += chunk.length;
-      if (total > 0) {
-        final fileProgress = (received / total).clamp(0.0, 1.0);
-        downloadProgress.value =
-            progressStart + (progressEnd - progressStart) * fileProgress;
-      }
-    }
-    await sink.close();
-    File(tmpPath).renameSync(savePath);
-    debugPrint('[KokoroModel] Downloaded $fileName ($received bytes)');
+    if (File(savePath).existsSync()) return;
+    final part = DownloadPart(File('$savePath.part'));
+    await ResumableHttpDownload().download(
+      uri: url,
+      part: part,
+      onProgress: (received, total) {
+        if (total != null && total > 0) {
+          downloadProgress.value =
+              progressStart +
+              (progressEnd - progressStart) *
+                  (received / total).clamp(0.0, 1.0);
+        }
+      },
+    );
+    await part.file.rename(savePath);
+    if (await part.manifest.exists()) await part.manifest.delete();
   }
 
   /// Download a specific model version.
@@ -136,10 +130,8 @@ class KokoroModelManager {
     try {
       final dir = await modelDirFor(model);
       final targetDir = Directory(dir);
-      if (targetDir.existsSync()) {
-        targetDir.deleteSync(recursive: true);
-      }
       targetDir.createSync(recursive: true);
+      await File('$dir/.installing').writeAsString('Installing', flush: true);
 
       // Download model.onnx (largest)
       await _downloadFile(
@@ -199,7 +191,6 @@ class KokoroModelManager {
       if (result.exitCode != 0) {
         throw Exception('espeak-ng-data extraction failed: ${result.stderr}');
       }
-      File(espeakTarPath).deleteSync();
 
       // v1.0 needs lexicon files and dict directory for multilingual support
       if (model == KokoroModel.v10) {
@@ -243,13 +234,17 @@ class KokoroModelManager {
         if (dictResult.exitCode != 0) {
           throw Exception('dict extraction failed: ${dictResult.stderr}');
         }
-        File(dictTarPath).deleteSync();
       }
 
       if (!File('$dir/model.onnx').existsSync()) {
         throw Exception('Download completed but model.onnx not found');
       }
 
+      await File('$dir/.installing').delete();
+      for (final archive in ['espeak-ng-data.tar.gz', 'dict.tar.gz']) {
+        final file = File('$dir/$archive');
+        if (await file.exists()) await file.delete();
+      }
       await setActiveModel(model);
       debugPrint('[KokoroModel] ${model.shortLabel} installed at $dir');
       downloadProgress.value = null;

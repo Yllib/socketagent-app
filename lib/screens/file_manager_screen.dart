@@ -518,7 +518,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
           }
           final entryIndex = rowIndex;
           final entry = rows[entryIndex];
-          final fileId = provider.getFileId(entry.path);
+          final fileId = provider.getFileId(entry.path, serverId: _effectiveServerId(provider));
           return _FileEntryTile(
             entry: entry,
             highlighted: entry.path == widget.highlightPath,
@@ -611,7 +611,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
 
   Future<void> _showFileActions(FileManagerEntry entry) async {
     final provider = context.read<ChatProvider>();
-    final fileId = provider.getFileId(entry.path);
+    final fileId = provider.getFileId(entry.path, serverId: _effectiveServerId(provider));
     final localPath = fileId == null
         ? null
         : provider.getReceivedFilePath(fileId);

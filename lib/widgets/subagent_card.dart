@@ -10,6 +10,8 @@ import 'file_card.dart';
 import 'reminder_card.dart';
 import 'scroll_passthrough.dart';
 import 'thinking_card.dart';
+import 'inline_chat_images.dart';
+import 'message_timestamp.dart';
 
 class SubAgentCard extends StatefulWidget {
   final ChatMessage message;
@@ -343,6 +345,12 @@ class _SubAgentCardState extends State<SubAgentCard> {
           const SizedBox(height: 4),
           MarkdownBody(
             data: SocketAgentLinkRouter.prepareMarkdown(content),
+            imageBuilder: (uri, title, alt) =>
+                buildChatMarkdownImage(uri, title, alt, widget.sourceServerId),
+            blockSyntaxes: const [ChatCompareSyntax()],
+            builders: {
+              'socketagent-compare': ChatCompareBuilder(widget.sourceServerId),
+            },
             selectable: true,
             onTapLink: (text, href, title) {
               SocketAgentLinkRouter.open(
@@ -370,6 +378,12 @@ class _SubAgentCardState extends State<SubAgentCard> {
   }
 
   Widget _buildChildMessage(ChatMessage msg) {
+    final content = _buildChildContent(msg);
+    if (msg.type == MessageType.text || content is SizedBox) return content;
+    return TimestampedChatCard(timestamp: msg.timestamp, child: content);
+  }
+
+  Widget _buildChildContent(ChatMessage msg) {
     switch (msg.type) {
       case MessageType.text:
         return MessageBubble(

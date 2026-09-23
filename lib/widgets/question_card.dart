@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'inline_chat_images.dart';
 import '../models/message.dart';
 import '../services/socketagent_link_router.dart';
 import 'scroll_passthrough.dart';
@@ -162,6 +163,18 @@ class _QuestionCardState extends State<QuestionCard> {
               child: Scrollbar(
                 child: SingleChildScrollView(
                   child: MarkdownBody(
+                    imageBuilder: (uri, title, alt) => buildChatMarkdownImage(
+                      uri,
+                      title,
+                      alt,
+                      widget.sourceServerId,
+                    ),
+                    blockSyntaxes: const [ChatCompareSyntax()],
+                    builders: {
+                      'socketagent-compare': ChatCompareBuilder(
+                        widget.sourceServerId,
+                      ),
+                    },
                     data: SocketAgentLinkRouter.prepareMarkdown(
                       question.question,
                     ),
@@ -408,6 +421,18 @@ class _QuestionCardState extends State<QuestionCard> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: MarkdownBody(
+                imageBuilder: (uri, title, alt) => buildChatMarkdownImage(
+                  uri,
+                  title,
+                  alt,
+                  widget.sourceServerId,
+                ),
+                blockSyntaxes: const [ChatCompareSyntax()],
+                builders: {
+                  'socketagent-compare': ChatCompareBuilder(
+                    widget.sourceServerId,
+                  ),
+                },
                 data: SocketAgentLinkRouter.prepareMarkdown(option.preview!),
                 onTapLink: (text, href, title) {
                   SocketAgentLinkRouter.open(

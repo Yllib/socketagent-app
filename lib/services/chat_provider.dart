@@ -1,3 +1,4 @@
+import 'package:http/http.dart' as http;
 import 'windows_local_server.dart';
 import 'desktop_window_service.dart';
 import 'codex_reset_attempts.dart';
@@ -10,7 +11,11 @@ import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:crypto/crypto.dart' as hashes;
+import 'download_part.dart';
+import 'download_retry.dart';
+import 'resumable_http_download.dart';
 import 'file_open_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -560,12 +565,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, _DownloadProgressNotification>
   _pendingDownloadNotifications = {};
   final Map<String, int> _downloadReceivedBytes = {}; // fileId → bytes saved
-  final Map<String, int> _downloadExpectedBytes = {}; // fileId → expected size
-  final Map<String, IOSink> _activeDownloads = {}; // fileId → write sink
-  final Map<String, String> _downloadTempPaths = {}; // fileId → temp path
-  final Map<String, String> _socketDownloadTokens =
-      {}; // fileId → active socket transfer token
-  final Map<String, BytesBuilder> _fileBytesBuffers = {};
+  bool _downloadsDisposed = false;
+  final Map<String, DownloadPart> _downloadParts = {};
+  final Map<String, Future<void>> _downloadEventQueues = {};
+  final Map<String, Future<void>> _downloadJobs = {};
+  final Map<String, int> _downloadGenerations = {};
+  final Map<String, ResumableHttpDownload> _httpDownloads = {};
+  final Map<String, Timer> _downloadRetryTimers = {};
+  final Set<String> _downloadStarting = {};
+  final Set<String> _socketDownloadStarted = {};
+  final Set<String> _resumeDownloadIds = {};
+  final Map<String, String> _socketDownloadTokens = {};
   final Map<String, Completer<String?>> _fileBytesCompleters = {};
   final Map<String, Completer<Map<String, dynamic>>>
   _sessionTransferCompleters = {};
@@ -1162,7 +1172,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (!_appInForeground || _viewingSessionId != sessionId) return false;
     if (Platform.isWindows &&
         (!DesktopWindowService.instance.value.visible ||
-            !DesktopWindowService.instance.value.active)) return false;
+            !DesktopWindowService.instance.value.active)) {
+      return false;
+    }
     final viewingServerId = _viewingServerId;
     if (serverId != null &&
         serverId.isNotEmpty &&
@@ -1928,47 +1940,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool isSessionAvailable(Session session) =>
       sessionServerStatus(session) == ConnectionStatus.connected;
 
-  Future<String?> fetchServerFileBase64(
-    String filePath, {
-    String? serverId,
-    Duration timeout = const Duration(seconds: 20),
-  }) async {
-    if (filePath.isEmpty) return null;
-    final fileId =
-        'bytes_${DateTime.now().microsecondsSinceEpoch}_${filePath.hashCode}';
-    final completer = Completer<String?>();
-    _fileBytesCompleters[fileId] = completer;
-    _fileBytesBuffers[fileId] = BytesBuilder(copy: false);
-    final ownerServerId = resolveDownloadServerId(
-      serverId,
-      _connMgr.activeServerId,
-    );
-    if (ownerServerId != null) {
-      _downloadServerIds[fileId] = ownerServerId;
-    }
-
-    final request = {
-      'type': 'request_file',
-      'filePath': filePath,
-      'fileId': fileId,
-    };
-    if (ownerServerId != null) {
-      _connMgr.sendToServer(ownerServerId, request);
-    } else {
-      _connMgr.send(request);
-    }
-
-    return completer.future.timeout(
-      timeout,
-      onTimeout: () {
-        _fileBytesCompleters.remove(fileId);
-        _fileBytesBuffers.remove(fileId);
-        _downloadReceivedBytes.remove(fileId);
-        _downloadServerIds.remove(fileId);
-        return null;
-      },
-    );
-  }
+  Future<String?> fetchServerFileBase64(String filePath, {
+    String? serverId, Duration timeout = const Duration(minutes: 3),
+  }) => fetchFileManagerFileBase64(path: filePath, fileName: filePath.split('/').last,
+      serverId: serverId, timeout: timeout);
 
   SherpaSpeechService get speech => _speech;
   AsrModelManager get asrModelManager => _asrModelManager;
@@ -2322,6 +2297,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
     await _connMgr.setServers(_serverConfigs);
+    await _restoreDownloads();
     _connMgr.connectAll();
 
     // Connection readiness ends here. Push registration, speech-engine
@@ -3149,6 +3125,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       // Auto-sync state on every (re)connect for this server
       if (update.status == ConnectionStatus.connected) {
+        _resumeDownloadsForServer(update.serverId);
         _retryPendingAbortForServer(update.serverId);
         _retryPendingPromptsForServer(update.serverId);
         _syncStateToServer(serverId: update.serverId);
@@ -4295,6 +4272,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'terminal_error',
       'file',
       'file_data',
+      'file_start',
       'file_chunk',
       'file_complete',
       'file_error',
@@ -4785,16 +4763,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _handleFileMessage(msg, serverId);
           break;
         case 'file_data':
-          _handleFileData(msg);
-          break;
+        case 'file_start':
         case 'file_chunk':
-          _handleFileChunk(msg);
-          break;
         case 'file_complete':
-          _handleFileComplete(msg);
-          break;
         case 'file_error':
-          _handleFileError(msg);
+          _enqueueDownloadEvent(msg, serverId);
           break;
         case 'session_transfer_export_result':
         case 'session_transfer_import_result':
@@ -6848,6 +6821,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _handleTextMessage(Map<String, dynamic> msg) {
+    if (msg['inlineImagesReady'] == true) {
+      for (final message in _messages.reversed) {
+        if (messageMatchesTranscriptPosition(message, msg)) {
+          message.textContent = msg['content'] as String? ?? message.textContent;
+          applyTranscriptPosition(message, msg);
+          notifyListeners();
+          break;
+        }
+      }
+      return;
+    }
     _processingSetAt = null; // server confirmed processing
     final content = msg['content'] as String? ?? '';
     final streamId = msg['streamId'] as String?;
@@ -10692,8 +10676,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (filePath.isNotEmpty) {
               final historyFileId =
                   entry['fileId'] as String? ??
-                  _filePathToId[filePath] ??
-                  filePath;
+                  _filePathToId[_filePathKey(filePath)] ??
+                  _stableFileTransferId(_filePathKey(filePath));
               final historyFileName =
                   entry['fileName'] as String? ?? filePath.split('/').last;
               final historyFileSize = (entry['fileSize'] as num?)?.toInt();
@@ -10715,8 +10699,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               if (historyFileSize != null && historyFileSize > 0) {
                 toolInput['_file_size'] = historyFileSize;
               }
-              _filePathToId[filePath] = historyFileId;
-              final activeServerId = _connMgr.activeServerId;
+              _filePathToId[_filePathKey(filePath)] = historyFileId;
+              final activeServerId = _activeSessionServerId ?? _connMgr.activeServerId;
               if (activeServerId != null && activeServerId.isNotEmpty) {
                 _downloadServerIds[historyFileId] = activeServerId;
               }
@@ -14178,26 +14162,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? serverId,
     bool showInChat = false,
   }) async {
-    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
-    final fileId = _stableFileTransferId(path);
-    final completer = Completer<Map<String, dynamic>>();
-    _fileManagerOperationCompleters[requestId] = completer;
+    final owner = resolveDownloadServerId(serverId, _connMgr.activeServerId);
+    final fileId = _stableFileTransferId('$owner:$path');
     _serverFiles[fileId] = path;
     _serverFileNames[fileId] = fileName;
-    if (serverId != null && serverId.isNotEmpty) {
-      _downloadServerIds[fileId] = serverId;
-    }
-    if (showInChat && _activeSessionId != null) {
-      _downloadSessionIds[fileId] = _activeSessionId!;
-    }
-    _filePathToId[path] = fileId;
-    _downloadRetryCounts[fileId] = 0;
-    _cancelledDownloads.remove(fileId);
-    _downloadingFiles.add(fileId);
-    _downloadProgress[fileId] = 0;
-    _downloadErrors.remove(fileId);
-    _armDownloadWatchdog(fileId);
-    _showDownloadProgressNotification(fileId, fileName, 0);
+    if (owner != null) _downloadServerIds[fileId] = owner;
+    if (showInChat && _activeSessionId != null) _downloadSessionIds[fileId] = _activeSessionId!;
+    _filePathToId[_filePathKey(path, owner)] = fileId;
     if (showInChat) {
       final hasVisibleCard = _messages.any(
         (m) =>
@@ -14217,98 +14188,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     notifyListeners();
 
-    final usedHttp = await _tryHttpFileDownload(
-      fileId: fileId,
-      serverPath: path,
-      fileName: fileName,
-      serverId: serverId,
-    );
-    if (usedHttp) {
-      _fileManagerOperationCompleters.remove(requestId);
-      return;
-    }
-
-    final offsetBytes = await _socketDownloadOffset(fileId);
-    final msg = {
-      'type': 'file_manager_download',
-      'requestId': requestId,
-      'path': path,
-      'fileId': fileId,
-      if (_serverFileVersions[fileId]?.isNotEmpty == true)
-        'expectedFileVersion': _serverFileVersions[fileId],
-      if (offsetBytes > 0) 'offsetBytes': offsetBytes,
-    };
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _ws.send(msg);
-    }
-
-    try {
-      await completer.future.timeout(const Duration(seconds: 10));
-    } catch (e) {
-      _fileManagerOperationCompleters.remove(requestId);
-      _serverFiles.remove(fileId);
-      _serverFileNames.remove(fileId);
-      _serverFileSizes.remove(fileId);
-      _serverFileVersions.remove(fileId);
-      _downloadServerIds.remove(fileId);
-      _downloadRetryCounts.remove(fileId);
-      _filePathToId.remove(path);
-      _downloadingFiles.remove(fileId);
-      _downloadProgress.remove(fileId);
-      _downloadErrors[fileId] = e.toString();
-      _cancelDownloadWatchdog(fileId);
-      notifyListeners();
-      rethrow;
-    }
+    requestFile(fileId);
   }
 
-  Future<String?> fetchFileManagerFileBase64({
-    required String path,
-    required String fileName,
-    String? serverId,
-    Duration timeout = const Duration(seconds: 30),
+  Future<String?> fetchFileManagerFileBase64({required String path, required String fileName,
+    String? serverId, Duration timeout = const Duration(minutes: 3),
   }) async {
-    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
-    final fileId = 'fm_preview_$requestId';
-    final operationCompleter = Completer<Map<String, dynamic>>();
-    final byteCompleter = Completer<String?>();
-
-    _fileManagerOperationCompleters[requestId] = operationCompleter;
-    _fileBytesCompleters[fileId] = byteCompleter;
-    _fileBytesBuffers[fileId] = BytesBuilder(copy: false);
-    final ownerServerId = resolveDownloadServerId(
-      serverId,
-      _connMgr.activeServerId,
-    );
-    if (ownerServerId != null) {
-      _downloadServerIds[fileId] = ownerServerId;
-    }
-
-    final msg = {
-      'type': 'file_manager_download',
-      'requestId': requestId,
-      'path': path,
-      'fileId': fileId,
-    };
-    if (ownerServerId != null) {
-      _connMgr.sendToServer(ownerServerId, msg);
-    } else {
-      _ws.send(msg);
-    }
-
-    try {
-      await operationCompleter.future.timeout(const Duration(seconds: 10));
-      return await byteCompleter.future.timeout(timeout);
-    } catch (e) {
-      _fileManagerOperationCompleters.remove(requestId);
-      _fileBytesCompleters.remove(fileId);
-      _fileBytesBuffers.remove(fileId);
-      _downloadReceivedBytes.remove(fileId);
-      _downloadServerIds.remove(fileId);
-      rethrow;
-    }
+    final owner = resolveDownloadServerId(serverId, _connMgr.activeServerId);
+    final id = 'preview_${_stableFileTransferId('$owner:$path')}';
+    final existing = _fileBytesCompleters[id];
+    if (existing != null) return existing.future;
+    final completer = Completer<String?>();
+    _fileBytesCompleters[id] = completer;
+    _serverFiles[id] = path;
+    _serverFileNames[id] = fileName;
+    if (owner != null) _downloadServerIds[id] = owner;
+    requestFile(id);
+    return completer.future.timeout(timeout, onTimeout: () {
+      unawaited(_cleanupActiveDownload(id));
+      _fileBytesCompleters.remove(id);
+      throw TimeoutException('Download paused. Saved progress will be resumed on retry.');
+    });
   }
 
   Future<Map<String, dynamic>> readFileManagerText({
@@ -16118,7 +16018,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Get local path for a downloaded file, or null if not yet downloaded
   /// Get fileId for a server file path (latest)
-  String? getFileId(String serverPath) => _filePathToId[serverPath];
+  String _filePathKey(String path, [String? serverId]) =>
+      jsonEncode([serverId ?? _activeSessionServerId ?? _connMgr.activeServerId ?? '', path]);
+
+  String? getFileId(String serverPath, {String? serverId}) =>
+      _filePathToId[_filePathKey(serverPath, serverId)];
 
   /// Get local path for a downloaded file by fileId
   String? getReceivedFilePath(String fileId) => _receivedFiles[fileId];
@@ -16179,7 +16083,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
         return;
       }
-      _filePathToId[filePath] = fileId;
+      _filePathToId[_filePathKey(filePath, currentServerId)] = fileId;
       final targetCardIndex = findSendFileAvailabilityCard(
         _messages,
         filePath: filePath,
@@ -16219,9 +16123,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> cancelDownloadFromNotification(String fileId) async {
     _cancelledDownloads.add(fileId);
-    await _cleanupActiveDownload(fileId, deleteTemp: true);
+    await _cleanupActiveDownload(fileId);
+    final part = _downloadParts[fileId];
+    if (part != null) { part.metadata['state'] = 'cancelled'; await part.save(); }
     _downloadRetryCounts.remove(fileId);
-    _downloadErrors[fileId] = 'Download cancelled';
+    _downloadErrors[fileId] = 'Download stopped. Tap retry to resume.';
     await _notifications.cancel(_downloadNotificationId(fileId));
     notifyListeners();
   }
@@ -16249,109 +16155,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Request file data from server (user tapped download).
-  /// Direct/manual servers use HTTP for large-file speed; relay falls back to
-  /// the encrypted socket chunk path.
-  void requestFile(String fileId) {
-    unawaited(_requestFile(fileId));
-  }
-
-  Future<void> _requestFile(String fileId) async {
-    final serverPath = _serverFiles[fileId];
-    if (serverPath == null) return;
-    final fileName = _serverFileNames[fileId] ?? serverPath.split('/').last;
-    await _cleanupActiveDownload(fileId, deleteTemp: false);
-    _downloadErrors.remove(fileId);
-    _downloadRetryCounts[fileId] = 0;
-    _cancelledDownloads.remove(fileId);
-    final ownerServerId = resolveDownloadServerId(
-      _downloadServerIds[fileId],
-      _connMgr.activeServerId,
-    );
-    if (ownerServerId != null) {
-      _downloadServerIds[fileId] = ownerServerId;
-    }
-    _downloadingFiles.add(fileId);
-    _downloadProgress[fileId] = 0;
-    _armDownloadWatchdog(fileId);
-    _showDownloadProgressNotification(fileId, fileName, 0);
-    notifyListeners();
-    unawaited(
-      _tryHttpFileDownload(
-        fileId: fileId,
-        serverPath: serverPath,
-        fileName: fileName,
-        serverId: ownerServerId,
-      ).then((usedHttp) {
-        if (usedHttp || !_downloadingFiles.contains(fileId)) return;
-        unawaited(
-          _requestSocketFileDownload(
-            fileId,
-            serverPath,
-            serverId: _downloadServerIds[fileId],
-          ),
-        );
-      }),
-    );
-  }
-
-  Future<String> _socketDownloadTempPath(String fileId) async {
-    await downloadsDirectory();
-    return _socketDownloadTempPathSync(fileId);
-  }
-
-  /// Only for [_handleFileChunk], which cannot await. See
-  /// [downloadsDirectorySync].
-  String _socketDownloadTempPathSync(String fileId) {
-    final safeId = _safeDownloadTempId(fileId);
-    final dir = downloadsDirectorySync();
-    return '${dir.path}${Platform.pathSeparator}.$safeId.tmp';
-  }
-
-  Future<int> _socketDownloadOffset(String fileId) async {
-    final tempFile = File(await _socketDownloadTempPath(fileId));
-    try {
-      return await tempFile.exists() ? await tempFile.length() : 0;
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  Future<void> _requestSocketFileDownload(
-    String fileId,
-    String serverPath, {
-    String? serverId,
-  }) async {
-    final offsetBytes = await _socketDownloadOffset(fileId);
-    final transferToken =
-        '${DateTime.now().microsecondsSinceEpoch}_${_downloadRetryCounts[fileId] ?? 0}';
-    _socketDownloadTokens[fileId] = transferToken;
-    final msg = {
-      'type': 'request_file',
-      'filePath': serverPath,
-      'fileId': fileId,
-      'transferToken': transferToken,
-      if (_serverFileVersions[fileId]?.isNotEmpty == true)
-        'expectedFileVersion': _serverFileVersions[fileId],
-      if (offsetBytes > 0) 'offsetBytes': offsetBytes,
-    };
-    _armDownloadWatchdog(fileId);
-    if (serverId != null && serverId.isNotEmpty) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _ws.send(msg);
-    }
-  }
-
-  int? _httpContentRangeTotal(Map<String, String> headers) {
-    final value = headers['content-range'] ?? headers['Content-Range'];
-    if (value == null) return null;
-    final match = RegExp(r'bytes\s+\d+-\d+/(\d+|\*)').firstMatch(value);
-    final total = match?.group(1);
-    if (total == null || total == '*') return null;
-    return int.tryParse(total);
-  }
-
   String _formatDownloadBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
     final kb = bytes / 1024;
@@ -16366,8 +16169,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required File tempFile,
     required Directory downloadsDir,
     required String safeName,
+    Future<void> Function(String)? beforeMove,
   }) async {
-    final name = safeName.isEmpty ? 'file' : safeName;
+    final cleanName = safeName.replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1f]'), '_');
+    final name = cleanName.isEmpty || cleanName == '.' || cleanName == '..' ? 'file' : cleanName;
     var targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$name');
     var counter = 1;
     while (targetFile.existsSync()) {
@@ -16381,10 +16186,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       counter++;
     }
 
+    await beforeMove?.call(targetFile.path);
     try {
       return await tempFile.rename(targetFile.path);
     } catch (_) {
-      await tempFile.copy(targetFile.path);
+      final staged = '${targetFile.path}.${DateTime.now().microsecondsSinceEpoch}.partial';
+      await tempFile.copy(staged);
+      await File(staged).rename(targetFile.path);
       await tempFile.delete();
       return targetFile;
     }
@@ -16415,651 +16223,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  Future<bool> _tryHttpFileDownload({
-    required String fileId,
-    required String serverPath,
-    required String fileName,
-    String? serverId,
-  }) async {
-    if (_directServerUsesEncryptedSocket(serverId)) {
-      return false;
-    }
-    final server = _getDirectServerFor(serverId);
-    if (server == null) return false;
-
-    final uri = Uri(
-      scheme: 'http',
-      host: server.host,
-      port: server.port,
-      path: '/download-file',
-      queryParameters: {'token': server.token, 'path': serverPath},
-    );
-
-    final safeName = fileName
-        .split('/')
-        .last
-        .split('\\')
-        .last
-        .replaceAll('..', '');
-    final downloadsDir = await downloadsDirectory();
-    final safeId = _safeDownloadTempId(fileId);
-    final tempPath =
-        '${downloadsDir.path}${Platform.pathSeparator}.$safeId.http.tmp';
-    final tempFile = File(tempPath);
-    const maxAttempts = 5;
-    const connectTimeout = Duration(seconds: 10);
-    const idleTimeout = Duration(seconds: 15);
-    var sawHttpResponse = false;
-    Object? lastError;
-
-    try {
-      if (!downloadsDir.existsSync()) {
-        downloadsDir.createSync(recursive: true);
-      }
-      _downloadTempPaths[fileId] = tempPath;
-      _cancelDownloadWatchdog(fileId);
-
-      for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (!_downloadingFiles.contains(fileId)) return true;
-
-        var existingBytes = tempFile.existsSync() ? await tempFile.length() : 0;
-        final client = http.Client();
-        IOSink? sink;
-        try {
-          final request = http.Request('GET', uri);
-          if (existingBytes > 0) {
-            request.headers['Range'] = 'bytes=$existingBytes-';
-          }
-          final response = await client.send(request).timeout(connectTimeout);
-          sawHttpResponse = true;
-
-          if (response.statusCode == 416 && existingBytes > 0) {
-            final serverSize = _httpContentRangeTotal(response.headers);
-            if (serverSize != null && existingBytes == serverSize) {
-              final targetFile = await _moveHttpDownloadToUniqueTarget(
-                tempFile: tempFile,
-                downloadsDir: downloadsDir,
-                safeName: safeName,
-              );
-              _downloadTempPaths.remove(fileId);
-              _lastNotifiedProgress.remove(fileId);
-              _receivedFiles[fileId] = targetFile.path;
-              _downloadingFiles.remove(fileId);
-              _downloadProgress.remove(fileId);
-              _downloadErrors.remove(fileId);
-              _downloadRetryCounts.remove(fileId);
-              _showDownloadFinishedNotification(
-                fileId,
-                safeName.isEmpty ? 'file' : safeName,
-              );
-              notifyListeners();
-              return true;
-            }
-            if (tempFile.existsSync()) await tempFile.delete();
-            existingBytes = 0;
-            throw Exception('Server rejected resume range');
-          }
-
-          var resume = false;
-          if (response.statusCode == 206) {
-            resume = existingBytes > 0;
-          } else if (response.statusCode == 200) {
-            if (existingBytes > 0 && tempFile.existsSync()) {
-              await tempFile.delete();
-              existingBytes = 0;
-            }
-          } else if (response.statusCode == 400 ||
-              response.statusCode == 401 ||
-              response.statusCode == 403 ||
-              response.statusCode == 404) {
-            _downloadTempPaths.remove(fileId);
-            return false;
-          } else {
-            throw Exception('HTTP ${response.statusCode}');
-          }
-
-          final total = response.statusCode == 206
-              ? _httpContentRangeTotal(response.headers) ??
-                    (response.contentLength == null
-                        ? null
-                        : existingBytes + response.contentLength!)
-              : response.contentLength;
-          var received = resume ? existingBytes : 0;
-          _setDownloadProgress(fileId, fileName, received, total);
-          sink = tempFile.openWrite(
-            mode: resume ? FileMode.append : FileMode.write,
-          );
-
-          await for (final chunk in response.stream.timeout(idleTimeout)) {
-            if (!_downloadingFiles.contains(fileId)) {
-              throw Exception('Download cancelled');
-            }
-            sink.add(chunk);
-            received += chunk.length;
-            _setDownloadProgress(fileId, fileName, received, total);
-          }
-
-          await sink.flush();
-          await sink.close();
-          sink = null;
-
-          final savedBytes = await tempFile.length();
-          if (total != null && total > 0 && savedBytes != total) {
-            throw Exception(
-              'Downloaded ${_formatDownloadBytes(savedBytes)} / ${_formatDownloadBytes(total)}',
-            );
-          }
-
-          final targetFile = await _moveHttpDownloadToUniqueTarget(
-            tempFile: tempFile,
-            downloadsDir: downloadsDir,
-            safeName: safeName,
-          );
-
-          _downloadTempPaths.remove(fileId);
-          _lastNotifiedProgress.remove(fileId);
-          _cancelDownloadWatchdog(fileId);
-          _downloadExpectedBytes.remove(fileId);
-          _receivedFiles[fileId] = targetFile.path;
-          _downloadingFiles.remove(fileId);
-          _downloadProgress.remove(fileId);
-          _downloadErrors.remove(fileId);
-          _downloadRetryCounts.remove(fileId);
-          _showDownloadFinishedNotification(
-            fileId,
-            safeName.isEmpty ? 'file' : safeName,
-          );
-          debugPrint(
-            '[File] HTTP download complete: ${targetFile.path} (fileId=$fileId)',
-          );
-          notifyListeners();
-          return true;
-        } catch (e) {
-          lastError = e;
-          debugPrint(
-            '[File] HTTP download attempt $attempt/$maxAttempts failed: $e',
-          );
-          try {
-            await sink?.flush();
-            await sink?.close();
-          } catch (_) {}
-          final partialBytes = tempFile.existsSync()
-              ? await tempFile.length()
-              : 0;
-          if (_cancelledDownloads.remove(fileId)) {
-            _downloadTempPaths.remove(fileId);
-            _lastNotifiedProgress.remove(fileId);
-            _downloadProgress.remove(fileId);
-            _downloadErrors[fileId] = 'Download cancelled';
-            notifyListeners();
-            return true;
-          }
-          if (attempt < maxAttempts && _downloadingFiles.contains(fileId)) {
-            _downloadErrors[fileId] = partialBytes > 0
-                ? 'Connection interrupted, retrying from ${_formatDownloadBytes(partialBytes)}...'
-                : 'Connection interrupted, retrying...';
-            _showDownloadProgressNotification(
-              fileId,
-              fileName,
-              _downloadProgress[fileId],
-            );
-            notifyListeners();
-            final retryDelaySeconds = attempt < 4 ? attempt * 2 : 8;
-            await Future.delayed(Duration(seconds: retryDelaySeconds));
-            continue;
-          }
-          break;
-        } finally {
-          client.close();
-        }
-      }
-
-      final partialBytes = tempFile.existsSync() ? await tempFile.length() : 0;
-      if (_cancelledDownloads.remove(fileId)) {
-        _downloadTempPaths.remove(fileId);
-        _lastNotifiedProgress.remove(fileId);
-        _downloadProgress.remove(fileId);
-        _downloadErrors[fileId] = 'Download cancelled';
-        notifyListeners();
-        return true;
-      }
-      if (partialBytes == 0 && !sawHttpResponse) {
-        _downloadTempPaths.remove(fileId);
-        return false;
-      }
-
-      _lastNotifiedProgress.remove(fileId);
-      _cancelDownloadWatchdog(fileId);
-      _downloadExpectedBytes.remove(fileId);
-      _downloadingFiles.remove(fileId);
-      _downloadProgress.remove(fileId);
-      _downloadRetryCounts.remove(fileId);
-      _downloadErrors[fileId] = partialBytes > 0
-          ? 'Download interrupted after ${_formatDownloadBytes(partialBytes)}. Tap retry to resume.'
-          : 'Download failed: ${lastError ?? 'unknown error'}';
-      _showDownloadFailedNotification(fileId, _downloadErrors[fileId]!);
-      notifyListeners();
-      return true;
-    } catch (e) {
-      debugPrint('[File] HTTP download failed, falling back to socket: $e');
-      _downloadTempPaths.remove(fileId);
-      _lastNotifiedProgress.remove(fileId);
-      _downloadProgress[fileId] = 0;
-      _downloadExpectedBytes.remove(fileId);
-      _armDownloadWatchdog(fileId);
-      notifyListeners();
-      return false;
-    }
-  }
-
-  /// Handle file data response from server (legacy non-chunked)
-  Future<void> _handleFileData(Map<String, dynamic> msg) async {
-    final fileId =
-        msg['fileId'] as String? ?? msg['fileName'] as String? ?? 'file';
-    final fileName = msg['fileName'] as String? ?? 'file';
-    final base64Data = msg['data'] as String? ?? '';
-    final fileSize = msg['fileSize'] as int? ?? 0;
-
-    final byteCompleter = _fileBytesCompleters.remove(fileId);
-    if (byteCompleter != null) {
-      _fileBytesBuffers.remove(fileId);
-      _downloadReceivedBytes.remove(fileId);
-      _downloadServerIds.remove(fileId);
-      if (!byteCompleter.isCompleted) {
-        if (base64Data.isEmpty) {
-          byteCompleter.completeError(
-            Exception('File transfer completed without data'),
-          );
-        } else {
-          byteCompleter.complete(base64Data);
-        }
-      }
-      return;
-    }
-
-    _downloadingFiles.remove(fileId);
-    _cancelDownloadWatchdog(fileId);
-
-    if (base64Data.isEmpty) {
-      _downloadErrors[fileId] = 'No file data returned';
-      _showDownloadFailedNotification(fileId, 'No file data returned');
-      notifyListeners();
-      return;
-    }
-
-    try {
-      final downloadsDir = await downloadsDirectory();
-
-      var targetFile = File(
-        '${downloadsDir.path}${Platform.pathSeparator}$fileName',
-      );
-      var counter = 1;
-      while (targetFile.existsSync()) {
-        final ext = fileName.contains('.')
-            ? '.${fileName.split('.').last}'
-            : '';
-        final base = fileName.contains('.')
-            ? fileName.substring(0, fileName.lastIndexOf('.'))
-            : fileName;
-        targetFile = File(
-          '${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext',
-        );
-        counter++;
-      }
-
-      final bytes = base64Decode(base64Data);
-      await targetFile.writeAsBytes(bytes);
-
-      _receivedFiles[fileId] = targetFile.path;
-      _downloadErrors.remove(fileId);
-      _downloadRetryCounts.remove(fileId);
-      _showDownloadFinishedNotification(fileId, fileName);
-      debugPrint(
-        '[File] Saved: ${targetFile.path} (${(fileSize / 1024).toStringAsFixed(1)} KB)',
-      );
-      notifyListeners();
-    } catch (e) {
-      debugPrint('[File] Error saving file: $e');
-      _downloadErrors[fileId] = e.toString();
-      _showDownloadFailedNotification(fileId, e.toString());
-      notifyListeners();
-    }
-  }
-
-  /// Handle a file chunk from the server (chunked transfer)
-  void _handleFileChunk(Map<String, dynamic> msg) {
-    final fileId =
-        msg['fileId'] as String? ?? msg['fileName'] as String? ?? 'file';
-    final fileName =
-        msg['fileName'] as String? ?? _serverFileNames[fileId] ?? 'file';
-    final chunkIndex = msg['chunkIndex'] as int? ?? 0;
-    final totalChunks = msg['totalChunks'] as int? ?? 1;
-    final fileSize = (msg['fileSize'] as num?)?.toInt() ?? 0;
-    final chunkOffset = (msg['offsetBytes'] as num?)?.toInt();
-    final transferToken = msg['transferToken'] as String?;
-    final binaryData = msg['binaryData'];
-    final isBinaryChunk = binaryData is Uint8List;
-    final base64Data = msg['data'] as String?;
-
-    try {
-      final expectedToken = _socketDownloadTokens[fileId];
-      if (expectedToken != null &&
-          transferToken != null &&
-          transferToken != expectedToken) {
-        debugPrint(
-          '[File] Ignoring stale chunk for $fileId token=$transferToken',
-        );
-        return;
-      }
-      var bytes = binaryData is Uint8List
-          ? binaryData
-          : base64Decode(base64Data ?? '');
-      if (fileSize > 0) {
-        _downloadExpectedBytes[fileId] = fileSize;
-      }
-      final byteCompleter = _fileBytesCompleters[fileId];
-      if (byteCompleter != null) {
-        _fileBytesBuffers[fileId]?.add(bytes);
-        final receivedBytes =
-            (_downloadReceivedBytes[fileId] ?? chunkOffset ?? 0) + bytes.length;
-        _downloadReceivedBytes[fileId] = receivedBytes;
-        if (isBinaryChunk) {
-          _sendFileDownloadAck(fileId, transferToken, receivedBytes);
-        }
-        return;
-      }
-      if (!_downloadingFiles.contains(fileId)) {
-        debugPrint('[File] Ignoring stale chunk for $fileId');
-        return;
-      }
-
-      // Open temp file on first chunk
-      if (!_activeDownloads.containsKey(fileId)) {
-        final tempPath = _socketDownloadTempPathSync(fileId);
-        final tempFile = File(tempPath);
-        final shouldAppend = chunkIndex > 0 && tempFile.existsSync();
-        final existingBytes = shouldAppend ? tempFile.lengthSync() : 0;
-        _activeDownloads[fileId] = tempFile.openWrite(
-          mode: shouldAppend ? FileMode.append : FileMode.write,
-        );
-        _downloadReceivedBytes[fileId] = existingBytes;
-        _downloadTempPaths[fileId] = tempPath;
-        _downloadingFiles.add(fileId);
-        debugPrint(
-          '[File] Starting chunked download: $fileName (id=$fileId, $totalChunks chunks${shouldAppend ? ', resume' : ''})',
-        );
-      }
-
-      final savedBytes = _downloadReceivedBytes[fileId] ?? 0;
-      if (chunkOffset != null) {
-        if (chunkOffset < savedBytes) {
-          final overlap = savedBytes - chunkOffset;
-          if (overlap >= bytes.length) {
-            if (isBinaryChunk) {
-              _sendFileDownloadAck(fileId, transferToken, savedBytes);
-            }
-            _armDownloadWatchdog(fileId);
-            return;
-          }
-          bytes = Uint8List.fromList(bytes.sublist(overlap));
-        } else if (chunkOffset > savedBytes) {
-          _retrySocketFileDownload(
-            fileId,
-            'Transfer gap at ${_formatDownloadBytes(savedBytes)}; next chunk starts at ${_formatDownloadBytes(chunkOffset)}.',
-          );
-          return;
-        }
-      }
-
-      _activeDownloads[fileId]!.add(bytes);
-      final receivedBytes =
-          (_downloadReceivedBytes[fileId] ?? 0) + bytes.length;
-      _downloadReceivedBytes[fileId] = receivedBytes;
-      if (isBinaryChunk) {
-        _sendFileDownloadAck(fileId, transferToken, receivedBytes);
-      }
-
-      _downloadErrors.remove(fileId);
-      _armDownloadWatchdog(fileId);
-      if (fileSize > 0) {
-        _setDownloadProgress(fileId, fileName, receivedBytes, fileSize);
-      } else {
-        final progress = (chunkIndex + 1) / totalChunks;
-        _setDownloadProgress(fileId, fileName, chunkIndex + 1, totalChunks);
-        _downloadProgress[fileId] = progress;
-      }
-    } catch (e) {
-      debugPrint(
-        '[File] Error handling chunk $chunkIndex/$totalChunks for $fileName: $e',
-      );
-      _failDownload(fileId, e.toString());
-    }
-  }
-
-  void _sendFileDownloadAck(
-    String fileId,
-    String? transferToken,
-    int receivedBytes,
-  ) {
-    final msg = {
-      'type': 'file_download_ack',
-      'fileId': fileId,
-      if (transferToken != null && transferToken.isNotEmpty)
-        'transferToken': transferToken,
-      'receivedBytes': receivedBytes,
-    };
-    final serverId = _downloadServerIds[fileId];
-    if (serverId != null && serverId.isNotEmpty) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _ws.send(msg);
-    }
-  }
-
-  /// Handle file transfer complete (chunked transfer)
-  Future<void> _handleFileComplete(Map<String, dynamic> msg) async {
-    final fileId =
-        msg['fileId'] as String? ?? msg['fileName'] as String? ?? 'file';
-    final fileName = msg['fileName'] as String? ?? 'file';
-    final fileSize = (msg['fileSize'] as num?)?.toInt();
-    final transferToken = msg['transferToken'] as String?;
-    final fileVersion = msg['fileVersion'] as String?;
-
-    try {
-      final expectedToken = _socketDownloadTokens[fileId];
-      if (expectedToken != null &&
-          transferToken != null &&
-          transferToken != expectedToken) {
-        debugPrint(
-          '[File] Ignoring stale completion for $fileId token=$transferToken',
-        );
-        return;
-      }
-      final byteCompleter = _fileBytesCompleters.remove(fileId);
-      if (byteCompleter != null) {
-        final bytes =
-            _fileBytesBuffers.remove(fileId)?.takeBytes() ?? Uint8List(0);
-        final receivedBytes = _downloadReceivedBytes.remove(fileId) ?? 0;
-        _downloadServerIds.remove(fileId);
-        if (!byteCompleter.isCompleted) {
-          if (fileSize != null && receivedBytes != fileSize) {
-            byteCompleter.completeError(
-              Exception(
-                'File transfer incomplete: received $receivedBytes of $fileSize bytes',
-              ),
-            );
-          } else if (bytes.isEmpty && (fileSize ?? 0) > 0) {
-            byteCompleter.completeError(
-              Exception('File transfer completed without data'),
-            );
-          } else {
-            byteCompleter.complete(base64Encode(bytes));
-          }
-        }
-        return;
-      }
-      if (!_downloadingFiles.contains(fileId)) {
-        debugPrint('[File] Ignoring stale completion for $fileId');
-        return;
-      }
-      if (fileVersion != null && fileVersion.isNotEmpty) {
-        _serverFileVersions[fileId] = fileVersion;
-      }
-
-      // Close the temp file
-      final sink = _activeDownloads.remove(fileId);
-      await sink?.flush();
-      await sink?.close();
-      _lastNotifiedProgress.remove(fileId);
-      _downloadReceivedBytes.remove(fileId);
-      _cancelDownloadWatchdog(fileId);
-
-      final tempPath = _downloadTempPaths.remove(fileId);
-      if (tempPath == null) {
-        debugPrint('[File] Error: no temp path for $fileId');
-        _downloadingFiles.remove(fileId);
-        _downloadProgress.remove(fileId);
-        _downloadErrors[fileId] = 'Transfer completed without a temp file';
-        _showDownloadFailedNotification(
-          fileId,
-          'Transfer completed without a temp file',
-        );
-        notifyListeners();
-        return;
-      }
-
-      final tempFile = File(tempPath);
-      if (!tempFile.existsSync()) {
-        debugPrint('[File] Error: temp file missing at $tempPath');
-        _downloadingFiles.remove(fileId);
-        _downloadProgress.remove(fileId);
-        _downloadErrors[fileId] = 'Downloaded temp file is missing';
-        _showDownloadFailedNotification(
-          fileId,
-          'Downloaded temp file is missing',
-        );
-        notifyListeners();
-        return;
-      }
-      final expectedBytes = fileSize ?? _downloadExpectedBytes[fileId];
-      final savedBytes = await tempFile.length();
-      if (expectedBytes != null &&
-          expectedBytes > 0 &&
-          savedBytes != expectedBytes) {
-        debugPrint(
-          '[File] Error: size mismatch for $fileId ($savedBytes/$expectedBytes)',
-        );
-        try {
-          await tempFile.delete();
-        } catch (_) {}
-        _downloadingFiles.remove(fileId);
-        _downloadProgress.remove(fileId);
-        _downloadExpectedBytes.remove(fileId);
-        _downloadErrors[fileId] =
-            'Downloaded ${_formatDownloadBytes(savedBytes)} / ${_formatDownloadBytes(expectedBytes)}';
-        _showDownloadFailedNotification(fileId, _downloadErrors[fileId]!);
-        notifyListeners();
-        return;
-      }
-
-      // Rename temp file to final name (handle duplicates)
-      final downloadsDir = await downloadsDirectory();
-      var targetFile = File(
-        '${downloadsDir.path}${Platform.pathSeparator}$fileName',
-      );
-      var counter = 1;
-      while (targetFile.existsSync()) {
-        final ext = fileName.contains('.')
-            ? '.${fileName.split('.').last}'
-            : '';
-        final base = fileName.contains('.')
-            ? fileName.substring(0, fileName.lastIndexOf('.'))
-            : fileName;
-        targetFile = File(
-          '${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext',
-        );
-        counter++;
-      }
-
-      // Try rename first, fall back to copy+delete
-      try {
-        await tempFile.rename(targetFile.path);
-      } catch (_) {
-        await tempFile.copy(targetFile.path);
-        await tempFile.delete();
-      }
-
-      _receivedFiles[fileId] = targetFile.path;
-      _downloadingFiles.remove(fileId);
-      _downloadProgress.remove(fileId);
-      _downloadErrors.remove(fileId);
-      _downloadRetryCounts.remove(fileId);
-      _downloadExpectedBytes.remove(fileId);
-      _socketDownloadTokens.remove(fileId);
-      _showDownloadFinishedNotification(fileId, fileName);
-      debugPrint(
-        '[File] Chunked download complete: ${targetFile.path} (fileId=$fileId)',
-      );
-      notifyListeners();
-    } catch (e) {
-      debugPrint(
-        '[File] Error completing download for $fileName (fileId=$fileId): $e',
-      );
-      _downloadingFiles.remove(fileId);
-      _downloadProgress.remove(fileId);
-      _downloadReceivedBytes.remove(fileId);
-      _downloadExpectedBytes.remove(fileId);
-      _socketDownloadTokens.remove(fileId);
-      _downloadErrors[fileId] = e.toString();
-      _cancelDownloadWatchdog(fileId);
-      _showDownloadFailedNotification(fileId, e.toString());
-      notifyListeners();
-    }
-  }
-
-  void _handleFileError(Map<String, dynamic> msg) {
-    final fileId = msg['fileId'] as String? ?? '';
-    if (fileId.isEmpty) return;
-    final transferToken = msg['transferToken'] as String?;
-    final expectedToken = _socketDownloadTokens[fileId];
-    if (expectedToken != null &&
-        transferToken != null &&
-        transferToken != expectedToken) {
-      debugPrint(
-        '[File] Ignoring stale error for $fileId token=$transferToken',
-      );
-      return;
-    }
-
-    final byteCompleter = _fileBytesCompleters.remove(fileId);
-    if (byteCompleter != null) {
-      _fileBytesBuffers.remove(fileId);
-      _downloadReceivedBytes.remove(fileId);
-      _downloadServerIds.remove(fileId);
-      if (!byteCompleter.isCompleted) {
-        byteCompleter.completeError(
-          Exception(msg['message'] as String? ?? 'File download failed'),
-        );
-      }
-      return;
-    }
-
-    if (_downloadingFiles.contains(fileId)) {
-      _failDownload(
-        fileId,
-        msg['message'] as String? ?? 'File download failed',
-        deleteTemp: false,
-      );
-    }
-  }
-
   String _stableFileTransferId(String path) {
-    var hash = 0x811c9dc5;
-    for (final unit in path.codeUnits) {
-      hash ^= unit;
-      hash = (hash * 0x01000193) & 0xffffffff;
-    }
-    return 'fm_${hash.toRadixString(16).padLeft(8, '0')}';
+    return 'fm_${hashes.sha256.convert(utf8.encode(path))}';
   }
 
   String _safeDownloadTempId(String fileId) {
@@ -17140,6 +16305,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String fileName,
     double? progress,
   ) {
+    if (_fileBytesCompleters.containsKey(fileId)) return;
     _pendingDownloadNotifications[fileId] = _DownloadProgressNotification(
       fileId: fileId,
       fileName: fileName,
@@ -17220,84 +16386,600 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  void _armDownloadWatchdog(String fileId) {
-    _downloadWatchdogs[fileId]?.cancel();
-    _downloadWatchdogs[fileId] = Timer(const Duration(seconds: 15), () {
-      if (!_downloadingFiles.contains(fileId)) return;
-      _retrySocketFileDownload(fileId, 'Transfer stalled.');
+  Future<Directory> _downloadStateDirectory() async {
+    final support = await getApplicationSupportDirectory();
+    return Directory('${support.path}/downloads');
+  }
+
+  Future<DownloadPart> _downloadPart(String fileId) async {
+    final existing = _downloadParts[fileId];
+    if (existing != null) return existing;
+    final owner = _downloadServerIds[fileId] ?? '';
+    final source = _serverFiles[fileId] ?? '';
+    final key = hashes.sha256
+        .convert(utf8.encode(jsonEncode([owner, source, fileId])))
+        .toString();
+    final directory = await _downloadStateDirectory();
+    final part = DownloadPart(
+      File('${directory.path}/$key.part'),
+      metadata: {
+        'fileId': fileId,
+        'serverId': owner,
+        'source': source,
+        'fileName': _serverFileNames[fileId] ?? 'file',
+        'sessionId': _downloadSessionIds[fileId],
+        'preview': _fileBytesCompleters.containsKey(fileId),
+      },
+    );
+    await part.load();
+    if (!await part.file.exists() &&
+        (source.contains('/send-files/') ||
+            source.startsWith('socketagent://image?id='))) {
+      final oldDir = await downloadsDirectory();
+      final safeId = _safeDownloadTempId(fileId);
+      for (final suffix in ['tmp', 'http.tmp']) {
+        final old = File('${oldDir.path}/.$safeId.$suffix');
+        if (await old.exists() && _serverFileVersions[fileId] != null) {
+          await part.file.parent.create(recursive: true);
+          await old.copy(part.file.path);
+          part.metadata['version'] = _serverFileVersions[fileId];
+          part.metadata['total'] = _serverFileSizes[fileId];
+          await part.save();
+          break;
+        }
+      }
+    }
+    _downloadParts[fileId] = part;
+    return part;
+  }
+
+  Future<void> _restoreDownloads() async {
+    try {
+      final directory = await _downloadStateDirectory();
+      if (!await directory.exists()) return;
+      await for (final entry in directory.list()) {
+        if (entry is! File || !entry.path.endsWith('.part.json')) continue;
+        try {
+          final part = DownloadPart(
+            File(entry.path.substring(0, entry.path.length - 5)),
+          );
+          await part.load();
+          final data = part.metadata;
+          final id = data['fileId'] as String?;
+          final owner = data['serverId'] as String?;
+          if (id == null ||
+              owner == null ||
+              data['preview'] == true ||
+              !_serverConfigs.any((server) => server.id == owner)) {
+            continue;
+          }
+          _downloadParts[id] = part;
+          _serverFiles[id] = data['source'] as String;
+          _filePathToId[_filePathKey(data['source'] as String, owner)] = id;
+          _serverFileNames[id] = data['fileName'] as String;
+          _downloadServerIds[id] = owner;
+          if (data['sessionId'] is String) {
+            _downloadSessionIds[id] = data['sessionId'] as String;
+          }
+          if (part.total != null) _serverFileSizes[id] = part.total!;
+          final target = data['target'] as String?;
+          if (target != null &&
+              await File(target).exists() &&
+              (part.total == null ||
+                  await File(target).length() == part.total)) {
+            _receivedFiles[id] = target;
+          } else if (data['state'] == 'active' ||
+              data['state'] == 'paused' ||
+              data['state'] == 'finishing') {
+            final bytes = await part.length;
+            if (part.total != null && part.total! > 0) {
+              _downloadProgress[id] = bytes / part.total!;
+            }
+            _downloadErrors[id] =
+                'Download paused. Saved ${_formatDownloadBytes(bytes)}.';
+            _resumeDownloadIds.add(id);
+          }
+        } catch (error) {
+          debugPrint('[File] Could not restore a download: $error');
+        }
+      }
+    } catch (error) {
+      debugPrint('[File] Download restoration unavailable: $error');
+    }
+  }
+
+  void _resumeDownloadsForServer(String serverId) {
+    for (final id in _resumeDownloadIds.toList()) {
+      if (_downloadServerIds[id] != serverId || _downloadingFiles.contains(id)) {
+        continue;
+      }
+      _resumeDownloadIds.remove(id);
+      requestFile(id);
+    }
+  }
+
+  void _enqueueDownloadEvent(Map<String, dynamic> msg, String? serverId) {
+    final id = msg['fileId'] as String? ?? '';
+    if (_downloadsDisposed ||
+        id.isEmpty ||
+        (_downloadServerIds[id] != null && serverId != _downloadServerIds[id])) {
+      return;
+    }
+    final previous = _downloadEventQueues[id] ?? Future<void>.value();
+    late final Future<void> current;
+    current = previous
+        .then((_) async {
+          if (_downloadsDisposed || !_downloadingFiles.contains(id)) return;
+          final expected = _socketDownloadTokens[id];
+          if (expected != null && msg['transferToken'] != expected) return;
+          switch (msg['type']) {
+            case 'file_start':
+              await _handleFileStart(msg);
+            case 'file_chunk':
+              await _handleFileChunk(msg);
+            case 'file_complete':
+              await _handleFileComplete(msg);
+            case 'file_error':
+              _handleFileError(msg);
+            case 'file_data':
+              await _handleFileData(msg);
+          }
+        })
+        .catchError((Object error) {
+          if (_downloadingFiles.contains(id)) {
+            if (error is FileSystemException) {
+              _failDownload(id, 'Could not save download: $error');
+            } else {
+              _retrySocketFileDownload(id, 'Transfer interrupted.');
+            }
+          }
+        })
+        .whenComplete(() {
+          if (identical(_downloadEventQueues[id], current)) {
+            _downloadEventQueues.remove(id);
+          }
+        });
+    _downloadEventQueues[id] = current;
+  }
+
+  void requestFile(String fileId) {
+    if (_downloadJobs.containsKey(fileId)) return;
+    late final Future<void> job;
+    job = _requestFile(fileId).whenComplete(() {
+      if (identical(_downloadJobs[fileId], job)) _downloadJobs.remove(fileId);
+    });
+    _downloadJobs[fileId] = job;
+    unawaited(job);
+  }
+
+  Future<void> _requestFile(String fileId) async {
+    if (_downloadsDisposed ||
+        _downloadingFiles.contains(fileId) ||
+        !_downloadStarting.add(fileId)) {
+      return;
+    }
+    final serverPath = _serverFiles[fileId];
+    if (serverPath == null) {
+      _downloadStarting.remove(fileId);
+      return;
+    }
+    final generation = (_downloadGenerations[fileId] ?? 0) + 1;
+    _downloadGenerations[fileId] = generation;
+    _downloadServerIds[fileId] ??= _connMgr.activeServerId ?? '';
+    _cancelledDownloads.remove(fileId);
+    _resumeDownloadIds.remove(fileId);
+    _downloadErrors.remove(fileId);
+    _downloadRetryCounts[fileId] = 0;
+    _lastNotifiedProgress.remove(fileId);
+    _downloadingFiles.add(fileId);
+    try {
+      final part = await _downloadPart(fileId);
+      if (_downloadGenerations[fileId] != generation) return;
+      part.metadata.remove('target');
+      part.metadata['state'] = 'active';
+      await part.save();
+      final received = await part.length;
+      _downloadReceivedBytes[fileId] = received;
+      _setDownloadProgress(
+        fileId,
+        _serverFileNames[fileId] ?? 'file',
+        received,
+        part.total ?? _serverFileSizes[fileId],
+      );
+      notifyListeners();
+      if (!await _tryHttpFileDownload(
+        fileId: fileId,
+        serverPath: serverPath,
+        fileName: _serverFileNames[fileId] ?? 'file',
+        serverId: _downloadServerIds[fileId],
+      )) {
+        if (_downloadGenerations[fileId] == generation &&
+            _downloadingFiles.contains(fileId)) {
+          await _requestSocketFileDownload(
+            fileId,
+            serverPath,
+            serverId: _downloadServerIds[fileId],
+          );
+        }
+      }
+    } catch (error) {
+      if (_downloadGenerations[fileId] == generation) {
+        _failDownload(fileId, 'Download paused: $error');
+      }
+    } finally {
+      _downloadStarting.remove(fileId);
+    }
+  }
+
+  Future<void> _requestSocketFileDownload(
+    String fileId,
+    String serverPath, {
+    String? serverId,
+  }) async {
+    final generation = _downloadGenerations[fileId];
+    final part = await _downloadPart(fileId);
+    final offset = await part.length;
+    if (!_downloadingFiles.contains(fileId) ||
+        generation != _downloadGenerations[fileId]) {
+      return;
+    }
+    final token =
+        '${DateTime.now().microsecondsSinceEpoch}_${_downloadRetryCounts[fileId] ?? 0}';
+    _socketDownloadTokens[fileId] = token;
+    _socketDownloadStarted.remove(fileId);
+    final identity = part.version;
+    final request = {
+      'type': 'request_file',
+      'filePath': serverPath,
+      'fileId': fileId,
+      'transferToken': token,
+      'downloadProtocolVersion': 2,
+      if (offset > 0) 'offsetBytes': offset,
+      if (identity != null) 'expectedFileVersion': identity.replaceAll('"', ''),
+    };
+    _armDownloadWatchdog(fileId);
+    if (serverId != null && serverId.isNotEmpty) {
+      _connMgr.sendToServer(serverId, request);
+    } else {
+      _ws.send(request);
+    }
+  }
+
+  Future<bool> _tryHttpFileDownload({
+    required String fileId,
+    required String serverPath,
+    required String fileName,
+    String? serverId,
+  }) async {
+    if (_directServerUsesEncryptedSocket(serverId)) return false;
+    final server = _getDirectServerFor(serverId);
+    if (server == null) return false;
+    final part = await _downloadPart(fileId);
+    final generation = _downloadGenerations[fileId];
+    final download = ResumableHttpDownload();
+    _httpDownloads[fileId] = download;
+    _cancelDownloadWatchdog(fileId);
+    try {
+      await download.download(
+        uri: Uri(
+          scheme: 'http',
+          host: server.host,
+          port: server.port,
+          path: '/download-file',
+          queryParameters: {'token': server.token, 'path': serverPath},
+        ),
+        part: part,
+        onProgress: (received, total) {
+          if (_downloadGenerations[fileId] == generation) {
+            if (received < (_downloadReceivedBytes[fileId] ?? 0)) { _lastNotifiedProgress.remove(fileId); }
+            _downloadReceivedBytes[fileId] = received;
+            _setDownloadProgress(fileId, fileName, received, total);
+          }
+        },
+        onRetry: (attempt, received) {
+          if (_downloadGenerations[fileId] == generation) {
+            _downloadErrors[fileId] =
+                'Connection interrupted. Retrying from ${_formatDownloadBytes(received)}...';
+            notifyListeners();
+          }
+        },
+      );
+      if (_downloadGenerations[fileId] == generation &&
+          _downloadingFiles.contains(fileId)) {
+        await _finishDownload(fileId, fileName, part.total);
+      }
+      return true;
+    } on DownloadCancelled {
+      return true;
+    } catch (error) {
+      if (_downloadGenerations[fileId] != generation) return true;
+      // Share the saved prefix and identity with the encrypted socket path.
+      // Auth/path failures are terminal; changing transports cannot fix them.
+      if (error is DownloadHttpException &&
+          error.status != 404 &&
+          !error.retryable) {
+        _failDownload(fileId, error.toString());
+        return true;
+      }
+      if (error is FileSystemException) {
+        _failDownload(fileId, error.toString());
+        return true;
+      }
+      return false;
+    } finally {
+      if (identical(_httpDownloads[fileId], download)) {
+        _httpDownloads.remove(fileId);
+      }
+    }
+  }
+
+  Future<void> _handleFileStart(Map<String, dynamic> msg) async {
+    final id = msg['fileId'] as String;
+    final part = await _downloadPart(id);
+    final offset = (msg['offsetBytes'] as num).toInt();
+    final size = (msg['fileSize'] as num).toInt();
+    final version = msg['fileVersion'] as String;
+    // HTTP ETags quote the same server version used by socket transfers.
+    if (part.version?.replaceAll('"', '') == version) {
+      part.metadata['version'] = version;
+    }
+    await part.begin(offset: offset, size: size, identity: version);
+    _lastNotifiedProgress.remove(id);
+    _serverFileVersions[id] = version;
+    _serverFileSizes[id] = size;
+    _downloadReceivedBytes[id] = offset;
+    _setDownloadProgress(id, _serverFileNames[id] ?? 'file', offset, size);
+    _socketDownloadStarted.add(id);
+    _armDownloadWatchdog(id);
+    _sendFileDownloadAck(
+      id,
+      msg['transferToken'] as String?,
+      offset,
+      ready: true,
+    );
+  }
+
+  Future<void> _handleFileChunk(Map<String, dynamic> msg) async {
+    final id = msg['fileId'] as String;
+    final part = await _downloadPart(id);
+    final data = msg['binaryData'];
+    final bytes = data is Uint8List
+        ? data
+        : base64Decode(msg['data'] as String? ?? '');
+    final offset =
+        (msg['offsetBytes'] as num?)?.toInt() ??
+        (_downloadReceivedBytes[id] ?? 0);
+    final size = (msg['fileSize'] as num?)?.toInt();
+    if (!_socketDownloadStarted.contains(id)) {
+      // Older servers lack file_start. JSON chunks carry their version;
+      // binary chunks can use a version advertised by a SendFile card.
+      final version = msg['fileVersion'] as String? ?? _serverFileVersions[id];
+      await part.begin(offset: offset, size: size, identity: version);
+      _socketDownloadStarted.add(id);
+    }
+    final received = await part.append(offset, bytes);
+    final previous = _downloadReceivedBytes[id] ?? 0;
+    _downloadReceivedBytes[id] = received;
+    if (received > previous) _downloadRetryCounts[id] = 0;
+    if (data is Uint8List) {
+      _sendFileDownloadAck(id, msg['transferToken'] as String?, received);
+    }
+    _armDownloadWatchdog(id);
+    _setDownloadProgress(id, _serverFileNames[id] ?? 'file', received, size);
+  }
+
+  void _sendFileDownloadAck(
+    String fileId,
+    String? token,
+    int received, {
+    bool ready = false,
+  }) {
+    final msg = {
+      'type': 'file_download_ack',
+      'fileId': fileId,
+      if (token != null) 'transferToken': token,
+      'receivedBytes': received,
+      if (ready) 'ready': true,
+    };
+    final owner = _downloadServerIds[fileId];
+    if (owner != null && owner.isNotEmpty) {
+      _connMgr.sendToServer(owner, msg);
+    } else {
+      _ws.send(msg);
+    }
+  }
+
+  Future<void> _handleFileData(Map<String, dynamic> msg) async {
+    final id = msg['fileId'] as String;
+    final part = await _downloadPart(id);
+    final bytes = base64Decode(msg['data'] as String? ?? '');
+    await part.begin(
+      offset: 0,
+      size: bytes.length,
+      identity: msg['fileVersion'] as String?,
+    );
+    await part.append(0, bytes);
+    await _finishDownload(id, _serverFileNames[id] ?? 'file', bytes.length);
+  }
+
+  Future<void> _handleFileComplete(Map<String, dynamic> msg) async {
+    final id = msg['fileId'] as String;
+    final part = await _downloadPart(id);
+    final size = (msg['fileSize'] as num?)?.toInt();
+    if (!_socketDownloadStarted.contains(id) && size == 0) {
+      await part.begin(
+        offset: 0,
+        size: 0,
+        identity: msg['fileVersion'] as String?,
+      );
+    }
+    await _finishDownload(id, _serverFileNames[id] ?? 'file', size);
+  }
+
+  Future<void> _finishDownload(String id, String name, int? expected) async {
+    final generation = _downloadGenerations[id];
+    final part = await _downloadPart(id);
+    await part.verifyComplete(expected);
+    if (_downloadsDisposed ||
+        generation != _downloadGenerations[id] ||
+        !_downloadingFiles.contains(id)) {
+      return;
+    }
+    _cancelDownloadWatchdog(id);
+    final preview = _fileBytesCompleters[id];
+    if (preview != null) {
+      final encoded = base64Encode(await part.file.readAsBytes());
+      if (_downloadsDisposed || generation != _downloadGenerations[id]) return;
+      _fileBytesCompleters.remove(id);
+      if (!preview.isCompleted) preview.complete(encoded);
+    } else {
+      final target = await _moveHttpDownloadToUniqueTarget(
+        tempFile: part.file,
+        downloadsDir: await downloadsDirectory(),
+        safeName: name.split('/').last.split('\\').last,
+        beforeMove: (target) async {
+          if (generation != _downloadGenerations[id] || _downloadsDisposed) {
+            throw DownloadCancelled();
+          }
+          part.metadata['target'] = target;
+          part.metadata['state'] = 'finishing';
+          await part.save();
+        },
+      );
+      _receivedFiles[id] = target.path;
+      part.metadata['target'] = target.path;
+      _showDownloadFinishedNotification(id, name);
+    }
+    part.metadata['state'] = 'complete';
+    await part.save();
+    _downloadingFiles.remove(id);
+    _resumeDownloadIds.remove(id);
+    _downloadProgress.remove(id);
+    _downloadErrors.remove(id);
+    _downloadRetryCounts.remove(id);
+    _socketDownloadTokens.remove(id);
+    _socketDownloadStarted.remove(id);
+    _lastNotifiedProgress.remove(id);
+    notifyListeners();
+  }
+
+  void _handleFileError(Map<String, dynamic> msg) {
+    final id = msg['fileId'] as String;
+    final error = msg['message'] as String? ?? 'Download interrupted';
+    if (RegExp(
+      r'not found|not allowed|permission|not a file|denied',
+      caseSensitive: false,
+    ).hasMatch(error)) {
+      _failDownload(id, error);
+    } else {
+      _retrySocketFileDownload(id, error);
+    }
+  }
+
+  void _armDownloadWatchdog(String id) {
+    _downloadWatchdogs.remove(id)?.cancel();
+    _downloadWatchdogs[id] = Timer(const Duration(seconds: 30), () {
+      if (_downloadingFiles.contains(id)) {
+        _retrySocketFileDownload(id, 'Transfer stalled.');
+      }
     });
   }
 
-  void _cancelDownloadWatchdog(String fileId) {
-    _downloadWatchdogs.remove(fileId)?.cancel();
+  void _cancelDownloadWatchdog(String id) {
+    _downloadWatchdogs.remove(id)?.cancel();
   }
 
   Future<void> _cleanupActiveDownload(
-    String fileId, {
+    String id, {
     bool deleteTemp = false,
   }) async {
-    _cancelDownloadWatchdog(fileId);
-    _lastNotifiedProgress.remove(fileId);
-    _clearDownloadProgressNotification(fileId);
-    _downloadReceivedBytes.remove(fileId);
-    _downloadExpectedBytes.remove(fileId);
-    _socketDownloadTokens.remove(fileId);
-    _downloadingFiles.remove(fileId);
-    _downloadProgress.remove(fileId);
-    final sink = _activeDownloads.remove(fileId);
-    try {
-      await sink?.flush();
-      await sink?.close();
-    } catch (_) {}
-    final tempPath = _downloadTempPaths.remove(fileId);
-    if (deleteTemp && tempPath != null) {
-      try {
-        final tempFile = File(tempPath);
-        if (tempFile.existsSync()) await tempFile.delete();
-      } catch (_) {}
+    _downloadGenerations[id] = (_downloadGenerations[id] ?? 0) + 1;
+    _httpDownloads[id]?.cancel();
+    _downloadRetryTimers.remove(id)?.cancel();
+    _socketDownloadTokens[id] = 'cancelled';
+    _cancelDownloadWatchdog(id);
+    _downloadingFiles.remove(id);
+    _resumeDownloadIds.remove(id);
+    _downloadStarting.add(id);
+    _socketDownloadStarted.remove(id);
+    _clearDownloadProgressNotification(id);
+    await _downloadJobs[id];
+    await _downloadEventQueues[id];
+    final part = _downloadParts[id];
+    if (part != null) {
+      part.metadata['state'] = 'paused';
+      await part.save();
+      if (deleteTemp) {
+        await part.discard();
+        _downloadParts.remove(id);
+      }
     }
+    _downloadStarting.remove(id);
   }
 
-  void _retrySocketFileDownload(String fileId, String error) {
-    final serverPath = _serverFiles[fileId];
-    if (serverPath == null || serverPath.isEmpty) {
-      _failDownload(fileId, '$error Tap download to retry.', deleteTemp: false);
+  void _retrySocketFileDownload(String id, String error) {
+    if (!_downloadingFiles.contains(id) || _downloadRetryTimers.containsKey(id)) {
       return;
     }
-    final retryCount = (_downloadRetryCounts[fileId] ?? 0) + 1;
-    if (retryCount > 5) {
-      _failDownload(fileId, '$error Tap retry to resume.', deleteTemp: false);
-      return;
-    }
-    _downloadRetryCounts[fileId] = retryCount;
-    _cancelDownloadWatchdog(fileId);
-    _socketDownloadTokens[fileId] =
-        'retrying_${DateTime.now().microsecondsSinceEpoch}_$retryCount';
-    final sink = _activeDownloads.remove(fileId);
-    unawaited(() async {
-      try {
-        await sink?.flush();
-        await sink?.close();
-      } catch (_) {}
-      if (!_serverFiles.containsKey(fileId)) return;
-      _downloadingFiles.add(fileId);
-      _downloadErrors[fileId] = '$error Retrying...';
-      notifyListeners();
-      final delaySeconds = retryCount < 4 ? retryCount * 2 : 8;
-      await Future.delayed(Duration(seconds: delaySeconds));
-      if (!_downloadingFiles.contains(fileId)) return;
-      await _requestSocketFileDownload(
-        fileId,
-        serverPath,
-        serverId: _downloadServerIds[fileId],
+    _cancelDownloadWatchdog(id);
+    _socketDownloadTokens[id] = 'retrying';
+    final attempt = (_downloadRetryCounts[id] ?? 0) + 1;
+    _downloadRetryCounts[id] = attempt;
+    final owner = _downloadServerIds[id];
+    if (owner != null &&
+        _connMgr.statusOf(owner) != ConnectionStatus.connected) {
+      _failDownload(
+        id,
+        'Waiting for connection. Download progress saved.',
+        reconnect: true,
       );
-    }());
+      return;
+    }
+    if (attempt > DownloadRetry.maxAttempts) {
+      _failDownload(id, 'Download paused. Tap retry to resume.');
+      return;
+    }
+    _downloadErrors[id] = '$error Retrying...';
+    notifyListeners();
+    final generation = _downloadGenerations[id];
+    _downloadRetryTimers[id] = Timer(DownloadRetry.delay(attempt), () async {
+      _downloadRetryTimers.remove(id);
+      await _downloadEventQueues[id];
+      if (!_downloadingFiles.contains(id) ||
+          generation != _downloadGenerations[id]) {
+        return;
+      }
+      try {
+        await _requestSocketFileDownload(
+          id,
+          _serverFiles[id]!,
+          serverId: owner,
+        );
+      } catch (error) {
+        _failDownload(id, 'Download paused: $error');
+      }
+    });
   }
 
-  void _failDownload(String fileId, String error, {bool deleteTemp = true}) {
-    _cleanupActiveDownload(fileId, deleteTemp: deleteTemp);
-    _downloadErrors[fileId] = error;
-    _showDownloadFailedNotification(fileId, error);
+  void _failDownload(String id, String error, {bool reconnect = false}) {
+    if (_downloadsDisposed) return;
+    _cancelDownloadWatchdog(id);
+    _downloadRetryTimers.remove(id)?.cancel();
+    _socketDownloadTokens[id] = 'paused';
+    _downloadingFiles.remove(id);
+    _downloadErrors[id] = error;
+    if (reconnect) _resumeDownloadIds.add(id);
+    final part = _downloadParts[id];
+    if (part != null) {
+      part.metadata['state'] = 'paused';
+      unawaited(part.save().catchError((Object _) {}));
+    }
+    final preview = _fileBytesCompleters.remove(id);
+    if (preview != null) {
+      if (!preview.isCompleted) preview.completeError(Exception(error));
+    } else {
+      _showDownloadFailedNotification(id, error);
+    }
     notifyListeners();
   }
 
@@ -17382,6 +17064,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _downloadWatchdogs.clear();
+    _downloadsDisposed = true;
+    for (final id in _downloadGenerations.keys.toList()) { _downloadGenerations[id] = _downloadGenerations[id]! + 1; }
+    for (final preview in _fileBytesCompleters.values) {
+      if (!preview.isCompleted) preview.completeError(StateError('App closed. Download progress saved.'));
+    }
+    _fileBytesCompleters.clear();
+    for (final timer in _downloadRetryTimers.values) { timer.cancel(); }
+    _downloadRetryTimers.clear();
+    for (final download in _httpDownloads.values) { download.cancel(); }
+    _downloadingFiles.clear();
+
     for (final timer in _backendInstallAckTimers.values) {
       timer.cancel();
     }
