@@ -5,6 +5,8 @@ import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'asr_model_manager.dart';
+import 'speech_input.dart';
+import 'speech_recognition_settings.dart';
 
 /// Convert PCM16 little-endian bytes to Float32List normalized to [-1.0, 1.0].
 Float32List _pcm16ToFloat32(Uint8List bytes) {
@@ -27,19 +29,33 @@ class _IsolateInit {
   final SendPort sendPort;
   final String modelDir;
   final String? punctDir;
-  _IsolateInit(this.sendPort, this.modelDir, this.punctDir);
+  final SpeechRecognitionSettings settings;
+  _IsolateInit(this.sendPort, this.modelDir, this.punctDir, this.settings);
 }
 
 class _AudioData {
   final Uint8List bytes;
-  _AudioData(this.bytes);
+  final int revision;
+  _AudioData(this.bytes, this.revision);
 }
 
 class _TextResult {
   final String text;
   final bool isEndpoint;
   final bool hasNewSpeech;
-  _TextResult(this.text, this.isEndpoint, {this.hasNewSpeech = true});
+  final int revision;
+  _TextResult(
+    this.text,
+    this.isEndpoint, {
+    this.hasNewSpeech = true,
+    required this.revision,
+  });
+}
+
+class _ResetRecognition {
+  final String text;
+  final int revision;
+  _ResetRecognition(this.text, this.revision);
 }
 
 // ── ASR Isolate ──
@@ -51,7 +67,13 @@ void _asrIsolateEntry(SendPort mainSendPort) {
   sherpa.OnlineRecognizer? recognizer;
   sherpa.OnlineStream? stream;
   sherpa.OnlinePunctuation? punctuation;
-  String rawText = ''; // Accumulated lowercase text without punctuation
+  int revision = 0;
+  String committed = '';
+  String lastSegment = '';
+  String join(String segment) =>
+      [committed, segment].where((s) => s.isNotEmpty).join(' ');
+  String punctuate(String segment) =>
+      segment.isEmpty ? '' : punctuation?.addPunct(segment) ?? segment;
 
   receivePort.listen((message) {
     if (message is _IsolateInit) {
@@ -70,9 +92,13 @@ void _asrIsolateEntry(SendPort mainSendPort) {
             provider: 'cpu',
             debug: false,
           ),
+          decodingMethod: message.settings.searchPaths == 1
+              ? 'greedy_search'
+              : 'modified_beam_search',
+          maxActivePaths: message.settings.searchPaths,
           enableEndpoint: true,
           rule1MinTrailingSilence: 2.4,
-          rule2MinTrailingSilence: 1.2,
+          rule2MinTrailingSilence: message.settings.endpointSilence,
           rule3MinUtteranceLength: 20.0,
         );
 
@@ -108,7 +134,9 @@ void _asrIsolateEntry(SendPort mainSendPort) {
         message.sendPort.send('error:$e');
       }
     } else if (message is _AudioData) {
-      if (recognizer == null || stream == null) return;
+      if (recognizer == null || stream == null || message.revision != revision) {
+        return;
+      }
 
       final samples = _pcm16ToFloat32(message.bytes);
       stream!.acceptWaveform(samples: samples, sampleRate: 16000);
@@ -120,31 +148,25 @@ void _asrIsolateEntry(SendPort mainSendPort) {
       final result = recognizer!.getResult(stream!);
       final currentSegment = result.text.trim().toLowerCase();
 
+      final hasNew = currentSegment.isNotEmpty && currentSegment != lastSegment;
+      lastSegment = currentSegment;
       if (recognizer!.isEndpoint(stream!)) {
-        final hasNew = currentSegment.isNotEmpty;
-        if (hasNew) {
-          rawText = rawText.isEmpty
-              ? currentSegment
-              : '$rawText $currentSegment';
-        }
+        committed = join(punctuate(currentSegment));
         recognizer!.reset(stream!);
-        // Re-punctuate the entire accumulated text
-        final display = (punctuation != null && rawText.isNotEmpty)
-            ? punctuation!.addPunct(rawText)
-            : rawText;
-        mainSendPort.send(_TextResult(display, true, hasNewSpeech: hasNew));
-      } else {
-        // For partial results, only send when there's active speech
-        if (currentSegment.isNotEmpty) {
-          final fullRaw = rawText.isEmpty
-              ? currentSegment
-              : '$rawText $currentSegment';
-          // Re-punctuate everything including the partial segment
-          final display = punctuation != null
-              ? punctuation!.addPunct(fullRaw)
-              : fullRaw;
-          mainSendPort.send(_TextResult(display, false));
-        }
+        lastSegment = '';
+        mainSendPort.send(
+          _TextResult(
+            committed,
+            true,
+            hasNewSpeech: hasNew,
+            revision: revision,
+          ),
+        );
+      } else if (hasNew) {
+        // Only the active segment changes. Keep earlier sentences and edits intact.
+        mainSendPort.send(
+          _TextResult(join(currentSegment), false, revision: revision),
+        );
       }
     } else if (message == 'finalize') {
       // Feed silence to flush the decoder buffer — the recognizer only
@@ -158,32 +180,19 @@ void _asrIsolateEntry(SendPort mainSendPort) {
         }
         final result = recognizer!.getResult(stream!);
         final currentSegment = result.text.trim().toLowerCase();
-        if (currentSegment.isNotEmpty) {
-          rawText = rawText.isEmpty
-              ? currentSegment
-              : '$rawText $currentSegment';
-        }
+        committed = join(punctuate(currentSegment));
         recognizer!.reset(stream!);
+        lastSegment = '';
       }
-      if (rawText.isNotEmpty) {
-        final display = punctuation != null
-            ? punctuation!.addPunct(rawText)
-            : rawText;
-        mainSendPort.send(_TextResult(display, true));
-      }
-    } else if (message == 'reset') {
-      rawText = '';
-      if (recognizer != null && stream != null) {
-        recognizer!.reset(stream!);
-      }
-    } else if (message is String && message.startsWith('setCommitted:')) {
-      // Strip punctuation and lowercase so we can re-punctuate cleanly
-      rawText = message
-          .substring('setCommitted:'.length)
-          .toLowerCase()
-          .replaceAll(RegExp(r'[.,!?;:\-\u2014]'), '')
-          .replaceAll(RegExp(r'\s+'), ' ')
-          .trim();
+      mainSendPort.send(
+        _TextResult(committed, true, hasNewSpeech: false, revision: revision),
+      );
+      mainSendPort.send('finalized');
+    } else if (message is _ResetRecognition) {
+      revision = message.revision;
+      committed = message.text;
+      lastSegment = '';
+      if (recognizer != null && stream != null) recognizer!.reset(stream!);
     } else if (message == 'shutdown') {
       stream?.free();
       recognizer?.free();
@@ -191,6 +200,7 @@ void _asrIsolateEntry(SendPort mainSendPort) {
       stream = null;
       recognizer = null;
       punctuation = null;
+      mainSendPort.send('closed');
       receivePort.close();
     }
   });
@@ -198,7 +208,8 @@ void _asrIsolateEntry(SendPort mainSendPort) {
 
 // ── Main service ──
 
-class SherpaSpeechService {
+class SherpaSpeechService implements SpeechInput {
+  final SpeechRecognitionSettings settings;
   final AsrModelManager _modelManager;
 
   bool _isInitialized = false;
@@ -215,19 +226,32 @@ class SherpaSpeechService {
   StreamSubscription? _micSub;
   Completer<void>? _micDoneCompleter;
   Completer<void>? _finalizeCompleter;
+  final _closed = Completer<void>();
 
   final _resultController = StreamController<String>.broadcast();
   final _statusController = StreamController<bool>.broadcast();
 
+  int _revision = 0;
   String _lastSttText = ''; // Last text sent by STT, to detect user edits
 
+  @override
   Stream<String> get onResult => _resultController.stream;
+  @override
   Stream<bool> get onListeningStatus => _statusController.stream;
+  @override
   bool get isListening => _isListening;
 
-  SherpaSpeechService(this._modelManager);
+  SherpaSpeechService(
+    this._modelManager, {
+    this.settings = const SpeechRecognitionSettings(),
+  });
 
-  Future<bool> initialize() async {
+  Future<bool>? _initializing;
+
+  @override
+  Future<bool> initialize() => _initializing ??= _initialize();
+
+  Future<bool> _initialize() async {
     if (_isInitialized) return true;
 
     final installed = await _modelManager.isModelInstalled();
@@ -253,7 +277,7 @@ class SherpaSpeechService {
           // Send init with model dirs
           final initPort = ReceivePort();
           _isolateSendPort!.send(
-            _IsolateInit(initPort.sendPort, modelDir, punctDir),
+            _IsolateInit(initPort.sendPort, modelDir, punctDir, settings),
           );
           initPort.listen((response) {
             if (response == 'ready') {
@@ -266,16 +290,19 @@ class SherpaSpeechService {
             initPort.close();
           });
         } else if (message is _TextResult) {
+          if (message.revision != _revision) return;
           _lastSttText = message.text;
           _resultController.add(message.text);
-          // Complete finalize completer if waiting
-          if (_finalizeCompleter != null && !_finalizeCompleter!.isCompleted) {
-            _finalizeCompleter!.complete();
-          }
           // Only reset silence timer on actual new speech, not echoed results
           // Skip entirely in push-to-talk mode
           if (message.hasNewSpeech && !_pushToTalk) {
             _resetSilenceTimer();
+          }
+        } else if (message == 'closed') {
+          if (!_closed.isCompleted) _closed.complete();
+        } else if (message == 'finalized') {
+          if (_finalizeCompleter != null && !_finalizeCompleter!.isCompleted) {
+            _finalizeCompleter!.complete();
           }
         } else if (message is String && message.startsWith('log:')) {
           debugPrint(message.substring(4));
@@ -295,15 +322,19 @@ class SherpaSpeechService {
     }
   }
 
+  @override
   Future<void> startListening({
     String existingText = '',
     bool pushToTalk = false,
   }) async {
+    if (_isListening) return;
+    if (_stopping != null) await _stopping;
     if (!_isInitialized) {
       final ok = await initialize();
       if (!ok) {
-        debugPrint('[SherpaSpeech] Init failed, cannot listen');
-        return;
+        throw StateError(
+          'Speech model could not be loaded. Download it in Voice & Speech.',
+        );
       }
     }
 
@@ -312,12 +343,8 @@ class SherpaSpeechService {
     _pushToTalk = pushToTalk;
     _statusController.add(true);
 
-    // Tell isolate about existing text to preserve
-    final trimmed = existingText.trim();
-    _isolateSendPort?.send('reset');
-    if (trimmed.isNotEmpty) {
-      _isolateSendPort?.send('setCommitted:$trimmed');
-    }
+    _lastSttText = existingText.trim();
+    _isolateSendPort?.send(_ResetRecognition(_lastSttText, ++_revision));
 
     if (!_pushToTalk) {
       _resetSilenceTimer();
@@ -345,7 +372,9 @@ class SherpaSpeechService {
       _micSub = micStream.listen(
         (data) {
           if (_sessionActive && _isolateSendPort != null) {
-            _isolateSendPort!.send(_AudioData(Uint8List.fromList(data)));
+            _isolateSendPort!.send(
+              _AudioData(Uint8List.fromList(data), _revision),
+            );
           }
         },
         onError: (e) {
@@ -370,30 +399,37 @@ class SherpaSpeechService {
 
   /// Called when the user manually edits the text field while STT is active.
   /// Syncs the isolate's committedText with the actual text field content.
+  @override
   void onTextFieldChanged(String currentText) {
     if (!_isListening) return;
     // Only sync if the text differs from what STT last emitted
     if (currentText != _lastSttText) {
       _lastSttText = currentText;
-      _isolateSendPort?.send('reset');
-      final trimmed = currentText.trim();
-      if (trimmed.isNotEmpty) {
-        _isolateSendPort?.send('setCommitted:$trimmed');
-      }
+      _isolateSendPort?.send(
+        _ResetRecognition(currentText.trim(), ++_revision),
+      );
     }
   }
 
   void _resetSilenceTimer() {
     _silenceTimer?.cancel();
-    _silenceTimer = Timer(const Duration(seconds: 4), () {
-      if (_sessionActive) {
-        debugPrint('[SherpaSpeech] 4s silence timeout, ending session');
-        stopListening();
-      }
-    });
+    _silenceTimer = Timer(
+      Duration(milliseconds: (settings.stopAfterSilence * 1000).round()),
+      () {
+        if (_sessionActive) {
+          debugPrint('[SherpaSpeech] Silence timeout, ending session');
+          stopListening();
+        }
+      },
+    );
   }
 
-  Future<void> stopListening() async {
+  Future<void>? _stopping;
+  @override
+  Future<void> stopListening() =>
+      _stopping ??= _stopListening().whenComplete(() => _stopping = null);
+
+  Future<void> _stopListening() async {
     _silenceTimer?.cancel();
     _silenceTimer = null;
 
@@ -424,23 +460,33 @@ class SherpaSpeechService {
     } catch (_) {}
     _finalizeCompleter = null;
 
+    _silenceTimer?.cancel();
     _sessionActive = false;
     _isListening = false;
     _statusController.add(false);
   }
 
-  void dispose() {
+  Future<void>? _closing;
+  @override
+  Future<void> close() => _closing ??= _close();
+
+  Future<void> _close() async {
     _sessionActive = false;
     _silenceTimer?.cancel();
-    _micSub?.cancel();
-    try {
-      _recorder?.stop();
-    } catch (_) {}
-    _recorder?.dispose();
-    _isolateSendPort?.send('shutdown');
-    _isolateResultSub?.cancel();
+    await _micSub?.cancel();
+    await _recorder?.dispose();
+    if (_isolateSendPort != null) {
+      _isolateSendPort!.send('shutdown');
+      try {
+        await _closed.future.timeout(const Duration(seconds: 5));
+      } catch (_) {}
+    }
+    await _isolateResultSub?.cancel();
     _isolate?.kill();
-    _resultController.close();
-    _statusController.close();
+    await _resultController.close();
+    await _statusController.close();
   }
+
+  @override
+  void dispose() => unawaited(close());
 }

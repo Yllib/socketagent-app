@@ -49,7 +49,8 @@ import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
-import 'sherpa_speech_service.dart';
+import 'local_speech_service.dart';
+import 'speech_recognition_settings.dart';
 import 'asr_model_manager.dart';
 import 'tts_service.dart';
 import 'tts_engine.dart';
@@ -495,9 +496,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Dummy WebSocketService for when no server is active (avoids null crashes).
   final WebSocketService _fallbackWs = WebSocketService();
   final AsrModelManager _asrModelManager = AsrModelManager();
-  late final SherpaSpeechService _speech = SherpaSpeechService(
-    _asrModelManager,
-  );
+  late final LocalSpeechService _speech = LocalSpeechService(_asrModelManager);
   final TtsService _tts = TtsService();
   late final SystemTtsEngine _systemEngine;
   final KokoroServerEngine _kokoroServerEngine = KokoroServerEngine();
@@ -670,6 +669,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       []; // {toolUseId, filePath}
   bool _isLoadingHistory = false;
   bool _isRefreshingHistory = false;
+  String? _historyRefreshError;
+  int _initialHistoryAttempts = 0;
   bool _isLoadingMore = false;
   int _historyWindowRevision = 0;
   int _historyOffset = 0; // index of oldest loaded entry (0 = all loaded)
@@ -1292,15 +1293,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (sessionId == null || sessionId.isEmpty) return;
     if (Platform.isWindows) {
       final sid = serverId ?? _connMgr.activeServerId ?? '';
-      final running = _runningSessionNotifications[_runningSessionKey(sid, sessionId)];
-      if (running != null && !running.suppressOngoingNotification &&
+      final running =
+          _runningSessionNotifications[_runningSessionKey(sid, sessionId)];
+      if (running != null &&
+          !running.suppressOngoingNotification &&
           !_isViewingSession(sessionId, serverId: sid)) {
-        unawaited(_notifications.showSessionCompletion(
-          id: _sessionCompletionNotificationId(sessionId, serverId: sid),
-          title: running.title,
-          body: 'Agent finished. Open the session to review.',
-          payload: 'session:${Uri.encodeComponent(sessionId)}:${Uri.encodeComponent(sid)}',
-        ));
+        unawaited(
+          _notifications.showSessionCompletion(
+            id: _sessionCompletionNotificationId(sessionId, serverId: sid),
+            title: running.title,
+            body: 'Agent finished. Open the session to review.',
+            payload:
+                'session:${Uri.encodeComponent(sessionId)}:${Uri.encodeComponent(sid)}',
+          ),
+        );
       }
     }
     final matchingKeys = _runningSessionNotifications.keys.where((key) {
@@ -1699,6 +1705,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool get isLoadingHistory => _isLoadingHistory;
+  String? get historyRefreshError => _historyRefreshError;
   bool get isRefreshingHistory => _isRefreshingHistory;
   bool get isLoadingMore => _isLoadingMore;
   int get historyWindowRevision => _historyWindowRevision;
@@ -1940,13 +1947,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool isSessionAvailable(Session session) =>
       sessionServerStatus(session) == ConnectionStatus.connected;
 
-  Future<String?> fetchServerFileBase64(String filePath, {
-    String? serverId, Duration timeout = const Duration(minutes: 3),
-  }) => fetchFileManagerFileBase64(path: filePath, fileName: filePath.split('/').last,
-      serverId: serverId, timeout: timeout);
+  Future<String?> fetchServerFileBase64(
+    String filePath, {
+    String? serverId,
+    Duration timeout = const Duration(minutes: 3),
+  }) => fetchFileManagerFileBase64(
+    path: filePath,
+    fileName: filePath.split('/').last,
+    serverId: serverId,
+    timeout: timeout,
+  );
 
-  SherpaSpeechService get speech => _speech;
+  LocalSpeechService get speech => _speech;
   AsrModelManager get asrModelManager => _asrModelManager;
+  SpeechRecognitionSettings get recognitionSettings => _speech.settings;
+  Future<void> setRecognitionSettings(SpeechRecognitionSettings value) async {
+    await _speech.configure(value);
+    notifyListeners();
+  }
+
   CryptoService get crypto => _crypto;
   ConnectionMode get connectionMode => _connMgr.active?.mode ?? _ws.mode;
   Future<void> get settingsReady => _settingsLoaded.future;
@@ -2186,18 +2205,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (Platform.isWindows) {
-      final seen = (prefs.getStringList('windows_local_servers_seen') ?? []).toSet();
+      final seen = (prefs.getStringList('windows_local_servers_seen') ?? [])
+          .toSet();
       try {
         for (final candidate in await WindowsLocalServer().discover()) {
           final identity = '${candidate.port}:${candidate.serverPubkey}';
           if (seen.contains(identity)) continue;
-          if (_serverConfigs.any((c) => c.serverPubkey == candidate.serverPubkey &&
-              c.port == candidate.port && !c.useRelay)) {
+          if (_serverConfigs.any(
+            (c) =>
+                c.serverPubkey == candidate.serverPubkey &&
+                c.port == candidate.port &&
+                !c.useRelay,
+          )) {
             seen.add(identity);
             continue;
           }
-          final probe = await const ServerConnectionProbe().verify(candidate,
-              subscriberToken: '', timeout: const Duration(seconds: 3));
+          final probe = await const ServerConnectionProbe().verify(
+            candidate,
+            subscriberToken: '',
+            timeout: const Duration(seconds: 3),
+          );
           if (!probe.success) continue;
           _serverConfigs.add(candidate.copyWith(id: ServerConfig.generateId()));
           await _saveServerConfigs();
@@ -2205,7 +2232,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
         await prefs.setStringList('windows_local_servers_seen', seen.toList());
       } catch (_) {
-        debugPrint('[Desktop] Local computer discovery unavailable; use Add computer.');
+        debugPrint(
+          '[Desktop] Local computer discovery unavailable; use Add computer.',
+        );
       }
     }
 
@@ -2300,6 +2329,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _restoreDownloads();
     _connMgr.connectAll();
 
+    await _speech.loadSettings();
+
     // Connection readiness ends here. Push registration, speech-engine
     // warm-up, draft loading, and other local setup are independent work. The
     // launcher is already waiting on this completer and can connect every
@@ -2315,8 +2346,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
         .toSet();
     _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
-    // Eagerly initialize STT so model is loaded before user presses mic
-    _speech.initialize();
+    // Speech models load on first use, keeping large optional models out of idle memory.
     // Always eagerly initialize TTS so it's warm before any speak message arrives
     await _tts.initialize();
     if (savedVoice != null) {
@@ -6824,7 +6854,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (msg['inlineImagesReady'] == true) {
       for (final message in _messages.reversed) {
         if (messageMatchesTranscriptPosition(message, msg)) {
-          message.textContent = msg['content'] as String? ?? message.textContent;
+          message.textContent =
+              msg['content'] as String? ?? message.textContent;
           applyTranscriptPosition(message, msg);
           notifyListeners();
           break;
@@ -9881,6 +9912,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _initialHistoryTimeout = null;
       _initialHistoryRequestId = null;
       _initialHistoryRequestDispatched = false;
+      _historyRefreshError = null;
+      _initialHistoryAttempts = 0;
       _olderHistoryRequestId = null;
       _isLoadingMore = false;
     } else if (decision.kind == SessionHistoryKind.older) {
@@ -10700,7 +10733,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 toolInput['_file_size'] = historyFileSize;
               }
               _filePathToId[_filePathKey(filePath)] = historyFileId;
-              final activeServerId = _activeSessionServerId ?? _connMgr.activeServerId;
+              final activeServerId =
+                  _activeSessionServerId ?? _connMgr.activeServerId;
               if (activeServerId != null && activeServerId.isNotEmpty) {
                 _downloadServerIds[historyFileId] = activeServerId;
               }
@@ -11431,13 +11465,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final serverConfig = serverId != null
         ? _serverConfigs.where((c) => c.id == serverId).firstOrNull
         : null;
+    final previousRunStats = {
+      for (final session in _sessions)
+        if (serverId == null || session.serverId == serverId)
+          session.id: session.runStats,
+    };
     final sessions = rawSessions
         .map(
-          (s) => Session.fromJson(s as Map<String, dynamic>).withServer(
-            serverId: serverId ?? '',
-            serverName: serverConfig?.name ?? '',
-            serverColor: serverConfig?.colorValue,
-          ),
+          (s) =>
+              Session.fromJson(
+                s as Map<String, dynamic>,
+                previousRunStats: previousRunStats[s['id']],
+              ).withServer(
+                serverId: serverId ?? '',
+                serverName: serverConfig?.name ?? '',
+                serverColor: serverConfig?.colorValue,
+              ),
         )
         .where((s) => !_isSessionArchiveHidden(serverId, s.id))
         .toList();
@@ -13911,6 +13954,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _historyOpenTraceStartedAt[requestId] = DateTime.now();
     _initialHistoryRequestId = requestId;
     _initialHistoryRequestDispatched = false;
+    _initialHistoryAttempts = 0;
+    _historyRefreshError = null;
     _olderHistoryRequestId = null;
     _initialHistoryTimeout?.cancel();
     _initialHistoryTimeout = null;
@@ -13926,36 +13971,63 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _initialHistoryRequestDispatched = true;
+    _initialHistoryAttempts++;
     _initialHistoryTimeout?.cancel();
     _initialHistoryTimeout = Timer(const Duration(seconds: 10), () {
       if (_initialHistoryRequestId != requestId ||
           _activeSessionId != sessionId) {
         return;
       }
-      if (_isRefreshingHistory && !_isLoadingHistory) {
-        _initialHistoryRequestId = null;
-        _initialHistoryRequestDispatched = false;
-        _isRefreshingHistory = false;
-        _historyOpenTraceStartedAt.remove(requestId);
-        notifyListeners();
-        return;
-      }
-      if (!_isLoadingHistory) {
-        _initialHistoryRequestId = null;
-        _initialHistoryRequestDispatched = false;
-        _historyOpenTraceStartedAt.remove(requestId);
-        return;
-      }
-      _isLoadingHistory = false;
       _initialHistoryRequestDispatched = false;
-      _historyOpenTraceStartedAt.remove(requestId);
-      _messages.add(
-        ChatMessage.error(
-          'Timed out loading this session from its computer. Check the computer connection and try again.',
-        ),
-      );
+      if (_initialHistoryAttempts < 3) {
+        _requestHistoryRefresh(requestId, sessionId);
+        return;
+      }
+      // Keep correlation alive: a slow but valid response must still replace
+      // the cache, even after the retry budget has been exhausted.
+      _isLoadingHistory = false;
+      _isRefreshingHistory = false;
+      _historyRefreshError =
+          'Latest messages could not be loaded. Your conversation is saved on the computer.';
       notifyListeners();
     });
+  }
+
+  void _requestHistoryRefresh(String requestId, String sessionId) {
+    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
+    final snapshot = serverId == null
+        ? null
+        : _transcriptCache.peek(serverId, sessionId);
+    final checkpoint = _transcriptCache.resumeCheckpoint(snapshot);
+    final message = <String, dynamic>{
+      'type': 'resume_session',
+      'sessionId': sessionId,
+      'historyRequestId': requestId,
+      'openTraceId': requestId,
+      if (checkpoint != null) ...{
+        'knownSessionSeq': checkpoint.latestSessionSeq,
+        'knownHistoryOffset': checkpoint.historyOffset,
+        'knownHistoryEntryCount': checkpoint.entryCount,
+      },
+    };
+    // Reuse a validated cache cursor so retrying does not resend the whole
+    // window. The server falls back to a bounded tail for incompatible caches.
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, message);
+    } else {
+      _connMgr.send(message);
+    }
+    _markInitialHistoryRequestDispatched(requestId, sessionId);
+  }
+
+  void retryHistoryRefresh() {
+    final sessionId = _activeSessionId;
+    if (sessionId == null) return;
+    final requestId = _beginInitialHistoryRequest(sessionId);
+    _isLoadingHistory = _messages.isEmpty;
+    _isRefreshingHistory = _messages.isNotEmpty;
+    _requestHistoryRefresh(requestId, sessionId);
+    notifyListeners();
   }
 
   /// Check if a path exists on the server. Returns true if it exists.
@@ -14167,7 +14239,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _serverFiles[fileId] = path;
     _serverFileNames[fileId] = fileName;
     if (owner != null) _downloadServerIds[fileId] = owner;
-    if (showInChat && _activeSessionId != null) _downloadSessionIds[fileId] = _activeSessionId!;
+    if (showInChat && _activeSessionId != null) {
+      _downloadSessionIds[fileId] = _activeSessionId!;
+    }
     _filePathToId[_filePathKey(path, owner)] = fileId;
     if (showInChat) {
       final hasVisibleCard = _messages.any(
@@ -14191,8 +14265,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     requestFile(fileId);
   }
 
-  Future<String?> fetchFileManagerFileBase64({required String path, required String fileName,
-    String? serverId, Duration timeout = const Duration(minutes: 3),
+  Future<String?> fetchFileManagerFileBase64({
+    required String path,
+    required String fileName,
+    String? serverId,
+    Duration timeout = const Duration(minutes: 3),
   }) async {
     final owner = resolveDownloadServerId(serverId, _connMgr.activeServerId);
     final id = 'preview_${_stableFileTransferId('$owner:$path')}';
@@ -14204,11 +14281,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _serverFileNames[id] = fileName;
     if (owner != null) _downloadServerIds[id] = owner;
     requestFile(id);
-    return completer.future.timeout(timeout, onTimeout: () {
-      unawaited(_cleanupActiveDownload(id));
-      _fileBytesCompleters.remove(id);
-      throw TimeoutException('Download paused. Saved progress will be resumed on retry.');
-    });
+    return completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        unawaited(_cleanupActiveDownload(id));
+        _fileBytesCompleters.remove(id);
+        throw TimeoutException(
+          'Download paused. Saved progress will be resumed on retry.',
+        );
+      },
+    );
   }
 
   Future<Map<String, dynamic>> readFileManagerText({
@@ -16018,8 +16100,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Get local path for a downloaded file, or null if not yet downloaded
   /// Get fileId for a server file path (latest)
-  String _filePathKey(String path, [String? serverId]) =>
-      jsonEncode([serverId ?? _activeSessionServerId ?? _connMgr.activeServerId ?? '', path]);
+  String _filePathKey(String path, [String? serverId]) => jsonEncode([
+    serverId ?? _activeSessionServerId ?? _connMgr.activeServerId ?? '',
+    path,
+  ]);
 
   String? getFileId(String serverPath, {String? serverId}) =>
       _filePathToId[_filePathKey(serverPath, serverId)];
@@ -16125,7 +16209,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _cancelledDownloads.add(fileId);
     await _cleanupActiveDownload(fileId);
     final part = _downloadParts[fileId];
-    if (part != null) { part.metadata['state'] = 'cancelled'; await part.save(); }
+    if (part != null) {
+      part.metadata['state'] = 'cancelled';
+      await part.save();
+    }
     _downloadRetryCounts.remove(fileId);
     _downloadErrors[fileId] = 'Download stopped. Tap retry to resume.';
     await _notifications.cancel(_downloadNotificationId(fileId));
@@ -16171,8 +16258,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String safeName,
     Future<void> Function(String)? beforeMove,
   }) async {
-    final cleanName = safeName.replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1f]'), '_');
-    final name = cleanName.isEmpty || cleanName == '.' || cleanName == '..' ? 'file' : cleanName;
+    final cleanName = safeName.replaceAll(
+      RegExp(r'[<>:"/\\|?*\x00-\x1f]'),
+      '_',
+    );
+    final name = cleanName.isEmpty || cleanName == '.' || cleanName == '..'
+        ? 'file'
+        : cleanName;
     var targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$name');
     var counter = 1;
     while (targetFile.existsSync()) {
@@ -16190,7 +16282,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       return await tempFile.rename(targetFile.path);
     } catch (_) {
-      final staged = '${targetFile.path}.${DateTime.now().microsecondsSinceEpoch}.partial';
+      final staged =
+          '${targetFile.path}.${DateTime.now().microsecondsSinceEpoch}.partial';
       await tempFile.copy(staged);
       await File(staged).rename(targetFile.path);
       await tempFile.delete();
@@ -16490,7 +16583,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _resumeDownloadsForServer(String serverId) {
     for (final id in _resumeDownloadIds.toList()) {
-      if (_downloadServerIds[id] != serverId || _downloadingFiles.contains(id)) {
+      if (_downloadServerIds[id] != serverId ||
+          _downloadingFiles.contains(id)) {
         continue;
       }
       _resumeDownloadIds.remove(id);
@@ -16502,7 +16596,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final id = msg['fileId'] as String? ?? '';
     if (_downloadsDisposed ||
         id.isEmpty ||
-        (_downloadServerIds[id] != null && serverId != _downloadServerIds[id])) {
+        (_downloadServerIds[id] != null &&
+            serverId != _downloadServerIds[id])) {
       return;
     }
     final previous = _downloadEventQueues[id] ?? Future<void>.value();
@@ -16671,7 +16766,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         part: part,
         onProgress: (received, total) {
           if (_downloadGenerations[fileId] == generation) {
-            if (received < (_downloadReceivedBytes[fileId] ?? 0)) { _lastNotifiedProgress.remove(fileId); }
+            if (received < (_downloadReceivedBytes[fileId] ?? 0)) {
+              _lastNotifiedProgress.remove(fileId);
+            }
             _downloadReceivedBytes[fileId] = received;
             _setDownloadProgress(fileId, fileName, received, total);
           }
@@ -16918,7 +17015,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _retrySocketFileDownload(String id, String error) {
-    if (!_downloadingFiles.contains(id) || _downloadRetryTimers.containsKey(id)) {
+    if (!_downloadingFiles.contains(id) ||
+        _downloadRetryTimers.containsKey(id)) {
       return;
     }
     _cancelDownloadWatchdog(id);
@@ -17065,14 +17163,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _downloadWatchdogs.clear();
     _downloadsDisposed = true;
-    for (final id in _downloadGenerations.keys.toList()) { _downloadGenerations[id] = _downloadGenerations[id]! + 1; }
+    for (final id in _downloadGenerations.keys.toList()) {
+      _downloadGenerations[id] = _downloadGenerations[id]! + 1;
+    }
     for (final preview in _fileBytesCompleters.values) {
-      if (!preview.isCompleted) preview.completeError(StateError('App closed. Download progress saved.'));
+      if (!preview.isCompleted) {
+        preview.completeError(
+          StateError('App closed. Download progress saved.'),
+        );
+      }
     }
     _fileBytesCompleters.clear();
-    for (final timer in _downloadRetryTimers.values) { timer.cancel(); }
+    for (final timer in _downloadRetryTimers.values) {
+      timer.cancel();
+    }
     _downloadRetryTimers.clear();
-    for (final download in _httpDownloads.values) { download.cancel(); }
+    for (final download in _httpDownloads.values) {
+      download.cancel();
+    }
     _downloadingFiles.clear();
 
     for (final timer in _backendInstallAckTimers.values) {

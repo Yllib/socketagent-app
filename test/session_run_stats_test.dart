@@ -2,6 +2,29 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:app/models/message.dart';
 
 void main() {
+  test(
+    'list summaries retain loaded runs; explicit empty history clears them',
+    () {
+      final previous = SessionRunStats.fromJson({
+        'completedCount': 1,
+        'recentRuns': [
+          {'runId': 'run-1', 'durationMs': 120000},
+        ],
+      });
+      final summary = Session.fromJson({
+        'id': 'session-1',
+        'runStats': {'completedCount': 2},
+      }, previousRunStats: previous);
+      expect(summary.runStats?.completedCount, 2);
+      expect(summary.runStats?.recentRuns.single.runId, 'run-1');
+      final cleared = SessionRunStats.fromJson({
+        'completedCount': 0,
+        'recentRuns': [],
+      }, previous: previous);
+      expect(cleared.recentRuns, isEmpty);
+    },
+  );
+
   test('session parses rollover lineage and current compaction count', () {
     final session = Session.fromJson({
       'id': 'new',

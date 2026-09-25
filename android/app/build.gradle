@@ -45,6 +45,11 @@ android {
         targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        externalNativeBuild {
+            cmake {
+                arguments "-DMOONSHINE_ORT_DIR=${layout.buildDirectory.dir('moonshine/runtime').get().asFile.absolutePath.replace('\\', '/')}"
+            }
+        }
     }
 
     productFlavors {
@@ -79,6 +84,13 @@ android {
         }
     }
 
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/moonshine/CMakeLists.txt')
+            version '3.22.1'
+        }
+    }
+
     packagingOptions {
         jniLibs {
             useLegacyPackaging = true
@@ -86,7 +98,71 @@ android {
     }
 }
 
+// Each SDK requires its own versioned ORT symbols. Give Moonshine's runtime
+// a private SONAME and rewrite its DT_NEEDED references, preserving byte lengths
+// and ELF alignment. Never pickFirst either SDK's libonnxruntime.so.
+configurations { moonshineAar; moonshineOrt }
+def moonshineOutput = layout.buildDirectory.file('moonshine/moonshine-voice-0.1.5-ort-1.28.0.aar')
+def moonshineIsolatedOrt = tasks.register('moonshineIsolatedOrt') {
+    inputs.files(configurations.moonshineAar, configurations.moonshineOrt)
+    outputs.dir(layout.buildDirectory.dir('moonshine/runtime'))
+    outputs.file(moonshineOutput)
+    doLast {
+        def output = moonshineOutput.get().asFile
+        output.parentFile.mkdirs()
+        def oldName = 'libonnxruntime.so' + (char) 0
+        def newName = 'libmoonruntime.so' + (char) 0
+        assert oldName.length() == newName.length()
+        new java.util.zip.ZipFile(configurations.moonshineAar.singleFile).withCloseable { source ->
+            new java.util.zip.ZipOutputStream(new FileOutputStream(output)).withCloseable { target ->
+                source.entries().each { entry ->
+                    // ORT 1.23.2 selects unsupported SME instructions on Snapdragon
+                    // Android 16. The C ABI adapter links ARM64 to fixed ORT 1.28.
+                    if (entry.name == 'jni/arm64-v8a/libonnxruntime.so') return
+                    def name = entry.name.replace('libonnxruntime.so', 'libmoonruntime.so')
+                    target.putNextEntry(new java.util.zip.ZipEntry(name))
+                    if (!entry.directory) {
+                        def bytes = source.getInputStream(entry).withCloseable { it.bytes }
+                        if (entry.name.endsWith('.so')) {
+                            def binary = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+                            if (binary.count(oldName) != 1) {
+                                throw new GradleException("Unexpected Moonshine ELF layout: ${entry.name}")
+                            }
+                            bytes = binary.replace(oldName, newName).getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)
+                        }
+                        target.write(bytes)
+                    }
+                    target.closeEntry()
+                }
+            }
+        }
+        new java.util.zip.ZipFile(configurations.moonshineOrt.singleFile).withCloseable { ort ->
+            def entry = ort.getEntry('jni/arm64-v8a/libonnxruntime.so')
+            def bytes = ort.getInputStream(entry).withCloseable { it.bytes }
+            def binary = new String(bytes, java.nio.charset.StandardCharsets.ISO_8859_1)
+            def privateName = 'libmoonortnext.so' + (char) 0
+            if (binary.count(oldName) != 1 || privateName.length() != oldName.length()) {
+                throw new GradleException('Unexpected ONNX Runtime ELF layout')
+            }
+            def runtime = layout.buildDirectory.file('moonshine/runtime/arm64-v8a/libmoonortnext.so').get().asFile
+            runtime.parentFile.mkdirs()
+            runtime.bytes = binary.replace(oldName, privateName).getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)
+        }
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name.startsWith('configureCMake')) task.dependsOn(moonshineIsolatedOrt)
+}
+
 dependencies {
+    moonshineAar 'ai.moonshine:moonshine-voice:0.1.5@aar'
+    moonshineOrt 'com.microsoft.onnxruntime:onnxruntime-android:1.28.0@aar'
+    implementation files(moonshineOutput).builtBy(moonshineIsolatedOrt)
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.10.0'
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    implementation 'androidx.work:work-runtime:2.9.1'
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
     implementation platform("com.google.firebase:firebase-bom:${firebaseSdkVersion}")
     implementation 'com.google.firebase:firebase-common'

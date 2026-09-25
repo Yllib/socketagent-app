@@ -646,7 +646,10 @@ class SessionRunStats {
     this.recentRuns = const [],
   });
 
-  factory SessionRunStats.fromJson(Map<String, dynamic> json) {
+  factory SessionRunStats.fromJson(
+    Map<String, dynamic> json, {
+    SessionRunStats? previous,
+  }) {
     final rawCurrent = json['current'];
     return SessionRunStats(
       current: rawCurrent is Map
@@ -660,12 +663,15 @@ class SessionRunStats {
       lastCompletedAt: DateTime.tryParse(
         json['lastCompletedAt']?.toString() ?? '',
       ),
-      recentRuns: (json['recentRuns'] as List? ?? const [])
-          .whereType<Map>()
-          .map(
-            (run) => SessionRunRecord.fromJson(Map<String, dynamic>.from(run)),
-          )
-          .toList(),
+      recentRuns: !json.containsKey('recentRuns') && previous != null
+          ? previous.recentRuns
+          : (json['recentRuns'] as List? ?? const [])
+                .whereType<Map>()
+                .map(
+                  (run) =>
+                      SessionRunRecord.fromJson(Map<String, dynamic>.from(run)),
+                )
+                .toList(),
     );
   }
 
@@ -776,7 +782,10 @@ class Session {
     this.delegationId,
   });
 
-  factory Session.fromJson(Map<String, dynamic> json) {
+  factory Session.fromJson(
+    Map<String, dynamic> json, {
+    SessionRunStats? previousRunStats,
+  }) {
     return Session(
       id: json['id'] ?? '',
       title: json['title'] ?? 'Untitled',
@@ -790,6 +799,7 @@ class Session {
       runStats: json['runStats'] is Map
           ? SessionRunStats.fromJson(
               Map<String, dynamic>.from(json['runStats'] as Map),
+              previous: previousRunStats,
             )
           : null,
       serverId: json['serverId'] ?? '',

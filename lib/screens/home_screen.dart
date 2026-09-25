@@ -122,7 +122,9 @@ class _ContextRowState extends State<_ContextRow> {
             style: TextStyle(
               fontSize: isLegend ? 13 : 12,
               fontWeight: isLegend ? FontWeight.w500 : FontWeight.normal,
-              color: theme.colorScheme.onSurface.withAlpha(isLegend ? 178 : 200),
+              color: theme.colorScheme.onSurface.withAlpha(
+                isLegend ? 178 : 200,
+              ),
             ),
           ),
           if (widget.share != null)
@@ -304,6 +306,7 @@ class HomeScreenState extends State<HomeScreen> {
   final FocusNode _focusNode = FocusNode();
   final GlobalKey<ChatViewState> _chatViewKey = GlobalKey();
   StreamSubscription? _speechSub;
+  StreamSubscription<String>? _speechErrorSub;
   String? _trackedSessionId;
   bool _showCommandPicker = false;
   String _commandFilter = '';
@@ -418,6 +421,8 @@ class HomeScreenState extends State<HomeScreen> {
     if (selected != null && mounted) await _openBrowserSession(selected);
   }
 
+  late final ChatProvider _lifecycleProvider;
+
   @override
   void initState() {
     super.initState();
@@ -427,6 +432,7 @@ class HomeScreenState extends State<HomeScreen> {
       setState(() => _panelPreferences = SessionPanelPreferences(preferences));
     });
     final provider = context.read<ChatProvider>();
+    _lifecycleProvider = provider;
     if (Platform.isWindows) {
       _focusNode.onKeyEvent = (focus, event) => handleDesktopComposerKey(
         event,
@@ -440,6 +446,13 @@ class HomeScreenState extends State<HomeScreen> {
     }
 
     // Listen to speech results and fill text field
+    _speechErrorSub = provider.speech.onError.listen((error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error)));
+      }
+    });
     _speechSub = provider.speech.onResult.listen((text) {
       if (!widget.visible) return;
       _textController.text = text;
@@ -520,11 +533,12 @@ class HomeScreenState extends State<HomeScreen> {
     _pendingPanelHides.removeListener(_panelHidesChanged);
     _pendingPanelHides.dispose();
     // Save draft before disposing
-    final provider = context.read<ChatProvider>();
+    final provider = _lifecycleProvider;
     provider.saveDraft(_textController.text.trim());
     provider.setViewingSession(null, chatScreenVisible: false);
     assistVoiceTrigger.removeListener(_onAssistVoiceTrigger);
     _speechSub?.cancel();
+    _speechErrorSub?.cancel();
     _textController.dispose();
     _focusNode.dispose();
     super.dispose();
@@ -1210,6 +1224,21 @@ class HomeScreenState extends State<HomeScreen> {
                                 provider.setElevenLabsSpeechRate(speed),
                               )
                             : null,
+                      ),
+                    if (provider.historyRefreshError != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Text(provider.historyRefreshError!),
+                            ),
+                            TextButton(
+                              onPressed: provider.retryHistoryRefresh,
+                              child: const Text('Retry'),
+                            ),
+                          ],
+                        ),
                       ),
                     if (provider.isRefreshingHistory)
                       const LinearProgressIndicator(minHeight: 2),
@@ -2819,12 +2848,11 @@ class HomeScreenState extends State<HomeScreen> {
     switch (name) {
       case 'Messages':
         final breakdown = ctx?['messageBreakdown'] as Map<String, dynamic>?;
-        return breakdown == null ? const [] : _msgBreakdownRows(breakdown, theme);
+        return breakdown == null
+            ? const []
+            : _msgBreakdownRows(breakdown, theme);
       case 'Skills':
-        return _tokenRows(
-          (ctx?['skills'] as Map?)?['skillFrontmatter'],
-          theme,
-        );
+        return _tokenRows((ctx?['skills'] as Map?)?['skillFrontmatter'], theme);
       case 'Memory files':
         return _tokenRows(ctx?['memoryFiles'], theme, labelKey: 'path');
       case 'MCP tools':
@@ -2854,17 +2882,18 @@ class HomeScreenState extends State<HomeScreen> {
     String labelKey = 'name',
   }) {
     if (list is! List) return const [];
-    final rows = list
-        .whereType<Map>()
-        .map(
-          (entry) => (
-            '${entry[labelKey] ?? entry['name'] ?? ''}'.split('/').last,
-            (entry['tokens'] as num?)?.toInt() ?? 0,
-          ),
-        )
-        .where((row) => row.$1.isNotEmpty && row.$2 > 0)
-        .toList()
-      ..sort((a, b) => b.$2.compareTo(a.$2));
+    final rows =
+        list
+            .whereType<Map>()
+            .map(
+              (entry) => (
+                '${entry[labelKey] ?? entry['name'] ?? ''}'.split('/').last,
+                (entry['tokens'] as num?)?.toInt() ?? 0,
+              ),
+            )
+            .where((row) => row.$1.isNotEmpty && row.$2 > 0)
+            .toList()
+          ..sort((a, b) => b.$2.compareTo(a.$2));
     return [
       for (final row in rows)
         _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
@@ -2884,11 +2913,12 @@ class HomeScreenState extends State<HomeScreen> {
       'attachmentTokens': 'Attachments',
       'redirectedContextTokens': 'Redirected context',
     };
-    final rows = labels.entries
-        .map((e) => (e.value, (breakdown[e.key] as num?)?.toInt() ?? 0))
-        .where((row) => row.$2 > 0)
-        .toList()
-      ..sort((a, b) => b.$2.compareTo(a.$2));
+    final rows =
+        labels.entries
+            .map((e) => (e.value, (breakdown[e.key] as num?)?.toInt() ?? 0))
+            .where((row) => row.$2 > 0)
+            .toList()
+          ..sort((a, b) => b.$2.compareTo(a.$2));
     return [
       for (final row in rows)
         _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),

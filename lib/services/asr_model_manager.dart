@@ -1,10 +1,34 @@
 import 'dart:io';
+import 'speech_recognition_settings.dart';
 import 'package:flutter/foundation.dart';
 import 'download_part.dart';
 import 'resumable_http_download.dart';
 import 'package:path_provider/path_provider.dart';
 
 class AsrModelManager {
+  AsrModel selectedModel = AsrModel.zipformer;
+  AsrModel? downloadingModel;
+
+  // Pinned Moonshine 0.1.5 streaming assets, without optional timestamp models.
+  static const moonshineFiles = {
+    'adapter.ort': [1319664, 2870368, 3651296],
+    'cross_kv.ort': [1287544, 5356536, 11643776],
+    'decoder_kv.ort': [32583720, 81878600, 146972408],
+    'encoder.ort': [7675440, 44148576, 94705376],
+    'frontend.model.ort': [23344, 26944, 28720],
+    'frontend.weights.ort': [2093464, 7769464, 11889560],
+    'streaming_config.json': [509, 512, 513],
+    'tokenizer.bin': [249974, 249974, 249974],
+  };
+  static int moonshineFileSize(AsrModel model, String file) =>
+      moonshineFiles[file]![AsrModel.values.indexOf(model) - 1];
+  static String moonshineUrl(AsrModel model, String file) =>
+      'https://download.moonshine.ai/model/${model.moonshineSize}-streaming-en/quantized_26_08_21/$file';
+
+  Future<String> directoryFor(AsrModel model) async => model.isMoonshine
+      ? '${await _baseDir}/moonshine-${model.moonshineSize}-streaming-en-26-08-21'
+      : await modelDir;
+
   // ASR model — large zipformer trained on LibriSpeech + GigaSpeech (~180MB int8)
   static const _modelDirName = 'sherpa-onnx-streaming-zipformer-en-2023-06-21';
   static const _asrDownloadUrl =
@@ -42,8 +66,20 @@ class AsrModelManager {
     return '${await _baseDir}/$_punctDirName';
   }
 
-  Future<bool> isModelInstalled() async {
-    final dir = await modelDir;
+  Future<bool> isModelInstalled([AsrModel? model]) async {
+    model ??= selectedModel;
+    final dir = await directoryFor(model);
+    if (model.isMoonshine) {
+      if (File('$dir/.installing').existsSync()) return false;
+      for (final name in moonshineFiles.keys) {
+        final file = File('$dir/$name');
+        if (!await file.exists() ||
+            await file.length() != moonshineFileSize(model, name)) {
+          return false;
+        }
+      }
+      return true;
+    }
     return !File('$dir/.installing').existsSync() &&
         [
           encoderFile,
@@ -63,8 +99,12 @@ class AsrModelManager {
   }
 
   /// Download both ASR and punctuation models from GitHub releases.
-  Future<void> downloadModel() async {
-    if (_isDownloading) return;
+  Future<void> downloadModel([AsrModel? model]) async {
+    model ??= selectedModel;
+    if (_isDownloading) {
+      throw StateError('A speech model is already downloading');
+    }
+    downloadingModel = model;
     _isDownloading = true;
     downloadProgress.value = 0.0;
 
@@ -73,8 +113,13 @@ class AsrModelManager {
       final baseDir = Directory(base);
       if (!baseDir.existsSync()) baseDir.createSync(recursive: true);
 
+      if (model.isMoonshine) {
+        await _downloadMoonshine(model);
+        return;
+      }
+
       // Download ASR model (~180MB) — 0% to 90%
-      final asrInstalled = await isModelInstalled();
+      final asrInstalled = await isModelInstalled(AsrModel.zipformer);
       if (!asrInstalled) {
         await _downloadAndExtract(
           url: _asrDownloadUrl,
@@ -107,6 +152,8 @@ class AsrModelManager {
       rethrow;
     } finally {
       _isDownloading = false;
+      downloadingModel = null;
+      downloadProgress.value = null;
     }
   }
 
@@ -170,12 +217,48 @@ class AsrModelManager {
     debugPrint('[AsrModel] $dirName installed');
   }
 
-  Future<void> deleteModel() async {
-    final base = await _baseDir;
-    final d = Directory(base);
-    if (d.existsSync()) {
-      d.deleteSync(recursive: true);
-      debugPrint('[AsrModel] All models deleted');
+  Future<void> _downloadMoonshine(AsrModel model) async {
+    final dir = await directoryFor(model);
+    await Directory(dir).create(recursive: true);
+    final marker = File('$dir/.installing');
+    await marker.writeAsString('Installing', flush: true);
+    final total = moonshineFiles.keys.fold<int>(
+      0,
+      (sum, file) => sum + moonshineFileSize(model, file),
+    );
+    var completed = 0;
+    for (final name in moonshineFiles.keys) {
+      final expected = moonshineFileSize(model, name);
+      final file = File('$dir/$name');
+      if (!await file.exists() || await file.length() != expected) {
+        final part = DownloadPart(File('$dir/$name.part'));
+        await ResumableHttpDownload().download(
+          uri: Uri.parse(moonshineUrl(model, name)),
+          part: part,
+          onProgress: (received, _) => downloadProgress.value =
+              ((completed + received) / total).clamp(0.0, 1.0),
+        );
+        if (await part.file.length() != expected) {
+          await part.file.delete();
+          if (await part.manifest.exists()) await part.manifest.delete();
+          throw StateError(
+            'Incomplete Moonshine file: $name. Retry the download.',
+          );
+        }
+        if (await file.exists()) await file.delete();
+        await part.file.rename(file.path);
+        if (await part.manifest.exists()) await part.manifest.delete();
+      }
+      completed += expected;
+      downloadProgress.value = completed / total;
     }
+    await marker.delete();
+  }
+
+  Future<void> deleteModel([AsrModel? model]) async {
+    if (_isDownloading) throw StateError('Wait for the download to finish');
+    final dir = Directory(await directoryFor(model ?? selectedModel));
+    if (await dir.exists()) await dir.delete(recursive: true);
+    // Punctuation is shared and small; keep it for a later Zipformer install.
   }
 }

@@ -1,5 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
+    <!-- Moonshine is opt-in and guarded at API 26. Zipformer still supports 24. -->
+    <uses-sdk tools:overrideLibrary="ai.moonshine.voice" />
     <!-- Permissions -->
     <!-- Downloaded media is opened with a per-file URI grant. Attachments use
          the system picker; suppress broad permissions added by open_filex. -->

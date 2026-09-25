@@ -15,13 +15,21 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 class MainActivity : FlutterActivity() {
+    private var moonshine: MoonshineRecognition? = null
     private val CHANNEL = "com.socketagent.app/intent"
     private var wasAssistIntent = false
     private var methodChannel: MethodChannel? = null
     private var pendingDeepLink: String? = null
 
+    override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
+        moonshine?.close()
+        moonshine = null
+        super.cleanUpFlutterEngine(flutterEngine)
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        moonshine = MoonshineRecognition(flutterEngine.dartExecutor.binaryMessenger, applicationContext)
 
         wasAssistIntent = intent?.action == Intent.ACTION_ASSIST ||
                           intent?.action == Intent.ACTION_VOICE_COMMAND

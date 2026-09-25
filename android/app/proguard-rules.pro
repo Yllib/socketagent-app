@@ -15,3 +15,11 @@
 -keep,allowobfuscation,allowshrinking class * extends com.google.gson.reflect.TypeToken
 -keep class com.google.gson.** { *; }
 -keep interface com.google.gson.** { *; }
+
+# JNI constructs these DTOs and accesses their fields by name.
+-keep class ai.moonshine.voice.JNI { *; }
+-keep class ai.moonshine.voice.Transcript { *; }
+-keep class ai.moonshine.voice.TranscriptLine { *; }
+-keep class ai.moonshine.voice.TranscriberOption { *; }
+-keep class ai.moonshine.voice.WordTiming { *; }
+-keep class ai.moonshine.voice.SpeakerSpan { *; }

@@ -114,8 +114,9 @@ Future<void> withSession(
   Future<void> Function(
     ChatProvider provider,
     Future<void> Function(Map<String, dynamic> event) send,
-  ) body,
-) async {
+  ) body, {
+  void Function(Map<String, dynamic>)? onClientMessage,
+}) async {
   final cache = await Directory.systemTemp.createTemp('multi-client-test-');
   final local = await WindowsLocalServer().discover();
   SharedPreferences.setMockInitialValues({
@@ -145,7 +146,16 @@ Future<void> withSession(
   final connected = Completer<WebSocket>();
   server.listen((request) async {
     final socket = await WebSocketTransformer.upgrade(request);
-    socket.listen((_) {});
+    socket.listen((raw) {
+      if (onClientMessage == null || raw is! String) return;
+      final envelope = jsonDecode(raw) as Map<String, dynamic>;
+      if (envelope['n'] is! String) return;
+      final plaintext = box.decrypt(
+        ByteList(base64Decode(envelope['c'] as String)),
+        nonce: base64Decode(envelope['n'] as String),
+      );
+      onClientMessage(jsonDecode(utf8.decode(plaintext)) as Map<String, dynamic>);
+    });
     connected.complete(socket);
   });
 
