@@ -48,8 +48,15 @@ Source: "desktop-setup.ps1"; DestDir: "{app}\.installer"; Flags: ignoreversion
 Name: "{group}\SocketAgent Desktop"; Filename: "{app}\socketagent.exe"
 Name: "{autodesktop}\SocketAgent Desktop"; Filename: "{app}\socketagent.exe"; Tasks: desktopicon
 
+[Registry]
+Root: HKCU; Subkey: "Software\Classes\socketagent"; ValueType: string; ValueName: ""; ValueData: "URL:SocketAgent"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\socketagent"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCU; Subkey: "Software\Classes\socketagent\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\socketagent.exe,0"
+Root: HKCU; Subkey: "Software\Classes\socketagent\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\socketagent.exe"" ""%1"""
+
 [Run]
-Filename: "{app}\socketagent.exe"; Description: "Open SocketAgent Desktop"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\socketagent.exe"; Description: "Open SocketAgent Desktop"; Flags: nowait postinstall skipifsilent; Check: not IsAppUpdate
+Filename: "{app}\socketagent.exe"; Flags: nowait; Check: IsAppUpdate
 
 [Code]
 var
@@ -61,6 +68,11 @@ var
   Progress: TOutputMarqueeProgressWizardPage;
   ServerStatus, ServerDirectory, ServerTask, LastError, ProgressTitle: String;
   ServerReady, Detecting: Boolean;
+
+function IsAppUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATE|0}') = '1';
+end;
 
 function Quote(const Value: String): String;
 begin
@@ -246,7 +258,7 @@ var
   OK: Boolean;
   Response: Integer;
 begin
-  if CurStep <> ssPostInstall then Exit;
+  if (CurStep <> ssPostInstall) or IsAppUpdate then Exit;
   // Silent installation never adds a server unless explicitly requested.
   if WizardSilent then begin
     DetectServer;

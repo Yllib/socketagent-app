@@ -2,15 +2,18 @@ import 'package:app/config/app_distribution.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('self-updates are available only in the direct distribution', () {
+  test('direct and Windows distributions support self-updates', () {
     expect(
       AppBuild.supportsSelfUpdates,
-      AppBuild.distribution == AppDistribution.direct,
+      AppBuild.distribution != AppDistribution.play,
     );
   });
 
-  test('user-initiated APK installs are available in every distribution', () {
-    expect(AppBuild.supportsApkInstalls, isTrue);
+  test('APK installs are available on Android distributions', () {
+    expect(
+      AppBuild.supportsApkInstalls,
+      AppBuild.distribution != AppDistribution.windows,
+    );
   });
 
   test('Play Billing is available only in the Play distribution', () {

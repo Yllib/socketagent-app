@@ -96,19 +96,12 @@ class BackendAuthCard extends StatelessWidget {
                       : serverId.isEmpty
                       ? null
                       : () {
-                          if (!running) {
-                            provider.authenticateBackend(
-                              serverId,
-                              backend: backend,
-                              force: true,
-                            );
-                          }
-                          showBackendOperationDialog(
+                          showBackendSignIn(
                             context,
                             provider,
                             serverId,
                             backend,
-                            fallbackOperation: 'auth',
+                            force: true,
                           );
                         },
                   icon: Icon(

@@ -12,7 +12,7 @@ abstract final class AppBuild {
       ? AppDistribution.play
       : AppDistribution.direct;
 
-  static const supportsSelfUpdates = distribution == AppDistribution.direct;
+  static const supportsSelfUpdates = distribution != AppDistribution.play;
   static const supportsApkInstalls = distribution != AppDistribution.windows;
   static const supportsPlayBilling = distribution == AppDistribution.play;
   static const supportsExactAlarms = distribution == AppDistribution.direct;

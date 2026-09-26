@@ -1,3 +1,4 @@
+import 'session_teleport.dart';
 import 'package:http/http.dart' as http;
 import 'windows_local_server.dart';
 import 'desktop_window_service.dart';
@@ -97,8 +98,8 @@ class SdkSessionPage {
 
 enum SessionTransferStage {
   exporting,
-  downloading,
-  uploading,
+  waiting,
+  transferring,
   importing,
   finalizing,
 }
@@ -107,10 +108,12 @@ class SessionTransferResult {
   const SessionTransferResult({
     required this.session,
     required this.exactNativeResume,
+    this.warning,
   });
 
   final Session session;
   final bool exactNativeResume;
+  final String? warning;
 }
 
 class NotificationTranscriptFocus {
@@ -285,6 +288,7 @@ class BackendInstallState {
     this.message = '',
     this.authUrl,
     this.authCode,
+    this.authMethod = 'device',
     this.running = true,
     List<String>? output,
   }) : output = output ?? <String>[];
@@ -297,6 +301,7 @@ class BackendInstallState {
   String message;
   String? authUrl;
   String? authCode;
+  String authMethod;
   bool running;
   final List<String> output;
   String _authTextTail = '';
@@ -333,6 +338,7 @@ class BackendInstallState {
       message = _stripTerminalControl(rawMessage).trimRight();
       absorbAuth(message, accumulate: true);
     }
+    authMethod = msg['authMethod'] as String? ?? authMethod;
     final rawAuthUrl = msg['authUrl'] as String?;
     if (rawAuthUrl != null) {
       authUrl = _stripTerminalControl(rawAuthUrl).trim();
@@ -4295,6 +4301,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'work_review_operation_result',
       'server_settings',
       'backend_install_progress',
+      'backend_auth_callback_result',
       'backend_auth_required',
       'terminal_status',
       'terminal_output',
@@ -4583,6 +4590,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
             break;
           }
+        case 'backend_auth_callback_result':
+          final callbackKey = '$serverId::${msg['requestId']}';
+          final pending = _backendAuthCallbackReplies.remove(callbackKey);
+          if (pending != null && !pending.isCompleted) {
+            pending.complete(msg['success'] == true);
+          }
+          break;
         case 'backend_install_progress':
           _handleBackendInstallProgress(msg, serverId);
           break;
@@ -4799,6 +4813,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'file_error':
           _enqueueDownloadEvent(msg, serverId);
           break;
+        case 'session_transfer_job_result':
         case 'session_transfer_export_result':
         case 'session_transfer_import_result':
         case 'session_transfer_discard_result':
@@ -12713,6 +12728,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required bool authenticate,
     required String operation,
     bool forceAuthenticate = false,
+    String authMethod = 'device',
   }) {
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) return;
     final key = _backendInstallKey(serverId, backend);
@@ -12731,6 +12747,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       operation: operation,
       phase: operation == 'auth' ? 'auth' : 'install',
       message: 'Starting $backendName $operationName...',
+      authMethod: authMethod,
     );
     _connMgr.sendToServer(serverId, {
       'type': 'backend_install',
@@ -12738,6 +12755,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'reinstall': reinstall,
       'authenticate': authenticate,
       if (forceAuthenticate) 'forceAuthenticate': true,
+      if (authenticate && backend == 'codex') 'authMethod': authMethod,
       'operation': operation,
       'requestId': requestId,
     });
@@ -12778,6 +12796,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String serverId, {
     String backend = 'codex',
     bool force = false,
+    String authMethod = 'device',
   }) {
     _runBackendOperation(
       serverId,
@@ -12786,7 +12805,53 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       authenticate: true,
       operation: 'auth',
       forceAuthenticate: force,
+      authMethod: authMethod,
     );
+  }
+
+  final _backendAuthCallbackReplies = <String, Completer<bool>>{};
+
+  bool backendServerIsLocal(String serverId) {
+    final config = _serverConfigs.where((s) => s.id == serverId).firstOrNull;
+    return config != null &&
+        !config.useRelay &&
+        [
+          'localhost',
+          '127.0.0.1',
+          '::1',
+          '[::1]',
+        ].contains(config.host.toLowerCase());
+  }
+
+  Future<void> completeCodexBrowserSignIn(
+    String serverId,
+    String requestId,
+    String callbackUrl,
+  ) async {
+    final state = backendInstallState(serverId, 'codex');
+    if (state?.requestId != requestId || state?.running != true) {
+      throw StateError('This sign-in has ended.');
+    }
+    final key = '$serverId::$requestId';
+    if (_backendAuthCallbackReplies.containsKey(key)) {
+      throw StateError('Sign-in is already finishing.');
+    }
+    final reply = Completer<bool>();
+    _backendAuthCallbackReplies[key] = reply;
+    try {
+      _connMgr.sendToServer(serverId, {
+        'type': 'backend_auth_callback',
+        'requestId': requestId,
+        'callbackUrl': callbackUrl,
+      });
+      if (!await reply.future.timeout(const Duration(seconds: 20))) {
+        throw StateError(
+          'Could not finish sign-in. Try again or use a device code.',
+        );
+      }
+    } finally {
+      _backendAuthCallbackReplies.remove(key);
+    }
   }
 
   void cancelBackendOperation(
@@ -12816,15 +12881,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final backend = msg['backend'] as String? ?? 'codex';
     final key = _backendInstallKey(serverId, backend);
     _backendInstallAckTimers.remove(key)?.cancel();
-    final state =
-        _backendInstallStates[key] ??
-        BackendInstallState(
-          backend: backend,
-          requestId:
-              msg['requestId'] as String? ??
-              'backend_${DateTime.now().millisecondsSinceEpoch}',
-          operation: msg['operation'] as String? ?? 'repair',
-        );
+    final existing = _backendInstallStates[key];
+    final requestId =
+        msg['requestId'] as String? ??
+        existing?.requestId ??
+        'backend_${DateTime.now().millisecondsSinceEpoch}';
+    final state = existing?.requestId == requestId
+        ? existing!
+        : BackendInstallState(
+            backend: backend,
+            requestId: requestId,
+            operation: msg['operation'] as String? ?? 'repair',
+          );
     state.apply(msg);
     _backendInstallStates[key] = state;
 
@@ -12881,11 +12949,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _serverBackendHealth[serverId] = existingHealth;
 
-    final key = _backendInstallKey(serverId, backend);
-    final state = _backendInstallStates[key];
-    if (authScope == 'openai' && state?.running != true && backend == 'codex') {
-      authenticateBackend(serverId, backend: backend);
-    }
+    // The user chooses browser or device sign-in from the card. A provider
+    // outage can also return an auth error, so do not start login automatically.
 
     final belongsToVisibleSession =
         (targetSessionId == null ||
@@ -14409,175 +14474,224 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  String _joinServerPath(String parent, String child) {
-    final separator = parent.contains('\\') && !parent.contains('/')
-        ? '\\'
-        : '/';
-    return parent.endsWith('/') || parent.endsWith('\\')
-        ? '$parent$child'
-        : '$parent$separator$child';
+  Future<List<Map<String, dynamic>>> sessionTeleportHistory() async {
+    final records = <Map<String, dynamic>>[];
+    await Future.wait(
+      _serverConfigs.map((server) async {
+        if (_connMgr.statusOf(server.id) != ConnectionStatus.connected ||
+            (_serverSessionTransferVersions[server.id] ?? 0) < 2) {
+          return;
+        }
+        try {
+          final reply = await _requestSessionTransfer(server.id, {
+            'type': 'session_transfer_job',
+            'action': 'list',
+          }, timeout: const Duration(seconds: 15));
+          for (final raw in reply['jobs'] as List? ?? []) {
+            final job = Map<String, dynamic>.from(raw as Map);
+            if (job['role'] == 'destination') continue;
+            final destination = job['role'] == 'local'
+                ? server
+                : _serverConfigs
+                      .where(
+                        (entry) => entry.serverPubkey == job['peerPublicKey'],
+                      )
+                      .firstOrNull;
+            records.add({
+              ...job,
+              'serverId': server.id,
+              'serverName': server.name,
+              'destinationServerId': destination?.id,
+              'destinationServerName': destination?.name,
+            });
+          }
+        } catch (_) {}
+      }),
+    );
+    return records;
   }
 
-  Future<SessionTransferResult> transferSession({
+  Future<SessionTransferResult?> transferSession({
     required Session source,
     required String destinationServerId,
     required String destinationCwd,
     required String destinationBackend,
     required bool move,
     void Function(SessionTransferStage stage)? onStage,
+    void Function(int bytes, int total)? onProgress,
+    bool Function()? keepWatching,
+    String? resumeJobId,
   }) async {
-    if (source.running) {
-      throw StateError(
-        'Wait for the session to finish or stop it before transferring',
-      );
-    }
-    if (_connMgr.statusOf(source.serverId) != ConnectionStatus.connected) {
-      throw StateError('The source computer is offline');
-    }
-    if (_connMgr.statusOf(destinationServerId) != ConnectionStatus.connected) {
-      throw StateError('The destination computer is offline');
-    }
-    if ((_serverSessionTransferVersions[source.serverId] ?? 0) < 1) {
-      throw StateError(
-        'SocketAgent on the source computer must update before it can transfer sessions',
-      );
-    }
-    if ((_serverSessionTransferVersions[destinationServerId] ?? 0) < 1) {
-      throw StateError(
-        'SocketAgent on the destination computer must update before it can receive sessions',
-      );
+    for (final id in {source.serverId, destinationServerId}) {
+      if ((_serverSessionTransferVersions[id] ?? 0) < 2) {
+        throw StateError(
+          'Update SocketAgent on both computers to use resumable teleport.',
+        );
+      }
+      if (_connMgr.statusOf(id) != ConnectionStatus.connected) {
+        throw StateError(
+          'Connect to both computers to start or resume teleport.',
+        );
+      }
     }
     final cwd = destinationCwd.trim();
     if (cwd.isEmpty) throw StateError('Choose a destination folder');
+    final sourceConfig = _serverConfigs.firstWhere(
+      (c) => c.id == source.serverId,
+    );
+    final destinationConfig = _serverConfigs.firstWhere(
+      (c) => c.id == destinationServerId,
+    );
+    final local = source.serverId == destinationServerId;
     final targetBackend = destinationBackend == 'codex' ? 'codex' : 'claude';
-    final exactNative =
-        move &&
-        source.serverId != destinationServerId &&
-        (source.backend ?? 'claude') == 'claude' &&
-        targetBackend == 'claude';
-
-    String? sourceBundlePath;
-    File? localBundle;
-    try {
-      onStage?.call(SessionTransferStage.exporting);
-      final exported = await _requestSessionTransfer(source.serverId, {
-        'type': 'session_transfer_export',
-        'sessionId': source.id,
-      });
-      if (exported['ok'] != true) {
-        throw StateError(
-          exported['error']?.toString() ??
-              'Source could not export the session',
-        );
+    final options = <String, dynamic>{
+      'sessionId': source.id,
+      'targetCwd': cwd,
+      'targetBackend': targetBackend,
+      'mode': move ? 'move' : 'clone',
+      'nativeMode':
+          move &&
+              !local &&
+              (source.backend ?? 'claude') == 'claude' &&
+              targetBackend == 'claude'
+          ? 'exact'
+          : 'handoff',
+    };
+    // Keep the ID before the first request. Lost acknowledgements and app restarts
+    // must retry the same operation, including a destination accepted on its own.
+    final prefs = await SharedPreferences.getInstance();
+    final identity = hashes.sha256
+        .convert(
+          utf8.encode(
+            jsonEncode([source.serverId, destinationServerId, options]),
+          ),
+        )
+        .toString();
+    final preferenceKey = 'teleport_$identity';
+    final jobId =
+        resumeJobId ?? prefs.getString(preferenceKey) ?? newTeleportId();
+    await prefs.setString(preferenceKey, jobId);
+    final transfer = SessionTeleport(
+      request: (server, message) => _requestSessionTransfer(
+        server,
+        message,
+        timeout: const Duration(seconds: 15),
+      ),
+    );
+    onStage?.call(SessionTransferStage.exporting);
+    final existing = await transfer.status(source.serverId, jobId);
+    Map<String, dynamic>? completed;
+    if (existing?['phase'] == 'completed') {
+      completed = existing;
+    } else {
+      if (source.running) {
+        throw StateError('Wait for the session to finish before transferring.');
       }
-      sourceBundlePath = exported['bundlePath'] as String? ?? '';
-      final sha256 = exported['sha256'] as String? ?? '';
-      final fileName =
-          (exported['fileName'] as String? ?? 'socketagent-session.satransfer')
-              .split('/')
-              .last
-              .split('\\')
-              .last;
-      if (sourceBundlePath.isEmpty || sha256.isEmpty) {
-        throw StateError('Source returned an incomplete transfer bundle');
+      if (local) {
+        await transfer.start(source.serverId, {
+          ...options,
+          'jobId': jobId,
+          'role': 'local',
+        });
+      } else {
+        if (!sourceConfig.isRelayPaired || !destinationConfig.isRelayPaired) {
+          throw StateError(
+            'Both computers need relay pairing before they can teleport sessions.',
+          );
+        }
+        final relayUrl = sourceConfig.relayUrl;
+        if (Uri.parse(relayUrl).host !=
+                Uri.parse(destinationConfig.relayUrl).host ||
+            Uri.parse(relayUrl).port !=
+                Uri.parse(destinationConfig.relayUrl).port) {
+          throw StateError(
+            'Both computers must use the same relay to teleport sessions.',
+          );
+        }
+        final httpUrl = _relayHttpUrlFromWs(relayUrl);
+        if (httpUrl == null) throw StateError('Invalid relay address');
+        final response = await http
+            .post(
+              Uri.parse('$httpUrl/api/session-transfer'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'jobId': jobId,
+                'subscriberToken': _subscriberToken,
+                'sourcePairingToken': sourceConfig.pairingToken,
+                'destinationPairingToken': destinationConfig.pairingToken,
+              }),
+            )
+            .timeout(const Duration(seconds: 20));
+        if (response.statusCode == 404) {
+          throw StateError(
+            'The relay needs an update before it can teleport sessions.',
+          );
+        }
+        final grant = jsonDecode(response.body) as Map<String, dynamic>;
+        if (response.statusCode != 200) {
+          throw StateError(
+            grant['error']?.toString() ?? 'Could not authorize teleport.',
+          );
+        }
+        await transfer.start(destinationServerId, {
+          ...options,
+          'jobId': jobId,
+          'role': 'destination',
+          'relayUrl': relayUrl,
+          'ticket': grant['destinationTicket'],
+          'peerPublicKey': sourceConfig.serverPubkey,
+        });
+        await transfer.start(source.serverId, {
+          ...options,
+          'jobId': jobId,
+          'role': 'source',
+          'relayUrl': relayUrl,
+          'ticket': grant['sourceTicket'],
+          'peerPublicKey': destinationConfig.serverPubkey,
+        });
       }
-
-      onStage?.call(SessionTransferStage.downloading);
-      final encoded = await fetchServerFileBase64(
-        sourceBundlePath,
+      completed = await transfer.watch(
         serverId: source.serverId,
-        timeout: const Duration(minutes: 5),
+        peerServerId: local ? null : destinationServerId,
+        jobId: jobId,
+        keepWatching: keepWatching,
+        onProgress: (job) {
+          onStage?.call(switch (job['phase']) {
+            'preparing' => SessionTransferStage.exporting,
+            'transferring' => SessionTransferStage.transferring,
+            'importing' => SessionTransferStage.importing,
+            'finalizing' => SessionTransferStage.finalizing,
+            _ => SessionTransferStage.waiting,
+          });
+          onProgress?.call(
+            (job['bytes'] as num?)?.toInt() ?? 0,
+            (job['totalBytes'] as num?)?.toInt() ?? 0,
+          );
+        },
       );
-      if (encoded == null || encoded.isEmpty) {
-        throw StateError('Could not download the encrypted session bundle');
-      }
-      final localPath = _joinServerPath(
-        Directory.systemTemp.path,
-        'socketagent-${DateTime.now().microsecondsSinceEpoch}-$fileName',
-      );
-      localBundle = File(localPath);
-      await localBundle.writeAsBytes(base64Decode(encoded), flush: true);
-
-      onStage?.call(SessionTransferStage.uploading);
-      final destinationTransferDir = _joinServerPath(
-        cwd,
-        '.socketagent-transfers',
-      );
-      await createFileManagerFolder(
-        path: destinationTransferDir,
-        serverId: destinationServerId,
-      );
-      final uploadedPath = await uploadFileManagerFile(
-        localPath: localBundle.path,
-        name: fileName,
-        targetDir: destinationTransferDir,
-        serverId: destinationServerId,
-        conflictPolicy: 'overwrite',
-      );
-
-      onStage?.call(SessionTransferStage.importing);
-      final imported = await _requestSessionTransfer(destinationServerId, {
-        'type': 'session_transfer_import',
-        'bundlePath': uploadedPath,
-        'expectedSha256': sha256,
-        'targetCwd': cwd,
-        'targetBackend': targetBackend,
-        'mode': move ? 'move' : 'clone',
-        'nativeMode': exactNative ? 'exact' : 'handoff',
-      });
-      if (imported['ok'] != true) {
-        throw StateError(
-          imported['error']?.toString() ??
-              'Destination could not import the session',
-        );
-      }
-      final rawSession = Map<String, dynamic>.from(
-        imported['session'] as Map? ?? const <String, dynamic>{},
-      );
-      rawSession['serverId'] = destinationServerId;
-      final config = _serverConfigs
-          .where((entry) => entry.id == destinationServerId)
-          .firstOrNull;
-      rawSession['serverName'] = config?.name ?? '';
-      rawSession['serverColor'] = config?.colorValue;
-      final destination = Session.fromJson(rawSession);
-      final destinationSessions = _perServerSessions.putIfAbsent(
-        destinationServerId,
-        () => [],
-      );
-      destinationSessions.removeWhere((entry) => entry.id == destination.id);
-      destinationSessions.add(destination);
-      _sessions.removeWhere(
-        (entry) =>
-            entry.id == destination.id && entry.serverId == destinationServerId,
-      );
-      _sessions.add(destination);
-      _saveSessionCacheSoon();
-
-      onStage?.call(SessionTransferStage.finalizing);
-      if (move) {
-        archiveSession(source.id, serverId: source.serverId);
-      }
-      notifyListeners();
-      return SessionTransferResult(
-        session: destination,
-        exactNativeResume: imported['exactNativeResume'] == true,
-      );
-    } finally {
-      if (sourceBundlePath != null && sourceBundlePath.isNotEmpty) {
-        try {
-          await _requestSessionTransfer(source.serverId, {
-            'type': 'session_transfer_discard',
-            'bundlePath': sourceBundlePath,
-          }, timeout: const Duration(seconds: 30));
-        } catch (_) {}
-      }
-      if (localBundle != null) {
-        try {
-          await localBundle.delete();
-        } catch (_) {}
-      }
     }
+    if (completed == null) return null;
+    final result = Map<String, dynamic>.from(completed['result'] as Map);
+    final rawSession = Map<String, dynamic>.from(result['session'] as Map);
+    rawSession['serverId'] = destinationServerId;
+    rawSession['serverName'] = destinationConfig.name;
+    rawSession['serverColor'] = destinationConfig.colorValue;
+    final destination = Session.fromJson(rawSession);
+    final list = _perServerSessions.putIfAbsent(destinationServerId, () => []);
+    list.removeWhere((s) => s.id == destination.id);
+    list.add(destination);
+    _sessions.removeWhere(
+      (s) => s.id == destination.id && s.serverId == destinationServerId,
+    );
+    _sessions.add(destination);
+    _saveSessionCacheSoon();
+    notifyListeners();
+    await prefs.remove(preferenceKey);
+    return SessionTransferResult(
+      session: destination,
+      exactNativeResume: result['exactNativeResume'] == true,
+      warning: completed['warning'] as String?,
+    );
   }
 
   Future<String> uploadFileManagerFile({
@@ -17124,6 +17238,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    for (final reply in _backendAuthCallbackReplies.values) {
+      if (!reply.isCompleted) reply.complete(false);
+    }
+    _backendAuthCallbackReplies.clear();
     for (final timer in _conversationRewindTimers.values) {
       timer.cancel();
     }

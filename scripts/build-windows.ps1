@@ -21,6 +21,8 @@ if ($LASTEXITCODE) { throw 'Dependency resolution failed' }
 if ($LASTEXITCODE) { throw 'Flutter analysis failed' }
 & $flutter test test/codex_subagent_lifecycle_test.dart test/session_actions_sheet_test.dart test/desktop_composer_keys_test.dart test/chat_history_pagination_test.dart test/anchored_action_menu_test.dart test/desktop_window_frame_test.dart test/paywall_screen_test.dart test/config_import_access_test.dart test/desktop_split_view_test.dart test/desktop_navigation_test.dart test/windows_local_server_test.dart test/desktop_qr_import_test.dart test/server_config_test.dart test/notification_session_target_test.dart
 if ($LASTEXITCODE) { throw 'Desktop tests failed' }
+& $flutter test --dart-define=SOCKETAGENT_DISTRIBUTION=windows test/desktop_update_test.dart test/app_distribution_test.dart test/settings_v2_screen_test.dart test/backend_sign_in_test.dart test/codex_sign_in_callback_test.dart
+if ($LASTEXITCODE) { throw 'Desktop update tests failed' }
 & $flutter build windows --release --dart-define=SOCKETAGENT_DISTRIBUTION=windows
 if ($LASTEXITCODE) { throw 'Windows build failed' }
 $release = Join-Path $root 'build/windows/x64/runner/Release'

@@ -2162,6 +2162,11 @@ class _SessionsTabState extends State<SessionsTab> {
                         ),
                       ),
                     ),
+                    IconButton(
+                      icon: const Icon(Icons.swap_horiz),
+                      tooltip: 'Transfers',
+                      onPressed: () => _showTeleportHistory(context),
+                    ),
                     _buildConnectionIndicator(provider),
                   ],
           ),
@@ -2213,7 +2218,7 @@ class _SessionsTabState extends State<SessionsTab> {
     final info = shell.updateService.updateInfo!;
     final updateService = shell.updateService;
     final downloading = updateService.isDownloading;
-    final downloaded = updateService.hasDownloadedApk;
+    final downloaded = updateService.hasDownloadedUpdate;
     final openingInstaller = updateService.isOpeningInstaller;
     final progress = updateService.downloadProgress;
     return Container(
@@ -2300,7 +2305,11 @@ class _SessionsTabState extends State<SessionsTab> {
                       ],
                     )
                   : Text(
-                      downloaded ? 'Install' : 'Download',
+                      downloaded
+                          ? updateService.isDesktopUpdate
+                                ? 'Install & restart'
+                                : 'Install'
+                          : 'Download',
                       style: const TextStyle(fontSize: 12),
                     ),
             ),
@@ -2522,17 +2531,124 @@ class _SessionsTabState extends State<SessionsTab> {
     }
   }
 
+  void _showTeleportHistory(BuildContext context) {
+    final provider = context.read<ChatProvider>();
+    var jobs = provider.sessionTeleportHistory();
+    showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Transfers'),
+          content: SizedBox(
+            width: 480,
+            child: FutureBuilder<List<Map<String, dynamic>>>(
+              future: jobs,
+              builder: (context, snapshot) {
+                if (!snapshot.hasData) return const Text('Loading transfers…');
+                final entries = snapshot.data!;
+                if (entries.isEmpty) {
+                  return const Text('No transfers on connected computers.');
+                }
+                return SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: entries.reversed.map((job) {
+                      final completed = job['phase'] == 'completed';
+                      final result = job['result'] as Map?;
+                      final session = result?['session'] as Map?;
+                      final destination = job['destinationServerId'] as String?;
+                      final source = provider.sessions
+                          .where(
+                            (s) =>
+                                s.serverId == job['serverId'] &&
+                                s.id == job['sessionId'],
+                          )
+                          .firstOrNull;
+                      final total =
+                          (job['totalBytes'] as num?)?.toDouble() ?? 0;
+                      final bytes = (job['bytes'] as num?)?.toDouble() ?? 0;
+                      final label = switch (job['phase']) {
+                        'completed' => 'Complete',
+                        'failed' => 'Paused',
+                        'preparing' => 'Preparing',
+                        'importing' => 'Restoring session',
+                        'finalizing' => 'Finishing',
+                        'transferring' => 'Transferring',
+                        _ => 'Waiting for connection',
+                      };
+                      return ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          session?['title'] as String? ??
+                              source?.title ??
+                              'Session transfer',
+                        ),
+                        subtitle: Text(
+                          '${job['serverName']} → ${job['destinationServerName'] ?? 'Destination'}\n$label${total > 0 && !completed ? ' · ${(bytes / total * 100).round()}%' : ''}${job['warning'] != null ? '\n${job['warning']}' : ''}${job['error'] != null ? '\n${job['error']}' : ''}',
+                        ),
+                        trailing: destination == null
+                            ? null
+                            : TextButton(
+                                onPressed: completed && session != null
+                                    ? () {
+                                        Navigator.pop(dialogContext);
+                                        _openSession(
+                                          this.context,
+                                          sessionId: session['id'] as String,
+                                          serverId: destination,
+                                        );
+                                      }
+                                    : source == null
+                                    ? null
+                                    : () {
+                                        Navigator.pop(dialogContext);
+                                        _showTeleportSessionSheet(
+                                          this.context,
+                                          source,
+                                          resume: job,
+                                        );
+                                      },
+                                child: Text(completed ? 'Open' : 'Resume'),
+                              ),
+                      );
+                    }).toList(),
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => setDialogState(() {
+                jobs = provider.sessionTeleportHistory();
+              }),
+              child: const Text('Refresh'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Close'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   String _sessionTransferStageLabel(SessionTransferStage stage) {
     return switch (stage) {
       SessionTransferStage.exporting => 'Packing session history…',
-      SessionTransferStage.downloading => 'Downloading encrypted bundle…',
-      SessionTransferStage.uploading => 'Uploading to destination…',
+      SessionTransferStage.waiting => 'Waiting for connection…',
+      SessionTransferStage.transferring => 'Transferring between computers…',
       SessionTransferStage.importing => 'Restoring session…',
       SessionTransferStage.finalizing => 'Finishing transfer…',
     };
   }
 
-  void _showTeleportSessionSheet(BuildContext context, Session session) {
+  void _showTeleportSessionSheet(
+    BuildContext context,
+    Session session, {
+    Map<String, dynamic>? resume,
+  }) {
     final provider = context.read<ChatProvider>();
     final connectedServers = provider.serverConfigs
         .where(
@@ -2586,13 +2702,20 @@ class _SessionsTabState extends State<SessionsTab> {
       return configured?.isNotEmpty == true ? configured! : session.cwd;
     }
 
-    var destinationBackend = initialBackendFor(destinationServerId);
-    var move = true;
+    destinationServerId =
+        resume?['destinationServerId'] as String? ?? destinationServerId;
+    var destinationBackend =
+        resume?['targetBackend'] as String? ??
+        initialBackendFor(destinationServerId);
+    var move = resume == null || resume['mode'] == 'move';
     var transferring = false;
     SessionTransferStage? stage;
+    var transferredBytes = 0;
+    var totalBytes = 0;
     String? error;
     final cwdController = TextEditingController(
-      text: initialCwdFor(destinationServerId),
+      text:
+          resume?['targetCwd'] as String? ?? initialCwdFor(destinationServerId),
     );
 
     showModalBottomSheet<void>(
@@ -2642,28 +2765,51 @@ class _SessionsTabState extends State<SessionsTab> {
                   destinationCwd: cwdController.text,
                   destinationBackend: destinationBackend,
                   move: move,
+                  resumeJobId: resume?['jobId'] as String?,
+                  keepWatching: () => sheetContext.mounted,
+                  onProgress: (bytes, total) {
+                    if (!sheetContext.mounted) return;
+                    setSheetState(() {
+                      transferredBytes = bytes;
+                      totalBytes = total;
+                    });
+                  },
                   onStage: (next) {
                     if (!sheetContext.mounted) return;
                     setSheetState(() => stage = next);
                   },
                 );
-                if (!sheetContext.mounted) return;
+                if (!sheetContext.mounted || result == null) return;
                 Navigator.pop(sheetContext);
                 final verb = move ? 'moved' : 'cloned';
                 final resumeDescription = result.exactNativeResume
                     ? 'with its native Claude thread'
                     : 'with a new ${destinationBackend == 'codex' ? 'Codex' : 'Claude'} thread';
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Session $verb $resumeDescription.'),
-                    action: SnackBarAction(
-                      label: 'Open',
-                      onPressed: () => _openSession(
-                        context,
-                        sessionId: result.session.id,
-                        serverId: result.session.serverId,
-                      ),
+                if (!context.mounted) return;
+                showDialog<void>(
+                  context: context,
+                  builder: (dialogContext) => AlertDialog(
+                    title: Text('Session $verb'),
+                    content: Text(
+                      result.warning ?? 'Ready $resumeDescription.',
                     ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(dialogContext),
+                        child: const Text('Done'),
+                      ),
+                      FilledButton(
+                        onPressed: () {
+                          Navigator.pop(dialogContext);
+                          _openSession(
+                            context,
+                            sessionId: result.session.id,
+                            serverId: result.session.serverId,
+                          );
+                        },
+                        child: const Text('Open session'),
+                      ),
+                    ],
                   ),
                 );
               } catch (transferError) {
@@ -2734,7 +2880,8 @@ class _SessionsTabState extends State<SessionsTab> {
                         ),
                       ],
                       selected: {move},
-                      onSelectionChanged: transferring
+                      onSelectionChanged:
+                          transferring || resume != null || resume != null
                           ? null
                           : (selection) {
                               setSheetState(() {
@@ -2759,7 +2906,7 @@ class _SessionsTabState extends State<SessionsTab> {
                             ),
                           )
                           .toList(),
-                      onChanged: transferring
+                      onChanged: transferring || resume != null
                           ? null
                           : (serverId) {
                               if (serverId == null) return;
@@ -2793,7 +2940,7 @@ class _SessionsTabState extends State<SessionsTab> {
                             ),
                           )
                           .toList(),
-                      onChanged: transferring
+                      onChanged: transferring || resume != null
                           ? null
                           : (backend) {
                               if (backend == null) return;
@@ -2806,7 +2953,7 @@ class _SessionsTabState extends State<SessionsTab> {
                     const SizedBox(height: 12),
                     TextField(
                       controller: cwdController,
-                      enabled: !transferring,
+                      enabled: !transferring && resume == null,
                       decoration: InputDecoration(
                         labelText: 'Destination project folder',
                         border: const OutlineInputBorder(),
@@ -2870,25 +3017,37 @@ class _SessionsTabState extends State<SessionsTab> {
                     ],
                     if (transferring && stage != null) ...[
                       const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(_sessionTransferStageLabel(stage!)),
-                          ),
-                        ],
+                      Text(_sessionTransferStageLabel(stage!)),
+                      if (totalBytes > 0) ...[
+                        const SizedBox(height: 8),
+                        LinearProgressIndicator(
+                          value: (transferredBytes / totalBytes).clamp(0, 1),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '${(transferredBytes / totalBytes * 100).round()}%',
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      const Text(
+                        'You can close this view. The computers will keep transferring, even if your phone disconnects.',
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(sheetContext),
+                        child: const Text('Close'),
                       ),
                     ],
                     const SizedBox(height: 20),
                     FilledButton.icon(
                       onPressed: transferring ? null : startTransfer,
                       icon: Icon(move ? Icons.move_up : Icons.copy_outlined),
-                      label: Text(move ? 'Move session' : 'Clone session'),
+                      label: Text(
+                        resume != null
+                            ? 'Resume transfer'
+                            : move
+                            ? 'Move session'
+                            : 'Clone session',
+                      ),
                     ),
                   ],
                 ),

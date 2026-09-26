@@ -82,12 +82,12 @@ class MainShellScreenState extends State<MainShellScreen>
                 if (!mounted) return;
                 final serverId = event['serverId']?.toString() ?? '';
                 if (!isMcp && serverId.isNotEmpty) {
-                  showBackendOperationDialog(
+                  showBackendSignIn(
                     context,
                     provider,
                     serverId,
                     'codex',
-                    fallbackOperation: 'auth',
+                    force: true,
                   );
                   return;
                 }
@@ -201,7 +201,9 @@ class MainShellScreenState extends State<MainShellScreen>
       if (AppBuild.supportsSelfUpdates) {
         // Returning from Android's package installer must re-read the running
         // version immediately so a completed install is not shown as pending.
-        unawaited(_checkForAppUpdate(force: _updateService.hasDownloadedApk));
+        unawaited(
+          _checkForAppUpdate(force: _updateService.hasDownloadedUpdate),
+        );
       }
       if (_currentIndex == 1) _startScheduledTaskRefresh();
     } else {

@@ -43,7 +43,7 @@ class _FakeUpdateService extends UpdateService {
   bool get isDownloading => downloading;
 
   @override
-  bool get hasDownloadedApk => available && downloaded;
+  bool get hasDownloadedUpdate => available && downloaded;
 
   @override
   bool get isOpeningInstaller => opening;
@@ -166,7 +166,7 @@ void main() {
           'Download app update',
           'Downloading app update 42%',
           'Install downloaded app update',
-          'Opening Android installer',
+          'Opening installer',
         ]) {
           expect(find.byTooltip(label), findsNothing);
         }
@@ -260,9 +260,12 @@ void main() {
 
       await pumpSettings(tester, provider, updateService);
 
-      expect(find.byTooltip('Install downloaded app update'), findsOneWidget);
+      final label = AppBuild.distribution == AppDistribution.windows
+          ? 'Install update and restart SocketAgent'
+          : 'Install downloaded app update';
+      expect(find.byTooltip(label), findsOneWidget);
       expect(find.byIcon(Icons.install_mobile), findsWidgets);
-      await tester.tap(find.byTooltip('Install downloaded app update'));
+      await tester.tap(find.byTooltip(label));
       await tester.pump();
       expect(updateService.installCount, 1);
     },
@@ -283,9 +286,9 @@ void main() {
 
       await pumpSettings(tester, provider, updateService);
 
-      expect(find.byTooltip('Opening Android installer'), findsOneWidget);
+      expect(find.byTooltip('Opening installer'), findsOneWidget);
       expect(find.byType(CircularProgressIndicator), findsWidgets);
-      await tester.tap(find.byTooltip('Opening Android installer'));
+      await tester.tap(find.byTooltip('Opening installer'));
       await tester.pump();
       expect(updateService.installCount, 0);
     },

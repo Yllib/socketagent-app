@@ -1,8 +1,5 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
-import 'package:url_launcher/url_launcher.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/websocket_service.dart';
@@ -14,6 +11,8 @@ import '../connect_computer_screen.dart';
 import '../paywall_screen.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
+import 'settings_v2_screen.dart'
+    show showBackendSignIn, showBackendOperationDialog;
 
 class ServersScreen extends StatefulWidget {
   const ServersScreen({super.key});
@@ -839,20 +838,6 @@ class _ServersScreenState extends State<ServersScreen> {
     }
   }
 
-  bool _backendIsHealthy(
-    ChatProvider provider,
-    String serverId,
-    String backend,
-  ) {
-    for (final entry in provider.backendHealthForServer(serverId)) {
-      if (entry['backend']?.toString() == backend &&
-          entry['severity']?.toString() == 'ok') {
-        return true;
-      }
-    }
-    return false;
-  }
-
   Widget _backendHealthDetail(
     BuildContext context,
     String label,
@@ -978,14 +963,10 @@ class _ServersScreenState extends State<ServersScreen> {
                   onPressed: () {
                     final backend = entry['backend']?.toString() ?? 'codex';
                     Navigator.pop(dialogContext);
-                    currentProvider.authenticateBackend(
-                      config.id,
-                      backend: backend,
-                    );
-                    _showBackendRepairDialog(
+                    showBackendSignIn(
                       rootContext,
                       currentProvider,
-                      config,
+                      config.id,
                       backend,
                     );
                   },
@@ -1122,11 +1103,7 @@ class _ServersScreenState extends State<ServersScreen> {
                   subtitle: Text(label, style: const TextStyle(fontSize: 12)),
                   onTap: () {
                     Navigator.pop(ctx);
-                    _showBackendHealthDialog(
-                      context,
-                      currentProvider,
-                      config,
-                    );
+                    _showBackendHealthDialog(context, currentProvider, config);
                   },
                 );
               },
@@ -1248,277 +1225,13 @@ class _ServersScreenState extends State<ServersScreen> {
     ServerConfig config,
     String backend,
   ) {
-    final rootContext = context;
-    final backendName = backend == 'codex' ? 'Codex' : 'Claude';
-    final claudeAuthCodeCtrl = TextEditingController();
-    var dismissedAfterSuccess = false;
-    provider.requestServerSettings(serverId: config.id);
-    final pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
-      provider.requestServerSettings(serverId: config.id);
-    });
-
-    showDialog(
-      context: context,
-      builder: (dialogContext) => Consumer<ChatProvider>(
-        builder: (context, currentProvider, _) {
-          final state = currentProvider.backendInstallState(config.id, backend);
-          final running = state?.running == true;
-          final failed = state?.status == 'failed';
-          final completed =
-              state?.running == false && state?.status == 'completed';
-          final healthy = _backendIsHealthy(
-            currentProvider,
-            config.id,
-            backend,
-          );
-          final authUrl = state?.authUrl;
-          final authCode = state?.authCode;
-          final output = state?.output ?? const <String>[];
-          final title = backend == 'codex' ? 'Codex Backend' : 'Claude Backend';
-          final operation = state?.operation ?? 'repair';
-          final isAuthOperation = operation == 'auth';
-          final operationTitle = isAuthOperation ? 'Sign-In' : 'Repair';
-          final shouldDismiss = isAuthOperation
-              ? completed
-              : (completed || healthy);
-
-          if (!dismissedAfterSuccess && shouldDismiss) {
-            dismissedAfterSuccess = true;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              pollTimer.cancel();
-              if (dialogContext.mounted &&
-                  Navigator.of(dialogContext).canPop()) {
-                Navigator.of(dialogContext).pop();
-              }
-              if (rootContext.mounted) {
-                ScaffoldMessenger.of(rootContext).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      isAuthOperation
-                          ? '$backendName sign-in completed.'
-                          : '$backendName backend is ready.',
-                    ),
-                    backgroundColor: Colors.green,
-                  ),
-                );
-              }
-            });
-          }
-
-          return AlertDialog(
-            title: Row(
-              children: [
-                Icon(
-                  failed
-                      ? Icons.error_outline
-                      : running
-                      ? Icons.sync
-                      : Icons.check_circle_outline,
-                  size: 22,
-                ),
-                const SizedBox(width: 10),
-                Expanded(child: Text('$title $operationTitle')),
-              ],
-            ),
-            content: SizedBox(
-              width: double.maxFinite,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    state?.message ??
-                        (isAuthOperation
-                            ? 'Starting sign-in...'
-                            : 'Starting repair...'),
-                  ),
-                  if (authUrl != null || authCode != null) ...[
-                    const SizedBox(height: 12),
-                    DecoratedBox(
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: Theme.of(context).colorScheme.outlineVariant,
-                        ),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            if (authCode != null && authCode.isNotEmpty) ...[
-                              const Text(
-                                'Device Code',
-                                style: TextStyle(fontWeight: FontWeight.w600),
-                              ),
-                              const SizedBox(height: 6),
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: SelectableText(
-                                      authCode,
-                                      style: const TextStyle(
-                                        fontSize: 20,
-                                        letterSpacing: 0,
-                                      ),
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Copy code',
-                                    icon: const Icon(Icons.copy, size: 20),
-                                    onPressed: () {
-                                      Clipboard.setData(
-                                        ClipboardData(text: authCode),
-                                      );
-                                      ScaffoldMessenger.of(
-                                        context,
-                                      ).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('Code copied'),
-                                        ),
-                                      );
-                                    },
-                                  ),
-                                ],
-                              ),
-                            ],
-                            if (authUrl != null && authUrl.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  onPressed: () {
-                                    final uri = Uri.tryParse(authUrl);
-                                    if (uri != null) {
-                                      launchUrl(
-                                        uri,
-                                        mode: LaunchMode.externalApplication,
-                                      );
-                                    }
-                                  },
-                                  icon: const Icon(Icons.open_in_browser),
-                                  label: Text(
-                                    backend == 'claude'
-                                        ? 'Open Login Page'
-                                        : 'Open Device Page',
-                                  ),
-                                ),
-                              ),
-                            ],
-                            if (backend == 'claude' &&
-                                isAuthOperation &&
-                                authUrl != null &&
-                                authUrl.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              TextField(
-                                controller: claudeAuthCodeCtrl,
-                                decoration: const InputDecoration(
-                                  labelText: 'Claude auth code',
-                                  hintText: 'Paste copied code',
-                                  border: OutlineInputBorder(),
-                                  isDense: true,
-                                ),
-                                minLines: 1,
-                                maxLines: 3,
-                                onSubmitted: (_) {
-                                  final code = claudeAuthCodeCtrl.text.trim();
-                                  final requestId = state?.requestId ?? '';
-                                  if (code.isEmpty || requestId.isEmpty) return;
-                                  currentProvider.submitAuthCode(
-                                    code,
-                                    serverId: config.id,
-                                    authRequestId: requestId,
-                                  );
-                                },
-                              ),
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: FilledButton.icon(
-                                  icon: const Icon(Icons.check),
-                                  label: const Text('Submit Code'),
-                                  onPressed: () {
-                                    final code = claudeAuthCodeCtrl.text.trim();
-                                    final requestId = state?.requestId ?? '';
-                                    if (code.isEmpty || requestId.isEmpty) {
-                                      return;
-                                    }
-                                    currentProvider.submitAuthCode(
-                                      code,
-                                      serverId: config.id,
-                                      authRequestId: requestId,
-                                    );
-                                  },
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                  if (output.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      'Output',
-                      style: Theme.of(context).textTheme.labelMedium,
-                    ),
-                    const SizedBox(height: 6),
-                    ConstrainedBox(
-                      constraints: const BoxConstraints(maxHeight: 220),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: Theme.of(context).colorScheme.surfaceContainer,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: SingleChildScrollView(
-                          reverse: true,
-                          padding: const EdgeInsets.all(10),
-                          child: SelectableText(
-                            output.join('\n'),
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
-                child: const Text('Close'),
-              ),
-              if (failed)
-                FilledButton(
-                  onPressed: () {
-                    if (isAuthOperation) {
-                      currentProvider.authenticateBackend(
-                        config.id,
-                        backend: backend,
-                      );
-                    } else {
-                      currentProvider.repairBackend(
-                        config.id,
-                        backend: backend,
-                        reinstall: true,
-                      );
-                    }
-                  },
-                  child: const Text('Retry'),
-                ),
-            ],
-          );
-        },
-      ),
-    ).whenComplete(() {
-      pollTimer.cancel();
-      claudeAuthCodeCtrl.dispose();
-    });
+    showBackendOperationDialog(
+      context,
+      provider,
+      config.id,
+      backend,
+      fallbackOperation: 'repair',
+    );
   }
 
   void _showVersionCheck(

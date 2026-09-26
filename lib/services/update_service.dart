@@ -32,35 +32,49 @@ class UpdateInfo {
 }
 
 class UpdateService extends ChangeNotifier {
-  static const _versionApiUrl =
-      'https://api.github.com/repos/Yllib/socketagent/contents/app-version.json?ref=master';
-  static const _versionRawUrl =
-      'https://raw.githubusercontent.com/Yllib/socketagent/master/app-version.json';
+  UpdateService({
+    this.distribution = AppBuild.distribution,
+    http.Client? metadataClient,
+    Future<Directory> Function()? updatesDirectory,
+    Future<void> Function(String, List<String>)? launchWindowsInstaller,
+  }) : _metadataClient = metadataClient ?? http.Client(),
+       _directory = updatesDirectory,
+       _launchWindowsInstaller =
+           launchWindowsInstaller ?? _startWindowsInstaller;
+
+  final AppDistribution distribution;
+  final http.Client _metadataClient;
+  final Future<Directory> Function()? _directory;
+  final Future<void> Function(String, List<String>) _launchWindowsInstaller;
+  bool get _supported => distribution != AppDistribution.play;
+  bool get isDesktopUpdate => distribution == AppDistribution.windows;
 
   UpdateInfo? _updateInfo;
   double? _downloadProgress;
   bool _isDownloading = false;
   bool _isOpeningInstaller = false;
   Timer? _installerLaunchResetTimer;
-  bool _hasDownloadedApk = false;
-  String? _downloadedApkPath;
+  bool _hasDownloadedUpdate = false;
+  String? _downloadedUpdatePath;
   String? _error;
 
   UpdateInfo? get updateInfo => _updateInfo;
   double? get downloadProgress => _downloadProgress;
   bool get isDownloading => _isDownloading;
   bool get isOpeningInstaller => _isOpeningInstaller;
-  // A verified APK is only actionable while it targets a newer version.
-  // Android leaves our downloaded installer in app storage after installation,
+  // A verified installer is only actionable while it targets a newer version.
+  // Installation leaves the downloaded file in app storage,
   // so file existence alone must never keep the UI in "ready to install".
-  bool get hasDownloadedApk => updateAvailable && _hasDownloadedApk;
-  String? get downloadedApkPath => _downloadedApkPath;
+  bool get hasDownloadedUpdate => updateAvailable && _hasDownloadedUpdate;
+  String? get downloadedUpdatePath => _downloadedUpdatePath;
   String? get error => _error;
   bool get updateAvailable => _updateInfo?.updateAvailable ?? false;
 
   /// Direct app update check against the public release metadata on GitHub.
   Future<UpdateInfo?> checkForUpdate() async {
-    if (!AppBuild.supportsSelfUpdates) return null;
+    if (!_supported || _isDownloading || _isOpeningInstaller) {
+      return _updateInfo;
+    }
     _finishInstallerLaunchState();
     _error = null;
     try {
@@ -76,6 +90,14 @@ class UpdateService extends ChangeNotifier {
 
       final latestVersion = data['version'] as String? ?? currentVersion;
       final downloadUrl = data['url'] as String? ?? '';
+      final uri = Uri.tryParse(downloadUrl);
+      if (!RegExp(r'^\d+\.\d+\.\d+$').hasMatch(latestVersion) ||
+          uri == null ||
+          uri.scheme != 'https' ||
+          uri.host.isEmpty ||
+          !uri.path.endsWith(isDesktopUpdate ? '.exe' : '.apk')) {
+        throw const FormatException('Invalid update download');
+      }
       final sha256 = _normalizeSha256(data['sha256'] as String? ?? '');
       final size = data['size'] is int ? data['size'] as int : null;
       final signingCertSha256 = (data['signingCertSha256'] as String? ?? '')
@@ -86,8 +108,9 @@ class UpdateService extends ChangeNotifier {
         '[Update] current=$currentVersion latest=$latestVersion newer=$newer sha256=${sha256.isNotEmpty}',
       );
 
-      if (newer && sha256.isEmpty) {
-        _error = 'Update metadata is missing APK SHA-256.';
+      final validHash = RegExp(r'^[a-f0-9]{64}$').hasMatch(sha256);
+      if (newer && !validHash) {
+        _error = 'Update metadata is missing installer SHA-256.';
       }
 
       _updateInfo = UpdateInfo(
@@ -97,9 +120,9 @@ class UpdateService extends ChangeNotifier {
         size: size,
         signingCertSha256: signingCertSha256,
         currentVersion: currentVersion,
-        updateAvailable: newer && sha256.isNotEmpty,
+        updateAvailable: newer && validHash,
       );
-      await _refreshDownloadedApkState();
+      await _refreshDownloadedUpdateState();
       notifyListeners();
       return _updateInfo;
     } catch (e) {
@@ -111,9 +134,50 @@ class UpdateService extends ChangeNotifier {
 
   Future<Map<String, dynamic>?> _fetchReleaseMetadata() async {
     final cacheBust = DateTime.now().microsecondsSinceEpoch;
+    if (isDesktopUpdate) {
+      final response = await _metadataClient
+          .get(
+            Uri.parse(
+              'https://api.github.com/repos/Yllib/socketagent/releases?per_page=10&t=$cacheBust',
+            ),
+            headers: {
+              'Accept': 'application/vnd.github+json',
+              'Cache-Control': 'no-cache',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      // Android is published before Windows finishes building. Skip incomplete
+      // releases so we only offer installers that actually exist and have a hash.
+      for (final release
+          in (jsonDecode(response.body) as List).whereType<Map>()) {
+        if (release['draft'] == true || release['prerelease'] == true) continue;
+        for (final asset
+            in (release['assets'] as List? ?? []).whereType<Map>()) {
+          final digest = asset['digest'] as String? ?? '';
+          if (asset['name'] != 'SocketAgent-Desktop-Setup.exe' ||
+              asset['state'] != 'uploaded' ||
+              !RegExp(r'^sha256:[a-fA-F0-9]{64}$').hasMatch(digest)) {
+            continue;
+          }
+          return {
+            'version': (release['tag_name'] as String).replaceFirst(
+              RegExp(r'^v'),
+              '',
+            ),
+            'url': asset['browser_download_url'],
+            'sha256': digest.substring(7),
+            'size': asset['size'],
+          };
+        }
+      }
+      return null;
+    }
     final sources = [
       (
-        Uri.parse('$_versionApiUrl&t=$cacheBust'),
+        Uri.parse(
+          'https://api.github.com/repos/Yllib/socketagent/contents/app-version.json?ref=master&t=$cacheBust',
+        ),
         true,
         <String, String>{
           'Accept': 'application/vnd.github+json',
@@ -122,7 +186,9 @@ class UpdateService extends ChangeNotifier {
         },
       ),
       (
-        Uri.parse('$_versionRawUrl?t=$cacheBust'),
+        Uri.parse(
+          'https://raw.githubusercontent.com/Yllib/socketagent/master/app-version.json?t=$cacheBust',
+        ),
         false,
         <String, String>{'Cache-Control': 'no-cache'},
       ),
@@ -130,7 +196,7 @@ class UpdateService extends ChangeNotifier {
 
     for (final source in sources) {
       try {
-        final response = await http
+        final response = await _metadataClient
             .get(source.$1, headers: source.$3)
             .timeout(const Duration(seconds: 10));
         if (response.statusCode != 200) continue;
@@ -172,19 +238,19 @@ class UpdateService extends ChangeNotifier {
     return Map<String, dynamic>.from(jsonDecode(content) as Map);
   }
 
-  /// Download and verify the APK without opening the installer. Download state
+  /// Download and verify the update without starting installation. Download state
   /// lives on this service, so it continues while callers navigate elsewhere.
   Future<void> downloadUpdate() async {
-    if (!AppBuild.supportsSelfUpdates) return;
+    if (!_supported || !updateAvailable) return;
     if (_updateInfo == null || _updateInfo!.downloadUrl.isEmpty) return;
     if (_isDownloading) return;
     if (_updateInfo!.sha256.isEmpty) {
-      _error = 'Update metadata is missing APK SHA-256.';
+      _error = 'Update metadata is missing installer SHA-256.';
       notifyListeners();
       return;
     }
-    await _refreshDownloadedApkState();
-    if (_hasDownloadedApk) return;
+    await _refreshDownloadedUpdateState();
+    if (_hasDownloadedUpdate) return;
 
     _isDownloading = true;
     _error = null;
@@ -195,15 +261,17 @@ class UpdateService extends ChangeNotifier {
       final updateDir = await _updatesDirectory();
       if (!await updateDir.exists()) await updateDir.create(recursive: true);
 
-      final apkPath = await _apkPathForVersion(_updateInfo!.latestVersion);
-      final apkFile = File(apkPath);
-      final partFile = File('$apkPath.part');
+      final installerPath = await _installerPathForVersion(
+        _updateInfo!.latestVersion,
+      );
+      final installerFile = File(installerPath);
+      final partFile = File('$installerPath.part');
 
-      // Delete old APKs
+      // Delete old installers
       if (await updateDir.exists()) {
         for (final f in updateDir.listSync()) {
           if (f is File &&
-              f.path != apkPath &&
+              f.path != installerPath &&
               f.path != partFile.path &&
               f.path != '${partFile.path}.json') {
             f.deleteSync();
@@ -214,17 +282,17 @@ class UpdateService extends ChangeNotifier {
       final result = await _downloadWithResume(
         url: _updateInfo!.downloadUrl,
         partFile: partFile,
-        finalFile: apkFile,
+        finalFile: installerFile,
       );
       if (!result) {
         throw Exception('Download failed');
       }
-      await _verifyDownloadedApkOrThrow(apkFile, _updateInfo!);
+      await _verifyDownloadedUpdateOrThrow(installerFile, _updateInfo!);
 
       _isDownloading = false;
       _downloadProgress = null;
-      _hasDownloadedApk = true;
-      _downloadedApkPath = apkPath;
+      _hasDownloadedUpdate = true;
+      _downloadedUpdatePath = installerPath;
       notifyListeners();
     } catch (e) {
       _isDownloading = false;
@@ -238,26 +306,26 @@ class UpdateService extends ChangeNotifier {
   /// both steps. New compact controls should use downloadUpdate followed by
   /// installDownloaded so the ready-to-install state remains explicit.
   Future<void> downloadAndInstall() async {
-    if (!AppBuild.supportsSelfUpdates) return;
-    await _refreshDownloadedApkState();
-    if (!_hasDownloadedApk) {
+    if (!_supported || !updateAvailable) return;
+    await _refreshDownloadedUpdateState();
+    if (!_hasDownloadedUpdate) {
       await downloadUpdate();
     }
-    if (_hasDownloadedApk) {
+    if (_hasDownloadedUpdate) {
       await installDownloaded();
     }
   }
 
   Future<void> installDownloaded() async {
-    if (!AppBuild.supportsSelfUpdates) return;
+    if (!_supported || !updateAvailable) return;
     if (_isOpeningInstaller) return;
     _isOpeningInstaller = true;
     _error = null;
     notifyListeners();
 
-    await _refreshDownloadedApkState();
-    final apkPath = _downloadedApkPath;
-    if (apkPath == null || apkPath.isEmpty) {
+    await _refreshDownloadedUpdateState();
+    final installerPath = _downloadedUpdatePath;
+    if (installerPath == null || installerPath.isEmpty) {
       _error = 'No downloaded update found';
       _finishInstallerLaunchState();
       notifyListeners();
@@ -265,32 +333,48 @@ class UpdateService extends ChangeNotifier {
     }
 
     try {
-      await _verifyDownloadedApkOrThrow(File(apkPath), _updateInfo!);
+      await _verifyDownloadedUpdateOrThrow(File(installerPath), _updateInfo!);
     } catch (e) {
-      _hasDownloadedApk = false;
-      _downloadedApkPath = null;
+      _hasDownloadedUpdate = false;
+      _downloadedUpdatePath = null;
       _error = e.toString().replaceFirst('Exception: ', '');
       _finishInstallerLaunchState();
       notifyListeners();
       return;
     }
 
-    final result = await OpenFilex.open(
-      apkPath,
-      type: 'application/vnd.android.package-archive',
-    );
-    if (result.type != ResultType.done) {
-      _error = 'Could not open installer: ${result.message}';
-      _finishInstallerLaunchState();
-      notifyListeners();
-      return;
+    if (isDesktopUpdate) {
+      try {
+        await _launchWindowsInstaller(installerPath, [
+          '/SILENT',
+          '/NORESTART',
+          '/UPDATE=1',
+          '/DIR=${File(Platform.resolvedExecutable).parent.path}',
+        ]);
+      } catch (_) {
+        _error = 'Could not start the update. Please try again.';
+        _finishInstallerLaunchState();
+        notifyListeners();
+        return;
+      }
+    } else {
+      final result = await OpenFilex.open(
+        installerPath,
+        type: 'application/vnd.android.package-archive',
+      );
+      if (result.type != ResultType.done) {
+        _error = 'Could not open installer: ${result.message}';
+        _finishInstallerLaunchState();
+        notifyListeners();
+        return;
+      }
     }
-    // Keep every install affordance visibly busy while Android transitions to
+    // Keep every install affordance visibly busy while the platform starts
     // its package installer. If no lifecycle transition occurs, recover after
     // a short guard period so a failed platform handoff is retryable.
     _installerLaunchResetTimer?.cancel();
     _installerLaunchResetTimer = Timer(
-      const Duration(seconds: 4),
+      Duration(seconds: isDesktopUpdate ? 30 : 4),
       _finishInstallerLaunchState,
     );
   }
@@ -306,7 +390,17 @@ class UpdateService extends ChangeNotifier {
   @override
   void dispose() {
     _installerLaunchResetTimer?.cancel();
+    _metadataClient.close();
     super.dispose();
+  }
+
+  static Future<void> _startWindowsInstaller(
+    String path,
+    List<String> arguments,
+  ) async {
+    // The installer asks this exact app installation to quit gracefully, then
+    // replaces its files and reopens it. Its process must survive our exit.
+    await Process.start(path, arguments, mode: ProcessStartMode.detached);
   }
 
   Future<bool> _downloadWithResume({
@@ -355,34 +449,34 @@ class UpdateService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> _refreshDownloadedApkState() async {
+  Future<void> _refreshDownloadedUpdateState() async {
     final info = _updateInfo;
     if (info == null) {
-      _hasDownloadedApk = false;
-      _downloadedApkPath = null;
+      _hasDownloadedUpdate = false;
+      _downloadedUpdatePath = null;
       return;
     }
-    final path = await _apkPathForVersion(info.latestVersion);
+    final path = await _installerPathForVersion(info.latestVersion);
     final file = File(path);
     if (!info.updateAvailable) {
-      // A successful installation leaves the APK behind. Once the running
+      // A successful installation leaves the installer behind. Once the running
       // package has caught up, clear both the stale action state and its files.
       await _deleteIfExists(file);
       await _deleteIfExists(File('$path.part'));
-      _hasDownloadedApk = false;
-      _downloadedApkPath = null;
+      _hasDownloadedUpdate = false;
+      _downloadedUpdatePath = null;
       _downloadProgress = null;
       return;
     }
-    _hasDownloadedApk = await file.exists() && await file.length() > 0;
-    if (_hasDownloadedApk && info.sha256.isNotEmpty) {
-      final verified = await _verifyDownloadedApk(file, info);
+    _hasDownloadedUpdate = await file.exists() && await file.length() > 0;
+    if (_hasDownloadedUpdate && info.sha256.isNotEmpty) {
+      final verified = await _verifyDownloadedUpdate(file, info);
       if (!verified) {
         await _deleteIfExists(file);
-        _hasDownloadedApk = false;
+        _hasDownloadedUpdate = false;
       }
     }
-    _downloadedApkPath = _hasDownloadedApk ? path : null;
+    _downloadedUpdatePath = _hasDownloadedUpdate ? path : null;
     if (!_isDownloading) {
       await _updatePartialProgress();
     }
@@ -395,7 +489,7 @@ class UpdateService extends ChangeNotifier {
       return;
     }
     final partFile = File(
-      '${await _apkPathForVersion(info.latestVersion)}.part',
+      '${await _installerPathForVersion(info.latestVersion)}.part',
     );
     if (!await partFile.exists()) {
       _downloadProgress = null;
@@ -411,13 +505,17 @@ class UpdateService extends ChangeNotifier {
   }
 
   Future<Directory> _updatesDirectory() async {
-    final dir = await getApplicationDocumentsDirectory();
+    if (_directory != null) return _directory();
+    final dir = isDesktopUpdate
+        ? await getApplicationSupportDirectory()
+        : await getApplicationDocumentsDirectory();
     return Directory('${dir.path}/updates');
   }
 
-  Future<String> _apkPathForVersion(String version) async {
+  Future<String> _installerPathForVersion(String version) async {
     final updateDir = await _updatesDirectory();
-    return '${updateDir.path}/socketagent-$version.apk';
+    final extension = isDesktopUpdate ? 'exe' : 'apk';
+    return '${updateDir.path}/socketagent-$version.$extension';
   }
 
   static String _normalizeSha256(String value) {
@@ -429,7 +527,7 @@ class UpdateService extends ChangeNotifier {
     return digest.toString();
   }
 
-  Future<bool> _verifyDownloadedApk(File file, UpdateInfo info) async {
+  Future<bool> _verifyDownloadedUpdate(File file, UpdateInfo info) async {
     if (info.sha256.isEmpty) return false;
     if (!await file.exists()) return false;
     if (info.size != null && info.size! > 0) {
@@ -440,11 +538,14 @@ class UpdateService extends ChangeNotifier {
     return actual == info.sha256;
   }
 
-  Future<void> _verifyDownloadedApkOrThrow(File file, UpdateInfo info) async {
-    final ok = await _verifyDownloadedApk(file, info);
+  Future<void> _verifyDownloadedUpdateOrThrow(
+    File file,
+    UpdateInfo info,
+  ) async {
+    final ok = await _verifyDownloadedUpdate(file, info);
     if (ok) return;
     await _deleteIfExists(file);
-    throw Exception('Downloaded APK did not match release SHA-256.');
+    throw Exception('Downloaded installer did not match release SHA-256.');
   }
 
   /// Compare semver strings. Returns true if latest > current.

@@ -22,6 +22,7 @@ import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../../widgets/adaptive_action_sheet.dart';
 import '../file_manager_screen.dart';
+import '../../services/codex_sign_in_callback.dart';
 import '../config_export_screen.dart';
 import '../config_import_screen.dart';
 import '../connect_computer_screen.dart';
@@ -125,7 +126,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
         updateService.isOpeningInstaller) {
       return;
     }
-    if (updateService.hasDownloadedApk) {
+    if (updateService.hasDownloadedUpdate) {
       await updateService.installDownloaded();
     } else if (updateService.updateAvailable) {
       await updateService.downloadUpdate();
@@ -144,13 +145,13 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
 
   Widget _buildUpdateAction(BuildContext context) {
     final downloading = updateService.isDownloading;
-    final downloaded = updateService.hasDownloadedApk;
+    final downloaded = updateService.hasDownloadedUpdate;
     final available = updateService.updateAvailable;
     final progress = updateService.downloadProgress;
     final openingInstaller = updateService.isOpeningInstaller;
 
     final tooltip = openingInstaller
-        ? 'Opening Android installer'
+        ? 'Opening installer'
         : _checkingForUpdate
         ? 'Checking for app updates'
         : downloading
@@ -158,7 +159,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
               ? 'Downloading app update'
               : 'Downloading app update ${(progress * 100).round()}%'
         : downloaded
-        ? 'Install downloaded app update'
+        ? updateService.isDesktopUpdate
+              ? 'Install update and restart SocketAgent'
+              : 'Install downloaded app update'
         : available
         ? 'Download app update'
         : 'Check for app updates';
@@ -453,7 +456,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                     const ListTile(
                       leading: Icon(Icons.notifications_outlined),
                       title: Text('Desktop notifications'),
-                      subtitle: Text('Keep SocketAgent open to receive session alerts.'),
+                      subtitle: Text(
+                        'Keep SocketAgent open to receive session alerts.',
+                      ),
                     ),
                 ],
               ),
@@ -660,7 +665,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     }
     if (AppBuild.supportsSelfUpdates && updateService.updateAvailable) {
       final downloading = updateService.isDownloading;
-      final downloaded = updateService.hasDownloadedApk;
+      final downloaded = updateService.hasDownloadedUpdate;
       final openingInstaller = updateService.isOpeningInstaller;
       items.add(
         _AttentionItem(
@@ -672,9 +677,11 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
               ? Icons.downloading
               : Icons.system_update,
           title: openingInstaller
-              ? 'Opening Android installer'
+              ? 'Opening installer'
               : downloaded
-              ? 'App update ready to install'
+              ? updateService.isDesktopUpdate
+                    ? 'Update ready. Install and restart'
+                    : 'App update ready to install'
               : downloading
               ? 'Downloading app update'
               : 'App update available',
@@ -918,139 +925,141 @@ class _SettingsV2ServerDetailScreenState
                           ),
                       ],
               ),
-              if (Platform.isAndroid) _SettingsGroup(
-                title: 'Notifications',
-                children: [
-                  FutureBuilder<bool>(
-                    future: _notificationsEnabled,
-                    builder: (context, snapshot) {
-                      final enabled = snapshot.data;
-                      return _DetailRow(
-                        icon: enabled == false
-                            ? Icons.notifications_off_outlined
-                            : Icons.notifications_active_outlined,
-                        title: 'Android permission',
-                        subtitle: enabled == null
-                            ? 'Checking whether this phone allows notifications'
-                            : enabled
-                            ? 'SocketAgent can show notifications on this phone'
-                            : 'Blocked by Android. Allow notifications to receive alerts',
-                        trailing: enabled == null
-                            ? 'Checking'
-                            : enabled
-                            ? 'Allowed'
-                            : 'Blocked',
-                      );
-                    },
-                  ),
-                  FutureBuilder<bool>(
-                    future: _notificationsEnabled,
-                    builder: (context, snapshot) {
-                      if (snapshot.data != false) {
-                        return const SizedBox.shrink();
-                      }
-                      return _ButtonRow(
-                        primaryLabel: _requestingNotificationPermission
-                            ? 'Checking Permission'
-                            : 'Allow Notifications',
-                        primaryIcon: Icons.notification_add_outlined,
-                        onPrimary: _requestingNotificationPermission
-                            ? null
-                            : _requestNotificationPermission,
-                      );
-                    },
-                  ),
-                  _DetailRow(
-                    icon: _pushRouteIcon(pushRoute.kind),
-                    title: 'Delivery path',
-                    subtitle: _pushRouteDescription(
-                      pushRoute.kind,
-                      activeProjectId: activeFirebaseProjectId,
-                      expectedProjectId: pushCapabilities?.directFcmProjectId,
+              if (Platform.isAndroid)
+                _SettingsGroup(
+                  title: 'Notifications',
+                  children: [
+                    FutureBuilder<bool>(
+                      future: _notificationsEnabled,
+                      builder: (context, snapshot) {
+                        final enabled = snapshot.data;
+                        return _DetailRow(
+                          icon: enabled == false
+                              ? Icons.notifications_off_outlined
+                              : Icons.notifications_active_outlined,
+                          title: 'Android permission',
+                          subtitle: enabled == null
+                              ? 'Checking whether this phone allows notifications'
+                              : enabled
+                              ? 'SocketAgent can show notifications on this phone'
+                              : 'Blocked by Android. Allow notifications to receive alerts',
+                          trailing: enabled == null
+                              ? 'Checking'
+                              : enabled
+                              ? 'Allowed'
+                              : 'Blocked',
+                        );
+                      },
                     ),
-                    trailing: _pushRouteLabel(pushRoute.kind),
-                  ),
-                  if (_pushRouteActionLabel(pushRoute.kind) case final label?)
-                    _ButtonRow(
-                      primaryLabel: label,
-                      primaryIcon: _pushRouteActionIcon(pushRoute.kind),
-                      onPrimary: () => _handlePushRouteAction(
-                        provider,
-                        config,
+                    FutureBuilder<bool>(
+                      future: _notificationsEnabled,
+                      builder: (context, snapshot) {
+                        if (snapshot.data != false) {
+                          return const SizedBox.shrink();
+                        }
+                        return _ButtonRow(
+                          primaryLabel: _requestingNotificationPermission
+                              ? 'Checking Permission'
+                              : 'Allow Notifications',
+                          primaryIcon: Icons.notification_add_outlined,
+                          onPrimary: _requestingNotificationPermission
+                              ? null
+                              : _requestNotificationPermission,
+                        );
+                      },
+                    ),
+                    _DetailRow(
+                      icon: _pushRouteIcon(pushRoute.kind),
+                      title: 'Delivery path',
+                      subtitle: _pushRouteDescription(
                         pushRoute.kind,
+                        activeProjectId: activeFirebaseProjectId,
+                        expectedProjectId: pushCapabilities?.directFcmProjectId,
                       ),
+                      trailing: _pushRouteLabel(pushRoute.kind),
                     ),
-                  _DetailRow(
-                    icon: customFirebase == null
-                        ? Icons.verified_user_outlined
-                        : Icons.cloud_outlined,
-                    title: 'Firebase project',
-                    subtitle: firebaseRestartRequired
-                        ? 'Close and reopen SocketAgent to use ${pendingFirebaseProjectId ?? 'the saved project'}'
-                        : activeFirebaseProjectId == null
-                        ? 'Firebase did not initialize on this phone'
-                        : 'Using $activeFirebaseProjectId for notification tokens',
-                    trailing: firebaseRestartRequired
-                        ? 'Restart needed'
-                        : customFirebase == null
-                        ? activeUsesCustomFirebase
-                              ? 'Custom'
-                              : 'SocketAgent'
-                        : 'Custom',
-                  ),
-                  if (pushRoute.kind == PushDeliveryRouteKind.directFirebase ||
-                      customFirebase != null ||
-                      activeUsesCustomFirebase)
-                    _ButtonRow(
-                      primaryLabel: 'Manage Firebase',
-                      primaryIcon: Icons.settings_outlined,
-                      onPrimary: _showFirebaseNotificationSetup,
+                    if (_pushRouteActionLabel(pushRoute.kind) case final label?)
+                      _ButtonRow(
+                        primaryLabel: label,
+                        primaryIcon: _pushRouteActionIcon(pushRoute.kind),
+                        onPrimary: () => _handlePushRouteAction(
+                          provider,
+                          config,
+                          pushRoute.kind,
+                        ),
+                      ),
+                    _DetailRow(
+                      icon: customFirebase == null
+                          ? Icons.verified_user_outlined
+                          : Icons.cloud_outlined,
+                      title: 'Firebase project',
+                      subtitle: firebaseRestartRequired
+                          ? 'Close and reopen SocketAgent to use ${pendingFirebaseProjectId ?? 'the saved project'}'
+                          : activeFirebaseProjectId == null
+                          ? 'Firebase did not initialize on this phone'
+                          : 'Using $activeFirebaseProjectId for notification tokens',
+                      trailing: firebaseRestartRequired
+                          ? 'Restart needed'
+                          : customFirebase == null
+                          ? activeUsesCustomFirebase
+                                ? 'Custom'
+                                : 'SocketAgent'
+                          : 'Custom',
                     ),
-                  _DetailRow(
-                    icon: pushRegistered && pushRoute.isReady
-                        ? Icons.phonelink_ring_outlined
-                        : pushDisabled
-                        ? Icons.notifications_off_outlined
-                        : Icons.phonelink_erase_outlined,
-                    title: 'This phone',
-                    subtitle: _pushRegistrationDescription(
-                      connected: connected,
-                      routeReady: pushRoute.isReady,
-                      registered: pushRegistered,
-                      disabled: pushDisabled,
-                    ),
-                    trailing: pushRegistered && pushRoute.isReady
-                        ? 'Registered'
-                        : pushDisabled
-                        ? 'Disabled'
-                        : pushRoute.isReady
-                        ? 'Pending'
-                        : 'Waiting',
-                  ),
-                  if (connected && pushRoute.isReady && !pushRegistered)
-                    _ButtonRow(
-                      primaryLabel: _registeringPush
-                          ? 'Registering'
+                    if (pushRoute.kind ==
+                            PushDeliveryRouteKind.directFirebase ||
+                        customFirebase != null ||
+                        activeUsesCustomFirebase)
+                      _ButtonRow(
+                        primaryLabel: 'Manage Firebase',
+                        primaryIcon: Icons.settings_outlined,
+                        onPrimary: _showFirebaseNotificationSetup,
+                      ),
+                    _DetailRow(
+                      icon: pushRegistered && pushRoute.isReady
+                          ? Icons.phonelink_ring_outlined
                           : pushDisabled
-                          ? 'Enable Notifications'
-                          : 'Retry Registration',
-                      primaryIcon: Icons.notification_add_outlined,
-                      onPrimary: _registeringPush
-                          ? null
-                          : () => _registerPush(provider, config),
-                    )
-                  else if (connected && pushRoute.isReady && pushRegistered)
-                    _ButtonRow(
-                      primaryLabel: _registeringPush
-                          ? 'Updating'
-                          : 'Unenroll Notifications',
-                      primaryIcon: Icons.notifications_off_outlined,
-                      onPrimary: _registeringPush
-                          ? null
-                          : () => _unregisterPush(provider, config),
+                          ? Icons.notifications_off_outlined
+                          : Icons.phonelink_erase_outlined,
+                      title: 'This phone',
+                      subtitle: _pushRegistrationDescription(
+                        connected: connected,
+                        routeReady: pushRoute.isReady,
+                        registered: pushRegistered,
+                        disabled: pushDisabled,
+                      ),
+                      trailing: pushRegistered && pushRoute.isReady
+                          ? 'Registered'
+                          : pushDisabled
+                          ? 'Disabled'
+                          : pushRoute.isReady
+                          ? 'Pending'
+                          : 'Waiting',
                     ),
-                ],
-              ),
+                    if (connected && pushRoute.isReady && !pushRegistered)
+                      _ButtonRow(
+                        primaryLabel: _registeringPush
+                            ? 'Registering'
+                            : pushDisabled
+                            ? 'Enable Notifications'
+                            : 'Retry Registration',
+                        primaryIcon: Icons.notification_add_outlined,
+                        onPrimary: _registeringPush
+                            ? null
+                            : () => _registerPush(provider, config),
+                      )
+                    else if (connected && pushRoute.isReady && pushRegistered)
+                      _ButtonRow(
+                        primaryLabel: _registeringPush
+                            ? 'Updating'
+                            : 'Unenroll Notifications',
+                        primaryIcon: Icons.notifications_off_outlined,
+                        onPrimary: _registeringPush
+                            ? null
+                            : () => _unregisterPush(provider, config),
+                      ),
+                  ],
+                ),
               if (plugins.contains('outlook-auth') ||
                   plugins.contains('ibs-auth'))
                 _SettingsGroup(
@@ -1869,17 +1878,12 @@ class _BackendDetailTile extends StatelessWidget {
               : false;
           if (!context.mounted) return;
           if (ok && force != true) return;
-          provider.authenticateBackend(
-            serverId,
-            backend: backend,
-            force: force == true,
-          );
-          showBackendOperationDialog(
+          await showBackendSignIn(
             context,
             provider,
             serverId,
             backend,
-            fallbackOperation: 'auth',
+            force: force == true,
           );
         }
 
@@ -1990,16 +1994,6 @@ class _BackendDetailTile extends StatelessWidget {
       },
     );
   }
-}
-
-bool _backendIsHealthy(ChatProvider provider, String serverId, String backend) {
-  for (final entry in provider.backendHealthForServer(serverId)) {
-    if (entry['backend']?.toString() == backend &&
-        entry['severity']?.toString() == 'ok') {
-      return true;
-    }
-  }
-  return false;
 }
 
 Future<bool?> _confirmBackendReauth(
@@ -2170,11 +2164,14 @@ Widget _buildBackendDeviceAuthCard(
   required String backendName,
   required String? authUrl,
   required String? authCode,
+  bool browserSignIn = false,
+  VoidCallback? onOpenBrowser,
 }) {
   final theme = Theme.of(context);
   final hasCode = authCode != null && authCode.isNotEmpty;
   final hasUrl = authUrl != null && authUrl.isNotEmpty;
-  final waitingForCodexCode = backend == 'codex' && hasUrl && !hasCode;
+  final waitingForCodexCode =
+      backend == 'codex' && !browserSignIn && hasUrl && !hasCode;
 
   return DecoratedBox(
     decoration: BoxDecoration(
@@ -2187,7 +2184,9 @@ Widget _buildBackendDeviceAuthCard(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            backend == 'claude' ? '$backendName sign-in' : 'Device sign-in',
+            backend == 'claude' || browserSignIn
+                ? '$backendName sign-in'
+                : 'Device sign-in',
             style: theme.textTheme.titleSmall?.copyWith(
               fontWeight: FontWeight.w700,
             ),
@@ -2249,12 +2248,13 @@ Widget _buildBackendDeviceAuthCard(
               child: FilledButton.icon(
                 onPressed: waitingForCodexCode
                     ? null
-                    : () => _openBackendAuthPage(
-                        context,
-                        authUrl: authUrl,
-                        authCode: authCode,
-                        overlayTitle: '$backendName sign-in',
-                      ),
+                    : onOpenBrowser ??
+                          () => _openBackendAuthPage(
+                            context,
+                            authUrl: authUrl,
+                            authCode: authCode,
+                            overlayTitle: '$backendName sign-in',
+                          ),
                 icon: const Icon(Icons.open_in_browser),
                 label: Text(
                   waitingForCodexCode
@@ -2300,6 +2300,75 @@ Widget _buildBackendOutputBlock(BuildContext context, List<String> output) {
   );
 }
 
+Future<void> showBackendSignIn(
+  BuildContext context,
+  ChatProvider provider,
+  String serverId,
+  String backend, {
+  bool force = false,
+}) async {
+  if (provider.backendInstallState(serverId, backend)?.running == true) {
+    showBackendOperationDialog(
+      context,
+      provider,
+      serverId,
+      backend,
+      fallbackOperation: 'auth',
+    );
+    return;
+  }
+  var method = 'device';
+  if (backend == 'codex') {
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Sign in to ChatGPT'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('Use your ChatGPT account for Codex.'),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              icon: const Icon(Icons.open_in_browser),
+              label: const Text('Sign in with browser'),
+              onPressed: () => Navigator.pop(dialogContext, 'browser'),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              icon: const Icon(Icons.pin_outlined),
+              label: const Text('Use a device code'),
+              onPressed: () => Navigator.pop(dialogContext, 'device'),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+    if (selected == null || !context.mounted) return;
+    method = selected;
+  }
+  provider.authenticateBackend(
+    serverId,
+    backend: backend,
+    // A deliberate sign-in choice must not be skipped by cached login status.
+    force: backend == 'codex' || force,
+    authMethod: method,
+  );
+  showBackendOperationDialog(
+    context,
+    provider,
+    serverId,
+    backend,
+    fallbackOperation: 'auth',
+  );
+}
+
 void showBackendOperationDialog(
   BuildContext context,
   ChatProvider provider,
@@ -2310,7 +2379,8 @@ void showBackendOperationDialog(
   final rootContext = context;
   final backendName = backend == 'codex' ? 'Codex' : 'Claude';
   final claudeAuthCodeCtrl = TextEditingController();
-  var dismissedAfterSuccess = false;
+  CodexSignInCallback? codexCallback;
+  String? callbackRequestId;
 
   provider.requestServerSettings(serverId: serverId);
   final pollTimer = Timer.periodic(const Duration(seconds: 2), (_) {
@@ -2319,6 +2389,7 @@ void showBackendOperationDialog(
 
   showDialog(
     context: context,
+    barrierDismissible: false,
     builder: (dialogContext) => Consumer<ChatProvider>(
       builder: (context, currentProvider, _) {
         final state = currentProvider.backendInstallState(serverId, backend);
@@ -2330,7 +2401,6 @@ void showBackendOperationDialog(
             (state?.message.toLowerCase().contains('already running') ?? false);
         final completed =
             state?.running == false && state?.status == 'completed';
-        final healthy = _backendIsHealthy(currentProvider, serverId, backend);
         final authUrl = state?.authUrl;
         final output = state?.output ?? const <String>[];
         final authCode = state?.authCode;
@@ -2339,33 +2409,22 @@ void showBackendOperationDialog(
         final hasAuthUrl = authUrl != null && authUrl.isNotEmpty;
         final hasAuthCode = authCode != null && authCode.isNotEmpty;
         final showDeviceAuthCard =
-            isAuthOperation && (hasAuthUrl || hasAuthCode);
-        final operationTitle = isAuthOperation ? 'Sign-In' : 'Repair';
-        final shouldDismiss = isAuthOperation
-            ? completed
-            : (completed || healthy);
-
-        if (!dismissedAfterSuccess && shouldDismiss) {
-          dismissedAfterSuccess = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            pollTimer.cancel();
-            if (dialogContext.mounted && Navigator.of(dialogContext).canPop()) {
-              Navigator.of(dialogContext).pop();
-            }
-            if (rootContext.mounted) {
-              ScaffoldMessenger.of(rootContext).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    isAuthOperation
-                        ? '$backendName sign-in completed.'
-                        : '$backendName backend is ready.',
-                  ),
-                  backgroundColor: Colors.green,
-                ),
-              );
-            }
-          });
+            isAuthOperation && running && (hasAuthUrl || hasAuthCode);
+        if (!running && codexCallback != null) {
+          unawaited(codexCallback!.close());
+          codexCallback = null;
+          callbackRequestId = null;
         }
+        if (completed || failed || cancelled) pollTimer.cancel();
+        final title = isAuthOperation
+            ? completed
+                  ? '$backendName sign-in complete'
+                  : failed
+                  ? 'Could not sign in to $backendName'
+                  : cancelled
+                  ? '$backendName sign-in cancelled'
+                  : '$backendName sign-in'
+            : '$backendName repair';
 
         return AlertDialog(
           title: Row(
@@ -2379,7 +2438,7 @@ void showBackendOperationDialog(
                 size: 22,
               ),
               const SizedBox(width: 10),
-              Expanded(child: Text('$backendName Backend $operationTitle')),
+              Expanded(child: Text(title)),
             ],
           ),
           content: SizedBox(
@@ -2390,7 +2449,11 @@ void showBackendOperationDialog(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    showDeviceAuthCard
+                    completed && isAuthOperation
+                        ? 'Signed in successfully. You can now use $backendName on this computer.'
+                        : cancelled && isAuthOperation
+                        ? 'You can sign in again whenever you are ready.'
+                        : showDeviceAuthCard
                         ? 'Finish $backendName sign-in in your browser, then return to SocketAgent.'
                         : state?.message ??
                               (isAuthOperation
@@ -2405,9 +2468,64 @@ void showBackendOperationDialog(
                       backendName: backendName,
                       authUrl: authUrl,
                       authCode: authCode,
+                      browserSignIn: state?.authMethod == 'browser',
+                      onOpenBrowser: state?.authMethod == 'browser'
+                          ? () async {
+                              try {
+                                final uri = Uri.parse(authUrl!);
+                                if (callbackRequestId != state!.requestId) {
+                                  await codexCallback?.close();
+                                  codexCallback = CodexSignInCallback();
+                                  await codexCallback!.start(
+                                    authUrl: uri,
+                                    serverIsLocal: provider
+                                        .backendServerIsLocal(serverId),
+                                    forward: (url) =>
+                                        provider.completeCodexBrowserSignIn(
+                                          serverId,
+                                          state.requestId,
+                                          url,
+                                        ),
+                                  );
+                                  callbackRequestId = state.requestId;
+                                }
+                                if (!dialogContext.mounted) return;
+                                if (!await launchUrl(
+                                  uri,
+                                  mode: LaunchMode.externalApplication,
+                                )) {
+                                  throw StateError('Browser could not open');
+                                }
+                              } catch (_) {
+                                if (dialogContext.mounted) {
+                                  await showDialog<void>(
+                                    context: dialogContext,
+                                    builder: (errorContext) => AlertDialog(
+                                      title: const Text(
+                                        'Could not open sign-in',
+                                      ),
+                                      content: const Text(
+                                        'Try opening your browser again, or cancel this sign-in and use a device code.',
+                                      ),
+                                      actions: [
+                                        TextButton(
+                                          onPressed: () =>
+                                              Navigator.pop(errorContext),
+                                          child: const Text('OK'),
+                                        ),
+                                      ],
+                                    ),
+                                  );
+                                }
+                              }
+                            }
+                          : null,
                     ),
                   ],
-                  if (isAuthOperation && AppBuild.supportsSystemOverlays) ...[
+                  if (isAuthOperation &&
+                      running &&
+                      state?.authMethod != 'browser' &&
+                      AppBuild.supportsSystemOverlays) ...[
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
@@ -2420,7 +2538,10 @@ void showBackendOperationDialog(
                       ),
                     ),
                   ],
-                  if (backend == 'claude' && isAuthOperation && hasAuthUrl) ...[
+                  if (backend == 'claude' &&
+                      isAuthOperation &&
+                      running &&
+                      hasAuthUrl) ...[
                     const SizedBox(height: 12),
                     TextField(
                       controller: claudeAuthCodeCtrl,
@@ -2454,11 +2575,11 @@ void showBackendOperationDialog(
                       ),
                     ),
                   ],
-                  if (output.isNotEmpty && !showDeviceAuthCard) ...[
+                  if (output.isNotEmpty && !isAuthOperation) ...[
                     const SizedBox(height: 12),
                     _buildBackendOutputBlock(context, output),
                   ],
-                  if (output.isNotEmpty && showDeviceAuthCard) ...[
+                  if (output.isNotEmpty && isAuthOperation && !completed) ...[
                     const SizedBox(height: 8),
                     ExpansionTile(
                       tilePadding: EdgeInsets.zero,
@@ -2471,10 +2592,11 @@ void showBackendOperationDialog(
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
-            ),
+            if (!isAuthOperation || !running)
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: Text(completed || cancelled ? 'Done' : 'Close'),
+              ),
             if (running || alreadyRunningConflict)
               TextButton(
                 onPressed: () {
@@ -2484,15 +2606,44 @@ void showBackendOperationDialog(
                     force: alreadyRunningConflict,
                   );
                 },
-                child: const Text('Force Stop'),
+                child: Text(isAuthOperation ? 'Cancel sign-in' : 'Force Stop'),
               ),
-            if (failed)
+            if ((failed || cancelled) &&
+                isAuthOperation &&
+                backend == 'codex' &&
+                state?.authMethod == 'browser')
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                  currentProvider.authenticateBackend(
+                    serverId,
+                    backend: backend,
+                    force: true,
+                    authMethod: 'device',
+                  );
+                  showBackendOperationDialog(
+                    rootContext,
+                    currentProvider,
+                    serverId,
+                    backend,
+                    fallbackOperation: 'auth',
+                  );
+                },
+                child: const Text('Use a device code'),
+              ),
+            if (failed || cancelled)
               FilledButton(
                 onPressed: () {
                   if (isAuthOperation) {
-                    currentProvider.authenticateBackend(
-                      serverId,
-                      backend: backend,
+                    Navigator.of(dialogContext).pop();
+                    unawaited(
+                      showBackendSignIn(
+                        rootContext,
+                        currentProvider,
+                        serverId,
+                        backend,
+                        force: true,
+                      ),
                     );
                   } else {
                     currentProvider.repairBackend(
@@ -2502,7 +2653,7 @@ void showBackendOperationDialog(
                     );
                   }
                 },
-                child: const Text('Retry'),
+                child: const Text('Try again'),
               ),
           ],
         );
@@ -2510,6 +2661,7 @@ void showBackendOperationDialog(
     ),
   ).whenComplete(() {
     pollTimer.cancel();
+    unawaited(codexCallback?.close());
     claudeAuthCodeCtrl.dispose();
   });
 }
@@ -2606,7 +2758,8 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
     final bool opened;
     if (provider.subscriptionProvider == 'stripe') {
       final url = await provider.getDirectBillingPortalUrl();
-      opened = url != null &&
+      opened =
+          url != null &&
           await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     } else {
       opened = await PlayBillingService.openSubscriptionManagement();
