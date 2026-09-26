@@ -15,6 +15,10 @@ public static class DesktopTest {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern IntPtr FindWindow(string cls,string title);
  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hwnd);
+ [StructLayout(LayoutKind.Sequential)] public struct MONITOR { public uint size; public RECT monitor,work; public uint flags; }
+ [DllImport("user32.dll")] static extern IntPtr MonitorFromWindow(IntPtr hwnd,uint flags);
+ [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr monitor,ref MONITOR info);
+ public static RECT WorkArea(IntPtr hwnd) { var m=new MONITOR{size=(uint)Marshal.SizeOf(typeof(MONITOR))}; GetMonitorInfo(MonitorFromWindow(hwnd,2),ref m);return m.work; }
  [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hwnd);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd,out uint pid);
  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd,out RECT r);
@@ -31,7 +35,7 @@ public static class DesktopTest {
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd,IntPtr dc,uint flags);
  [DllImport("shell32.dll")] static extern int Shell_NotifyIconGetRect(ref ICONID id,out RECT rect);
  public static IntPtr Child(IntPtr parent) { return FindWindowEx(parent,IntPtr.Zero,null,null); }
- public static bool HasTrayIcon(IntPtr hwnd) { var id=new ICONID{cbSize=(uint)Marshal.SizeOf(typeof(ICONID)),hwnd=hwnd,id=1}; RECT rect; return Shell_NotifyIconGetRect(ref id,out rect)==0; }
+ public static bool HasTrayIcon(IntPtr hwnd) { var id=new ICONID{cbSize=(uint)Marshal.SizeOf(typeof(ICONID)),hwnd=hwnd,id=1}; RECT rect; return Shell_NotifyIconGetRect(ref id,out rect)>=0; }
  public static PLACEMENT Placement(IntPtr hwnd) { var p=new PLACEMENT{length=(uint)Marshal.SizeOf(typeof(PLACEMENT))}; GetWindowPlacement(hwnd,ref p);return p; }
  public static int Hit(IntPtr hwnd,int x,int y) { return SendMessage(hwnd,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&0xffff))).ToInt32(); }
 }
@@ -82,6 +86,7 @@ function Restart-App {
 }
 Find-App
 $original=[DesktopTest]::Placement($window)
+try {
 Assert-Window (([DesktopTest]::GetWindowLong($window,-16) -band 0x00c00000) -eq 0) 'Stock caption removed'
 Assert-Window ([DesktopTest]::HasTrayIcon($window)) 'Tray icon registered with Windows'
 [DesktopTest]::ShowWindow($window,9)|Out-Null
@@ -97,10 +102,19 @@ Assert-Window ([DesktopTest]::IsIconic($window)) 'Custom minimize control'
 Open-App
 Click-Control 69
 Assert-Window ([DesktopTest]::IsZoomed($window)) 'Custom maximize control'
+$maximizedBounds=New-Object DesktopTest+RECT
+[DesktopTest]::GetWindowRect($window,[ref]$maximizedBounds)|Out-Null
+$work=[DesktopTest]::WorkArea($window)
+Assert-Window ($maximizedBounds.Left -ge $work.Left -and $maximizedBounds.Top -ge $work.Top -and $maximizedBounds.Right -le $work.Right -and $maximizedBounds.Bottom -le $work.Bottom) 'Maximized outer window leaves the Windows taskbar visible'
 Click-Control 69
 Assert-Window (![DesktopTest]::IsZoomed($window)) 'Custom restore control'
 Click-Control 23
 Assert-Window (![DesktopTest]::IsWindowVisible($window)) 'Custom hide control keeps the client in the tray'
+Assert-Window ([DesktopTest]::HasTrayIcon($window)) 'Tray registration survives hiding'
+[DesktopTest]::PostMessage($window,0x8029,[IntPtr]::Zero,[IntPtr]0x202)|Out-Null
+Start-Sleep -Milliseconds 500
+Assert-Window ([DesktopTest]::IsWindowVisible($window)) 'Mouse tray click restores the window'
+Click-Control 23
 [uint32]$firstPid=0
 [DesktopTest]::GetWindowThreadProcessId($window,[ref]$firstPid)|Out-Null
 Start-Process $exe -WorkingDirectory (Split-Path $exe) -Wait
@@ -127,7 +141,9 @@ Click-Control 69
 $r=New-Object DesktopTest+RECT
 [DesktopTest]::GetWindowRect($window,[ref]$r)|Out-Null
 Assert-Window (($r.Right-$r.Left) -eq 1100 -and ($r.Bottom-$r.Top) -eq 760) 'Restore size is retained while maximized'
-[DesktopTest]::SetWindowPlacement($window,[ref]$original)|Out-Null
+} finally {
+ [DesktopTest]::SetWindowPlacement($window,[ref]$original)|Out-Null
+}
 Start-Sleep -Seconds 1
 Capture-App 'desktop-window-final'
 $p=Get-Process socketagent | Where-Object Path -eq $exe | Select-Object -First 1

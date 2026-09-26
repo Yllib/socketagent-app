@@ -39,6 +39,8 @@ void main() {
       ),
     );
     expect(find.byTooltip('Restore window'), findsOneWidget);
+    expect(find.byIcon(Icons.remove), findsOneWidget);
+    expect(find.byIcon(Icons.filter_none), findsOneWidget);
     await tester.tap(find.byTooltip('Minimize'));
     await tester.tap(find.byTooltip('Restore window'));
     await tester.tap(find.byTooltip('Hide to tray'));

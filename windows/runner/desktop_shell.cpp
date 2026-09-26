@@ -121,7 +121,9 @@ void DesktopShell::Show() {
 void DesktopShell::Hide() {
   SavePlacement();
   // Never strand a window if Explorer could not accept our tray icon.
-  if (!tray_ready_) AddTrayIcon();
+  // Explorer can lose the icon without destroying our window. Verify the
+  // registration now rather than trusting the result cached at startup.
+  AddTrayIcon();
   ShowWindow(window_, tray_ready_ ? SW_HIDE : SW_MINIMIZE);
   NotifyState();
 }
@@ -131,11 +133,20 @@ void DesktopShell::AddTrayIcon() {
   tray_.cbSize = sizeof(tray_);
   tray_.hWnd = window_;
   tray_.uID = 1;
-  tray_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP;
+  tray_.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_SHOWTIP | NIF_STATE;
+  tray_.dwStateMask = NIS_HIDDEN;
+  tray_.dwState = 0;
   tray_.uCallbackMessage = kTrayMessage;
-  tray_.hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(IDI_APP_ICON));
+  tray_.hIcon = static_cast<HICON>(LoadImageW(GetModuleHandle(nullptr),
+      MAKEINTRESOURCE(IDI_APP_ICON), IMAGE_ICON,
+      GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_SHARED));
+  if (!tray_.hIcon) {
+    tray_ready_ = false;
+    return;
+  }
   wcscpy_s(tray_.szTip, L"SocketAgent Desktop");
-  tray_ready_ = Shell_NotifyIconW(NIM_ADD, &tray_) != FALSE;
+  tray_ready_ = Shell_NotifyIconW(NIM_MODIFY, &tray_) != FALSE;
+  if (!tray_ready_) tray_ready_ = Shell_NotifyIconW(NIM_ADD, &tray_) != FALSE;
   if (tray_ready_) {
     tray_.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &tray_);
@@ -258,8 +269,16 @@ std::optional<LRESULT> DesktopShell::HandleMessage(UINT message, WPARAM wparam, 
     case WM_SHOWWINDOW:
     case WM_ACTIVATE: NotifyState(); break;
     case kTrayMessage:
-      if (LOWORD(lparam) == NIN_SELECT || LOWORD(lparam) == NIN_KEYSELECT) Show();
-      else if (LOWORD(lparam) == WM_CONTEXTMENU) ShowTrayMenu();
+      // Handle mouse notifications as well as version-4 keyboard selection.
+      // NIM_SETVERSION may fail or Explorer may retain legacy callback behavior.
+      switch (LOWORD(lparam)) {
+        case NIN_SELECT:
+        case NIN_KEYSELECT:
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDBLCLK: Show(); break;
+        case WM_CONTEXTMENU:
+        case WM_RBUTTONUP: ShowTrayMenu(); break;
+      }
       return 0;
   }
   return std::nullopt;

@@ -66,7 +66,7 @@ class DesktopWindowFrame extends StatelessWidget {
                           ),
                           _WindowButton(
                             tooltip: 'Minimize',
-                            icon: Icons.keyboard_arrow_down_rounded,
+                            icon: Icons.remove,
                             onPressed: service.minimize,
                           ),
                           _WindowButton(
@@ -74,8 +74,8 @@ class DesktopWindowFrame extends StatelessWidget {
                                 ? 'Restore window'
                                 : 'Maximize',
                             icon: state.maximized
-                                ? Icons.close_fullscreen_rounded
-                                : Icons.open_in_full_rounded,
+                                ? Icons.filter_none
+                                : Icons.crop_square,
                             onPressed: service.toggleMaximize,
                           ),
                           _WindowButton(

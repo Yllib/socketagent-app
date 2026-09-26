@@ -86,20 +86,22 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   if (message == WM_NCACTIVATE && !IsIconic(hwnd)) {
     return DefWindowProc(hwnd, message, wparam, -1);
   }
-  if (message == WM_NCCALCSIZE) {
-    if (wparam && IsZoomed(hwnd)) {
-      MONITORINFO monitor{sizeof(MONITORINFO)};
-      if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) {
-        reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam)->rgrc[0] = monitor.rcWork;
-      }
-    }
-    return 0;
-  }
+  if (message == WM_NCCALCSIZE) return 0;
   if (message == WM_NCHITTEST) return DesktopShell::HitTest(hwnd, lparam);
   if (message == WM_GETMINMAXINFO) {
     auto* info = reinterpret_cast<MINMAXINFO*>(lparam);
     const UINT dpi = GetDpiForWindow(hwnd);
     info->ptMinTrackSize = {MulDiv(620, dpi, 96), MulDiv(460, dpi, 96)};
+    // Constrain the outer window, not just Flutter's client area. An outer
+    // window covering the monitor makes Explorer treat it as fullscreen and
+    // hide the taskbar even when we leave empty space inside the client area.
+    MONITORINFO monitor{sizeof(MONITORINFO)};
+    if (GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &monitor)) {
+      info->ptMaxPosition = {monitor.rcWork.left - monitor.rcMonitor.left,
+                            monitor.rcWork.top - monitor.rcMonitor.top};
+      info->ptMaxSize = {monitor.rcWork.right - monitor.rcWork.left,
+                        monitor.rcWork.bottom - monitor.rcWork.top};
+    }
     return 0;
   }
   if (desktop_shell_) {
