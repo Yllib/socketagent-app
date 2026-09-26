@@ -1,6 +1,10 @@
 # Run in the signed-in Windows session, against the installed development client.
+param(
+ [string]$Root = 'C:/Users/billy/socketagent-windows-build',
+ [int]$ServerPort = 0
+)
 $ErrorActionPreference = 'Stop'
-$root='C:/Users/billy/socketagent-windows-build'
+New-Item -ItemType Directory -Force $Root | Out-Null
 Remove-Item "$root/window-test-error.txt", "$root/window-test-results.json" -ErrorAction SilentlyContinue
 trap { $_ | Out-String | Set-Content "$root/window-test-error.txt"; exit 1 }
 Add-Type -AssemblyName System.Drawing
@@ -33,9 +37,37 @@ public static class DesktopTest {
  [DllImport("user32.dll",CharSet=CharSet.Unicode)] public static extern uint RegisterWindowMessage(string name);
  [DllImport("user32.dll")] static extern IntPtr FindWindowEx(IntPtr parent,IntPtr after,string cls,string title);
  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd,IntPtr dc,uint flags);
+ [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
+ [DllImport("user32.dll")] static extern bool SetCursorPos(int x,int y);
+ [DllImport("user32.dll")] static extern void mouse_event(uint flags,uint x,uint y,uint data,UIntPtr extra);
+ static void ClickRect(RECT r) {
+  SetCursorPos((r.Left+r.Right)/2,(r.Top+r.Bottom)/2);
+  mouse_event(2,0,0,0,UIntPtr.Zero); mouse_event(4,0,0,0,UIntPtr.Zero);
+  System.Threading.Thread.Sleep(500);
+ }
+ public static void ClickTray(IntPtr hwnd) {
+  var id=new ICONID{cbSize=(uint)Marshal.SizeOf(typeof(ICONID)),hwnd=hwnd,id=1}; RECT r;
+  var result=Shell_NotifyIconGetRect(ref id,out r);
+  if(result<0 || r.Right<=r.Left || r.Bottom<=r.Top) throw new Exception("No clickable tray icon bounds");
+  POINT cursor;GetCursorPos(out cursor);
+  try {
+   ClickRect(r);
+   if(!IsWindowVisible(hwnd)) {
+    // Some Explorer versions return the overflow button with S_OK too.
+    // After opening it, require a different rectangle for the actual icon.
+    RECT actual;
+    result=Shell_NotifyIconGetRect(ref id,out actual);
+    if(result<0 || actual.Right<=actual.Left || actual.Bottom<=actual.Top ||
+       (actual.Left==r.Left && actual.Top==r.Top && actual.Right==r.Right && actual.Bottom==r.Bottom))
+      throw new Exception("Tray icon not accessible in overflow");
+    ClickRect(actual);
+   }
+  } finally { SetCursorPos(cursor.X,cursor.Y); }
+ }
+
  [DllImport("shell32.dll")] static extern int Shell_NotifyIconGetRect(ref ICONID id,out RECT rect);
  public static IntPtr Child(IntPtr parent) { return FindWindowEx(parent,IntPtr.Zero,null,null); }
- public static bool HasTrayIcon(IntPtr hwnd) { var id=new ICONID{cbSize=(uint)Marshal.SizeOf(typeof(ICONID)),hwnd=hwnd,id=1}; RECT rect; return Shell_NotifyIconGetRect(ref id,out rect)>=0; }
+ public static bool HasTrayIcon(IntPtr hwnd) { var id=new ICONID{cbSize=(uint)Marshal.SizeOf(typeof(ICONID)),hwnd=hwnd,id=1}; RECT rect; return Shell_NotifyIconGetRect(ref id,out rect)>=0 && rect.Right>rect.Left && rect.Bottom>rect.Top; }
  public static PLACEMENT Placement(IntPtr hwnd) { var p=new PLACEMENT{length=(uint)Marshal.SizeOf(typeof(PLACEMENT))}; GetWindowPlacement(hwnd,ref p);return p; }
  public static int Hit(IntPtr hwnd,int x,int y) { return SendMessage(hwnd,0x84,IntPtr.Zero,new IntPtr((y<<16)|(x&0xffff))).ToInt32(); }
 }
@@ -76,19 +108,36 @@ function Open-App {
  [DesktopTest]::PostMessage($script:window,[DesktopTest]::RegisterWindowMessage('SocketAgent.Desktop.Activate.v1'),[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
  Start-Sleep -Milliseconds 500
 }
+function Assert-ServerRunning {
+ if (!$ServerPort) { return }
+ $listener=Get-NetTCPConnection -LocalPort $ServerPort -State Listen -ErrorAction Stop
+ if ($script:serverPid -notin @($listener.OwningProcess)) { throw 'Local server stopped or restarted when Desktop exited' }
+ $client=New-Object Net.Sockets.TcpClient
+ try { $client.Connect('127.0.0.1',$ServerPort) } finally { $client.Dispose() }
+ Assert-Window $true 'Local server keeps its PID and accepts connections after Desktop exits'
+}
 function Restart-App {
  $process=Get-Process socketagent | Where-Object Path -eq $exe | Select-Object -First 1
  Start-Process $exe -ArgumentList '--quit' -Wait
  if (!$process.WaitForExit(10000)) { throw 'Explicit Quit failed' }
+ Start-Sleep -Seconds 2
+ Assert-ServerRunning
  Start-Process $exe -WorkingDirectory (Split-Path $exe)
  Start-Sleep -Seconds 8
  Find-App
 }
 Find-App
+[uint32]$installedPid=0
+[DesktopTest]::GetWindowThreadProcessId($window,[ref]$installedPid)|Out-Null
+$exe=(Get-Process -Id $installedPid).Path
+if ($ServerPort) {
+ $script:serverPid=(Get-NetTCPConnection -LocalPort $ServerPort -State Listen | Select-Object -First 1).OwningProcess
+}
 $original=[DesktopTest]::Placement($window)
 try {
+Restart-App
 Assert-Window (([DesktopTest]::GetWindowLong($window,-16) -band 0x00c00000) -eq 0) 'Stock caption removed'
-Assert-Window ([DesktopTest]::HasTrayIcon($window)) 'Tray icon registered with Windows'
+Assert-Window ([DesktopTest]::HasTrayIcon($window)) 'Tray icon has reachable bounds'
 [DesktopTest]::ShowWindow($window,9)|Out-Null
 [DesktopTest]::MoveWindow($window,200,120,1100,760,$true)|Out-Null
 [DesktopTest]::PostMessage($window,0x232,[IntPtr]::Zero,[IntPtr]::Zero)|Out-Null
@@ -110,10 +159,10 @@ Click-Control 69
 Assert-Window (![DesktopTest]::IsZoomed($window)) 'Custom restore control'
 Click-Control 23
 Assert-Window (![DesktopTest]::IsWindowVisible($window)) 'Custom hide control keeps the client in the tray'
-Assert-Window ([DesktopTest]::HasTrayIcon($window)) 'Tray registration survives hiding'
-[DesktopTest]::PostMessage($window,0x8029,[IntPtr]::Zero,[IntPtr]0x202)|Out-Null
+Assert-Window ([DesktopTest]::HasTrayIcon($window)) 'Tray icon remains reachable after hiding'
+[DesktopTest]::ClickTray($window)
 Start-Sleep -Milliseconds 500
-Assert-Window ([DesktopTest]::IsWindowVisible($window)) 'Mouse tray click restores the window'
+Assert-Window ([DesktopTest]::IsWindowVisible($window)) 'Real mouse click on the Windows tray icon restores the window'
 Click-Control 23
 [uint32]$firstPid=0
 [DesktopTest]::GetWindowThreadProcessId($window,[ref]$firstPid)|Out-Null

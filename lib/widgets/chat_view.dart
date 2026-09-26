@@ -656,12 +656,14 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   bool _historyWasPrepended(ChatView oldWidget) {
-    final added = widget.messages.length - oldWidget.messages.length;
-    if (added <= 0 || oldWidget.messages.isEmpty) return false;
-    return _messageRowKey(widget.messages[added]) ==
-            _messageRowKey(oldWidget.messages.first) &&
-        _messageRowKey(widget.messages.last) ==
-            _messageRowKey(oldWidget.messages.last);
+    if (oldWidget.messages.isEmpty || widget.messages.isEmpty) return false;
+    // A live reply can be appended in the same frame as an older page. The
+    // total length delta and the last row therefore do not identify a prepend.
+    final previousFirstKey = _messageRowKey(oldWidget.messages.first);
+    return widget.messages.indexWhere(
+          (message) => _messageRowKey(message) == previousFirstKey,
+        ) >
+        0;
   }
 
   List<({CondensedChatRow content, String rowKey})> _renderRows(
@@ -731,7 +733,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final historyLoadFinished =
         oldWidget.isLoadingMore && !widget.isLoadingMore;
     final historyWasPrepended = _historyWasPrepended(oldWidget);
-    if (historyWasPrepended &&
+    final historyHeaderChanged =
+        widget.hasMoreHistory != oldWidget.hasMoreHistory;
+    if ((historyWasPrepended || historyHeaderChanged) &&
         !_effectiveFollowLatest &&
         !_hasTranscriptTarget) {
       _preserveViewportAcrossPrepend();

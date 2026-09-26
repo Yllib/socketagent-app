@@ -23,6 +23,7 @@ class DesktopShell {
   void Hide();
   void SavePlacement();
   void AddTrayIcon();
+  bool HasReachableTrayIcon() const;
   void ShowTrayMenu();
   void NotifyState();
   flutter::EncodableValue State() const;

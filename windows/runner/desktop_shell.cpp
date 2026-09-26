@@ -124,7 +124,7 @@ void DesktopShell::Hide() {
   // Explorer can lose the icon without destroying our window. Verify the
   // registration now rather than trusting the result cached at startup.
   AddTrayIcon();
-  ShowWindow(window_, tray_ready_ ? SW_HIDE : SW_MINIMIZE);
+  ShowWindow(window_, tray_ready_ && HasReachableTrayIcon() ? SW_HIDE : SW_MINIMIZE);
   NotifyState();
 }
 
@@ -145,14 +145,28 @@ void DesktopShell::AddTrayIcon() {
     return;
   }
   wcscpy_s(tray_.szTip, L"SocketAgent Desktop");
-  tray_ready_ = Shell_NotifyIconW(NIM_MODIFY, &tray_) != FALSE;
-  if (!tray_ready_) tray_ready_ = Shell_NotifyIconW(NIM_ADD, &tray_) != FALSE;
+  // Add first. Updating an icon is not evidence that Explorer actually added
+  // it, especially after Explorer has restarted or lost its notification state.
+  tray_ready_ = Shell_NotifyIconW(NIM_ADD, &tray_) != FALSE;
+  if (!tray_ready_) tray_ready_ = Shell_NotifyIconW(NIM_MODIFY, &tray_) != FALSE;
   if (tray_ready_) {
     tray_.uVersion = NOTIFYICON_VERSION_4;
     Shell_NotifyIconW(NIM_SETVERSION, &tray_);
   } else if (!IsWindowVisible(window_) && ready_) {
     Show();
   }
+}
+
+bool DesktopShell::HasReachableTrayIcon() const {
+  NOTIFYICONIDENTIFIER icon{};
+  icon.cbSize = sizeof(icon);
+  icon.hWnd = window_;
+  icon.uID = tray_.uID;
+  RECT bounds{};
+  const auto result = Shell_NotifyIconGetRect(&icon, &bounds);
+  // Registration alone can succeed without an accessible icon. In that case
+  // keep the ordinary taskbar button instead of stranding a hidden window.
+  return SUCCEEDED(result) && bounds.right > bounds.left && bounds.bottom > bounds.top;
 }
 
 void DesktopShell::ShowTrayMenu() {

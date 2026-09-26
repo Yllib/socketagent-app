@@ -124,6 +124,47 @@ void main() {
     },
   );
 
+  for (final appendReply in [false, true]) {
+    for (final prependCount in [0, 20]) {
+      testWidgets(
+        'history completion anchors variable rows: prepend=$prependCount reply=$appendReply',
+        (tester) async {
+          final key = GlobalKey<_HistoryHarnessState>();
+          await tester.pumpWidget(
+            MaterialApp(
+              home: _HistoryHarness(
+                key: key,
+                initiallyLoadingHistory: false,
+                messageCount: 80,
+              ),
+            ),
+          );
+          key.currentState!.varyMessageHeights();
+          key.currentState!.holdViewport();
+          await tester.pump();
+          final position = tester
+              .state<ScrollableState>(find.byType(Scrollable).first)
+              .position;
+          position.jumpTo(150);
+          await tester.pump();
+          await tester.pump();
+          final anchor = _topVisibleMessage(tester);
+
+          key.currentState!.completeLoad(
+            prependCount: prependCount,
+            variableHeights: true,
+          );
+          if (appendReply) key.currentState!.appendNewResponse('New reply');
+          // Assert the first painted frame as well as the settled viewport.
+          await tester.pump();
+          expect(_messageTop(tester, anchor.id), closeTo(anchor.top, 0.5));
+          await tester.pumpAndSettle();
+          expect(_messageTop(tester, anchor.id), closeTo(anchor.top, 0.5));
+        },
+      );
+    }
+  }
+
   testWidgets('authoritative history replacement discards the old extent', (
     WidgetTester tester,
   ) async {
@@ -1068,6 +1109,17 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
     textContent: 'History response $index',
   );
 
+  void varyMessageHeights() {
+    setState(() {
+      for (var i = 0; i < messages.length; i++) {
+        messages[i].textContent = List.filled(
+          i % 7 + 1,
+          'History response $i',
+        ).join('\n');
+      }
+    });
+  }
+
   void focusMessage(int index) {
     setState(() {
       messages[index].entryId = 'entry-$index';
@@ -1167,13 +1219,23 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
     });
   }
 
-  void completeLoad({required int prependCount, bool hasMoreAfter = false}) {
+  void completeLoad({
+    required int prependCount,
+    bool hasMoreAfter = false,
+    bool variableHeights = false,
+  }) {
     setState(() {
       messages = [
-        ...List.generate(
-          prependCount,
-          (index) => _message(-prependCount + index),
-        ),
+        ...List.generate(prependCount, (index) {
+          final message = _message(-prependCount + index);
+          if (variableHeights) {
+            message.textContent = List.filled(
+              index % 9 + 1,
+              message.textContent,
+            ).join('\n');
+          }
+          return message;
+        }),
         ...messages,
       ];
       isLoadingMore = false;
