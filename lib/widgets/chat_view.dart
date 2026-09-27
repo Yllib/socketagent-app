@@ -447,7 +447,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       return;
     }
     if (!widget.condensedToolUsage) return;
-    final row = _renderRows(widget.messages).where((candidate) {
+    final row = _renderRows().where((candidate) {
       final content = candidate.content;
       return content is CondensedWorkRow &&
           content.messages.any((message) => message.toolUseId == toolUseId);
@@ -519,7 +519,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           widget.isLoadingMore) {
         return;
       }
-      final rows = _renderRows(widget.messages);
+      final rows = _renderRows();
       final messageIndex = rows.indexWhere(
         (row) => _rowMatchesTranscriptTarget(row.content),
       );
@@ -591,7 +591,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
     _transcriptTargetSeekAttempts++;
     final position = _scrollController.position;
-    final rows = _renderRows(widget.messages);
+    final rows = _renderRows();
     final listIndexByRowKey = <String, int>{};
     for (var index = 0; index < rows.length; index++) {
       listIndexByRowKey[rows[index].rowKey] =
@@ -667,20 +667,32 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         0;
   }
 
-  List<({CondensedChatRow content, String rowKey})> _renderRows(
-    Iterable<ChatMessage> messages,
-  ) {
-    final occurrences = <String, int>{};
-    final rows = buildCondensedChatRows(
-      messages.where((message) => message.type != MessageType.codexPlan),
+  final _rowCache = CondensedChatRowsCache();
+  List<CondensedChatRow>? _lastCondensedRows;
+  List<({CondensedChatRow content, String rowKey})> _lastRenderedRows = [];
+  List<({CondensedChatRow content, String rowKey})>? _rowsForWidget;
+
+  List<({CondensedChatRow content, String rowKey})> _renderRows() {
+    final ready = _rowsForWidget;
+    if (ready != null) return ready;
+    final rows = _rowCache.render(
+      widget.messages.where((message) => message.type != MessageType.codexPlan),
       messageKey: _messageRowKey,
       enabled: widget.condensedToolUsage,
       isProcessing: widget.isProcessing,
     );
-    return [
-      for (final row in rows)
-        (content: row, rowKey: _collisionSafeRowKey(row.keySeed, occurrences)),
-    ];
+    if (!identical(rows, _lastCondensedRows)) {
+      final occurrences = <String, int>{};
+      _lastCondensedRows = rows;
+      _lastRenderedRows = [
+        for (final row in rows)
+          (
+            content: row,
+            rowKey: _collisionSafeRowKey(row.keySeed, occurrences),
+          ),
+      ];
+    }
+    return _rowsForWidget = _lastRenderedRows;
   }
 
   String _collisionSafeRowKey(String base, Map<String, int> occurrences) {
@@ -695,6 +707,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _rowsForWidget = null;
     _reindexAllMessages();
 
     if (_requestedFollowLatest == widget.followLatest) {
@@ -721,7 +734,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
     final historyWindowWasReplaced =
         widget.historyWindowRevision != oldWidget.historyWindowRevision;
-    final newRows = _renderRows(widget.messages);
+    final newRows = _renderRows();
     final newRowKeys = newRows.map((row) => row.rowKey).toList();
 
     final activeRowKeys = newRowKeys.toSet();
@@ -1158,10 +1171,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final activeCodexPlan = codexPlanMessages.isEmpty
         ? null
         : codexPlanMessages.last;
-    final visibleMessages = widget.messages
-        .where((m) => m.type != MessageType.codexPlan)
-        .toList();
-    final visibleRows = _renderRows(visibleMessages);
+    final visibleRows = _renderRows();
 
     if (visibleRows.isEmpty && activeCodexPlan == null) {
       return ColoredBox(

@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'package:crypto/crypto.dart';
 
 import 'package:path_provider/path_provider.dart';
+import 'replace_file.dart';
 
 Map<String, dynamic> mergeTranscriptCachePayloads(
   Map<String, dynamic> current,
@@ -65,43 +67,47 @@ Map<String, dynamic> mergeTranscriptCachePayloads(
 Map<String, dynamic> boundTranscriptCachePayload(
   Map<String, dynamic> payload, {
   required int maxBytes,
+  Expando<int>? entryByteLengths,
 }) {
-  Map<String, dynamic> candidate(int droppedMessages) {
-    final messages = (payload['messages'] as List? ?? const []);
-    final total = (payload['total'] as num?)?.toInt() ?? messages.length;
-    final originalOffset =
-        (payload['offset'] as num?)?.toInt() ??
-        (total - messages.length).clamp(0, total);
-    return Map<String, dynamic>.from(payload)
-      ..remove('requestId')
-      ..['historyKind'] = 'initial'
-      ..['messages'] = messages.skip(droppedMessages).toList()
-      ..['offset'] = originalOffset + droppedMessages;
-  }
-
-  bool fits(Map<String, dynamic> value) =>
-      utf8.encode(jsonEncode(value)).length <= maxBytes;
-
   final messages = payload['messages'] as List? ?? const [];
-  final untrimmed = candidate(0);
-  if (fits(untrimmed) || messages.isEmpty) return untrimmed;
+  final total = (payload['total'] as num?)?.toInt() ?? messages.length;
+  final offset =
+      (payload['offset'] as num?)?.toInt() ??
+      (total - messages.length).clamp(0, total);
+  final result = Map<String, dynamic>.from(payload)
+    ..remove('requestId')
+    ..['historyKind'] = 'initial'
+    ..['messages'] = const []
+    ..['offset'] = offset;
 
-  // Find the smallest prefix that can be discarded while keeping a complete,
-  // contiguous newest suffix. Advancing offset alongside the trim preserves a
-  // safe resume cursor instead of freezing the previous oversized snapshot.
-  var low = 1;
-  var high = messages.length;
-  var best = messages.length;
-  while (low <= high) {
-    final middle = low + ((high - low) ~/ 2);
-    if (fits(candidate(middle))) {
-      best = middle;
-      high = middle - 1;
-    } else {
-      low = middle + 1;
+  // Count each immutable entry once, not the whole transcript on every event.
+  // Include JSON commas and changes in the decimal offset for an exact bound.
+  final sizes = <int>[];
+  var bytes = utf8.encode(jsonEncode(result)).length;
+  for (final entry in messages) {
+    final cached = entry is Map && entryByteLengths != null
+        ? entryByteLengths[entry]
+        : null;
+    final size = cached ?? utf8.encode(jsonEncode(entry)).length;
+    if (entry is Map && entryByteLengths != null) {
+      entryByteLengths[entry] = size;
     }
+    sizes.add(size);
+    bytes += size;
   }
-  return candidate(best);
+  if (messages.isNotEmpty) bytes += messages.length - 1;
+  var dropped = 0;
+  while (bytes > maxBytes && dropped < messages.length) {
+    bytes -= sizes[dropped];
+    if (messages.length - dropped > 1) bytes--;
+    bytes +=
+        (offset + dropped + 1).toString().length -
+        (offset + dropped).toString().length;
+    dropped++;
+  }
+  return result
+    ..['messages'] = messages.skip(dropped).toList()
+    ..['offset'] = offset + dropped;
 }
 
 Map<String, dynamic> mergeLiveTranscriptCacheEntry(
@@ -114,7 +120,6 @@ Map<String, dynamic> mergeLiveTranscriptCacheEntry(
 
   final messages = (current['messages'] as List? ?? const [])
       .whereType<Map>()
-      .map((message) => Map<String, dynamic>.from(message))
       .toList();
   final existingIndex = messages.indexWhere(
     (message) =>
@@ -262,6 +267,7 @@ class SessionTranscriptCache {
   static const int maxSnapshotBytes = 2 * 1024 * 1024;
 
   final Map<String, Map<String, dynamic>> _memory = {};
+  final Expando<int> _entryByteLengths = Expando<int>();
   final Map<String, int> _generations = {};
   final Map<String, Future<void>> _pendingWrites = {};
   final Map<String, Timer> _liveWriteTimers = {};
@@ -346,7 +352,8 @@ class SessionTranscriptCache {
       final directory = await _cacheDirectory();
       final file = File('${directory.path}/${_fileName(key)}');
       if (!await file.exists()) return null;
-      final decoded = jsonDecode(await file.readAsString());
+      final raw = await file.readAsString();
+      final decoded = await Isolate.run(() => jsonDecode(raw));
       if ((_generations[key] ?? 0) != generation) return _memory[key];
       if (!isCurrentTranscriptCacheEnvelope(decoded)) {
         await file.delete().catchError((_) => file);
@@ -413,6 +420,7 @@ class SessionTranscriptCache {
       payload,
       // Leave room for the versioned envelope and cache-key metadata.
       maxBytes: maxSnapshotBytes - 1024,
+      entryByteLengths: _entryByteLengths,
     );
     final wrapper = <String, dynamic>{
       'schemaVersion': schemaVersion,
@@ -421,18 +429,22 @@ class SessionTranscriptCache {
       'savedAt': DateTime.now().toUtc().toIso8601String(),
       'payload': cachedPayload,
     };
-    final encoded = jsonEncode(wrapper);
-    if (utf8.encode(encoded).length > maxSnapshotBytes) return;
     final key = _key(serverId, sessionId);
     _generations[key] = (_generations[key] ?? 0) + 1;
     _memory[key] = cachedPayload;
     final previousWrite = _pendingWrites[key];
-    final write = _persistAfter(previousWrite, key: key, encoded: encoded);
+    final write = _persistAfter(
+      previousWrite,
+      key: key,
+      wrapper: wrapper,
+      generation: _generations[key]!,
+    );
     _pendingWrites[key] = write;
     try {
       await write;
-    } catch (_) {
+    } catch (error) {
       // Cache failures must never prevent opening a session.
+      stderr.writeln('[TranscriptCache] Could not persist snapshot: $error');
     } finally {
       if (identical(_pendingWrites[key], write)) {
         _pendingWrites.remove(key);
@@ -443,18 +455,25 @@ class SessionTranscriptCache {
   Future<void> _persistAfter(
     Future<void>? previousWrite, {
     required String key,
-    required String encoded,
+    required Map<String, dynamic> wrapper,
+    required int generation,
   }) async {
     if (previousWrite != null) {
       try {
         await previousWrite;
       } catch (_) {}
     }
+    if (_generations[key] != generation) return;
+    final encoded = await Isolate.run(() {
+      final json = jsonEncode(wrapper);
+      return utf8.encode(json).length <= maxSnapshotBytes ? json : null;
+    });
+    if (encoded == null || _generations[key] != generation) return;
     final directory = await _cacheDirectory();
     final file = File('${directory.path}/${_fileName(key)}');
     final temp = File('${file.path}.tmp');
     await temp.writeAsString(encoded, flush: true);
-    await temp.rename(file.path);
+    await replaceFile(temp, file.path);
     await _prune(directory);
   }
 
@@ -511,6 +530,7 @@ class SessionTranscriptCache {
     final bounded = boundTranscriptCachePayload(
       merged,
       maxBytes: maxSnapshotBytes - 1024,
+      entryByteLengths: _entryByteLengths,
     );
     final key = _key(serverId, sessionId);
     _generations[key] = (_generations[key] ?? 0) + 1;

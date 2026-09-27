@@ -8,12 +8,20 @@ import 'package:app/services/session_transcript_cache.dart';
 import 'package:app/models/message_reconciliation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:pinenacl/x25519.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  FlutterLocalNotificationsPlatform.instance =
+      AndroidFlutterLocalNotificationsPlugin();
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+        const MethodChannel('dexterous.com/flutter/local_notifications'),
+        (call) async => call.method == 'initialize' ? true : null,
+      );
   test(
     'cached terminal outcomes survive serialization and acknowledgement deduplication',
     () {
@@ -249,12 +257,7 @@ void main() {
           'total': 0,
           'offset': 0,
         });
-        expect(provider.conversationRewindStatus?.pending, false);
-        expect(provider.conversationRewindStatus?.failed, false);
-        expect(
-          provider.conversationRewindStatus?.message,
-          contains('2 messages removed'),
-        );
+        expect(provider.conversationRewindStatus, isNull);
         expect(provider.subagentTasks, isEmpty);
         expect(provider.messages.where((m) => m.toolUseId == id), isEmpty);
         Map<String, dynamic>? diskCache;

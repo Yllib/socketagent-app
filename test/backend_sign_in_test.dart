@@ -74,10 +74,9 @@ void main() {
             },
           );
       final provider = _SignInProvider();
-      addTearDown(provider.dispose);
       await tester.pumpWidget(
-        ChangeNotifierProvider<ChatProvider>.value(
-          value: provider,
+        ChangeNotifierProvider<ChatProvider>(
+          create: (_) => provider,
           child: MaterialApp(
             home: Builder(
               builder: (context) => Scaffold(
@@ -129,10 +128,9 @@ void main() {
       tester,
     ) async {
       final provider = _SignInProvider();
-      addTearDown(provider.dispose);
       await tester.pumpWidget(
-        ChangeNotifierProvider<ChatProvider>.value(
-          value: provider,
+        ChangeNotifierProvider<ChatProvider>(
+          create: (_) => provider,
           child: MaterialApp(
             home: Builder(
               builder: (context) => Scaffold(

@@ -1925,24 +1925,32 @@ class _SessionsTabState extends State<SessionsTab> {
             sessionTreeLastActive(right).compareTo(sessionTreeLastActive(left)),
       );
 
-    final children = <Widget>[];
+    final children = <({Key key, Widget Function() build})>[];
     void addSection(String title, List<SessionTreeNode> sectionRoots) {
       if (sectionRoots.isEmpty) return;
       final sessionCount = sectionRoots.fold<int>(
         0,
         (total, node) => total + node.sessionCount,
       );
-      children.add(_buildSessionSectionHeader(context, title, sessionCount));
+      children.add((
+        key: ValueKey('section-$title'),
+        build: () => _buildSessionSectionHeader(context, title, sessionCount),
+      ));
       for (var i = 0; i < sectionRoots.length; i++) {
-        children.add(_buildSessionTreeNode(context, sectionRoots[i]));
+        final node = sectionRoots[i];
+        children.add((
+          key: ValueKey('session-${_sessionKey(node.session)}'),
+          build: () => _buildSessionTreeNode(context, node),
+        ));
         if (i != sectionRoots.length - 1) {
-          children.add(
-            Divider(
+          children.add((
+            key: ValueKey('divider-${_sessionKey(node.session)}'),
+            build: () => Divider(
               height: 1,
               indent: 48,
               color: Theme.of(context).colorScheme.outlineVariant.withAlpha(80),
             ),
-          );
+          ));
         }
       }
     }
@@ -1951,9 +1959,17 @@ class _SessionsTabState extends State<SessionsTab> {
     addSection('Pinned', pinned);
     addSection('Recent', recent);
 
-    return ListView(
+    final indices = {
+      for (var i = 0; i < children.length; i++) children[i].key: i,
+    };
+    return ListView.builder(
       padding: const EdgeInsets.only(bottom: 80),
-      children: children,
+      itemCount: children.length,
+      findChildIndexCallback: (key) => indices[key],
+      itemBuilder: (context, index) => KeyedSubtree(
+        key: children[index].key,
+        child: children[index].build(),
+      ),
     );
   }
 
@@ -2083,8 +2099,26 @@ class _SessionsTabState extends State<SessionsTab> {
 
   @override
   Widget build(BuildContext context) {
-    return Consumer<ChatProvider>(
-      builder: (context, provider, _) {
+    return Selector<ChatProvider, List<Object?>>(
+      selector: (context, provider) => [
+        provider.activeSessionId,
+        provider.activeSessionServerId,
+        provider.activeServerId,
+        provider.connectionStatus,
+        for (final config in provider.serverConfigs) ...[
+          config,
+          provider.connMgr.statusOf(config.id),
+          [...provider.backendsForServer(config.id)],
+        ],
+        for (final session in provider.sessions)
+          (
+            session,
+            provider.isSessionPinned(session.id),
+            provider.isNotifEnabled(session.id),
+          ),
+      ],
+      builder: (context, selection, _) {
+        final provider = context.read<ChatProvider>();
         final configs = provider.serverConfigs;
 
         // No servers configured — show onboarding

@@ -98,8 +98,8 @@ void main() {
     UpdateService updateService,
   ) async {
     await tester.pumpWidget(
-      ChangeNotifierProvider<ChatProvider>.value(
-        value: provider,
+      ChangeNotifierProvider<ChatProvider>(
+        create: (_) => provider,
         child: MaterialApp(
           home: SettingsV2Screen(updateService: updateService),
         ),
@@ -113,7 +113,6 @@ void main() {
     (tester) async {
       final provider = ChatProvider();
       final updateService = _FakeUpdateService();
-      addTearDown(provider.dispose);
       addTearDown(updateService.dispose);
 
       await pumpSettings(tester, provider, updateService);
@@ -157,7 +156,6 @@ void main() {
         _FakeUpdateService(available: true, downloaded: true, opening: true),
       ]) {
         final provider = ChatProvider();
-        addTearDown(provider.dispose);
         addTearDown(updateService.dispose);
         await pumpSettings(tester, provider, updateService);
         expect(find.text('v1.2.3'), findsOneWidget);
@@ -182,7 +180,6 @@ void main() {
   testWidgets('seven version taps reveal owner access', (tester) async {
     final provider = ChatProvider();
     final updateService = _FakeUpdateService();
-    addTearDown(provider.dispose);
     addTearDown(updateService.dispose);
 
     await pumpSettings(tester, provider, updateService);
@@ -210,7 +207,6 @@ void main() {
     (tester) async {
       final provider = ChatProvider();
       final updateService = _FakeUpdateService(available: true);
-      addTearDown(provider.dispose);
       addTearDown(updateService.dispose);
 
       await pumpSettings(tester, provider, updateService);
@@ -233,7 +229,6 @@ void main() {
         downloading: true,
         progress: 0.42,
       );
-      addTearDown(provider.dispose);
       addTearDown(updateService.dispose);
 
       await pumpSettings(tester, provider, updateService);
@@ -255,7 +250,6 @@ void main() {
         available: true,
         downloaded: true,
       );
-      addTearDown(provider.dispose);
       addTearDown(updateService.dispose);
 
       await pumpSettings(tester, provider, updateService);
@@ -281,7 +275,6 @@ void main() {
         downloaded: true,
         opening: true,
       );
-      addTearDown(provider.dispose);
       addTearDown(updateService.dispose);
 
       await pumpSettings(tester, provider, updateService);
@@ -303,7 +296,6 @@ void main() {
         available: false,
         downloaded: true,
       );
-      addTearDown(provider.dispose);
       addTearDown(updateService.dispose);
 
       await pumpSettings(tester, provider, updateService);
@@ -323,7 +315,6 @@ void main() {
   ) async {
     final provider = ChatProvider();
     final updateService = _FakeUpdateService();
-    addTearDown(provider.dispose);
     addTearDown(updateService.dispose);
 
     await pumpSettings(tester, provider, updateService);

@@ -33,6 +33,42 @@ ChatMessage _tool(String id, String name, int second) {
 String _key(ChatMessage message) => message.id;
 
 void main() {
+  test(
+    'cached rows preserve streaming text and invalidate grouping metrics',
+    () {
+      final cache = CondensedChatRowsCache();
+      final text = _text('reply', MessageSender.assistant, 'partial', 0);
+      final thinking = ChatMessage.thinking()..thinkingTokens = 12;
+      final messages = [text, thinking];
+      List<CondensedChatRow> render({
+        bool processing = false,
+        int second = 0,
+      }) => cache.render(
+        messages,
+        messageKey: _key,
+        enabled: true,
+        isProcessing: processing,
+        now: DateTime(2026, 1, 1, 12, 1, second),
+      );
+      final first = render();
+      expect(identical(render(), first), isTrue);
+      text.textContent = 'complete streamed reply';
+      expect(identical(render(), first), isTrue);
+      expect(
+        (first.first as CondensedVisibleRow).message.textContent,
+        'complete streamed reply',
+      );
+      thinking.thinkingTokens = 30;
+      final updated = render();
+      expect(identical(updated, first), isFalse);
+      expect((updated.last as CondensedWorkRow).metrics.thinkingTokens, 30);
+      final live = render(processing: true);
+      expect(identical(render(processing: true, second: 1), live), isFalse);
+      messages.insert(0, _text('older', MessageSender.user, 'earlier', 0));
+      expect(render(), hasLength(3));
+    },
+  );
+
   test('groups only internal work between conversation messages', () {
     final user = _text('user-1', MessageSender.user, 'Fix it', 0);
     final agent = _text(

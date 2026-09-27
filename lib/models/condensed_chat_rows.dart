@@ -1,4 +1,50 @@
 import 'message.dart';
+import 'package:flutter/foundation.dart';
+
+/// Message objects can change in place while streaming. Snapshot the fields
+/// that affect grouping/metrics; retain row objects for unrelated UI updates.
+class CondensedChatRowsCache {
+  List<Object?> _inputs = const [];
+  List<CondensedChatRow> _rows = const [];
+
+  List<CondensedChatRow> render(
+    Iterable<ChatMessage> messages, {
+    required String Function(ChatMessage) messageKey,
+    required bool enabled,
+    required bool isProcessing,
+    DateTime? now,
+  }) {
+    final entries = messages.toList(growable: false);
+    final time = now ?? DateTime.now();
+    final inputs = <Object?>[
+      enabled,
+      isProcessing,
+      if (enabled && isProcessing) time.millisecondsSinceEpoch ~/ 1000,
+      for (final message in entries)
+        (
+          message,
+          messageKey(message),
+          message.type,
+          message.toolName,
+          message.toolUseId,
+          message.timestamp,
+          message.toolStreaming,
+          message.thinkingTokens,
+          message.thinkingDurationMs,
+          isCondensedConversationMessage(message),
+        ),
+    ];
+    if (listEquals(_inputs, inputs)) return _rows;
+    _inputs = inputs;
+    return _rows = buildCondensedChatRows(
+      entries,
+      messageKey: messageKey,
+      enabled: enabled,
+      isProcessing: isProcessing,
+      now: time,
+    );
+  }
+}
 
 sealed class CondensedChatRow {
   const CondensedChatRow({required this.keySeed});

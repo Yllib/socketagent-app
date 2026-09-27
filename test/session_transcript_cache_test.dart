@@ -4,6 +4,97 @@ import 'package:app/services/session_transcript_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'byte accounting keeps the largest suffix at Unicode and offset boundaries',
+    () {
+      for (final offset in [0, 8, 98]) {
+        final messages = List.generate(
+          8,
+          (i) => <String, dynamic>{
+            'entryId': 'row-$i',
+            'sessionSeq': offset + i + 1,
+            'revision': 1,
+            'content': '日本語 🔧 "\n$i',
+          },
+        );
+        final payload = <String, dynamic>{
+          'messages': messages,
+          'offset': offset,
+          'total': offset + messages.length,
+          'requestId': 'remove-me',
+        };
+        final sizes = Expando<int>();
+        for (var budget = 40; budget < 1500; budget += 17) {
+          Map<String, dynamic> candidate(int dropped) => {
+            ...payload,
+            'messages': messages.skip(dropped).toList(),
+            'offset': offset + dropped,
+            'historyKind': 'initial',
+          }..remove('requestId');
+          var dropped = 0;
+          while (dropped < messages.length &&
+              utf8.encode(jsonEncode(candidate(dropped))).length > budget) {
+            dropped++;
+          }
+          expect(
+            boundTranscriptCachePayload(
+              payload,
+              maxBytes: budget,
+              entryByteLengths: sizes,
+            ),
+            candidate(dropped),
+          );
+        }
+      }
+    },
+  );
+
+  test(
+    'live merges retain unchanged entry sizes and replace revised entries',
+    () {
+      final oldEntry = <String, dynamic>{
+        'entryId': 'a',
+        'sessionSeq': 1,
+        'revision': 1,
+        'content': 'old',
+      };
+      final payload = <String, dynamic>{
+        'messages': [oldEntry],
+        'offset': 0,
+        'total': 1,
+      };
+      final sizes = Expando<int>();
+      boundTranscriptCachePayload(
+        payload,
+        maxBytes: 1024,
+        entryByteLengths: sizes,
+      );
+      final appended = mergeLiveTranscriptCacheEntry(payload, {
+        'entryId': 'b',
+        'sessionSeq': 2,
+        'revision': 1,
+        'content': 'second',
+      });
+      expect(identical((appended['messages'] as List).first, oldEntry), isTrue);
+      final revised = mergeLiveTranscriptCacheEntry(appended, {
+        'entryId': 'a',
+        'sessionSeq': 1,
+        'revision': 2,
+        'content': 'longer replacement',
+      });
+      final first = (revised['messages'] as List).first;
+      expect(identical(first, oldEntry), isFalse);
+      expect(sizes[first], isNull);
+      boundTranscriptCachePayload(
+        revised,
+        maxBytes: 1024,
+        entryByteLengths: sizes,
+      );
+      expect(sizes[first], utf8.encode(jsonEncode(first)).length);
+      expect(oldEntry['content'], 'old');
+    },
+  );
+
   test('rejects pre-backfill transcript caches during upgrade', () {
     expect(
       isCurrentTranscriptCacheEnvelope({

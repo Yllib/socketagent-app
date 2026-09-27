@@ -1,4 +1,5 @@
 import 'outgoing_queue.dart';
+import 'background_json_store.dart';
 import 'session_teleport.dart';
 import 'package:http/http.dart' as http;
 import 'windows_local_server.dart';
@@ -628,6 +629,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _appInForeground = true;
   // Per-session input drafts (sessionId → unsent text)
   final Map<String, String> _sessionDrafts = {};
+  final _draftStore = BackgroundJsonStore('session-drafts-v1');
+  final _sessionListStore = BackgroundJsonStore('session-lists-v1');
+  Timer? _sessionCacheSaveTimer;
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   bool _isListening = false;
   bool _listeningStartInFlight = false;
@@ -1444,6 +1448,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void saveDraft(String text, [String? sessionId]) {
     final id = sessionId ?? _activeSessionId;
     if (id != null) {
+      if ((_sessionDrafts[id] ?? '') == text) return;
       if (text.isEmpty) {
         _sessionDrafts.remove(id);
       } else {
@@ -1459,21 +1464,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _persistDrafts() {
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setString('session_drafts', jsonEncode(_sessionDrafts));
-    });
+    unawaited(
+      _draftStore.save(Map<String, dynamic>.from(_sessionDrafts)).catchError((
+        Object error,
+      ) {
+        debugPrint('[Drafts] Failed to save drafts: $error');
+      }),
+    );
   }
 
   Future<void> _loadDrafts() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('session_drafts');
-    if (raw != null) {
-      try {
-        final map = jsonDecode(raw) as Map<String, dynamic>;
-        for (final e in map.entries) {
-          _sessionDrafts[e.key] = e.value as String;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final data = await _draftStore.load(
+        legacyPreferences: prefs,
+        legacyKey: 'session_drafts',
+      );
+      if (data == null) return;
+      for (final entry in data.entries) {
+        if (entry.value is String) {
+          _sessionDrafts.putIfAbsent(entry.key, () => entry.value as String);
         }
-      } catch (_) {}
+      }
+    } catch (error) {
+      debugPrint('[Drafts] Failed to load drafts: $error');
     }
   }
 
@@ -2081,6 +2095,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       requestServerSettings();
       _resumeActiveSessionAfterForeground();
     } else {
+      if (_sessionCacheSaveTimer != null) unawaited(_saveSessionCache());
       _backgroundedAt ??= DateTime.now();
       _syncOngoingSessionNotifications();
     }
@@ -2898,12 +2913,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _loadSessionCache(SharedPreferences prefs) async {
-    final raw = prefs.getString(_sessionCachePrefsKey);
-    if (raw == null || raw.isEmpty || _serverConfigs.isEmpty) return;
-
+    if (_serverConfigs.isEmpty) return;
     try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return;
+      final decoded = await _sessionListStore.load(
+        legacyPreferences: prefs,
+        legacyKey: _sessionCachePrefsKey,
+      );
+      if (decoded == null) return;
 
       final configsById = {
         for (final config in _serverConfigs) config.id: config,
@@ -2942,9 +2958,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _saveSessionCache() async {
+    _sessionCacheSaveTimer?.cancel();
+    _sessionCacheSaveTimer = null;
     try {
-      final prefs = _cachedPrefs ?? await SharedPreferences.getInstance();
-      _cachedPrefs = prefs;
       final payload = <String, List<Map<String, dynamic>>>{};
       for (final config in _serverConfigs) {
         final sessions = _perServerSessions[config.id] ?? const <Session>[];
@@ -2952,14 +2968,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             .map((session) => session.copyWith(running: false).toJson())
             .toList();
       }
-      await prefs.setString(_sessionCachePrefsKey, jsonEncode(payload));
+      await _sessionListStore.save(payload);
     } catch (e) {
       debugPrint('[Sessions] Failed to save session cache: $e');
     }
   }
 
   void _saveSessionCacheSoon() {
-    unawaited(_saveSessionCache());
+    _sessionCacheSaveTimer ??= Timer(const Duration(milliseconds: 500), () {
+      unawaited(_saveSessionCache());
+    });
   }
 
   String _archivePendingKey(String? serverId, String sessionId) {
@@ -17509,6 +17527,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    if (_sessionCacheSaveTimer != null) unawaited(_saveSessionCache());
     _outgoingDisposed = true;
     _outgoingTimer?.cancel();
     for (final upload in _outgoingUploadCompleters.values) {

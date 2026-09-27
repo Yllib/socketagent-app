@@ -61,20 +61,24 @@ void main() {
         await cold.invalidate('server', 'thread');
         expect(await loading, isNull);
         expect(cold.peek('server', 'thread'), isNull);
-        await SessionTranscriptCache().save('server', 'thread', snapshot);
-        final next = SessionTranscriptCache();
-        final old = next.load('server', 'thread');
-        final replacement = {
-          ...snapshot,
-          'messages': [(snapshot['messages'] as List).first],
-          'total': 1,
-        };
-        await next.save('server', 'thread', replacement);
-        expect((await old)?['total'], 1);
-        expect(
-          (await SessionTranscriptCache().load('server', 'thread'))?['total'],
-          1,
-        );
+        // Exercise the overlapping read/replace window repeatedly. Windows can
+        // briefly hold a file handle after a read has completed.
+        for (var attempt = 0; attempt < 12; attempt++) {
+          await SessionTranscriptCache().save('server', 'thread', snapshot);
+          final next = SessionTranscriptCache();
+          final old = next.load('server', 'thread');
+          final replacement = {
+            ...snapshot,
+            'messages': [(snapshot['messages'] as List).first],
+            'total': 1,
+          };
+          await next.save('server', 'thread', replacement);
+          expect((await old)?['total'], 1);
+          expect(
+            (await SessionTranscriptCache().load('server', 'thread'))?['total'],
+            1,
+          );
+        }
       } finally {
         await root.delete(recursive: true);
       }
