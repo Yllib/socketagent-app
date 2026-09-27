@@ -3,6 +3,32 @@ import 'package:app/models/message_reconciliation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('large cached refresh retains live objects and revised content', () {
+    final live = List.generate(
+      1800,
+      (i) => ChatMessage.assistantText('session')
+        ..entryId = 'entry-$i'
+        ..sessionSeq = i + 1
+        ..revision = 1
+        ..textContent = 'Reply $i',
+    );
+    final snapshot = List.generate(
+      1800,
+      (i) => ChatMessage.assistantText('session')
+        ..entryId = 'entry-$i'
+        ..sessionSeq = i + 1
+        ..revision = 2
+        ..textContent = 'Reply $i updated',
+    );
+    final merged = reconcileLiveTranscriptWithSnapshot(snapshot, live);
+    expect(merged.length, live.length);
+    for (var i = 0; i < live.length; i++) {
+      expect(merged[i], same(live[i]));
+      expect(merged[i].textContent, 'Reply $i updated');
+      expect(merged[i].revision, 2);
+    }
+  });
+
   test('browser session history restores the protected browser card', () {
     final message = browserSessionMessageFromPayload({
       'role': 'browser_session',

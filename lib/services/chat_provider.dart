@@ -11679,12 +11679,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       if ((msg.sender == MessageSender.user ||
               msg.sender == MessageSender.assistant) &&
-          msg.type == MessageType.text) {
+          msg.type == MessageType.text &&
+          msg.entryId == null &&
+          msg.uuid == null) {
         final normalized = _normalizeHistoryText(msg.textContent);
-        if (msg.entryId == null &&
-            msg.uuid == null &&
-            normalized.isNotEmpty &&
-            deduped.isNotEmpty) {
+        if (normalized.isNotEmpty && deduped.isNotEmpty) {
           final previous = deduped.last;
           if (previous.sender == msg.sender &&
               previous.type == MessageType.text &&

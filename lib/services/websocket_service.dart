@@ -5,6 +5,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/file_download_frame.dart';
 import 'crypto_service.dart';
+import 'socket_frame_decoder.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, error }
 
@@ -285,36 +286,53 @@ class WebSocketService {
         pingInterval: const Duration(seconds: 20),
       );
 
-      _channelSubscription = _channel!.stream.listen(
-        (data) {
-          if (gen != _connectionGeneration) return;
-          if (_status != ConnectionStatus.connected &&
-              _mode == ConnectionMode.direct) {
-            _setStatus(ConnectionStatus.connected);
-          }
-          try {
-            if (data is String) {
-              final raw = jsonDecode(data) as Map<String, dynamic>;
-              _handleIncoming(raw);
-            } else if (data is List<int>) {
-              _handleIncomingBinary(Uint8List.fromList(data));
+      _channelSubscription = _channel!.stream
+          .asyncMap((data) async {
+            if (gen != _connectionGeneration) return;
+            if (_status != ConnectionStatus.connected &&
+                _mode == ConnectionMode.direct) {
+              _setStatus(ConnectionStatus.connected);
             }
-          } catch (_) {}
-        },
-        onError: (error) {
-          if (gen != _connectionGeneration) return;
-          _setStatus(ConnectionStatus.error);
-          _scheduleReconnect();
-        },
-        onDone: () {
-          if (gen != _connectionGeneration) return;
-          _encryptionReady = false;
-          _serverSupportsBinary = false;
-          _serverSupportsUploadAcks = false;
-          _setStatus(ConnectionStatus.disconnected);
-          _scheduleReconnect();
-        },
-      );
+            try {
+              final crypto = _cryptoService;
+              final decoded = await (crypto == null
+                  ? decodeSocketFrame(
+                      data,
+                      encryptedBinary: _mode == ConnectionMode.relay,
+                    )
+                  : crypto.decodeFrame(
+                      data,
+                      relay: _mode == ConnectionMode.relay,
+                    ));
+              // Reconnects can finish while a large frame is being decoded.
+              if (gen != _connectionGeneration || decoded == null) return;
+              if (decoded.encrypted) {
+                _routeDecryptedMessage(decoded.message);
+              } else {
+                _handleIncoming(decoded.message);
+              }
+            } catch (error) {
+              debugPrint(
+                '[WebSocket] Incoming frame rejected: ${error.runtimeType}',
+              );
+            }
+          })
+          .listen(
+            (_) {},
+            onError: (error) {
+              if (gen != _connectionGeneration) return;
+              _setStatus(ConnectionStatus.error);
+              _scheduleReconnect();
+            },
+            onDone: () {
+              if (gen != _connectionGeneration) return;
+              _encryptionReady = false;
+              _serverSupportsBinary = false;
+              _serverSupportsUploadAcks = false;
+              _setStatus(ConnectionStatus.disconnected);
+              _scheduleReconnect();
+            },
+          );
 
       if (_mode == ConnectionMode.direct &&
           _cryptoService != null &&
@@ -395,23 +413,6 @@ class WebSocketService {
         return;
       }
 
-      // Encrypted message from server
-      if (raw.containsKey('n') && raw.containsKey('c')) {
-        if (_cryptoService == null || !_cryptoService!.isReady) {
-          debugPrint('[Relay] Encrypted msg received but crypto not ready');
-          return;
-        }
-        try {
-          final plaintext = _cryptoService!.decrypt(raw);
-          final msg = jsonDecode(plaintext) as Map<String, dynamic>;
-          debugPrint('[Relay] Decrypted message: ${msg['type']}');
-          _routeDecryptedMessage(msg);
-        } catch (e) {
-          debugPrint('[Relay] Decryption failed: $e');
-        }
-        return;
-      }
-
       // Plaintext messages in relay mode (only during key exchange)
       if (raw['type'] == 'key_exchange_ack') {
         _onEncryptionEstablished();
@@ -430,17 +431,6 @@ class WebSocketService {
         _onEncryptionEstablished();
         return;
       }
-
-      if (raw.containsKey('n') && raw.containsKey('c')) {
-        try {
-          final plaintext = _cryptoService!.decrypt(raw);
-          final msg = jsonDecode(plaintext) as Map<String, dynamic>;
-          _routeDecryptedMessage(msg);
-        } catch (e) {
-          debugPrint('[Direct E2E] Decryption failed: $e');
-        }
-        return;
-      }
     }
 
     // Direct legacy mode — pass through. We also peek at server_capabilities to
@@ -450,55 +440,6 @@ class WebSocketService {
       _applyServerCapabilities(raw);
     }
     _messageController.add(raw);
-  }
-
-  /// Handle a binary WebSocket frame.
-  ///   - In relay mode the frame is `[24-byte nonce | ciphertext]` and we
-  ///     decrypt before parsing.
-  ///   - In direct mode it's `[1 marker | payload]` plain.
-  void _handleIncomingBinary(Uint8List bytes) {
-    if (_mode == ConnectionMode.relay) {
-      if (_cryptoService == null || !_cryptoService!.isReady) return;
-      try {
-        final plaintext = _cryptoService!.decryptBinary(bytes);
-        if (plaintext.isEmpty) return;
-        final marker = plaintext[0];
-        if (marker == _binMarkerJson) {
-          final json = utf8.decode(plaintext.sublist(1));
-          final msg = jsonDecode(json) as Map<String, dynamic>;
-          _routeDecryptedMessage(msg);
-        } else if (marker == binaryFileDownloadMarker) {
-          final msg = decodeBinaryFileDownloadFrame(plaintext);
-          if (msg != null) _routeDecryptedMessage(msg);
-        }
-      } catch (e) {
-        debugPrint('[Relay] Binary decryption failed: $e');
-      }
-      return;
-    }
-    if (_mode == ConnectionMode.direct &&
-        _cryptoService != null &&
-        _cryptoService!.isReady) {
-      try {
-        final plaintext = _cryptoService!.decryptBinary(bytes);
-        if (plaintext.isEmpty) return;
-        final marker = plaintext[0];
-        if (marker == _binMarkerJson) {
-          final json = utf8.decode(plaintext.sublist(1));
-          final msg = jsonDecode(json) as Map<String, dynamic>;
-          _routeDecryptedMessage(msg);
-        } else if (marker == binaryFileDownloadMarker) {
-          final msg = decodeBinaryFileDownloadFrame(plaintext);
-          if (msg != null) _routeDecryptedMessage(msg);
-        }
-      } catch (e) {
-        debugPrint('[Direct E2E] Binary decryption failed: $e');
-      }
-      return;
-    }
-
-    final msg = decodeBinaryFileDownloadFrame(bytes);
-    if (msg != null) _routeDecryptedMessage(msg);
   }
 
   /// Common post-decrypt routing: surfaces the message to listeners and

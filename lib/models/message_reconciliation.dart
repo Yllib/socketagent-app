@@ -694,6 +694,11 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
 }) {
   final reconciled = snapshotMessages.toList();
   final liveList = liveCandidates.toList();
+  final indexByKey = <String, int>{};
+  for (var i = 0; i < reconciled.length; i++) {
+    final key = _stableLiveKey(reconciled[i]);
+    if (key != null) indexByKey[key] = i;
+  }
   final positionedSnapshotMessages = reconciled.where(
     (message) => message.sessionSeq != null,
   );
@@ -704,7 +709,11 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
             .reduce((left, right) => left > right ? left : right);
   var newestLiveOverlap = -1;
   for (var i = 0; i < liveList.length; i++) {
-    if (reconciled.any((snapshot) => _messagesOverlap(liveList[i], snapshot))) {
+    final key = _stableLiveKey(liveList[i]);
+    final overlaps = key != null
+        ? indexByKey.containsKey(key)
+        : reconciled.any((snapshot) => _messagesOverlap(liveList[i], snapshot));
+    if (overlaps) {
       newestLiveOverlap = i;
     }
   }
@@ -744,9 +753,7 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     final stableKey = _stableLiveKey(live);
     var matchIndex = -1;
     if (stableKey != null) {
-      matchIndex = reconciled.lastIndexWhere(
-        (snapshot) => _stableLiveKey(snapshot) == stableKey,
-      );
+      matchIndex = indexByKey[stableKey] ?? -1;
     } else if (live.type == MessageType.text ||
         live.type == MessageType.thinking ||
         live.type == MessageType.skillInvocation) {
@@ -756,8 +763,24 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
     }
 
     if (matchIndex >= 0) {
+      final previousKey = _stableLiveKey(reconciled[matchIndex]);
       _mergeSnapshotStateIntoLive(live, reconciled[matchIndex]);
       reconciled[matchIndex] = live;
+      final mergedKey = _stableLiveKey(live);
+      if (previousKey != mergedKey &&
+          previousKey != null &&
+          indexByKey[previousKey] == matchIndex) {
+        indexByKey.remove(previousKey);
+        // Legacy text matching can replace a keyed row with a different
+        // identity. Only that rare case needs to search for an earlier copy.
+        final earlier = reconciled.lastIndexWhere(
+          (message) => _stableLiveKey(message) == previousKey,
+        );
+        if (earlier >= 0) indexByKey[previousKey] = earlier;
+      }
+      if (mergedKey != null && (indexByKey[mergedKey] ?? -1) <= matchIndex) {
+        indexByKey[mergedKey] = matchIndex;
+      }
       continue;
     }
     // A reconnect snapshot is a sliding tail page. Entries that were visible
@@ -782,6 +805,7 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
       continue;
     }
     reconciled.add(live);
+    if (stableKey != null) indexByKey[stableKey] = reconciled.length - 1;
   }
   return reconciled;
 }

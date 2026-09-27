@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:pinenacl/x25519.dart';
 import 'secure_storage_service.dart';
+import 'socket_frame_decoder.dart';
 
 /// NaCl box encryption service for relay E2E encryption.
 /// Uses X25519 key agreement + XSalsa20-Poly1305 authenticated encryption.
@@ -16,6 +17,11 @@ class CryptoService {
 
   /// Whether encryption is ready (we have both our keys and the server's)
   bool get isReady => _box != null;
+
+  Future<DecodedSocketFrame?> decodeFrame(
+    Object? frame, {
+    required bool relay,
+  }) => decodeSocketFrame(frame, box: _box, encryptedBinary: relay || isReady);
 
   /// Our public key as base64 (for key exchange)
   String get publicKeyBase64 {
@@ -73,9 +79,7 @@ class CryptoService {
   /// Encrypt a plaintext message. Returns a JSON map with {n: nonce, c: ciphertext}.
   Map<String, String> encrypt(String plaintext) {
     if (_box == null) throw StateError('Encryption not initialized');
-    final encrypted = _box!.encrypt(
-      Uint8List.fromList(utf8.encode(plaintext)),
-    );
+    final encrypted = _box!.encrypt(Uint8List.fromList(utf8.encode(plaintext)));
     return {
       'n': base64Encode(Uint8List.fromList(encrypted.nonce.asTypedList)),
       'c': base64Encode(Uint8List.fromList(encrypted.cipherText.asTypedList)),
@@ -86,7 +90,9 @@ class CryptoService {
   String decrypt(Map<String, dynamic> envelope) {
     if (_box == null) throw StateError('Decryption not initialized');
     final nonce = Uint8List.fromList(base64Decode(envelope['n'] as String));
-    final cipherText = Uint8List.fromList(base64Decode(envelope['c'] as String));
+    final cipherText = Uint8List.fromList(
+      base64Decode(envelope['c'] as String),
+    );
     final decrypted = _box!.decrypt(
       ByteList(cipherText),
       nonce: Uint8List.fromList(nonce),
