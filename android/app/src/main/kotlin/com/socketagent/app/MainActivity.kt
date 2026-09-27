@@ -33,7 +33,7 @@ class MainActivity : FlutterActivity() {
 
         wasAssistIntent = intent?.action == Intent.ACTION_ASSIST ||
                           intent?.action == Intent.ACTION_VOICE_COMMAND
-        pendingDeepLink = sessionDeepLink(intent)
+        pendingDeepLink = appDeepLink(intent)
 
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel!!.setMethodCallHandler { call, result ->
@@ -291,7 +291,7 @@ class MainActivity : FlutterActivity() {
         val isAssist = intent.action == Intent.ACTION_ASSIST ||
                        intent.action == Intent.ACTION_VOICE_COMMAND
         wasAssistIntent = isAssist
-        val deepLink = sessionDeepLink(intent)
+        val deepLink = appDeepLink(intent)
         if (deepLink != null) {
             pendingDeepLink = null
             methodChannel?.invokeMethod("onDeepLink", deepLink)
@@ -301,10 +301,11 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun sessionDeepLink(intent: Intent?): String? {
+    private fun appDeepLink(intent: Intent?): String? {
         if (intent?.action != Intent.ACTION_VIEW) return null
         val uri = intent.data ?: return null
-        if (uri.scheme != "socketagent" || uri.host != "session") return null
+        if (uri.scheme != "socketagent") return null
+        if (uri.host != "session" && !(uri.host == "auth" && uri.path == "/return")) return null
         return uri.toString()
     }
 }

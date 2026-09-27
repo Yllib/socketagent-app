@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:app/screens/settings/voice_speech_screen.dart';
 import 'package:app/services/asr_model_manager.dart';
 import 'package:app/services/chat_provider.dart';
 import 'package:app/services/local_speech_service.dart';
+import 'package:app/services/kokoro_model_manager.dart';
 import 'package:app/services/speech_recognition_settings.dart';
 import 'package:app/services/tts_engine.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +25,22 @@ class _VoiceProvider extends ChangeNotifier implements ChatProvider {
       const SpeechRecognitionSettings(model: AsrModel.moonshineMedium);
   @override
   bool pushToTalk = true;
+  int voiceLoads = 0;
+  Completer<void>? voiceLoading;
+  @override
+  final kokoroModelManager = KokoroModelManager();
+  @override
+  Future<void> setTtsEngineMode(TtsEngineMode mode) async {
+    ttsEngineMode = mode;
+    notifyListeners();
+  }
+
+  @override
+  Future<void> initTtsVoices() async {
+    voiceLoads++;
+    await voiceLoading?.future;
+  }
+
   @override
   bool get autoVoiceOnAssist => false;
   @override
@@ -101,6 +119,7 @@ void main() {
       await tester.tap(find.text('Read aloud'));
       await tester.pumpAndSettle();
       expect(find.text('Device voices'), findsOneWidget);
+      expect(provider.voiceLoads, 1);
       expect(find.text('Speaking speed'), findsNothing);
       await tester.tap(find.text('Voice source'));
       await tester.pumpAndSettle();
@@ -119,6 +138,40 @@ void main() {
       await tester.pumpAndSettle();
       expect(provider.recognitionSettings.model, AsrModel.moonshineMedium);
       expect(provider.pushToTalk, isTrue);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await provider.speech.close();
+      provider.dispose();
+    },
+  );
+  testWidgets(
+    'source can change away from Kokoro while voice loading is stuck',
+    (tester) async {
+      final pending = Completer<void>();
+      final provider = _VoiceProvider()
+        ..voiceLoading = pending
+        ..hasElevenLabsApiKey = true
+        ..ttsEngineMode = TtsEngineMode.kokoroDevice;
+      await tester.pumpWidget(
+        ChangeNotifierProvider<ChatProvider>.value(
+          value: provider,
+          child: const MaterialApp(home: VoiceSpeechScreen()),
+        ),
+      );
+      await tester.tap(find.text('Read aloud'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Voice source'));
+      await tester.pumpAndSettle();
+      expect(find.text('Read-aloud voice source'), findsOneWidget);
+      await tester.tap(find.text('ElevenLabs'));
+      await tester.pumpAndSettle();
+      expect(provider.ttsEngineMode, TtsEngineMode.elevenLabs);
+      await tester.tap(find.text('Voice source'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Device voices'));
+      await tester.pumpAndSettle();
+      expect(provider.ttsEngineMode, TtsEngineMode.system);
+      pending.complete();
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox.shrink());
       await provider.speech.close();
       provider.dispose();

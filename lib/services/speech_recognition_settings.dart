@@ -5,7 +5,13 @@ enum AsrModel {
   zipformer('Zipformer', 'English', null, 0),
   moonshineTiny('Moonshine Tiny', 'English · 45 MB', 'tiny', 2),
   moonshineSmall('Moonshine Small', 'English · 142 MB', 'small', 4),
-  moonshineMedium('Moonshine Medium', 'English · 269 MB', 'medium', 5);
+  moonshineMedium('Moonshine Medium', 'English · 269 MB', 'medium', 5),
+  nemotron(
+    'Nemotron 0.6B',
+    'English · 464 MB download · 8 GB RAM recommended',
+    null,
+    0,
+  );
 
   const AsrModel(
     this.label,

@@ -1,3 +1,4 @@
+import 'resume_context_card.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -1633,6 +1634,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       case MessageType.question:
         if (msg.emailPreview != null) {
           return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);
+        }
+        if (msg.questionId?.startsWith('resume_context_') == true) {
+          return ResumeContextCard(message: msg, onAnswer: widget.onAnswer);
         }
         return QuestionCard(
           message: msg,

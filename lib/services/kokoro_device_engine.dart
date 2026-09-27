@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
@@ -294,7 +295,6 @@ class KokoroDeviceEngine extends TtsEngine {
   StreamSubscription<dynamic>? _activeChunkSubscription;
   Completer<void>? _generationCompleter;
   int _genId = 0;
-
   KokoroDeviceEngine(this._modelManager) {
     _playerSubscriptions.add(
       _player.playerStateStream.listen((state) {
@@ -336,8 +336,13 @@ class KokoroDeviceEngine extends TtsEngine {
 
   bool get isModelLoaded => _isModelReady;
 
+  Future<void>? _initializing;
+
   @override
-  Future<void> initialize() async {
+  Future<void> initialize() =>
+      _initializing ??= _initialize().whenComplete(() => _initializing = null);
+
+  Future<void> _initialize() async {
     if (_isModelReady && _isolateReady) return;
 
     final installed = await _modelManager.isModelInstalled();
@@ -354,10 +359,10 @@ class KokoroDeviceEngine extends TtsEngine {
       debugPrint('[KokoroDevice] No model file found, skipping init');
       return;
     }
-    _isModelReady = true;
     debugPrint('[KokoroDevice] Model: $_modelPath (${activeModel.shortLabel})');
 
     await _spawnIsolate();
+    _isModelReady = _isolateReady;
   }
 
   Future<void> _spawnIsolate() async {
@@ -371,24 +376,31 @@ class KokoroDeviceEngine extends TtsEngine {
       _IsolateInit(_mainReceivePort!.sendPort, _modelDir!, _modelPath!, _isV10),
     );
 
-    final broadcastStream = _mainReceivePort!.asBroadcastStream();
-
-    _isolateSendPort = await broadcastStream.first as SendPort;
-
-    final status = await broadcastStream.first as String;
-    if (status.startsWith('ready:')) {
-      _isolateReady = true;
-      debugPrint('[KokoroDevice] Isolate ready — $status');
-    } else {
-      debugPrint('[KokoroDevice] Isolate failed: $status');
-      _shutdownIsolate();
-      return;
-    }
-
-    // Forward subsequent messages to chunk controller
-    _streamSub = broadcastStream.listen((message) {
-      _chunkController?.add(message);
+    final ready = Completer<void>();
+    _streamSub = _mainReceivePort!.listen((message) {
+      if (message is SendPort) {
+        _isolateSendPort = message;
+      } else if (message is String && message.startsWith('ready:')) {
+        _isolateReady = true;
+        if (!ready.isCompleted) ready.complete();
+      } else if (!ready.isCompleted &&
+          message is String &&
+          message.startsWith('error:')) {
+        ready.completeError(
+          StateError(
+            'The voice model could not load. Try downloading it again.',
+          ),
+        );
+      } else {
+        _chunkController?.add(message);
+      }
     });
+    try {
+      await ready.future.timeout(const Duration(seconds: 90));
+    } catch (_) {
+      _shutdownIsolate();
+      rethrow;
+    }
   }
 
   @override
@@ -399,26 +411,13 @@ class KokoroDeviceEngine extends TtsEngine {
       status: TtsPlaybackStatus.loading,
       text: text,
     );
-    if (!_isModelReady) {
-      await initialize();
-    }
-    if (!_isolateReady) await _spawnIsolate();
-    if (!_isolateReady) {
-      debugPrint('[KokoroDevice] Cannot speak — not ready');
-      _playbackState.value = _playbackState.value.copyWith(
-        status: TtsPlaybackStatus.error,
-        error: 'The on-device speech model is not ready.',
-      );
-      return;
-    }
-
-    final voiceMap = _isV10 ? _voiceIdsV10 : _voiceIdsV019;
-    final sid = voiceMap[_selectedVoice.id] ?? 0;
-    debugPrint(
-      '[KokoroDevice] Speaking: "${text.substring(0, text.length.clamp(0, 60))}..."',
-    );
-
     try {
+      await initialize();
+      if (!_isolateReady) {
+        throw StateError('Download a voice model in Voice & Speech first.');
+      }
+      final voiceMap = _isV10 ? _voiceIdsV10 : _voiceIdsV019;
+      final sid = voiceMap[_selectedVoice.id] ?? 0;
       _isSpeaking = true;
 
       _chunkController = StreamController<dynamic>.broadcast();
@@ -440,7 +439,7 @@ class KokoroDeviceEngine extends TtsEngine {
       );
 
       var playbackStarted = false;
-      final bufferedChunks = <_WavAudioSource>[];
+      final bufferedChunks = <Uint8List>[];
       var playerMutation = Future<void>.value();
 
       // Start on the first sentence chunk. The model still receives the full
@@ -450,16 +449,22 @@ class KokoroDeviceEngine extends TtsEngine {
         if (bufferedChunks.isEmpty) return;
 
         playbackStarted = true;
-        final initialSources = List<_WavAudioSource>.from(bufferedChunks);
+        final initialChunks = List<Uint8List>.from(bufferedChunks);
         bufferedChunks.clear();
         playerMutation = playerMutation.then((_) async {
           debugPrint(
-            '[KokoroDevice] Starting playback with ${initialSources.length} buffered chunks',
+            '[KokoroDevice] Starting playback with ${initialChunks.length} buffered chunks',
           );
-          await _player.setAudioSources([
-            _WavAudioSource(buildTtsLeadInWav()),
-            ...initialSources,
-          ]);
+          if (currentGenId != _genId) return;
+          final sources = [
+            if (Platform.isAndroid) _WavAudioSource(buildTtsLeadInWav()),
+            ...initialChunks.map(_WavAudioSource.new),
+          ];
+          if (currentGenId != _genId) return;
+          await _player
+              .setAudioSources(sources)
+              .timeout(const Duration(seconds: 20));
+          if (currentGenId != _genId) return;
           _emitPlayerState(status: TtsPlaybackStatus.playing);
           unawaited(_player.play());
         });
@@ -474,17 +479,19 @@ class KokoroDeviceEngine extends TtsEngine {
             '[KokoroDevice] Chunk ${message.index} ready (${(message.wavBytes.length / 1024).toStringAsFixed(0)} KB)',
           );
 
-          final source = _WavAudioSource(message.wavBytes);
-
           if (!playbackStarted) {
-            bufferedChunks.add(source);
+            bufferedChunks.add(message.wavBytes);
             startPlayback();
           } else {
             // Serialize playlist mutations. A second generated chunk can arrive
             // while setAudioSources is still preparing the first one; mutating
             // just_audio concurrently can discard the queue or fail silently.
             playerMutation = playerMutation.then((_) async {
+              if (currentGenId != _genId) return;
+              final source = _WavAudioSource(message.wavBytes);
+              if (currentGenId != _genId) return;
               await _player.addAudioSource(source);
+              if (currentGenId != _genId) return;
               if (_player.processingState == ProcessingState.completed) {
                 // Player ran out of chunks and stopped — seek to the new chunk
                 // and resume playback.
@@ -502,9 +509,11 @@ class KokoroDeviceEngine extends TtsEngine {
           startPlayback();
           if (!completer.isCompleted) completer.complete();
         } else if (message is String && message.startsWith('error:')) {
-          debugPrint('[KokoroDevice] Error: $message');
-          startPlayback();
-          if (!completer.isCompleted) completer.complete();
+          if (!completer.isCompleted) {
+            completer.completeError(
+              StateError('Could not generate speech with this voice.'),
+            );
+          }
         }
       });
       _activeChunkSubscription = sub;
@@ -613,11 +622,22 @@ class KokoroDeviceEngine extends TtsEngine {
   /// Reinitialize with a different model variant.
   /// Shuts down the current isolate and spawns a new one.
   Future<void> reinitialize() async {
+    await unload();
+    await initialize();
+  }
+
+  /// Release the model while keeping playback available for a later download.
+  Future<void> unload() async {
+    if (_initializing != null) {
+      try {
+        await _initializing;
+      } catch (_) {}
+    }
+    await stop();
     _shutdownIsolate();
     _isModelReady = false;
     _modelDir = null;
     _modelPath = null;
-    await initialize();
   }
 
   void _shutdownIsolate() {

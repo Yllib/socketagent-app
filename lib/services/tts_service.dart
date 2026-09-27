@@ -51,7 +51,9 @@ class TtsService {
 
   Future<void> initialize() {
     if (_isInitialized) return Future.value();
-    return _initializationFuture ??= _initialize();
+    return _initializationFuture ??= _initialize().whenComplete(
+      () => _initializationFuture = null,
+    );
   }
 
   Future<void> _initialize() async {
@@ -112,31 +114,25 @@ class TtsService {
 
     // Load available voices
     await _loadVoices();
-    final preferredVoiceName = _preferredVoiceName;
-    if (preferredVoiceName != null) {
-      final preferred = _availableVoices.where(
-        (voice) => voice.name == preferredVoiceName,
-      );
-      if (preferred.isNotEmpty) {
-        final voice = preferred.first;
-        await _tts.setVoice({'name': voice.name, 'locale': voice.locale});
-        _selectedVoice = voice;
-      }
+    final voice =
+        _availableVoices
+            .where((v) => v.name == _preferredVoiceName)
+            .firstOrNull ??
+        _availableVoices.firstOrNull;
+    if (voice != null) {
+      await _tts.setVoice({'name': voice.name, 'locale': voice.locale});
+      _selectedVoice = voice;
     }
 
-    // Prime Android audio system with a silent utterance so first real
-    // speak() doesn't lose its opening words to audio focus acquisition.
-    await _tts.setVolume(0.0);
-    await _tts.speak(' ');
-    await Future.delayed(const Duration(milliseconds: 200));
-    await _tts.setVolume(1.0);
-
-    // Android can otherwise begin speech before its audio route is audible.
-    // A short native silent utterance preserves every spoken word while still
-    // allowing the real utterance to start immediately afterward.
-    try {
+    // A whitespace utterance can leave Windows' synthesizer busy indefinitely.
+    // Audio-focus priming and silence are Android-only operations.
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      await _tts.setVolume(0.0);
+      await _tts.speak(' ');
+      await Future.delayed(const Duration(milliseconds: 200));
+      await _tts.setVolume(1.0);
       await _tts.setSilence(220);
-    } catch (_) {}
+    }
 
     _isInitialized = true;
     debugPrint(
@@ -188,9 +184,7 @@ class TtsService {
     if (!_isInitialized) await initialize();
     if (text.trim().isEmpty) return;
 
-    if (_originalText.isNotEmpty) {
-      await _stopPlatform(clearPlayback: false);
-    }
+    await _stopPlatform(clearPlayback: false);
     _originalText = text;
     _segmentText = text;
     _segmentOffset = 0;
@@ -203,7 +197,21 @@ class TtsService {
     );
     _isSpeaking = true;
     await _tts.awaitSpeakCompletion(false);
-    await _tts.speak(text, focus: true);
+    await _speakPlatform(text);
+  }
+
+  Future<void> _speakPlatform(String text) async {
+    try {
+      final result = await _tts.speak(text, focus: true);
+      if (result == 0) throw StateError('The selected voice could not start.');
+    } catch (error) {
+      _isSpeaking = false;
+      _playbackState.value = _playbackState.value.copyWith(
+        status: TtsPlaybackStatus.error,
+        error: 'Could not play speech. Check your voice and audio output.',
+      );
+      rethrow;
+    }
   }
 
   Future<void> pause() async {
@@ -219,7 +227,7 @@ class TtsService {
     _pauseRequested = false;
     _segmentOffset = _characterPosition;
     _emitPlayback(status: TtsPlaybackStatus.loading);
-    await _tts.speak(_segmentText, focus: true);
+    await _speakPlatform(_segmentText);
   }
 
   Future<void> restart() async {
@@ -232,7 +240,7 @@ class TtsService {
     _characterPosition = 0;
     _pauseRequested = false;
     _emitPlayback(status: TtsPlaybackStatus.loading, progress: 0);
-    await _tts.speak(text, focus: true);
+    await _speakPlatform(text);
   }
 
   Future<void> seekToFraction(double fraction) async {
@@ -256,7 +264,7 @@ class TtsService {
     if (wasPlaying) {
       _pauseRequested = false;
       _emitPlayback(status: TtsPlaybackStatus.loading);
-      await _tts.speak(_segmentText, focus: true);
+      await _speakPlatform(_segmentText);
     } else {
       _pauseRequested = true;
       _emitPlayback(status: TtsPlaybackStatus.paused);

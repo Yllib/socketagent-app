@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 
 import 'package:path_provider/path_provider.dart';
 
@@ -261,6 +262,7 @@ class SessionTranscriptCache {
   static const int maxSnapshotBytes = 2 * 1024 * 1024;
 
   final Map<String, Map<String, dynamic>> _memory = {};
+  final Map<String, int> _generations = {};
   final Map<String, Future<void>> _pendingWrites = {};
   final Map<String, Timer> _liveWriteTimers = {};
   Directory? _directory;
@@ -283,6 +285,18 @@ class SessionTranscriptCache {
 
   Map<String, dynamic>? peek(String serverId, String sessionId) {
     return _memory[_key(serverId, sessionId)];
+  }
+
+  String? historyDigest(Map<String, dynamic>? snapshot) {
+    if (resumeCheckpoint(snapshot) == null) return null;
+    final lines = StringBuffer();
+    for (final entry in snapshot!['messages'] as List) {
+      if (entry['entryId'] == null || entry['revision'] == null) return null;
+      lines.writeln(
+        '${entry['sessionSeq']}:${entry['entryId']}:${entry['revision']}',
+      );
+    }
+    return sha256.convert(utf8.encode(lines.toString())).toString();
   }
 
   int? latestSessionSeq(Map<String, dynamic>? snapshot) {
@@ -325,6 +339,7 @@ class SessionTranscriptCache {
 
   Future<Map<String, dynamic>?> load(String serverId, String sessionId) async {
     final key = _key(serverId, sessionId);
+    final generation = _generations[key] ?? 0;
     final inMemory = _memory[key];
     if (inMemory != null) return inMemory;
     try {
@@ -332,6 +347,7 @@ class SessionTranscriptCache {
       final file = File('${directory.path}/${_fileName(key)}');
       if (!await file.exists()) return null;
       final decoded = jsonDecode(await file.readAsString());
+      if ((_generations[key] ?? 0) != generation) return _memory[key];
       if (!isCurrentTranscriptCacheEnvelope(decoded)) {
         await file.delete().catchError((_) => file);
         return null;
@@ -345,7 +361,7 @@ class SessionTranscriptCache {
       final snapshot = Map<String, dynamic>.from(payload);
       _memory[key] = snapshot;
       await file.setLastModified(DateTime.now());
-      return snapshot;
+      return _memory[key];
     } catch (_) {
       return null;
     }
@@ -353,6 +369,7 @@ class SessionTranscriptCache {
 
   Future<void> invalidate(String serverId, String sessionId) async {
     final key = _key(serverId, sessionId);
+    _generations[key] = (_generations[key] ?? 0) + 1;
     _memory.remove(key);
     _liveWriteTimers.remove(key)?.cancel();
     final previousWrite = _pendingWrites[key];
@@ -407,6 +424,7 @@ class SessionTranscriptCache {
     final encoded = jsonEncode(wrapper);
     if (utf8.encode(encoded).length > maxSnapshotBytes) return;
     final key = _key(serverId, sessionId);
+    _generations[key] = (_generations[key] ?? 0) + 1;
     _memory[key] = cachedPayload;
     final previousWrite = _pendingWrites[key];
     final write = _persistAfter(previousWrite, key: key, encoded: encoded);
@@ -445,8 +463,11 @@ class SessionTranscriptCache {
     String sessionId,
     Map<String, dynamic> delta,
   ) async {
-    final current =
-        peek(serverId, sessionId) ?? await load(serverId, sessionId);
+    var current = peek(serverId, sessionId);
+    if (current == null) {
+      await load(serverId, sessionId);
+      current = peek(serverId, sessionId);
+    }
     if (current == null) return;
     await save(
       serverId,
@@ -460,8 +481,11 @@ class SessionTranscriptCache {
     String sessionId,
     Map<String, dynamic> olderPage,
   ) async {
-    final current =
-        peek(serverId, sessionId) ?? await load(serverId, sessionId);
+    var current = peek(serverId, sessionId);
+    if (current == null) {
+      await load(serverId, sessionId);
+      current = peek(serverId, sessionId);
+    }
     if (current == null) return;
     await save(
       serverId,
@@ -476,8 +500,11 @@ class SessionTranscriptCache {
     Map<String, dynamic> entry,
   ) async {
     if (serverId.isEmpty || sessionId.isEmpty) return;
-    final current =
-        peek(serverId, sessionId) ?? await load(serverId, sessionId);
+    var current = peek(serverId, sessionId);
+    if (current == null) {
+      await load(serverId, sessionId);
+      current = peek(serverId, sessionId);
+    }
     if (resumeCheckpoint(current) == null) return;
     final merged = mergeLiveTranscriptCacheEntry(current!, entry);
     if (identical(merged, current)) return;
@@ -486,6 +513,7 @@ class SessionTranscriptCache {
       maxBytes: maxSnapshotBytes - 1024,
     );
     final key = _key(serverId, sessionId);
+    _generations[key] = (_generations[key] ?? 0) + 1;
     _memory[key] = bounded;
 
     // Live tool events often arrive in tight bursts. Update the memory cursor

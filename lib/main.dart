@@ -8,6 +8,7 @@ import 'config/app_distribution.dart';
 import 'services/chat_provider.dart';
 import 'services/desktop_workspace_controller.dart';
 import 'services/desktop_window_service.dart';
+import 'services/desktop_audio.dart';
 import 'widgets/desktop_window_frame.dart';
 import 'services/work_review_repository.dart';
 import 'services/notification_service.dart';
@@ -27,6 +28,7 @@ final routeObserver = RouteObserver<ModalRoute<void>>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  initializeDesktopAudio();
   await _verifyDistribution();
   if (Platform.isWindows) await DesktopWindowService.instance.initialize();
   if (Platform.isAndroid) {
@@ -205,6 +207,15 @@ class _AppLauncherState extends State<AppLauncher>
 
   bool _handleSessionDeepLink(String? value) {
     if (!mounted) return false;
+    final uri = Uri.tryParse(value ?? '');
+    if (uri?.scheme == 'socketagent' &&
+        uri?.host == 'auth' &&
+        uri?.path == '/return') {
+      // Bringing the existing activity forward preserves its sign-in dialog.
+      // The URL never asserts authentication success; only the server can.
+      _navigationIntentVersion++;
+      return true;
+    }
     final link = SessionDeepLink.parse(value);
     if (link == null) return false;
     _navigationIntentVersion++;

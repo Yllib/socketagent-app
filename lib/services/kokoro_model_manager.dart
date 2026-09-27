@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
-import 'download_part.dart';
-import 'resumable_http_download.dart';
+import 'model_archive.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -11,9 +10,12 @@ enum KokoroModel {
 
   String get dirName =>
       this == v10 ? 'kokoro-multi-lang-v1_0' : 'kokoro-en-v0_19';
-  String get label => this == v10
-      ? 'v1.0 — 53 voices, multilingual'
-      : 'v0.19 — 11 voices, English';
+  String get label => this == v10 ? 'v1.0 · Multilingual' : 'v0.19 · English';
+  String get downloadLabel =>
+      this == v10 ? '350 MB download' : '320 MB download';
+  String get archiveSha256 => this == v10
+      ? 'c5f7e2d2caf082bc1d20fb70334a61d99d20b484500aad32e7cf84c128ea3298'
+      : '912804855a04745fa77a30be545b3f9a5d15c4d66db00b88cbcd4921df605ac7';
   String get shortLabel => this == v10 ? 'Kokoro v1.0' : 'Kokoro v0.19';
 }
 
@@ -43,7 +45,12 @@ class KokoroModelManager {
         File('$dir/model.onnx').existsSync() &&
         File('$dir/voices.bin').existsSync() &&
         File('$dir/tokens.txt').existsSync() &&
-        Directory('$dir/espeak-ng-data').existsSync();
+        Directory('$dir/espeak-ng-data').existsSync() &&
+        (model != KokoroModel.v10 ||
+            [
+              'lexicon-us-en.txt',
+              'lexicon-gb-en.txt',
+            ].every((name) => File('$dir/$name').existsSync()));
   }
 
   /// Whether the active model is installed (backwards compat).
@@ -74,186 +81,39 @@ class KokoroModelManager {
     final dir = await modelDirFor(model);
     final p = '$dir/model.onnx';
     if (File(p).existsSync()) return p;
-    // Fallback: try the other model
-    for (final m in KokoroModel.values) {
-      final other = '${await modelDirFor(m)}/model.onnx';
-      if (File(other).existsSync()) return other;
-    }
     return null;
   }
 
-  /// Download a file from the server.
-  Future<void> _downloadFile({
-    required String serverHost,
-    required int serverPort,
-    required String authToken,
-    required String fileName,
-    required String savePath,
-    required String modelDirName,
-    double progressStart = 0.0,
-    double progressEnd = 1.0,
-  }) async {
-    final url = Uri.parse(
-      'http://$serverHost:$serverPort/tts-model?token=$authToken&file=$fileName&model=$modelDirName',
-    );
-    debugPrint('[KokoroModel] Downloading $fileName from $modelDirName');
-
-    if (File(savePath).existsSync()) return;
-    final part = DownloadPart(File('$savePath.part'));
-    await ResumableHttpDownload().download(
-      uri: url,
-      part: part,
-      onProgress: (received, total) {
-        if (total != null && total > 0) {
-          downloadProgress.value =
-              progressStart +
-              (progressEnd - progressStart) *
-                  (received / total).clamp(0.0, 1.0);
-        }
-      },
-    );
-    await part.file.rename(savePath);
-    if (await part.manifest.exists()) await part.manifest.delete();
-  }
-
-  /// Download a specific model version.
-  Future<void> downloadModel({
-    required String serverHost,
-    required int serverPort,
-    required String authToken,
-    KokoroModel model = KokoroModel.v019,
-  }) async {
-    if (_isDownloading) return;
+  /// Public model assets download directly, without a paired server.
+  Future<void> downloadModel({KokoroModel model = KokoroModel.v019}) async {
+    if (_isDownloading) {
+      throw StateError('A voice model is already downloading.');
+    }
     _isDownloading = true;
-    downloadProgress.value = 0.0;
-
+    downloadProgress.value = 0;
     try {
-      final dir = await modelDirFor(model);
-      final targetDir = Directory(dir);
-      targetDir.createSync(recursive: true);
-      await File('$dir/.installing').writeAsString('Installing', flush: true);
-
-      // Download model.onnx (largest)
-      await _downloadFile(
-        serverHost: serverHost,
-        serverPort: serverPort,
-        authToken: authToken,
-        fileName: 'model.onnx',
-        savePath: '$dir/model.onnx',
-        modelDirName: model.dirName,
-        progressStart: 0.0,
-        progressEnd: 0.75,
+      await installModelArchive(
+        uri: Uri.parse(
+          'https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${model.dirName}.tar.bz2',
+        ),
+        directory: Directory(await modelDirFor(model)),
+        sha256Hex: model.archiveSha256,
+        requiredFiles: [
+          'model.onnx',
+          'voices.bin',
+          'tokens.txt',
+          'espeak-ng-data/phontab',
+          if (model == KokoroModel.v10) ...[
+            'lexicon-us-en.txt',
+            'lexicon-gb-en.txt',
+          ],
+        ],
+        onProgress: (value) => downloadProgress.value = value,
       );
-
-      // Download voices.bin
-      await _downloadFile(
-        serverHost: serverHost,
-        serverPort: serverPort,
-        authToken: authToken,
-        fileName: 'voices.bin',
-        savePath: '$dir/voices.bin',
-        modelDirName: model.dirName,
-        progressStart: 0.75,
-        progressEnd: 0.88,
-      );
-
-      // Download tokens.txt
-      await _downloadFile(
-        serverHost: serverHost,
-        serverPort: serverPort,
-        authToken: authToken,
-        fileName: 'tokens.txt',
-        savePath: '$dir/tokens.txt',
-        modelDirName: model.dirName,
-        progressStart: 0.88,
-        progressEnd: 0.89,
-      );
-
-      // Download espeak-ng-data (tar.gz)
-      final espeakTarPath = '$dir/espeak-ng-data.tar.gz';
-      await _downloadFile(
-        serverHost: serverHost,
-        serverPort: serverPort,
-        authToken: authToken,
-        fileName: 'espeak-ng-data',
-        savePath: espeakTarPath,
-        modelDirName: model.dirName,
-        progressStart: 0.89,
-        progressEnd: 0.93,
-      );
-      downloadProgress.value = 0.93;
-      final result = await Process.run('tar', [
-        'xzf',
-        espeakTarPath,
-        '-C',
-        dir,
-      ]);
-      if (result.exitCode != 0) {
-        throw Exception('espeak-ng-data extraction failed: ${result.stderr}');
-      }
-
-      // v1.0 needs lexicon files and dict directory for multilingual support
-      if (model == KokoroModel.v10) {
-        // Download lexicon files
-        for (final lexFile in [
-          'lexicon-us-en.txt',
-          'lexicon-gb-en.txt',
-          'lexicon-zh.txt',
-        ]) {
-          await _downloadFile(
-            serverHost: serverHost,
-            serverPort: serverPort,
-            authToken: authToken,
-            fileName: lexFile,
-            savePath: '$dir/$lexFile',
-            modelDirName: model.dirName,
-            progressStart: 0.93,
-            progressEnd: 0.95,
-          );
-        }
-
-        // Download dict directory (tar.gz, for Chinese text segmentation)
-        final dictTarPath = '$dir/dict.tar.gz';
-        await _downloadFile(
-          serverHost: serverHost,
-          serverPort: serverPort,
-          authToken: authToken,
-          fileName: 'dict',
-          savePath: dictTarPath,
-          modelDirName: model.dirName,
-          progressStart: 0.95,
-          progressEnd: 0.98,
-        );
-        downloadProgress.value = 0.98;
-        final dictResult = await Process.run('tar', [
-          'xzf',
-          dictTarPath,
-          '-C',
-          dir,
-        ]);
-        if (dictResult.exitCode != 0) {
-          throw Exception('dict extraction failed: ${dictResult.stderr}');
-        }
-      }
-
-      if (!File('$dir/model.onnx').existsSync()) {
-        throw Exception('Download completed but model.onnx not found');
-      }
-
-      await File('$dir/.installing').delete();
-      for (final archive in ['espeak-ng-data.tar.gz', 'dict.tar.gz']) {
-        final file = File('$dir/$archive');
-        if (await file.exists()) await file.delete();
-      }
       await setActiveModel(model);
-      debugPrint('[KokoroModel] ${model.shortLabel} installed at $dir');
-      downloadProgress.value = null;
-    } catch (e) {
-      debugPrint('[KokoroModel] Download failed: $e');
-      downloadProgress.value = null;
-      rethrow;
     } finally {
       _isDownloading = false;
+      downloadProgress.value = null;
     }
   }
 

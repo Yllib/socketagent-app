@@ -1,3 +1,4 @@
+import 'outgoing_queue.dart';
 import 'session_teleport.dart';
 import 'package:http/http.dart' as http;
 import 'windows_local_server.dart';
@@ -404,18 +405,6 @@ class _RunningSessionInfo {
   final bool suppressOngoingNotification;
 }
 
-class _PendingPromptDispatch {
-  const _PendingPromptDispatch({
-    required this.messageId,
-    required this.serverId,
-    required this.payload,
-  });
-
-  final String messageId;
-  final String serverId;
-  final Map<String, dynamic> payload;
-}
-
 class _DownloadProgressNotification {
   const _DownloadProgressNotification({
     required this.fileId,
@@ -516,6 +505,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _elevenLabsPreviewLoadingVoiceId;
   String? _elevenLabsVoicesError;
   late TtsEngine _activeTtsEngine;
+  int _ttsSourceChange = 0;
   final NotificationService _notifications = NotificationService();
   final CryptoService _crypto = CryptoService();
   final SecureStorageService _secureStorage = SecureStorageService();
@@ -645,7 +635,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _pushToTalk = false;
   bool _isProcessing = false;
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
-  final Map<String, _PendingPromptDispatch> _pendingPromptDispatches = {};
+  final Map<String, OutgoingRequest> _pendingPromptDispatches = {};
+  final Map<String, int> _serverCommandReceiptVersions = {};
+  String? outgoingQueueError;
+  final OutgoingQueue _outgoingQueue = OutgoingQueue();
+  late final Future<void> _outgoingReady;
+  Timer? _outgoingTimer;
+  String? _draftConversationId;
+  final Map<String, int> _outgoingCancelEpochs = {};
+  bool _drainingOutgoing = false;
+  bool _outgoingDrainRequested = false;
+  bool _outgoingDisposed = false;
+  final Map<String, DateTime> _outgoingSentAt = {};
+  List<OutgoingRequest> get pendingOutgoing =>
+      _pendingPromptDispatches.values.toList();
   DateTime? _currentPromptStartedAt;
   Timer? _promptRuntimeTimer;
   Timer? _initialHistoryTimeout;
@@ -764,6 +767,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   double? _uploadProgress;
   String? _pendingUploadId;
   Completer<String>? _uploadCompleter;
+  final Map<String, Completer<String>> _outgoingUploadCompleters = {};
   // Per-upload state used to drive UI progress, gate the chunk send-loop on
   // server acks (backpressure), and detect stalled uploads.
   final Map<String, _UploadState> _uploadStates = {};
@@ -1295,9 +1299,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (sync) _syncOngoingSessionNotifications();
   }
 
-  void _markSessionIdle(String? sessionId, {String? serverId}) {
+  void _markSessionIdle(
+    String? sessionId, {
+    String? serverId,
+    bool notifyCompletion = true,
+  }) {
     if (sessionId == null || sessionId.isEmpty) return;
-    if (Platform.isWindows) {
+    if (Platform.isWindows && notifyCompletion) {
       final sid = serverId ?? _connMgr.activeServerId ?? '';
       final running =
           _runningSessionNotifications[_runningSessionKey(sid, sessionId)];
@@ -2019,6 +2027,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return sessionId.isEmpty ||
           !_isViewingSession(sessionId, serverId: serverId);
     };
+    _outgoingReady = _restoreOutgoingQueue();
+    _outgoingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
+      unawaited(_drainOutgoingQueue());
+    });
     _loadSettings();
     _setupListeners();
   }
@@ -3257,6 +3269,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             'knownSessionSeq': checkpoint.latestSessionSeq,
             'knownHistoryOffset': checkpoint.historyOffset,
             'knownHistoryEntryCount': checkpoint.entryCount,
+            'knownHistoryDigest': _transcriptCache.historyDigest(
+              cachedSnapshot,
+            ),
           },
         });
         if (sent) {
@@ -3270,10 +3285,243 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _restoreOutgoingQueue() async {
+    try {
+      for (final request in await _outgoingQueue.load()) {
+        _pendingPromptDispatches[request.id] = request;
+      }
+      if (!_outgoingDisposed) {
+        _restoreOutgoingBubbles();
+        notifyListeners();
+      }
+    } catch (error) {
+      outgoingQueueError = 'Saved requests could not be loaded: $error';
+      if (!_outgoingDisposed) notifyListeners();
+    }
+  }
+
+  void _restoreOutgoingBubbles() {
+    for (final request in _pendingPromptDispatches.values) {
+      if (request.payload['type'] != 'prompt' ||
+          request.serverId !=
+              (_activeSessionServerId ?? _connMgr.activeServerId) ||
+          request.payload['sessionId'] != _activeSessionId ||
+          _messages.any((m) => m.id == request.id || m.uuid == request.id)) {
+        continue;
+      }
+      _messages.add(
+        ChatMessage(
+          id: request.id,
+          sender: MessageSender.user,
+          type: MessageType.text,
+          timestamp: request.createdAt,
+          textContent: request.displayText,
+          isPending: true,
+        ),
+      );
+      _pendingLocalUserMessageIds.add(request.id);
+    }
+  }
+
+  Future<bool> _sendDurableCommand(
+    String serverId,
+    Map<String, dynamic> payload,
+    String label,
+  ) async {
+    if (_serverCommandReceiptVersions[serverId] == 0) {
+      return _connMgr.sendToServer(serverId, payload);
+    }
+    final sendKey = '$serverId:${payload['sessionId']}';
+    final sendEpoch = _outgoingCancelEpochs[sendKey] ?? 0;
+    final id =
+        'command_${DateTime.now().microsecondsSinceEpoch}_${payload['type']}';
+    final request = OutgoingRequest(
+      id: id,
+      serverId: serverId,
+      payload: {...payload, 'commandId': id},
+      displayText: label,
+      createdAt: DateTime.now(),
+    );
+    try {
+      await _outgoingReady;
+      await _outgoingQueue.stage(request);
+      if ((_outgoingCancelEpochs[sendKey] ?? 0) != sendEpoch) {
+        await _outgoingQueue.remove(id);
+        return false;
+      }
+      _pendingPromptDispatches[id] = request;
+      notifyListeners();
+      unawaited(_drainOutgoingQueue());
+      return true;
+    } catch (error) {
+      outgoingQueueError = 'Could not save request: $error';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  void _failOutgoing(String id, String reason) {
+    final request = _pendingPromptDispatches[id];
+    if (request == null) return;
+    if (request.error == reason) return;
+    request.error = reason;
+    unawaited(
+      _outgoingQueue.save(request).catchError((Object error) {
+        outgoingQueueError = 'Could not save request status: $error';
+        if (!_outgoingDisposed) notifyListeners();
+      }),
+    );
+    notifyListeners();
+  }
+
+  void _forgetOutgoing(String id) {
+    _pendingPromptDispatches.remove(id);
+    _outgoingSentAt.remove(id);
+    unawaited(
+      _outgoingQueue.remove(id).catchError((Object error) {
+        outgoingQueueError =
+            'A delivered request could not be removed from this device: $error';
+        if (!_outgoingDisposed) notifyListeners();
+      }),
+    );
+    scheduleMicrotask(() => unawaited(_drainOutgoingQueue()));
+  }
+
+  Future<void> discardOutgoing(String id) async {
+    await _outgoingReady;
+    // An already transmitted operation may have started. Discard only stops
+    // retrying delivery; Stop remains the control for running work.
+    _forgetOutgoing(id);
+    _messages.removeWhere((m) => m.id == id && m.isPending);
+    _pendingLocalUserMessageIds.remove(id);
+    notifyListeners();
+  }
+
   void _retryPendingPromptsForServer(String serverId) {
-    for (final pending in _pendingPromptDispatches.values.toList()) {
-      if (pending.serverId != serverId) continue;
-      _connMgr.sendToServer(serverId, pending.payload);
+    _outgoingSentAt.removeWhere(
+      (id, _) => _pendingPromptDispatches[id]?.serverId == serverId,
+    );
+    unawaited(_drainOutgoingQueue());
+  }
+
+  Future<void> _drainOutgoingQueue() async {
+    await _outgoingReady;
+    if (_outgoingDisposed) return;
+    if (_drainingOutgoing) {
+      _outgoingDrainRequested = true;
+      return;
+    }
+    _outgoingDrainRequested = false;
+    _drainingOutgoing = true;
+    try {
+      final destinations = <String>{};
+      for (final request in _pendingPromptDispatches.values.toList()) {
+        final destination =
+            '${request.serverId}:${request.payload['sessionId'] ?? request.payload['clientConversationId'] ?? request.payload['cwd']}';
+        if (!destinations.add(destination)) continue;
+        if (_pendingHardStops.containsKey(
+          _hardStopKey(
+            request.serverId,
+            request.payload['sessionId']?.toString() ?? '',
+          ),
+        )) {
+          continue;
+        }
+        if (request.payload['type'] != 'prompt' &&
+            DateTime.now().difference(request.createdAt) >
+                const Duration(minutes: 2)) {
+          _failOutgoing(
+            request.id,
+            'This request expired. Check the conversation before trying again.',
+          );
+          continue;
+        }
+        if (request.payload['type'] != 'prompt') {
+          final receiptVersion =
+              _serverCommandReceiptVersions[request.serverId];
+          if (receiptVersion == null) continue;
+          if (receiptVersion < 1) {
+            _failOutgoing(
+              request.id,
+              'Update this computer before retrying saved requests.',
+            );
+            continue;
+          }
+        }
+        final ws = _connMgr.getConnection(request.serverId);
+        if (request.error != null || ws?.status != ConnectionStatus.connected) {
+          continue;
+        }
+        final last = _outgoingSentAt[request.id];
+        if (last != null &&
+            DateTime.now().difference(last) < const Duration(seconds: 15)) {
+          continue;
+        }
+        _outgoingSentAt[request.id] = DateTime.now();
+        final bubble =
+            _messages.where((m) => m.id == request.id).firstOrNull ??
+            ChatMessage(
+              id: request.id,
+              sender: MessageSender.user,
+              type: MessageType.text,
+              timestamp: request.createdAt,
+              textContent: request.displayText,
+            );
+        try {
+          for (var i = 0; i < request.files.length; i++) {
+            final file = request.files[i];
+            if (file['serverPath'] != null) continue;
+            file['serverPath'] = await _uploadFromPath(
+              path: file['path'] as String,
+              name: file['name'] as String,
+              progressTarget: bubble,
+              targetServerId: request.serverId,
+              targetSessionId: request.payload['sessionId'] as String?,
+              targetCwd: request.payload['cwd'] as String?,
+              progressBase: i / request.files.length,
+              progressSpan: 1 / request.files.length,
+            );
+            if (!_pendingPromptDispatches.containsKey(request.id)) break;
+            await _outgoingQueue.save(request);
+          }
+          if (!_pendingPromptDispatches.containsKey(request.id)) continue;
+          if (request.files.isNotEmpty &&
+              request.payload['attachmentsPrepared'] != true) {
+            request.payload['text'] =
+                '${request.files.map((f) => '[Attached file: ${f['serverPath']}]').join('\n')}\n${request.payload['text']}';
+            request.payload['attachmentsPrepared'] = true;
+            await _outgoingQueue.save(request);
+          }
+          bubble.uploadProgress = null;
+          if (!_pendingPromptDispatches.containsKey(request.id) ||
+              _outgoingDisposed) {
+            continue;
+          }
+          _pendingCacheUserPromptContent[request.id] =
+              request.payload['text']?.toString() ?? '';
+          final sent = ws!.send(request.payload);
+          if (sent &&
+              request.payload['type'] == 'prompt' &&
+              !_isProcessing &&
+              request.payload['sessionId'] == _activeSessionId &&
+              request.serverId ==
+                  (_activeSessionServerId ?? _connMgr.activeServerId)) {
+            _isProcessing = true;
+            _processingSetAt = DateTime.now();
+            _startPromptRuntime(startedAt: _processingSetAt!);
+          }
+        } catch (error) {
+          // Keep the staged files and prompt for the next connection/attempt.
+          bubble.uploadProgress = null;
+          debugPrint('Outgoing request retained for retry: $error');
+        }
+      }
+    } finally {
+      _drainingOutgoing = false;
+      if (!_outgoingDisposed) {
+        notifyListeners();
+        if (_outgoingDrainRequested) unawaited(_drainOutgoingQueue());
+      }
     }
   }
 
@@ -4313,6 +4561,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'file_chunk',
       'file_complete',
       'file_error',
+      'upload_complete',
+      'upload_progress',
+      'upload_chunk_ack',
       'push_token_registered',
       'push_token_unregistered',
       'push_registration_status',
@@ -4322,6 +4573,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'browser_clipboard',
       'browser_session_error',
       'browser_runtime_install_progress',
+      'command_receipt',
       'prompt_received',
       'prompt_failed',
       'abort_ack',
@@ -4545,6 +4797,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 ? raw.whereType<String>().toList()
                 : <String>['claude'];
             if (serverId != null) {
+              _serverCommandReceiptVersions[serverId] =
+                  (msg['commandReceiptVersion'] as num?)?.toInt() ?? 0;
+              unawaited(_drainOutgoingQueue());
               _captureServerRuntimeInfo(msg, serverId);
               _serverPushCapabilities[serverId] =
                   PushDeliveryCapabilities.fromServerValue(
@@ -5300,10 +5555,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           }
           break;
+        case 'command_receipt':
+          final commandId = msg['commandId']?.toString() ?? '';
+          final pending = _pendingPromptDispatches[commandId];
+          if (pending != null && pending.serverId == serverId) {
+            if (msg['status'] == 'accepted' && pending.error == null) {
+              _forgetOutgoing(commandId);
+            } else if (msg['status'] == 'uncertain' ||
+                msg['status'] == 'conflict') {
+              _failOutgoing(
+                commandId,
+                msg['message']?.toString() ??
+                    'Check the conversation before trying again.',
+              );
+            }
+            notifyListeners();
+          }
+          break;
         case 'prompt_received':
           final receivedMessageId = msg['messageId']?.toString() ?? '';
           if (receivedMessageId.isNotEmpty) {
-            _pendingPromptDispatches.remove(receivedMessageId);
+            if (_pendingPromptDispatches[receivedMessageId]?.serverId ==
+                serverId) {
+              _forgetOutgoing(receivedMessageId);
+            }
             final idx = _messages.indexWhere(
               (message) => message.id == receivedMessageId,
             );
@@ -5322,7 +5597,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               msg['message']?.toString() ?? 'The prompt could not be started';
           var visibleMessageIndex = -1;
           if (failedMessageId.isNotEmpty) {
-            _pendingPromptDispatches.remove(failedMessageId);
+            _failOutgoing(failedMessageId, failureReason);
             _pendingLocalUserMessageIds.remove(failedMessageId);
             _pendingCacheUserPromptContent.remove(failedMessageId);
             visibleMessageIndex = _messages.indexWhere(
@@ -5349,7 +5624,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final reason = msg['message'] as String? ?? 'Message was not sent';
           var removed = false;
           if (failedMsgId.isNotEmpty) {
-            _pendingPromptDispatches.remove(failedMsgId);
+            _failOutgoing(failedMsgId, reason);
             final idx = _messages.indexWhere(
               (m) => m.id == failedMsgId && m.isPending,
             );
@@ -5954,8 +6229,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'upload_complete':
           final uploadId = msg['uploadId'] as String?;
           final serverPath = msg['serverPath'] as String?;
+          final outgoingUpload = _outgoingUploadCompleters[uploadId];
+          if (serverPath != null &&
+              outgoingUpload != null &&
+              !outgoingUpload.isCompleted) {
+            outgoingUpload.complete(serverPath);
+          }
           if (uploadId == _pendingUploadId && serverPath != null) {
-            _uploadCompleter?.complete(serverPath);
+            if (_uploadCompleter?.isCompleted == false) {
+              _uploadCompleter!.complete(serverPath);
+            }
             _uploadCompleter = null;
           }
           if (uploadId != null) {
@@ -9461,10 +9744,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
       notifyListeners();
     });
-    _ws.sendRewindConversation(
-      uuid,
-      sessionId: _activeSessionId,
-      rewindFiles: activeSessionBackend == 'codex' ? false : rewindFiles,
+    unawaited(
+      _sendDurableCommand(
+        _activeSessionServerId ?? _connMgr.activeServerId ?? '',
+        {
+          'type': 'rewind_conversation',
+          'sessionId': _activeSessionId,
+          'userMessageUuid': uuid,
+          'rewindFiles': activeSessionBackend == 'codex' ? false : rewindFiles,
+        },
+        'Rewind conversation',
+      ),
     );
     notifyListeners();
   }
@@ -9484,12 +9774,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (msg['dryRun'] != true && sessionId != null && ownerServerId != null) {
       final key = '$ownerServerId:$sessionId';
       _conversationRewindTimers.remove(key)?.cancel();
-      _conversationRewinds[key] = ConversationRewindStatus(
-        failed: msg['success'] != true,
-        message: msg['success'] == true
-            ? 'Conversation rewound. ${msg['messagesRemoved'] ?? 0} messages removed.'
-            : 'Rewind failed: ${msg['error'] ?? 'Unknown error'}',
-      );
+      if (msg['success'] == true) {
+        _conversationRewinds.remove(key);
+      } else {
+        _conversationRewinds[key] = ConversationRewindStatus(
+          failed: true,
+          message: 'Rewind failed: ${msg['error'] ?? 'Unknown error'}',
+        );
+      }
     }
     if (msg['success'] == true &&
         msg['dryRun'] != true &&
@@ -9505,12 +9797,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     final success = msg['success'] == true;
     final dryRun = msg['dryRun'] == true;
-    final error = msg['error'] as String?;
-    final messagesRemoved = (msg['messagesRemoved'] as num?)?.toInt() ?? 0;
-
     if (dryRun) return; // dry-run previews are not shown as messages
 
     if (success) {
+      if (msg['replayed'] == true) {
+        // A recovered receipt describes an earlier rewind. Remove only that
+        // deleted range; newer messages and active work must remain intact.
+        _initialHistoryRequestId = null;
+        _olderHistoryRequestId = null;
+        _isLoadingMore = false;
+        final retained = (msg['retainedThroughSeq'] as num?)?.toInt();
+        final removed = (msg['removedThroughSeq'] as num?)?.toInt();
+        if (retained != null && removed != null) {
+          _messages.removeWhere(
+            (message) =>
+                message.sessionSeq != null &&
+                message.sessionSeq! > retained &&
+                message.sessionSeq! <= removed,
+          );
+        }
+        notifyListeners();
+        return;
+      }
       if (msg['rewindIncludesTarget'] == true) {
         // The following authoritative history must not merge removed cards back.
         _subagentTasks.clear();
@@ -9533,33 +9841,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
         }
       }
-      if (msg['rewindIncludesTarget'] == true) _messages.clear();
+      final retainedIds = _messages.map((message) => message.id).toSet();
+      _pendingLocalUserMessageIds.retainAll(retainedIds);
+      _pendingCacheUserPromptContent.removeWhere(
+        (id, _) => !retainedIds.contains(id),
+      );
+      _markSessionIdle(
+        sessionId,
+        serverId: ownerServerId,
+        notifyCompletion: false,
+      );
+      _sessionLiveState.setRunning(ownerServerId, sessionId, false);
       _isProcessing = false;
       _stopPromptRuntime();
       _clearLiveMessageStreams();
-      _messages.add(
-        ChatMessage(
-          id: 'rewind_conv_${DateTime.now().microsecondsSinceEpoch}',
-          sender: MessageSender.system,
-          type: MessageType.taskNotification,
-          timestamp: DateTime.now(),
-          textContent:
-              'Conversation rewound ($messagesRemoved messages removed)',
-          toolName: 'success',
-        ),
-      );
-    } else {
-      _messages.add(
-        ChatMessage(
-          id: 'rewind_conv_${DateTime.now().microsecondsSinceEpoch}',
-          sender: MessageSender.system,
-          type: MessageType.taskNotification,
-          timestamp: DateTime.now(),
-          textContent:
-              'Conversation rewind failed: ${error ?? 'unknown error'}',
-          toolName: 'failed',
-        ),
-      );
     }
     notifyListeners();
   }
@@ -9598,7 +9893,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (clientMessageId != null && clientMessageId.isNotEmpty) {
       final idx = _messages.indexWhere((m) => m.id == clientMessageId);
       if (idx >= 0) {
-        _pendingPromptDispatches.remove(clientMessageId);
+        _forgetOutgoing(clientMessageId);
         _messages[idx].uuid = uuid;
         applyTranscriptPosition(_messages[idx], msg);
         _messages = orderByTranscriptPosition(_messages);
@@ -9645,7 +9940,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           (arrived == null ||
               (m.type == arrived.type &&
                   m.textContent == arrived.textContent))) {
-        _pendingPromptDispatches.remove(m.id);
+        _forgetOutgoing(m.id);
         m.uuid = uuid;
         applyTranscriptPosition(m, msg);
         _messages = orderByTranscriptPosition(_messages);
@@ -9965,6 +10260,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           return leftSequence.compareTo(rightSequence);
         });
     final offset = (msg['offset'] as num?)?.toInt() ?? 0;
+    final isRewind = msg['historyKind'] == 'rewind';
     final isDelta = decision.kind == SessionHistoryKind.delta;
     final isAppend = decision.kind == SessionHistoryKind.append || isDelta;
     final isPrepend = decision.kind == SessionHistoryKind.older;
@@ -11094,7 +11390,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Appends add newer events and must not move the boundary of the oldest
     // page already in memory. Moving it here makes the next pagination request
     // fetch a recent/duplicate slice instead of the preceding page.
-    if (!isAppend) {
+    if (msg['receiptReplay'] == true) {
+      _historyOffset = _historyOffset.clamp(0, offset).toInt();
+      _isLoadingHistory = false;
+    } else if (isRewind) {
+      _historyOffset = _messages.isEmpty
+          ? offset
+          : _historyOffset.clamp(0, offset).toInt();
+    } else if (!isAppend) {
       _historyOffset = offset;
     } else if (isDelta && msg['offset'] is num) {
       // Preserve the oldest cached boundary. A delta begins after the cached
@@ -11145,6 +11448,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Prepend older messages before existing ones
       _messages = [...loaded, ..._messages];
       _isLoadingMore = false;
+    } else if (isRewind) {
+      _messages = reconcileRewoundTranscript(
+        loaded,
+        liveBeforeSnapshot,
+        firstSnapshotSeq: rawMessages.isEmpty
+            ? null
+            : (rawMessages.first['sessionSeq'] as num?)?.toInt(),
+      );
+      _backgroundTasks
+        ..clear()
+        ..addAll(historyBackgroundTasks);
+      _subagentTasks.clear();
+      _workflowTasks
+        ..clear()
+        ..addAll(historyWorkflowTasks);
+      _isLoadingHistory = false;
     } else {
       // Initial load — replace
       // Reconcile the full visible live transcript. ChatMessage timestamps
@@ -11209,7 +11528,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _messages = dedupeNativeLiveAssistantTwins(
       preservePositionedTranscriptMembership(
         orderByTranscriptPosition(dedupeStableTranscriptMessages(_messages)),
-        liveBeforeSnapshot,
+        isRewind ? const [] : liveBeforeSnapshot,
       ),
     );
     _recountPendingInjectedMessages();
@@ -11297,6 +11616,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
+    _restoreOutgoingBubbles();
     _ensurePendingHardStopCard(
       historySessionId,
       serverId: serverId ?? _activeSessionServerId,
@@ -11538,165 +11858,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    // Snapshot the entire composer queue. Values remain memory-only until the
-    // server acknowledges storage, and are never included in prompt/history.
     final fileAttachments = [..._pendingFileAttachments];
     final secretAttachments = [..._pendingSecretAttachments];
-    final attachmentCount = fileAttachments.length + secretAttachments.length;
-    final hasAttachmentsForSend = attachmentCount > 0;
-
-    // Show the user's message immediately (original text only)
+    final promptServerId =
+        _activeSessionServerId ?? _connMgr.activeServerId ?? '';
+    if (promptServerId.isEmpty) return;
+    // Capture routing and model choices before waiting for disk or uploads.
     final displayText = text.trim().isEmpty
-        ? [
-            if (fileAttachments.isNotEmpty)
-              '📎 ${fileAttachments.length} ${fileAttachments.length == 1 ? "file" : "files"}',
-            if (secretAttachments.isNotEmpty)
-              '🔐 ${secretAttachments.length} ${secretAttachments.length == 1 ? "secret" : "secrets"}',
-          ].join(' · ')
+        ? 'Attached files or secrets'
         : text;
-    final userMsg = _buildUserDisplayMessage(displayText);
-    _pendingLocalUserMessageIds.add(userMsg.id);
-    // Every prompt remains visibly pending until the server acknowledges that
-    // it accepted this exact message ID. A successful socket write is not a
-    // delivery receipt and reconnects may occur between the two.
-    userMsg.isPending = true;
-    // Mark as pending if injecting with non-immediate priority OR if we're
-    // about to spend time uploading. The bubble renders pending state with
-    // reduced opacity + a progress indicator while the file streams up.
-    if (priority != null && _isProcessing) {
-      userMsg.isPending = true;
-      userMsg.injectionPriority = priority;
-      _pendingInjectedMessageCount++;
-    }
-    if (hasAttachmentsForSend) {
-      userMsg.isPending = true;
-      if (fileAttachments.isNotEmpty) {
-        userMsg.uploadProgress = 0.0;
-        userMsg.uploadFileName = fileAttachments.length == 1
-            ? fileAttachments.first.name
-            : '${fileAttachments.length} files';
-      }
-    }
-    _messages.add(userMsg);
-    // Don't null _currentStreamingMessage here — if Claude is mid-stream,
-    // let it keep appending to the existing message at its current position
-    // (before the user message). It gets cleared by _handleResult when the
-    // turn ends, so the response to the injected message starts fresh.
-    _isProcessing = true;
-    final promptStartedAt = DateTime.now();
-    _processingSetAt = promptStartedAt;
-    _startPromptRuntime(startedAt: promptStartedAt);
-    _promptSuggestions = [];
-
-    // The queue is now committed to this bubble. Do not clear the snapshotted
-    // secret values until each has either been stored or the send has failed.
-    _pendingFileAttachments.clear();
-    _pendingSecretAttachments.clear();
-    _uploadProgress = null;
-    _pendingUploadId = null;
-    notifyListeners();
-
-    String prompt = text;
-    final uploadedPaths = <String>[];
-    final attachedSecrets = <SecretMetadata>[];
-    final attachmentCards = <ChatMessage>[];
-
-    if (hasAttachmentsForSend) {
-      try {
-        for (var i = 0; i < fileAttachments.length; i++) {
-          final attachment = fileAttachments[i];
-          if (!attachment.exists) {
-            throw Exception('File is no longer available: ${attachment.name}');
-          }
-          final count = fileAttachments.length;
-          final serverPath = await _uploadFromPath(
-            path: attachment.path,
-            name: attachment.name,
-            progressTarget: userMsg,
-            progressBase: count == 0 ? 0 : i / count,
-            progressSpan: count == 0 ? 1 : 1 / count,
-          );
-          uploadedPaths.add(serverPath);
-          attachmentCards.add(
-            ChatMessage(
-              id: 'upload_${DateTime.now().microsecondsSinceEpoch}_$i',
-              sender: MessageSender.system,
-              type: MessageType.taskNotification,
-              timestamp: DateTime.now(),
-              textContent: 'Uploaded: ${serverPath.split('/').last}',
-              toolName: 'uploaded',
-            ),
-          );
-        }
-
-        for (var i = 0; i < secretAttachments.length; i++) {
-          final attachment = secretAttachments[i];
-          final metadata =
-              attachment.metadata ??
-              await storeSecureInput(
-                label: attachment.label,
-                value: attachment.value,
-                scope: attachment.scope,
-                envHint: attachment.envHint,
-              );
-          attachment.clearValue();
-          attachedSecrets.add(metadata);
-          _resolveMatchingSecureInput(metadata);
-          attachmentCards.add(
-            ChatMessage(
-              id: 'secret_attach_${DateTime.now().microsecondsSinceEpoch}_$i',
-              sender: MessageSender.system,
-              type: MessageType.taskNotification,
-              timestamp: DateTime.now(),
-              textContent:
-                  'Attached secret: ${metadata.label} (${metadata.scope})',
-              toolName: 'secure_attached',
-            ),
-          );
-        }
-
-        final prefixes = <String>[
-          for (final serverPath in uploadedPaths)
-            '[Attached file: $serverPath]',
-          for (final secret in attachedSecrets)
-            '[Attached secret: ${jsonEncode({'label': secret.label, 'scope': secret.scope, 'envHint': secret.envHint, 'filePath': secret.filePath})}]',
-        ];
-        prompt = '${prefixes.join('\n')}\n$prompt';
-
-        final idx = _messages.indexOf(userMsg);
-        if (idx >= 0) {
-          _messages.insertAll(idx, attachmentCards);
-        } else {
-          _messages.addAll(attachmentCards);
-        }
-      } catch (e) {
-        for (final secret in secretAttachments) {
-          secret.clearValue();
-        }
-        _pendingLocalUserMessageIds.remove(userMsg.id);
-        userMsg.isPending = false;
-        userMsg.uploadProgress = null;
-        _messages.add(ChatMessage.error('Attachment failed: $e'));
-        _isProcessing = false;
-        _stopPromptRuntime();
-        notifyListeners();
-        return;
-      }
-      userMsg.uploadProgress = null;
-    }
-
-    _dropLegacyCancelPrepends();
-    if (_pendingPrepends.isNotEmpty) {
-      final prefix = _pendingPrepends.join('\n');
-      prompt = '$prefix\n$prompt';
-      _clearPrepends();
-    }
-
-    _pendingCacheUserPromptContent[userMsg.id] = prompt;
+    final userMsg = _buildUserDisplayMessage(displayText)..isPending = true;
     final useCodexFastMode = _activeSessionBackend == 'codex' && _codexFastMode;
     final promptPayload = <String, dynamic>{
       'type': 'prompt',
-      'text': prompt,
+      'text': text,
+      'commandId': userMsg.id,
+      if (_activeSessionId == null)
+        'clientConversationId': _draftConversationId ??= 'draft_${userMsg.id}',
       if (_activeSessionId != null) 'sessionId': _activeSessionId,
       if (priority != null) 'priority': priority,
       'messageId': userMsg.id,
@@ -11723,17 +11901,91 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           },
         },
     };
-    final promptServerId =
-        _activeSessionServerId ?? _connMgr.activeServerId ?? '';
-    _pendingPromptDispatches[userMsg.id] = _PendingPromptDispatch(
-      messageId: userMsg.id,
-      serverId: promptServerId,
-      payload: promptPayload,
-    );
-    _sendToActiveSessionServer(promptPayload);
-
-    // Upload is complete, but the bubble stays pending until prompt_received.
-    userMsg.uploadProgress = null;
+    final sendKey = '$promptServerId:${promptPayload['sessionId']}';
+    final sendEpoch = _outgoingCancelEpochs[sendKey] ?? 0;
+    _pendingLocalUserMessageIds.add(userMsg.id);
+    if (priority != null && _isProcessing) userMsg.injectionPriority = priority;
+    _messages.add(userMsg);
+    _promptSuggestions = [];
+    _pendingFileAttachments.clear();
+    _pendingSecretAttachments.clear();
+    _dropLegacyCancelPrepends();
+    if (_pendingPrepends.isNotEmpty) {
+      promptPayload['text'] =
+          '${_pendingPrepends.join('\n')}\n${promptPayload['text']}';
+      _clearPrepends();
+    }
+    notifyListeners();
+    try {
+      // Secret values never enter the disk outbox. Store them through the
+      // protected channel first; persist only the returned references.
+      final prefixes = <String>[];
+      for (final attachment in secretAttachments) {
+        final metadata =
+            attachment.metadata ??
+            await storeSecureInput(
+              label: attachment.label,
+              value: attachment.value,
+              scope: attachment.scope,
+              envHint: attachment.envHint,
+              targetServerId: promptServerId,
+              targetSessionId: promptPayload['sessionId'] as String?,
+              targetCwd: promptPayload['cwd'] as String?,
+            );
+        attachment.clearValue();
+        _resolveMatchingSecureInput(metadata);
+        final index = _messages.indexOf(userMsg);
+        if (index >= 0) {
+          _messages.insert(
+            index,
+            ChatMessage(
+              id: 'secret_attach_${DateTime.now().microsecondsSinceEpoch}',
+              sender: MessageSender.system,
+              type: MessageType.taskNotification,
+              timestamp: DateTime.now(),
+              textContent:
+                  'Attached secret: ${metadata.label} (${metadata.scope})',
+              toolName: 'secure_attached',
+            ),
+          );
+        }
+        prefixes.add(
+          '[Attached secret: ${jsonEncode({'label': metadata.label, 'scope': metadata.scope, 'envHint': metadata.envHint, 'filePath': metadata.filePath})}]',
+        );
+      }
+      if (prefixes.isNotEmpty) {
+        promptPayload['text'] =
+            '${prefixes.join('\n')}\n${promptPayload['text']}';
+      }
+      final request = OutgoingRequest(
+        id: userMsg.id,
+        serverId: promptServerId,
+        payload: promptPayload,
+        displayText: displayText,
+        createdAt: userMsg.timestamp,
+        files: [
+          for (final file in fileAttachments)
+            {'path': file.path, 'name': file.name},
+        ],
+      );
+      await _outgoingReady;
+      await _outgoingQueue.stage(request);
+      if ((_outgoingCancelEpochs[sendKey] ?? 0) != sendEpoch) {
+        await _outgoingQueue.remove(request.id);
+        userMsg.isPending = false;
+        _pendingLocalUserMessageIds.remove(userMsg.id);
+        return;
+      }
+      _pendingPromptDispatches[userMsg.id] = request;
+      await _drainOutgoingQueue();
+    } catch (error) {
+      userMsg.isPending = false;
+      _pendingLocalUserMessageIds.remove(userMsg.id);
+      _messages.add(ChatMessage.error('Message could not be saved: $error'));
+      for (final secret in secretAttachments) {
+        secret.clearValue();
+      }
+    }
     notifyListeners();
   }
 
@@ -11749,6 +12001,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final text = _messages[idx].textContent;
     _messages.removeAt(idx);
+    _forgetOutgoing(messageId);
     if (_pendingInjectedMessageCount > 0) {
       _pendingInjectedMessageCount--;
     }
@@ -11849,36 +12102,37 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required ChatMessage progressTarget,
     double progressBase = 0,
     double progressSpan = 1,
+    String? targetServerId,
+    String? targetSessionId,
+    String? targetCwd,
   }) async {
     final file = File(path);
     final fileSize = await file.length();
-    final ws = _sessionWs;
+    final ws = targetServerId == null
+        ? _sessionWs
+        : _connMgr.getConnection(targetServerId)!;
     final binary = ws.serverSupportsBinary;
-    // 1MB binary chunks: small enough to not blow up the OS TCP buffer on
-    // cellular, big enough that NaCl/JSON overhead per chunk stays a small
-    // fraction. 512KB on the legacy base64 path keeps the relay's 16MB
-    // payload limit comfortably out of reach.
-    final chunkSize = binary ? 1 * 1024 * 1024 : 512 * 1024;
+    final chunkSize = binary ? 1024 * 1024 : 512 * 1024;
     final totalChunks = (fileSize / chunkSize)
         .ceil()
         .clamp(1, double.infinity)
         .toInt();
     final uploadId = DateTime.now().microsecondsSinceEpoch.toString();
-    _pendingUploadId = uploadId;
     final completer = Completer<String>();
-    _uploadCompleter = completer;
-
-    // Progress state is independent from the transport acknowledgement gate:
-    // UI updates stay throttled while the gate below bounds queued file data.
+    completer.future.ignore();
+    final input = await file.open();
+    final ackGate = UploadAckGate(enabled: ws.serverSupportsUploadAcks);
+    _uploadAckGates[uploadId] = ackGate;
+    // Session navigation clears composer state. An upload owns its completion
+    // independently, so navigating cannot disconnect this waiter from its reply.
+    _outgoingUploadCompleters[uploadId] = completer;
     final state = _UploadState(
       target: progressTarget,
       progressBase: progressBase,
       progressSpan: progressSpan,
       onStall: () {
         if (!completer.isCompleted) {
-          completer.completeError(
-            Exception('Upload stalled — no progress from the computer for 30s'),
-          );
+          completer.completeError(TimeoutException('Upload interrupted'));
         }
       },
     );
@@ -11886,34 +12140,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _uploadStates[uploadId] = state;
       state.start();
     }
-    final ackGate = UploadAckGate(enabled: ws.serverSupportsUploadAcks);
-    _uploadAckGates[uploadId] = ackGate;
-
-    final started = ws.send({
-      'type': 'upload_start',
-      'uploadId': uploadId,
-      'fileName': name,
-      'fileSize': fileSize,
-      'totalChunks': totalChunks,
-      'chunkSize': chunkSize,
-      if (_activeSessionId != null) 'sessionId': _activeSessionId,
-      if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
-    });
-    if (!started) {
-      _uploadAckGates.remove(uploadId)?.dispose();
-      throw StateError('File upload transport is not connected');
-    }
-
-    debugPrint(
-      '[Upload] start id=$uploadId chunks=$totalChunks size=$fileSize binary=$binary bulk=${ws.bulkLaneReady}',
-    );
-    final input = await file.open();
     try {
+      if (!ws.send({
+        'type': 'upload_start',
+        'uploadId': uploadId,
+        'fileName': name,
+        'fileSize': fileSize,
+        'totalChunks': totalChunks,
+        'chunkSize': chunkSize,
+        if (targetSessionId != null) 'sessionId': targetSessionId,
+        if (targetCwd != null) 'cwd': targetCwd,
+      })) {
+        throw StateError('File upload transport is not connected');
+      }
       for (var i = 0; i < totalChunks; i++) {
-        if (i % 10 == 0 || i == totalChunks - 1) {
-          debugPrint('[Upload] sending chunk $i/$totalChunks');
-        }
-
         final chunk = await input.read(chunkSize);
         final sent = binary
             ? ws.sendUploadChunkBinary(
@@ -11927,29 +12167,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 'chunkIndex': i,
                 'data': base64Encode(chunk),
               });
-        if (!sent) {
-          throw StateError('File upload lane disconnected at chunk $i');
-        }
+        if (!sent) throw StateError('File upload disconnected');
         if (!binary) {
-          // Legacy fallback: drive spinner from chunk-loop iteration so it's
-          // not stuck at 0 when the server isn't emitting progress events.
           progressTarget.uploadProgress =
               progressBase + ((i + 1) / totalChunks) * progressSpan;
-          notifyListeners();
+          if (!_outgoingDisposed) notifyListeners();
         }
         await ackGate.waitForWindow(i + 1);
       }
-    } catch (_) {
-      _uploadAckGates.remove(uploadId)?.dispose();
-      rethrow;
+      return await completer.future.timeout(const Duration(seconds: 45));
     } finally {
       await input.close();
+      state.dispose();
+      _uploadStates.remove(uploadId);
+      _uploadAckGates.remove(uploadId)?.dispose();
+      _outgoingUploadCompleters.remove(uploadId);
     }
-
-    // No wall-clock timeout — completion is gated by server `upload_complete`
-    // (success) or the stall detector inside `state` (failure after 30s
-    // without a progress event).
-    return completer.future;
   }
 
   Future<void> abortQuery() async {
@@ -11965,6 +12198,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _activeSessionServerId ??
         _connMgr.activeServerId ??
         '';
+    final sendKey = '$serverId:$sessionId';
+    _outgoingCancelEpochs[sendKey] = (_outgoingCancelEpochs[sendKey] ?? 0) + 1;
+    await _outgoingReady;
+    for (final request in _pendingPromptDispatches.values.toList()) {
+      if (request.serverId == serverId &&
+          request.payload['sessionId'] == sessionId) {
+        _forgetOutgoing(request.id);
+      }
+    }
     final key = _hardStopKey(serverId, sessionId);
     final existing = _pendingHardStops[key];
     if (existing != null) {
@@ -12177,7 +12419,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void answerQuestion(String questionId, Map<String, String> answers) {
+  Future<void> answerQuestion(
+    String questionId,
+    Map<String, String> answers,
+  ) async {
     // Check if this is an outlook auth answer
     if (questionId.startsWith('outlook_auth_')) {
       submitOutlookAuth(questionId, answers);
@@ -12194,15 +12439,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           (m.type == MessageType.question ||
               m.type == MessageType.elicitationUrl),
     );
-    if (idx >= 0) {
-      _messages[idx].answered = true;
-      _messages[idx].answers = Map<String, String>.from(answers);
+    final message = idx >= 0 ? _messages[idx] : null;
+    final queued = await _sendDurableCommand(
+      _activeSessionServerId ?? _connMgr.activeServerId ?? '',
+      {
+        'type': 'answer',
+        'sessionId': _activeSessionId,
+        'questionId': questionId,
+        'answers': answers,
+      },
+      'Answer: ${answers.values.join(', ')}',
+    );
+    if (queued && message != null) {
+      message.answered = true;
+      message.answers = Map<String, String>.from(answers);
     }
-    _sendToActiveSessionServer({
-      'type': 'answer',
-      'questionId': questionId,
-      'answers': answers,
-    });
     notifyListeners();
   }
 
@@ -12285,6 +12536,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String value,
     String scope = 'session',
     String? envHint,
+    String? targetServerId,
+    String? targetSessionId,
+    String? targetCwd,
   }) async {
     if (label.trim().isEmpty || value.isEmpty) {
       throw ArgumentError('Label and secret value are required');
@@ -12292,7 +12546,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final requestId = 'secret_create_${DateTime.now().microsecondsSinceEpoch}';
     final completer = Completer<SecretMetadata>();
     _secretWriteCompleters[requestId] = completer;
-    _sendToActiveSessionServer({
+    final payload = <String, dynamic>{
       'type': 'secure_input_store',
       'label': label.trim(),
       'value': value,
@@ -12300,9 +12554,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'clientRequestId': requestId,
       if (envHint != null && envHint.trim().isNotEmpty)
         'envHint': envHint.trim(),
-      if (_activeSessionId != null) 'sessionId': _activeSessionId,
-      if (_activeSessionCwd != null) 'cwd': _activeSessionCwd,
-    });
+      if ((targetSessionId ?? _activeSessionId) != null)
+        'sessionId': targetServerId != null
+            ? targetSessionId
+            : _activeSessionId,
+      if ((targetCwd ?? _activeSessionCwd) != null)
+        'cwd': targetServerId != null ? targetCwd : _activeSessionCwd,
+    };
+    if (targetServerId != null) {
+      _connMgr.sendToServer(targetServerId, payload);
+    } else {
+      _sendToActiveSessionServer(payload);
+    }
     return completer.future.timeout(
       const Duration(seconds: 30),
       onTimeout: () {
@@ -12689,6 +12952,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _activeSessionCwd = effectiveCwd;
     _activeSessionTitle = 'Untitled';
+    _draftConversationId = 'draft_${DateTime.now().microsecondsSinceEpoch}';
     final msg = <String, dynamic>{
       'type': 'new_session',
       if (effectiveCwd != null) 'cwd': effectiveCwd,
@@ -13904,6 +14168,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'knownSessionSeq': checkpoint.latestSessionSeq,
         'knownHistoryOffset': checkpoint.historyOffset,
         'knownHistoryEntryCount': checkpoint.entryCount,
+        'knownHistoryDigest': _transcriptCache.historyDigest(cachedSnapshot),
       },
     };
     bool resumeSent;
@@ -14073,6 +14338,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'knownSessionSeq': checkpoint.latestSessionSeq,
         'knownHistoryOffset': checkpoint.historyOffset,
         'knownHistoryEntryCount': checkpoint.entryCount,
+        'knownHistoryDigest': _transcriptCache.historyDigest(snapshot),
       },
     };
     // Reuse a validated cache cursor so retrying does not resend the whole
@@ -15324,12 +15590,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void compactCodexThread(String sessionId) {
     final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
-    final msg = {'type': 'compact_context', 'sessionId': sessionId};
-    if (session != null && session.serverId.isNotEmpty) {
-      _connMgr.sendToServer(session.serverId, msg);
-    } else {
-      _ws.send(msg);
-    }
+    unawaited(
+      _sendDurableCommand(
+        session?.serverId ??
+            _activeSessionServerId ??
+            _connMgr.activeServerId ??
+            '',
+        {'type': 'compact_context', 'sessionId': sessionId},
+        'Compact conversation',
+      ),
+    );
   }
 
   void rollbackCodexThread(String sessionId, {int numTurns = 1}) {
@@ -15848,8 +16118,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         }
       }());
     }
-    // Always pre-load on-device engine so isolate is warm when needed
-    _kokoroDeviceEngine.initialize();
+    // Models load on first playback; opening settings must not start inference.
     // Restore saved voice
     final prefs = await SharedPreferences.getInstance();
     final savedVoice = prefs.getString('tts_voice');
@@ -15881,12 +16150,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (!_elevenLabsEnabled || !_elevenLabsEngine.hasApiKey)) {
       throw StateError('Add an ElevenLabs API key and enable it first.');
     }
+    final change = ++_ttsSourceChange;
+    final previous = _activeTtsEngine;
+    // Unused players need no cleanup. A stalled native player must not prevent
+    // choosing another source, and a newer choice always wins.
+    Future<void> stopSpeech(Future<void> Function() stop) async {
+      try {
+        await stop().timeout(const Duration(seconds: 2));
+      } catch (error) {
+        debugPrint('[TTS] Source-change cleanup failed: $error');
+      }
+    }
+
+    await Future.wait([
+      if (previous.isSpeaking ||
+          previous.playbackState.value.status != TtsPlaybackStatus.idle)
+        stopSpeech(previous.stop),
+      if (_elevenLabsPreviewLoadingVoiceId != null)
+        stopSpeech(stopElevenLabsVoicePreview),
+    ]);
+    if (change != _ttsSourceChange) return;
     _ttsEngineMode = mode;
-    // Stop any current speech
-    await _systemEngine.stop();
-    await _kokoroServerEngine.stop();
-    await _kokoroDeviceEngine.stop();
-    await _elevenLabsEngine.stop();
     switch (mode) {
       case TtsEngineMode.system:
         _activeTtsEngine = _systemEngine;
@@ -15896,11 +16180,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         break;
       case TtsEngineMode.kokoroDevice:
         _activeTtsEngine = _kokoroDeviceEngine;
-        _kokoroDeviceEngine.initialize();
         break;
       case TtsEngineMode.elevenLabs:
         _activeTtsEngine = _elevenLabsEngine;
-        await _elevenLabsEngine.initialize();
+        unawaited(_elevenLabsEngine.initialize());
         break;
     }
     // Sync to server
@@ -15947,15 +16230,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       throw StateError('Enter your ElevenLabs API key first.');
     }
     _elevenLabsEnabled = enabled;
+    final switchSource = enabled
+        ? setTtsEngineMode(TtsEngineMode.elevenLabs)
+        : _ttsEngineMode == TtsEngineMode.elevenLabs
+        ? setTtsEngineMode(TtsEngineMode.system)
+        : Future<void>.value();
+    notifyListeners();
+    await switchSource;
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('elevenlabs_enabled', enabled);
-    if (enabled) {
-      await setTtsEngineMode(TtsEngineMode.elevenLabs);
-    } else if (_ttsEngineMode == TtsEngineMode.elevenLabs) {
-      await setTtsEngineMode(TtsEngineMode.system);
-    } else {
-      notifyListeners();
-    }
+    await prefs.setBool('elevenlabs_enabled', _elevenLabsEnabled);
   }
 
   Future<void> setElevenLabsModel(ElevenLabsModel model) async {
@@ -16035,11 +16318,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await prefs.setString('kokoro_voice', voice.id);
   }
 
-  /// Get a direct server's connection details for HTTP model downloads.
-  ({String host, int port, String token})? _getDirectServer() {
-    return _getDirectServerFor();
-  }
-
+  /// Direct connection details for file downloads.
   ({String host, int port, String token})? _getDirectServerFor([
     String? serverId,
   ]) {
@@ -16101,16 +16380,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> downloadKokoroModel([
     KokoroModel model = KokoroModel.v019,
   ]) async {
-    final server = _getDirectServer();
-    if (server == null) {
-      throw Exception('No direct computer configured for model download');
-    }
-    await _kokoroModelManager.downloadModel(
-      serverHost: server.host,
-      serverPort: server.port,
-      authToken: server.token,
-      model: model,
-    );
+    await _kokoroModelManager.downloadModel(model: model);
     // After download, initialize/reinitialize the device engine
     await _kokoroDeviceEngine.reinitialize();
     notifyListeners();
@@ -16130,7 +16400,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> deleteKokoroModel() async {
-    _kokoroDeviceEngine.dispose();
+    await _kokoroDeviceEngine.unload();
     await _kokoroModelManager.deleteModel();
     if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
       await setTtsEngineMode(TtsEngineMode.system);
@@ -16139,11 +16409,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> deleteKokoroModelVersion(KokoroModel model) async {
+    await _kokoroDeviceEngine.unload();
     await _kokoroModelManager.deleteModelVersion(model);
     if (await _kokoroModelManager.isModelInstalled()) {
       await _kokoroDeviceEngine.reinitialize();
     } else {
-      _kokoroDeviceEngine.dispose();
       if (_ttsEngineMode == TtsEngineMode.kokoroDevice) {
         await setTtsEngineMode(TtsEngineMode.system);
       }
@@ -16163,6 +16433,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       await _kokoroDeviceEngine.setVoice(voice);
       await _kokoroDeviceEngine.speak('Hello, this is a preview of my voice.');
+      final error = _kokoroDeviceEngine.playbackState.value.error;
+      if (error != null) throw StateError(error);
     } else if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
       await _kokoroServerEngine.setVoice(voice);
       _ws.send({
@@ -17237,6 +17509,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _outgoingDisposed = true;
+    _outgoingTimer?.cancel();
+    for (final upload in _outgoingUploadCompleters.values) {
+      if (!upload.isCompleted) upload.completeError(StateError('App closed'));
+    }
+    _outgoingUploadCompleters.clear();
     WidgetsBinding.instance.removeObserver(this);
     for (final reply in _backendAuthCallbackReplies.values) {
       if (!reply.isCompleted) reply.complete(false);

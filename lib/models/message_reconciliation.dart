@@ -179,6 +179,32 @@ String? transcriptMessageIdentity(ChatMessage message) {
   return '$entryId:$sessionSeq';
 }
 
+/// Rewind replaces only the discarded suffix. Keep older loaded pages and
+/// reuse unchanged cards so their widget state and scroll anchors survive.
+List<ChatMessage> reconcileRewoundTranscript(
+  List<ChatMessage> snapshot,
+  List<ChatMessage> visible, {
+  required int? firstSnapshotSeq,
+}) {
+  if (firstSnapshotSeq == null) return snapshot;
+  final existing = <String, ChatMessage>{
+    for (final message in visible)
+      if (_positionedMembershipKey(message) case final String key) key: message,
+  };
+  return [
+    ...visible.where(
+      (message) =>
+          message.sessionSeq != null && message.sessionSeq! < firstSnapshotSeq,
+    ),
+    for (final message in snapshot)
+      if (existing[_positionedMembershipKey(message)]
+          case final ChatMessage prior)
+        if (prior.revision == message.revision) prior else message
+      else
+        message,
+  ];
+}
+
 bool messageMatchesTranscriptPosition(
   ChatMessage message,
   Map<String, dynamic> incoming,

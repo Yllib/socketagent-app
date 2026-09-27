@@ -36,6 +36,9 @@ class LocalSpeechService implements SpeechInput {
     if (!Platform.isAndroid && settings.model.isMoonshine) {
       settings = settings.copyWith(model: AsrModel.zipformer);
     }
+    if (!Platform.isWindows && settings.model == AsrModel.nemotron) {
+      settings = settings.copyWith(model: AsrModel.zipformer);
+    }
     manager.selectedModel = settings.model;
   }
 
@@ -66,6 +69,9 @@ class LocalSpeechService implements SpeechInput {
           : SherpaSpeechService(manager, settings: settings);
       _resultSub = _engine!.onResult.listen(_results.add);
       _statusSub = _engine!.onListeningStatus.listen(_statuses.add);
+      if (_engine case final SherpaSpeechService sherpa) {
+        _errorSub = sherpa.onError.listen(_errors.add);
+      }
       if (_engine case final MoonshineSpeechService moonshine) {
         _errorSub = moonshine.onError.listen(_errors.add);
       }

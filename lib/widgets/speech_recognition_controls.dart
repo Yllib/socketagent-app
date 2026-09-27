@@ -297,7 +297,9 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
           'Choose a model for English dictation. Download once, then use it offline.',
         ),
         const SizedBox(height: 16),
-        for (final model in AsrModel.values) ...[
+        for (final model in AsrModel.values.where(
+          (model) => model != AsrModel.nemotron || Platform.isWindows,
+        )) ...[
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(
@@ -360,7 +362,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
       ),
       const SizedBox(height: 24),
-      if (!_settings.model.isMoonshine) ...[
+      if (_settings.model == AsrModel.zipformer) ...[
         const Text('Recognition effort'),
         const SizedBox(height: 12),
         SegmentedButton<int>(
@@ -389,7 +391,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
           label: '${_settings.endpointSilence.toStringAsFixed(1)} s',
           update: (v) => _settings.copyWith(endpointSilence: v),
         ),
-      ] else ...[
+      ] else if (_settings.model.isMoonshine) ...[
         _slider(
           title: 'Background noise filtering',
           detail: 'Raise this if background sounds are picked up as speech.',

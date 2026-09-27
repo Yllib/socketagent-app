@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'speech_recognition_settings.dart';
+import 'model_archive.dart';
 import 'package:flutter/foundation.dart';
 import 'download_part.dart';
 import 'resumable_http_download.dart';
@@ -27,12 +28,23 @@ class AsrModelManager {
 
   Future<String> directoryFor(AsrModel model) async => model.isMoonshine
       ? '${await _baseDir}/moonshine-${model.moonshineSize}-streaming-en-26-08-21'
+      : model == AsrModel.nemotron
+      ? '${await _baseDir}/$nemotronDirName'
       : await modelDir;
 
   // ASR model — large zipformer trained on LibriSpeech + GigaSpeech (~180MB int8)
   static const _modelDirName = 'sherpa-onnx-streaming-zipformer-en-2023-06-21';
   static const _asrDownloadUrl =
       'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$_modelDirName.tar.bz2';
+
+  static const nemotronDirName =
+      'sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25';
+  static String encoderFor(AsrModel model) =>
+      model == AsrModel.nemotron ? 'encoder.int8.onnx' : encoderFile;
+  static String decoderFor(AsrModel model) =>
+      model == AsrModel.nemotron ? 'decoder.int8.onnx' : decoderFile;
+  static String joinerFor(AsrModel model) =>
+      model == AsrModel.nemotron ? 'joiner.int8.onnx' : joinerFile;
 
   // Punctuation model
   static const _punctDirName = 'sherpa-onnx-online-punct-en-2024-08-06';
@@ -82,9 +94,9 @@ class AsrModelManager {
     }
     return !File('$dir/.installing').existsSync() &&
         [
-          encoderFile,
-          decoderFile,
-          joinerFile,
+          encoderFor(model),
+          decoderFor(model),
+          joinerFor(model),
           tokensFile,
         ].every((name) => File('$dir/$name').existsSync());
   }
@@ -118,14 +130,33 @@ class AsrModelManager {
         return;
       }
 
+      if (model == AsrModel.nemotron) {
+        await installModelArchive(
+          uri: Uri.parse(
+            'https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$nemotronDirName.tar.bz2',
+          ),
+          directory: Directory(await directoryFor(model)),
+          sha256Hex:
+              '78e2b79fcf7271553a74402a76b771b09ea40117a39566a79f52235b23db6358',
+          requiredFiles: [
+            encoderFor(model),
+            decoderFor(model),
+            joinerFor(model),
+            tokensFile,
+          ],
+          onProgress: (value) => downloadProgress.value = value,
+        );
+        return;
+      }
+
       // Download ASR model (~180MB) — 0% to 90%
-      final asrInstalled = await isModelInstalled(AsrModel.zipformer);
+      final asrInstalled = await isModelInstalled(model);
       if (!asrInstalled) {
         await _downloadAndExtract(
           url: _asrDownloadUrl,
           dirName: _modelDirName,
           basePath: base,
-          verifyFile: encoderFile,
+          verifyFile: encoderFor(model),
           progressStart: 0.0,
           progressEnd: 0.90,
         );

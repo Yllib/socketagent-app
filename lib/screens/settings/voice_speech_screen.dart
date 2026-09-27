@@ -208,7 +208,34 @@ class _ReadAloudSettings extends StatefulWidget {
 class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
   bool _busy = false;
   bool _previewing = false;
+  bool _loadingVoices = false;
   ChatProvider get provider => widget.provider;
+  String? _voiceLoadError;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _loadVoices();
+    });
+  }
+
+  Future<void> _loadVoices() async {
+    if (_loadingVoices) return;
+    setState(() {
+      _loadingVoices = true;
+      _voiceLoadError = null;
+    });
+    try {
+      await provider.initTtsVoices().timeout(const Duration(seconds: 10));
+    } catch (_) {
+      if (mounted) {
+        setState(() => _voiceLoadError = 'Could not load device voices.');
+      }
+    } finally {
+      if (mounted) setState(() => _loadingVoices = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -231,14 +258,26 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
       await operation();
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(failure)));
+        await _showError(failure);
       }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  Future<void> _showError(String message) => showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Voice unavailable'),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('OK'),
+        ),
+      ],
+    ),
+  );
 
   Future<void> _changeSource() async {
     final mode = await _choose(
@@ -272,11 +311,18 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
     if (mode == TtsEngineMode.elevenLabs && !provider.hasElevenLabsApiKey) {
       await _account();
     } else {
-      await _run(
-        () => mode == TtsEngineMode.elevenLabs
-            ? provider.setElevenLabsEnabled(true)
-            : provider.setTtsEngineMode(mode),
-      );
+      // Source selection must remain available during voice loading/downloads.
+      try {
+        if (mode == TtsEngineMode.elevenLabs) {
+          await provider.setElevenLabsEnabled(true);
+        } else {
+          await provider.setTtsEngineMode(mode);
+        }
+      } catch (_) {
+        if (mounted) {
+          await _showError('Could not change voice source. Please try again.');
+        }
+      }
     }
   }
 
@@ -341,12 +387,8 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not play this voice. Check that it is ready and try again.',
-            ),
-          ),
+        await _showError(
+          'Could not play this voice. Check your model download and audio output, then try again.',
         );
       }
     } finally {
@@ -362,6 +404,16 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
       key: const PageStorageKey('read-aloud-settings'),
       padding: const EdgeInsets.all(20),
       children: [
+        if (_voiceLoadError != null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(_voiceLoadError!),
+            trailing: TextButton(
+              onPressed: _loadingVoices ? null : _loadVoices,
+              child: const Text('Retry'),
+            ),
+          ),
+
         const Text(
           'Choose how replies sound.',
           style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
@@ -380,7 +432,7 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
           title: const Text('Voice source'),
           subtitle: Text(_sourceName(mode)),
           trailing: const Icon(Icons.chevron_right),
-          onTap: _busy ? null : _changeSource,
+          onTap: _changeSource,
         ),
         if (mode == TtsEngineMode.kokoroDevice)
           _KokoroDownloads(provider: provider),
@@ -527,13 +579,21 @@ class _KokoroDownloadsState extends State<_KokoroDownloads> {
       } else {
         await widget.provider.setKokoroModel(model);
       }
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Could not update the download. Connect to your computer and try again.',
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Voice download failed'),
+            content: const Text(
+              'Check your internet connection and free disk space, then try again. Partial downloads are kept so you can resume.',
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('OK'),
+              ),
+            ],
           ),
         );
       }
@@ -562,11 +622,9 @@ class _KokoroDownloadsState extends State<_KokoroDownloads> {
                   ? Icons.radio_button_checked
                   : Icons.radio_button_off,
             ),
-            title: Text(model == KokoroModel.v019 ? 'English' : 'Multilingual'),
+            title: Text(model.shortLabel),
             subtitle: Text(
-              _installed.contains(model)
-                  ? 'Downloaded'
-                  : 'Download from your computer',
+              _installed.contains(model) ? 'Downloaded' : model.downloadLabel,
             ),
             trailing: !_installed.contains(model)
                 ? const Icon(Icons.download_outlined)

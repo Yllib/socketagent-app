@@ -1,3 +1,4 @@
+import '../widgets/outgoing_queue_notice.dart';
 import 'dart:io';
 import '../services/desktop_composer_keys.dart';
 import '../services/desktop_workspace_controller.dart';
@@ -1225,6 +1226,7 @@ class HomeScreenState extends State<HomeScreen> {
                               )
                             : null,
                       ),
+                    OutgoingQueueNotice(provider: provider),
                     if (provider.historyRefreshError != null)
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),

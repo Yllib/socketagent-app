@@ -8,7 +8,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_timezone
   flutter_tts
   fullscreen_window
-  just_audio_windows
+  media_kit_libs_windows_audio
   pdfx
   record_windows
   speech_to_text_windows

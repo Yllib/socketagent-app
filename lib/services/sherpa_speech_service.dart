@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:isolate';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
@@ -83,16 +84,21 @@ void _asrIsolateEntry(SendPort mainSendPort) {
         final config = sherpa.OnlineRecognizerConfig(
           model: sherpa.OnlineModelConfig(
             transducer: sherpa.OnlineTransducerModelConfig(
-              encoder: '${message.modelDir}/${AsrModelManager.encoderFile}',
-              decoder: '${message.modelDir}/${AsrModelManager.decoderFile}',
-              joiner: '${message.modelDir}/${AsrModelManager.joinerFile}',
+              encoder:
+                  '${message.modelDir}/${AsrModelManager.encoderFor(message.settings.model)}',
+              decoder:
+                  '${message.modelDir}/${AsrModelManager.decoderFor(message.settings.model)}',
+              joiner:
+                  '${message.modelDir}/${AsrModelManager.joinerFor(message.settings.model)}',
             ),
             tokens: '${message.modelDir}/${AsrModelManager.tokensFile}',
-            numThreads: 2,
+            numThreads: Platform.isWindows ? 4 : 2,
             provider: 'cpu',
             debug: false,
           ),
-          decodingMethod: message.settings.searchPaths == 1
+          decodingMethod:
+              (message.settings.model == AsrModel.nemotron ||
+                  message.settings.searchPaths == 1)
               ? 'greedy_search'
               : 'modified_beam_search',
           maxActivePaths: message.settings.searchPaths,
@@ -134,7 +140,9 @@ void _asrIsolateEntry(SendPort mainSendPort) {
         message.sendPort.send('error:$e');
       }
     } else if (message is _AudioData) {
-      if (recognizer == null || stream == null || message.revision != revision) {
+      if (recognizer == null ||
+          stream == null ||
+          message.revision != revision) {
         return;
       }
 
@@ -146,7 +154,7 @@ void _asrIsolateEntry(SendPort mainSendPort) {
       }
 
       final result = recognizer!.getResult(stream!);
-      final currentSegment = result.text.trim().toLowerCase();
+      final currentSegment = result.text.trim();
 
       final hasNew = currentSegment.isNotEmpty && currentSegment != lastSegment;
       lastSegment = currentSegment;
@@ -173,13 +181,15 @@ void _asrIsolateEntry(SendPort mainSendPort) {
       // decodes when it has a full chunk, so the tail end of speech may
       // be stuck undecoded. Silence pads it out and triggers endpoint.
       if (recognizer != null && stream != null) {
-        final silence = Float32List(8000); // 0.5s of silence at 16kHz
+        final silence = Float32List(
+          32000,
+        ); // Flush up to two seconds of buffered speech.
         stream!.acceptWaveform(samples: silence, sampleRate: 16000);
         while (recognizer!.isReady(stream!)) {
           recognizer!.decode(stream!);
         }
         final result = recognizer!.getResult(stream!);
-        final currentSegment = result.text.trim().toLowerCase();
+        final currentSegment = result.text.trim();
         committed = join(punctuate(currentSegment));
         recognizer!.reset(stream!);
         lastSegment = '';
@@ -230,6 +240,8 @@ class SherpaSpeechService implements SpeechInput {
 
   final _resultController = StreamController<String>.broadcast();
   final _statusController = StreamController<bool>.broadcast();
+  final _errorController = StreamController<String>.broadcast();
+  Stream<String> get onError => _errorController.stream;
 
   int _revision = 0;
   String _lastSttText = ''; // Last text sent by STT, to detect user edits
@@ -261,8 +273,10 @@ class SherpaSpeechService implements SpeechInput {
     }
 
     try {
-      final modelDir = await _modelManager.modelDir;
-      final punctInstalled = await _modelManager.isPunctInstalled();
+      final modelDir = await _modelManager.directoryFor(settings.model);
+      final punctInstalled =
+          settings.model == AsrModel.zipformer &&
+          await _modelManager.isPunctInstalled();
       final punctDir = punctInstalled ? await _modelManager.punctDir : null;
 
       final receivePort = ReceivePort();
@@ -356,7 +370,9 @@ class SherpaSpeechService implements SpeechInput {
     if (!hasPermission) {
       debugPrint('[SherpaSpeech] No mic permission');
       await stopListening();
-      return;
+      throw StateError(
+        'Microphone access is disabled. Allow microphone access in system settings.',
+      );
     }
 
     try {
@@ -378,7 +394,9 @@ class SherpaSpeechService implements SpeechInput {
           }
         },
         onError: (e) {
-          debugPrint('[SherpaSpeech] Mic stream error: $e');
+          _errorController.add(
+            'Microphone recording stopped. Check your input device.',
+          );
           if (_micDoneCompleter != null && !_micDoneCompleter!.isCompleted) {
             _micDoneCompleter!.complete();
           }
@@ -392,8 +410,8 @@ class SherpaSpeechService implements SpeechInput {
         },
       );
     } catch (e) {
-      debugPrint('[SherpaSpeech] Failed to start mic: $e');
       await stopListening();
+      rethrow;
     }
   }
 
@@ -456,8 +474,12 @@ class SherpaSpeechService implements SpeechInput {
     _finalizeCompleter = Completer<void>();
     _isolateSendPort?.send('finalize');
     try {
-      await _finalizeCompleter!.future.timeout(const Duration(seconds: 2));
-    } catch (_) {}
+      await _finalizeCompleter!.future.timeout(const Duration(seconds: 30));
+    } catch (_) {
+      _errorController.add(
+        'Finishing dictation took too long. Some final words may be missing.',
+      );
+    }
     _finalizeCompleter = null;
 
     _silenceTimer?.cancel();
@@ -485,6 +507,7 @@ class SherpaSpeechService implements SpeechInput {
     _isolate?.kill();
     await _resultController.close();
     await _statusController.close();
+    await _errorController.close();
   }
 
   @override
