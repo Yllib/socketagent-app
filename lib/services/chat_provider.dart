@@ -1,5 +1,6 @@
 import 'outgoing_queue.dart';
 import 'background_json_store.dart';
+import 'session_list_loader.dart';
 import 'session_teleport.dart';
 import 'package:http/http.dart' as http;
 import 'windows_local_server.dart';
@@ -521,6 +522,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   List<ChatMessage> _messages = [];
   List<Session> _sessions = [];
+  final Map<String?, int> _sessionListConnectionRevisions = {};
+  bool _isLoadingSessionCache = true;
+  bool get isLoadingSessionCache => _isLoadingSessionCache;
   List<Map<String, dynamic>> _todos = [];
   final Set<String> _dismissedTodoKeys = {};
   bool _taskListDismissed = false;
@@ -2045,7 +2049,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _outgoingTimer = Timer.periodic(const Duration(seconds: 15), (_) {
       unawaited(_drainOutgoingQueue());
     });
-    _loadSettings();
+    unawaited(
+      _loadSettings().catchError((Object error, StackTrace stack) {
+        if (!_settingsLoaded.isCompleted) {
+          _settingsLoaded.completeError(error, stack);
+        } else {
+          debugPrint(
+            '[Startup] Optional initialization failed: ${error.runtimeType}',
+          );
+        }
+      }),
+    );
     _setupListeners();
   }
 
@@ -2237,51 +2251,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _saveServerConfigs();
     }
 
-    if (Platform.isWindows) {
-      final seen = (prefs.getStringList('windows_local_servers_seen') ?? [])
-          .toSet();
-      try {
-        for (final candidate in await WindowsLocalServer().discover()) {
-          final identity = '${candidate.port}:${candidate.serverPubkey}';
-          if (seen.contains(identity)) continue;
-          if (_serverConfigs.any(
-            (c) =>
-                c.serverPubkey == candidate.serverPubkey &&
-                c.port == candidate.port &&
-                !c.useRelay,
-          )) {
-            seen.add(identity);
-            continue;
-          }
-          final probe = await const ServerConnectionProbe().verify(
-            candidate,
-            subscriberToken: '',
-            timeout: const Duration(seconds: 3),
-          );
-          if (!probe.success) continue;
-          _serverConfigs.add(candidate.copyWith(id: ServerConfig.generateId()));
-          await _saveServerConfigs();
-          seen.add(identity);
-        }
-        await prefs.setStringList('windows_local_servers_seen', seen.toList());
-      } catch (_) {
-        debugPrint(
-          '[Desktop] Local computer discovery unavailable; use Add computer.',
-        );
-      }
-    }
-
     _loadServerBuildCache(prefs);
-    await _loadSessionCache(prefs);
-    unawaited(
-      _transcriptCache.prewarm(
-        _sessions
-            .take(SessionTranscriptCache.maxSnapshots)
-            .map(
-              (session) => (serverId: session.serverId, sessionId: session.id),
-            ),
-      ),
-    );
     _loadScheduledTaskCache(prefs);
     _pushRegisteredServers
       ..clear()
@@ -2364,29 +2334,63 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     await _speech.loadSettings();
 
-    // Connection readiness ends here. Push registration, speech-engine
-    // warm-up, draft loading, and other local setup are independent work. The
-    // launcher is already waiting on this completer and can connect every
-    // configured computer while the remaining initialization continues.
-    if (!_settingsLoaded.isCompleted) {
-      _settingsLoaded.complete();
-    }
-    notifyListeners();
-
     _restorePendingHardStops(prefs);
-    await _registerPushNotifications();
     _lastServerStartedAt = prefs.getString('server_started_at');
     _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
         .toSet();
     _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
-    // Speech models load on first use, keeping large optional models out of idle memory.
-    // Always eagerly initialize TTS so it's warm before any speak message arrives
-    await _tts.initialize();
-    if (savedVoice != null) {
-      await _tts.restoreVoice(savedVoice);
-    }
     await _loadDrafts();
+    if (_outgoingDisposed) return;
+    if (!_settingsLoaded.isCompleted) _settingsLoaded.complete();
     notifyListeners();
+
+    // These services do not gate the first usable screen. Transcript files and
+    // native speech engines load on demand instead of competing with startup.
+    unawaited(_loadSessionCache(prefs));
+    unawaited(_discoverLocalServer(prefs));
+    unawaited(_registerPushNotifications());
+  }
+
+  Future<void> _discoverLocalServer(SharedPreferences prefs) async {
+    if (Platform.isWindows) {
+      final seen = (prefs.getStringList('windows_local_servers_seen') ?? [])
+          .toSet();
+      try {
+        for (final candidate in await WindowsLocalServer().discover()) {
+          final identity = '${candidate.port}:${candidate.serverPubkey}';
+          if (seen.contains(identity)) continue;
+          if (_serverConfigs.any(
+            (c) =>
+                c.serverPubkey == candidate.serverPubkey &&
+                c.port == candidate.port &&
+                !c.useRelay,
+          )) {
+            seen.add(identity);
+            continue;
+          }
+          final probe = await const ServerConnectionProbe().verify(
+            candidate,
+            subscriberToken: '',
+            timeout: const Duration(seconds: 3),
+          );
+          if (!probe.success) continue;
+          if (_outgoingDisposed) return;
+          await addServer(candidate.copyWith(id: ServerConfig.generateId()));
+          seen.add(identity);
+        }
+        if (seen.length !=
+            (prefs.getStringList('windows_local_servers_seen') ?? []).length) {
+          await prefs.setStringList(
+            'windows_local_servers_seen',
+            seen.toList(),
+          );
+        }
+      } catch (_) {
+        debugPrint(
+          '[Desktop] Local computer discovery unavailable; use Add computer.',
+        );
+      }
+    }
   }
 
   Future<void> saveSettings({
@@ -2913,8 +2917,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _loadSessionCache(SharedPreferences prefs) async {
-    if (_serverConfigs.isEmpty) return;
     try {
+      if (_serverConfigs.isEmpty) return;
       final decoded = await _sessionListStore.load(
         legacyPreferences: prefs,
         legacyKey: _sessionCachePrefsKey,
@@ -2930,30 +2934,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final config = configsById[serverId];
         if (config == null || entry.value is! List) continue;
 
-        final sessions = <Session>[];
-        for (final item in entry.value as List) {
-          if (item is! Map) continue;
-          final session = Session.fromJson(Map<String, dynamic>.from(item))
-              .withServer(
-                serverId: serverId,
-                serverName: config.name,
-                serverColor: config.colorValue,
-              )
-              .copyWith(running: false);
-          if (!_isSessionArchiveHidden(serverId, session.id)) {
-            sessions.add(session);
-          }
-        }
+        final sessions = await loadSessionList(
+          entry.value as List,
+          server: config,
+          cached: true,
+        );
+        sessions.removeWhere(
+          (session) => _isSessionArchiveHidden(serverId, session.id),
+        );
         loaded[serverId] = sessions;
       }
 
-      if (loaded.isEmpty) return;
-      _perServerSessions
-        ..clear()
-        ..addAll(loaded);
+      if (_outgoingDisposed) return;
+      for (final entry in loaded.entries) {
+        if (_serverConfigs.any((config) => config.id == entry.key)) {
+          _perServerSessions.putIfAbsent(entry.key, () => entry.value);
+        }
+      }
       _rebuildSessionList();
     } catch (e) {
       debugPrint('[Sessions] Failed to load session cache: $e');
+    } finally {
+      _isLoadingSessionCache = false;
+      if (!_outgoingDisposed) notifyListeners();
     }
   }
 
@@ -3181,6 +3184,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _setupListeners() {
     _statusSub = _connMgr.statusStream.listen((update) {
+      _sessionListConnectionRevisions[update.serverId] =
+          (_sessionListConnectionRevisions[update.serverId] ?? 0) + 1;
       // Update overall connection status — connected if ANY server is connected
       if (_connMgr.anyConnected) {
         _connectionStatus = ConnectionStatus.connected;
@@ -3204,9 +3209,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     });
 
-    _messageSub = _connMgr.messages.listen((serverMsg) {
-      _handleServerMessage(serverMsg.data, serverMsg.serverId);
-    });
+    _messageSub = _connMgr.messages
+        .asyncMap((serverMsg) {
+          return _handleServerMessage(serverMsg.data, serverMsg.serverId);
+        })
+        .listen(
+          (_) {},
+          onError: (Object error) {
+            debugPrint(
+              '[Connection] Could not apply message: ${error.runtimeType}',
+            );
+          },
+        );
 
     _speechResultSub = _speech.onResult.listen((text) {
       // Speech results are handled by the UI text controller
@@ -4517,7 +4531,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return false;
   }
 
-  void _handleServerMessage(Map<String, dynamic> msg, [String? serverId]) {
+  Future<void> _handleServerMessage(
+    Map<String, dynamic> msg, [
+    String? serverId,
+  ]) async {
     final type = msg['type'] as String?;
     if (type == null) return;
 
@@ -4806,7 +4823,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
         case 'session_list':
-          _handleSessionList(msg, serverId);
+          await _handleSessionList(msg, serverId);
           break;
         case 'server_capabilities':
           {
@@ -11811,7 +11828,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _handleSessionList(Map<String, dynamic> msg, [String? serverId]) {
+  Future<void> _handleSessionList(
+    Map<String, dynamic> msg, [
+    String? serverId,
+  ]) async {
     final rawSessions = msg['sessions'] as List? ?? [];
     // Find server config for tagging
     final serverConfig = serverId != null
@@ -11822,19 +11842,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (serverId == null || session.serverId == serverId)
           session.id: session.runStats,
     };
-    final sessions = rawSessions
-        .map(
-          (s) =>
-              Session.fromJson(
-                s as Map<String, dynamic>,
-                previousRunStats: previousRunStats[s['id']],
-              ).withServer(
-                serverId: serverId ?? '',
-                serverName: serverConfig?.name ?? '',
-                serverColor: serverConfig?.colorValue,
-              ),
-        )
-        .where((s) => !_isSessionArchiveHidden(serverId, s.id))
+    final connectionRevision = _sessionListConnectionRevisions[serverId];
+    final loaded = await loadSessionList(
+      rawSessions,
+      server: serverConfig,
+      serverId: serverId,
+      previousRunStats: previousRunStats,
+    );
+    if (_outgoingDisposed ||
+        connectionRevision != _sessionListConnectionRevisions[serverId] ||
+        (serverConfig != null &&
+            !_serverConfigs.any((config) => config.id == serverId))) {
+      return;
+    }
+    final sessions = loaded
+        .where((session) => !_isSessionArchiveHidden(serverId, session.id))
         .toList();
 
     for (final session in sessions) {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -49,7 +50,7 @@ class SharedPreferencesWorkReviewCache implements WorkReviewCache {
     final text = (await SharedPreferences.getInstance()).getString(_key);
     if (text == null || text.isEmpty) return null;
     try {
-      final decoded = jsonDecode(text);
+      final decoded = await Isolate.run(() => jsonDecode(text));
       return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
     } catch (_) {
       return null;

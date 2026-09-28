@@ -9,7 +9,10 @@ import 'services/chat_provider.dart';
 import 'services/desktop_workspace_controller.dart';
 import 'services/desktop_window_service.dart';
 import 'services/desktop_audio.dart';
+import 'services/windows_preferences_worker.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'widgets/desktop_window_frame.dart';
+import 'widgets/desktop_startup.dart';
 import 'services/work_review_repository.dart';
 import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
@@ -28,6 +31,15 @@ final routeObserver = RouteObserver<ModalRoute<void>>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    SharedPreferencesStorePlatform.instance = WindowsPreferencesWorker();
+    runApp(DesktopStartup(initialize: _initializeApp));
+  } else {
+    runApp(await _initializeApp());
+  }
+}
+
+Future<Widget> _initializeApp() async {
   initializeDesktopAudio();
   await _verifyDistribution();
   if (Platform.isWindows) await DesktopWindowService.instance.initialize();
@@ -36,20 +48,28 @@ void main() async {
   }
   await NotificationService().initialize();
   final chatProvider = ChatProvider();
-  await chatProvider.settingsReady;
-  if (AppBuild.supportsPlayBilling) {
-    PlayBillingService.instance.initialize(
-      chatProvider.verifyGooglePlayPurchase,
+  WorkReviewRepository? workReviews;
+  try {
+    await chatProvider.settingsReady;
+    if (AppBuild.supportsPlayBilling) {
+      PlayBillingService.instance.initialize(
+        chatProvider.verifyGooglePlayPurchase,
+      );
+    }
+    workReviews = WorkReviewRepository(
+      transport: ConnectionManagerWorkReviewTransport(chatProvider.connMgr),
     );
+    await workReviews.initialize();
+    if (Platform.isAndroid) await PushNotificationService().initialize();
+    return ClaudeAssistantApp(
+      chatProvider: chatProvider,
+      workReviews: workReviews,
+    );
+  } catch (_) {
+    workReviews?.dispose();
+    chatProvider.dispose();
+    rethrow;
   }
-  final workReviews = WorkReviewRepository(
-    transport: ConnectionManagerWorkReviewTransport(chatProvider.connMgr),
-  );
-  await workReviews.initialize();
-  if (Platform.isAndroid) await PushNotificationService().initialize();
-  runApp(
-    ClaudeAssistantApp(chatProvider: chatProvider, workReviews: workReviews),
-  );
 }
 
 Future<void> _verifyDistribution() async {
@@ -126,7 +146,7 @@ class _AppLauncherState extends State<AppLauncher>
   static const _channel = MethodChannel('com.socketagent.app/intent');
   bool _checked = false;
   int _navigationIntentVersion = 0;
-  bool _splashDone = false;
+  bool _splashDone = Platform.isWindows;
   late final AnimationController _fadeController;
   final GlobalKey<MainShellScreenState> _mainShellKey = GlobalKey();
   NotificationParentDestination _mainShellDestination =
@@ -202,7 +222,7 @@ class _AppLauncherState extends State<AppLauncher>
     setState(() => _checked = true);
 
     // Wait for connection + session list before dismissing splash
-    _waitForReady(provider);
+    if (!Platform.isWindows) _waitForReady(provider);
   }
 
   bool _handleSessionDeepLink(String? value) {

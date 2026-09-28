@@ -1891,7 +1891,9 @@ class _SessionsTabState extends State<SessionsTab> {
       return Center(
         child: Text(
           provider.sessions.isEmpty
-              ? 'No sessions yet'
+              ? (provider.isLoadingSessionCache
+                    ? 'Loading sessions…'
+                    : 'No sessions yet')
               : 'No matching sessions',
           style: TextStyle(
             fontSize: 14,
@@ -2105,6 +2107,7 @@ class _SessionsTabState extends State<SessionsTab> {
         provider.activeSessionServerId,
         provider.activeServerId,
         provider.connectionStatus,
+        provider.isLoadingSessionCache,
         for (final config in provider.serverConfigs) ...[
           config,
           provider.connMgr.statusOf(config.id),
