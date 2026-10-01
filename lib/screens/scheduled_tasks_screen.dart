@@ -3,11 +3,15 @@ import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../models/scheduled_task_unread.dart';
+import '../models/session_scheduled_tasks.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'home_screen.dart';
 
 class ScheduledTasksScreen extends StatefulWidget {
-  const ScheduledTasksScreen({super.key});
+  const ScheduledTasksScreen({super.key, this.sessionId, this.serverId});
+
+  final String? sessionId;
+  final String? serverId;
 
   @override
   State<ScheduledTasksScreen> createState() => _ScheduledTasksScreenState();
@@ -1606,6 +1610,48 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
     openConversation(context);
   }
 
+  Widget _buildLinkedSession(Map<String, dynamic> task, ChatProvider provider) {
+    final sessionId = task['linkedSessionId'] as String?;
+    if (sessionId == null || sessionId.isEmpty) return const SizedBox.shrink();
+    final serverId = task['_serverId'] as String?;
+    final session = provider.sessions
+        .where(
+          (session) => session.id == sessionId && session.serverId == serverId,
+        )
+        .firstOrNull;
+    final title = session?.title.trim();
+    final label =
+        'Returns results to ${title == null || title.isEmpty ? 'original session' : title}';
+    return Tooltip(
+      message: label,
+      child: TextButton.icon(
+        onPressed: serverId == null || serverId.isEmpty
+            ? null
+            : () {
+                provider.resumeSession(sessionId, serverId: serverId);
+                openConversation(context);
+              },
+        style: TextButton.styleFrom(
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          minimumSize: const Size(0, 36),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          alignment: Alignment.centerLeft,
+        ),
+        icon: const Icon(Icons.subdirectory_arrow_left, size: 16),
+        label: Text(
+          label,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontSize: 12,
+            decoration: TextDecoration.underline,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildRunHistory(Map<String, dynamic> task) {
     final runs = (task['runs'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     if (runs.isEmpty) return const SizedBox.shrink();
@@ -1739,8 +1785,14 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
-              subtitle: Text(
-                'Archived ${_formatTime(task['archivedAt'] as String?)}',
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Archived ${_formatTime(task['archivedAt'] as String?)}',
+                  ),
+                  _buildLinkedSession(task, provider),
+                ],
               ),
               trailing: IconButton(
                 tooltip: 'Restore task',
@@ -1758,7 +1810,13 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
       builder: (context, provider, _) {
-        final tasks = provider.scheduledTasks;
+        final tasks = widget.sessionId == null
+            ? provider.scheduledTasks
+            : scheduledTasksForSession(
+                provider.scheduledTasks,
+                sessionId: widget.sessionId,
+                serverId: widget.serverId,
+              );
         final activeTasks = tasks
             .where((task) => !scheduledTaskIsArchived(task))
             .toList();
@@ -1771,11 +1829,20 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
             );
           });
         return Scaffold(
-          appBar: AppBar(title: const Text('Scheduled Tasks')),
-          floatingActionButton: FloatingActionButton(
-            onPressed: _showCreateDialog,
-            child: const Icon(Icons.add),
+          appBar: AppBar(
+            title: Text(
+              widget.sessionId == null
+                  ? 'Scheduled tasks'
+                  : 'Session scheduled tasks',
+            ),
           ),
+          backgroundColor: Colors.black,
+          floatingActionButton: widget.sessionId != null
+              ? null
+              : FloatingActionButton(
+                  onPressed: _showCreateDialog,
+                  child: const Icon(Icons.add),
+                ),
           body: tasks.isEmpty
               ? Center(
                   child: Column(
@@ -1796,7 +1863,9 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'Tap + to schedule a task, or ask your agent\nto schedule one for you',
+                        widget.sessionId == null
+                            ? 'Tap + to schedule a task, or ask your agent\nto schedule one for you'
+                            : 'Ask your agent to schedule a task linked to this session.',
                         textAlign: TextAlign.center,
                         style: TextStyle(
                           fontSize: 14,
@@ -1906,6 +1975,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                             fontWeight: FontWeight.w600,
                                           ),
                                         ),
+                                        _buildLinkedSession(task, provider),
                                         if (name.isNotEmpty &&
                                             prompt.isNotEmpty) ...[
                                           const SizedBox(height: 2),

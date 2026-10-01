@@ -2,6 +2,7 @@ import 'outgoing_queue.dart';
 import 'background_json_store.dart';
 import 'session_list_loader.dart';
 import 'session_teleport.dart';
+import 'transfer_history.dart';
 import 'package:http/http.dart' as http;
 import 'windows_local_server.dart';
 import 'desktop_window_service.dart';
@@ -657,6 +658,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, DateTime> _outgoingSentAt = {};
   List<OutgoingRequest> get pendingOutgoing =>
       _pendingPromptDispatches.values.toList();
+  List<OutgoingRequest> get activeDeliveryProblems =>
+      _pendingPromptDispatches.values.where((request) {
+        if (request.error == null ||
+            request.serverId !=
+                (_activeSessionServerId ?? _connMgr.activeServerId)) {
+          return false;
+        }
+        final sessionId = request.payload['sessionId'];
+        return (sessionId != null && sessionId == _activeSessionId) ||
+            (_activeSessionId == null &&
+                _draftConversationId != null &&
+                request.payload['clientConversationId'] == _draftConversationId) ||
+            _messages.any((message) => message.id == request.id || message.uuid == request.id);
+      }).toList();
   DateTime? _currentPromptStartedAt;
   Timer? _promptRuntimeTimer;
   Timer? _initialHistoryTimeout;
@@ -4616,6 +4631,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'codex_reset_result',
       'reminder',
       'rate_limit_event',
+      'session_transfer_job_result',
       'session_transfer_export_result',
       'session_transfer_import_result',
       'session_transfer_discard_result',
@@ -9954,6 +9970,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // there and this only stamps it; anywhere else it is the whole message.
     final rawContent = msg['content'] as String? ?? '';
     final prompt = rawContent.isEmpty ? null : _parseUserPrompt(rawContent);
+    if (prompt != null &&
+        prompt.notices.any(
+          (notice) => notice.kind == UserPromptNoticeKind.scheduledTask,
+        ) &&
+        !_messages.any(
+          (message) =>
+              message.uuid == uuid ||
+              (msg['entryId'] != null && message.entryId == msg['entryId']),
+        )) {
+      final notice = prompt.notices.firstWhere(
+        (notice) => notice.kind == UserPromptNoticeKind.scheduledTask,
+      );
+      final card = _userPromptNoticeCard(notice, 0, 0)..uuid = uuid;
+      applyTranscriptPosition(card, msg);
+      _messages = orderByTranscriptPosition([..._messages, card]);
+      notifyListeners();
+    }
     if (prompt != null && (prompt.hidden || prompt.text.isEmpty)) {
       // A prompt with nothing to show has no bubble on any client, so there is
       // nothing here to stamp either.
@@ -14779,42 +14812,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  Future<List<Map<String, dynamic>>> sessionTeleportHistory() async {
-    final records = <Map<String, dynamic>>[];
-    await Future.wait(
-      _serverConfigs.map((server) async {
-        if (_connMgr.statusOf(server.id) != ConnectionStatus.connected ||
-            (_serverSessionTransferVersions[server.id] ?? 0) < 2) {
-          return;
-        }
-        try {
-          final reply = await _requestSessionTransfer(server.id, {
-            'type': 'session_transfer_job',
-            'action': 'list',
-          }, timeout: const Duration(seconds: 15));
-          for (final raw in reply['jobs'] as List? ?? []) {
-            final job = Map<String, dynamic>.from(raw as Map);
-            if (job['role'] == 'destination') continue;
-            final destination = job['role'] == 'local'
-                ? server
-                : _serverConfigs
-                      .where(
-                        (entry) => entry.serverPubkey == job['peerPublicKey'],
-                      )
-                      .firstOrNull;
-            records.add({
-              ...job,
-              'serverId': server.id,
-              'serverName': server.name,
-              'destinationServerId': destination?.id,
-              'destinationServerName': destination?.name,
-            });
-          }
-        } catch (_) {}
-      }),
-    );
-    return records;
-  }
+  Future<TransferHistory> sessionTeleportHistory() => loadTransferHistory(
+    servers: _serverConfigs,
+    isConnected: (id) => _connMgr.statusOf(id) == ConnectionStatus.connected,
+    isSupported: (id) => (_serverSessionTransferVersions[id] ?? 0) >= 2,
+    request: (id, message) => _requestSessionTransfer(
+      id, message, timeout: const Duration(seconds: 15),
+    ),
+  );
 
   Future<SessionTransferResult?> transferSession({
     required Session source,
@@ -15260,6 +15265,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void scheduleTask({
     String? name,
+    String? linkedSessionId,
     required String prompt,
     required String cwd,
     required String scheduledTime,
@@ -15275,6 +15281,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final msg = <String, dynamic>{
       'type': 'schedule_task',
+      if (linkedSessionId != null) 'linkedSessionId': linkedSessionId,
       if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
       'prompt': prompt,
       'cwd': cwd,

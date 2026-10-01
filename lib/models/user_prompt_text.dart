@@ -19,7 +19,7 @@ final RegExp systemNoiseRegex = RegExp(
 
 /// Something that happened alongside a prompt and renders as its own small
 /// card above the bubble.
-enum UserPromptNoticeKind { cancelled, todoDismissed, fileUpload, secretAttachment }
+enum UserPromptNoticeKind { cancelled, todoDismissed, fileUpload, secretAttachment, scheduledTask }
 
 class UserPromptNotice {
   const UserPromptNotice({
@@ -130,6 +130,25 @@ ParsedUserPrompt parseUserPrompt(
       continue;
     }
     break;
+  }
+
+  if (text.startsWith('<socketagent_scheduled_task_report ')) {
+    final name = RegExp(
+      r'^Scheduled task: (.+)$',
+      multiLine: true,
+    ).firstMatch(text)?.group(1);
+    final status = RegExp(
+      r'^Status: (.+)$',
+      multiLine: true,
+    ).firstMatch(text)?.group(1);
+    notices.add(
+      UserPromptNotice(
+        kind: UserPromptNoticeKind.scheduledTask,
+        text: '${name ?? 'Scheduled task'}: ${status ?? 'result received'}',
+        toolName: 'ScheduleTask',
+      ),
+    );
+    return ParsedUserPrompt(text: '', notices: notices, hidden: true);
   }
 
   // Monitor output renders as its own card, and a delegation report is context

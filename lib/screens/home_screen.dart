@@ -1,3 +1,6 @@
+import '../widgets/linked_scheduled_tasks_panel.dart';
+import '../models/session_scheduled_tasks.dart';
+import 'scheduled_tasks_screen.dart';
 import '../widgets/outgoing_queue_notice.dart';
 import 'dart:io';
 import '../services/desktop_composer_keys.dart';
@@ -911,6 +914,19 @@ class HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  void _showSessionScheduledTasks(ChatProvider provider) {
+    final sessionId = provider.activeSessionId;
+    final serverId = provider.activeSessionServerId;
+    if (sessionId == null || serverId == null) return;
+    provider.requestScheduledTasks();
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) =>
+            ScheduledTasksScreen(sessionId: sessionId, serverId: serverId),
+      ),
+    );
+  }
+
   Future<void> _showHtmlPlanManager(ChatProvider provider) {
     return showModalBottomSheet<void>(
       context: context,
@@ -1186,6 +1202,15 @@ class HomeScreenState extends State<HomeScreen> {
                     if (provider.activeSessionId != null ||
                         provider.isPendingNewSession)
                       _buildControlChips(provider),
+                    LinkedScheduledTasksPanel(
+                      tasks: scheduledTasksForSession(
+                        provider.scheduledTasks,
+                        sessionId: provider.activeSessionId,
+                        serverId: provider.activeSessionServerId,
+                        pendingOnly: true,
+                      ),
+                      onOpen: () => _showSessionScheduledTasks(provider),
+                    ),
                     if (_panelPreferences != null &&
                         !_panelHidden(provider, SessionPanel.browser) &&
                         provider.activeBrowserSessions.isNotEmpty)
@@ -1670,6 +1695,12 @@ class HomeScreenState extends State<HomeScreen> {
           Icons.fact_check_outlined,
           [
             SessionAction(
+              'session_scheduled_tasks',
+              'Scheduled tasks',
+              Icons.schedule,
+              enabled: hasSession,
+            ),
+            SessionAction(
               'manage_html_plans',
               'HTML plans',
               Icons.view_quilt_outlined,
@@ -1882,6 +1913,9 @@ class HomeScreenState extends State<HomeScreen> {
         Future.microtask(() {
           if (mounted) _showSecretManager(provider);
         });
+        break;
+      case 'session_scheduled_tasks':
+        _showSessionScheduledTasks(provider);
         break;
       case 'manage_html_plans':
         Future.microtask(() {

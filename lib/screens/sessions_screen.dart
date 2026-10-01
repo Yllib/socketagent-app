@@ -5,9 +5,12 @@ import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
-import '../models/server_config.dart';
 import '../models/session_grouping.dart';
 import '../widgets/adaptive_action_sheet.dart';
+import '../widgets/transfer_history_dialog.dart';
+import '../widgets/computer_filter_dialog.dart';
+import '../widgets/session_backend_watermark.dart';
+import '../widgets/session_compaction_notice.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'archive_screen.dart';
 import 'home_screen.dart';
@@ -46,7 +49,7 @@ class SessionsTab extends StatefulWidget {
 
 class _SessionsTabState extends State<SessionsTab> {
   String? _openingSessionKey;
-  String? _selectedServerFilterId;
+  final Set<String> _selectedServerFilterIds = {};
   bool _connectedOnlyFilter = false;
   String? _backendFilter;
   bool _searchOpen = false;
@@ -625,7 +628,9 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   String? _serverIdForNewSession(ChatProvider provider) {
-    final selected = _selectedServerFilterId;
+    final selected = _selectedServerFilterIds.length == 1
+        ? _selectedServerFilterIds.single
+        : null;
     if (selected != null &&
         provider.serverConfigs.any((c) => c.id == selected)) {
       return selected;
@@ -1255,8 +1260,10 @@ class _SessionsTabState extends State<SessionsTab> {
                                         ),
                                       ),
                                       const SizedBox(width: 6),
-                                      _BackendBadge(
-                                        backend: sessionBackend ?? 'claude',
+                                      Text(
+                                        _backendLabel(
+                                          sessionBackend ?? 'claude',
+                                        ),
                                       ),
                                     ],
                                   ),
@@ -1409,29 +1416,6 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  List<ServerConfig> _sortedServerConfigs(ChatProvider provider) {
-    final sorted = [...provider.serverConfigs];
-    sorted.sort((a, b) {
-      final orderCmp = a.sortOrder.compareTo(b.sortOrder);
-      if (orderCmp != 0) return orderCmp;
-      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    });
-    return sorted;
-  }
-
-  Color _serverStatusColor(ConnectionStatus status) {
-    switch (status) {
-      case ConnectionStatus.connected:
-        return Colors.green;
-      case ConnectionStatus.connecting:
-        return Colors.orange;
-      case ConnectionStatus.error:
-        return Colors.red;
-      case ConnectionStatus.disconnected:
-        return Colors.grey;
-    }
-  }
-
   String _serverStatusLabel(ConnectionStatus status) {
     switch (status) {
       case ConnectionStatus.connected:
@@ -1570,24 +1554,31 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   String _serverFilterLabel(ChatProvider provider) {
-    if (_connectedOnlyFilter) return 'Connected only';
-    final selected = _selectedServerFilterId;
-    if (selected == null) return 'All computers';
-    return provider.serverConfigs
-            .where((config) => config.id == selected)
-            .firstOrNull
-            ?.name ??
-        'All computers';
+    final selected = _selectedServerFilterIds;
+    final label = selected.isEmpty
+        ? 'All computers'
+        : selected.length == 1
+        ? provider.serverConfigs
+                  .where((c) => selected.contains(c.id))
+                  .firstOrNull
+                  ?.name ??
+              'All computers'
+        : '${selected.length} computers';
+    return _connectedOnlyFilter ? '$label · Connected' : label;
   }
 
+  bool _matchesComputerFilter(ChatProvider provider, String serverId) =>
+      ComputerFilterSelection(
+        _selectedServerFilterIds,
+        _connectedOnlyFilter,
+      ).includes(
+        serverId,
+        connected:
+            provider.connMgr.statusOf(serverId) == ConnectionStatus.connected,
+      );
+
   bool _matchesSessionFilters(ChatProvider provider, Session session) {
-    if (_selectedServerFilterId != null &&
-        session.serverId != _selectedServerFilterId) {
-      return false;
-    }
-    if (_connectedOnlyFilter && !provider.isSessionAvailable(session)) {
-      return false;
-    }
+    if (!_matchesComputerFilter(provider, session.serverId)) return false;
     final backend = session.backend ?? 'claude';
     if (_backendFilter != null && backend != _backendFilter) return false;
 
@@ -1604,79 +1595,35 @@ class _SessionsTabState extends State<SessionsTab> {
     BuildContext context,
     ChatProvider provider,
   ) async {
-    final sortedServers = _sortedServerConfigs(provider);
-    final sessions = provider.sessions;
-    final connectedCount = provider.serverConfigs
-        .where(
-          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
-        )
-        .length;
-
-    int sessionCountFor(String serverId) =>
-        sessions.where((session) => session.serverId == serverId).length;
-
-    int runningCountFor(String serverId) => sessions
-        .where((session) => session.serverId == serverId && session.running)
-        .length;
-
-    final selected = await showAdaptiveActionSheet<String>(
+    final counts = <String, int>{};
+    for (final session in provider.sessions) {
+      counts.update(session.serverId, (count) => count + 1, ifAbsent: () => 1);
+    }
+    final selected = await showDialog<ComputerFilterSelection>(
       context: context,
-      title: 'Filter by computer',
-      sections: [
-        AdaptiveSheetSection([
-          AdaptiveSheetAction(
-            value: 'all',
-            label: 'All computers',
-            subtitle: '${sessions.length} sessions',
-            icon: Icons.all_inbox,
-            trailing: _selectedServerFilterId == null && !_connectedOnlyFilter
-                ? const Icon(Icons.check)
-                : null,
-          ),
-          AdaptiveSheetAction(
-            value: 'connected',
-            label: 'Connected only',
-            subtitle: '$connectedCount online',
-            icon: Icons.cloud_done,
-            trailing: _connectedOnlyFilter ? const Icon(Icons.check) : null,
-          ),
-        ]),
-        AdaptiveSheetSection(
-          sortedServers.map((config) {
-            final status = provider.connMgr.statusOf(config.id);
-            final sessionCount = sessionCountFor(config.id);
-            final runningCount = runningCountFor(config.id);
-            final statusColor = _serverStatusColor(status);
-            return AdaptiveSheetAction(
-              value: 'server:${config.id}',
-              label: config.name,
-              subtitle: [
-                _serverStatusLabel(status),
-                '$sessionCount session${sessionCount == 1 ? '' : 's'}',
-                if (runningCount > 0) '$runningCount running',
-              ].join(' · '),
-              icon: Icons.dns_outlined,
-              iconColor: statusColor,
-              trailing: _selectedServerFilterId == config.id
-                  ? const Icon(Icons.check)
-                  : null,
-            );
-          }).toList(),
-        ),
-      ],
+      builder: (_) => ComputerFilterDialog(
+        computers: [
+          for (final config in provider.serverConfigs)
+            ComputerFilterOption(
+              id: config.id,
+              name: config.name,
+              sessionCount: counts[config.id] ?? 0,
+              connected:
+                  provider.connMgr.statusOf(config.id) ==
+                  ConnectionStatus.connected,
+            ),
+        ],
+        selection: ComputerFilterSelection({
+          ..._selectedServerFilterIds,
+        }, _connectedOnlyFilter),
+      ),
     );
     if (selected == null || !mounted) return;
     setState(() {
-      if (selected == 'connected') {
-        _selectedServerFilterId = null;
-        _connectedOnlyFilter = true;
-      } else if (selected.startsWith('server:')) {
-        _selectedServerFilterId = selected.substring('server:'.length);
-        _connectedOnlyFilter = false;
-      } else {
-        _selectedServerFilterId = null;
-        _connectedOnlyFilter = false;
-      }
+      _selectedServerFilterIds
+        ..clear()
+        ..addAll(selected.ids);
+      _connectedOnlyFilter = selected.connectedOnly;
     });
   }
 
@@ -1740,7 +1687,7 @@ class _SessionsTabState extends State<SessionsTab> {
   Widget _buildFilterChipBar(BuildContext context, ChatProvider provider) {
     final theme = Theme.of(context);
     final activeFilters =
-        _selectedServerFilterId != null ||
+        _selectedServerFilterIds.isNotEmpty ||
         _connectedOnlyFilter ||
         _backendFilter != null ||
         _searchQuery.trim().isNotEmpty;
@@ -1762,7 +1709,7 @@ class _SessionsTabState extends State<SessionsTab> {
                     avatar: Icon(
                       _connectedOnlyFilter
                           ? Icons.cloud_done
-                          : _selectedServerFilterId == null
+                          : _selectedServerFilterIds.isEmpty
                           ? Icons.all_inbox
                           : Icons.dns,
                       size: 18,
@@ -1821,7 +1768,7 @@ class _SessionsTabState extends State<SessionsTab> {
                       tooltip: 'Clear filters',
                       onPressed: () {
                         setState(() {
-                          _selectedServerFilterId = null;
+                          _selectedServerFilterIds.clear();
                           _connectedOnlyFilter = false;
                           _backendFilter = null;
                           _searchQuery = '';
@@ -1980,8 +1927,10 @@ class _SessionsTabState extends State<SessionsTab> {
     ChatProvider provider,
   ) {
     final visible = _globalSearchResults.where((session) {
-      if (_selectedServerFilterId != null &&
-          session['_serverId'] != _selectedServerFilterId) {
+      if (!_matchesComputerFilter(
+        provider,
+        session['_serverId'] as String? ?? '',
+      )) {
         return false;
       }
       if (_backendFilter != null &&
@@ -2129,11 +2078,7 @@ class _SessionsTabState extends State<SessionsTab> {
           return const OnboardingScreen();
         }
 
-        if (_selectedServerFilterId != null &&
-            !configs.any((config) => config.id == _selectedServerFilterId)) {
-          _selectedServerFilterId = null;
-          _connectedOnlyFilter = false;
-        }
+        _selectedServerFilterIds.retainAll(configs.map((config) => config.id));
         return Scaffold(
           appBar: AppBar(
             automaticallyImplyLeading: false,
@@ -2570,103 +2515,68 @@ class _SessionsTabState extends State<SessionsTab> {
 
   void _showTeleportHistory(BuildContext context) {
     final provider = context.read<ChatProvider>();
-    var jobs = provider.sessionTeleportHistory();
     showDialog<void>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Transfers'),
-          content: SizedBox(
-            width: 480,
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: jobs,
-              builder: (context, snapshot) {
-                if (!snapshot.hasData) return const Text('Loading transfers…');
-                final entries = snapshot.data!;
-                if (entries.isEmpty) {
-                  return const Text('No transfers on connected computers.');
-                }
-                return SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: entries.reversed.map((job) {
-                      final completed = job['phase'] == 'completed';
-                      final result = job['result'] as Map?;
-                      final session = result?['session'] as Map?;
-                      final destination = job['destinationServerId'] as String?;
-                      final source = provider.sessions
-                          .where(
-                            (s) =>
-                                s.serverId == job['serverId'] &&
-                                s.id == job['sessionId'],
-                          )
-                          .firstOrNull;
-                      final total =
-                          (job['totalBytes'] as num?)?.toDouble() ?? 0;
-                      final bytes = (job['bytes'] as num?)?.toDouble() ?? 0;
-                      final label = switch (job['phase']) {
-                        'completed' => 'Complete',
-                        'failed' => 'Paused',
-                        'preparing' => 'Preparing',
-                        'importing' => 'Restoring session',
-                        'finalizing' => 'Finishing',
-                        'transferring' => 'Transferring',
-                        _ => 'Waiting for connection',
-                      };
-                      return ListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: Text(
-                          session?['title'] as String? ??
-                              source?.title ??
-                              'Session transfer',
-                        ),
-                        subtitle: Text(
-                          '${job['serverName']} → ${job['destinationServerName'] ?? 'Destination'}\n$label${total > 0 && !completed ? ' · ${(bytes / total * 100).round()}%' : ''}${job['warning'] != null ? '\n${job['warning']}' : ''}${job['error'] != null ? '\n${job['error']}' : ''}',
-                        ),
-                        trailing: destination == null
-                            ? null
-                            : TextButton(
-                                onPressed: completed && session != null
-                                    ? () {
-                                        Navigator.pop(dialogContext);
-                                        _openSession(
-                                          this.context,
-                                          sessionId: session['id'] as String,
-                                          serverId: destination,
-                                        );
-                                      }
-                                    : source == null
-                                    ? null
-                                    : () {
-                                        Navigator.pop(dialogContext);
-                                        _showTeleportSessionSheet(
-                                          this.context,
-                                          source,
-                                          resume: job,
-                                        );
-                                      },
-                                child: Text(completed ? 'Open' : 'Resume'),
-                              ),
-                      );
-                    }).toList(),
+      builder: (dialogContext) => TransferHistoryDialog(
+        load: provider.sessionTeleportHistory,
+        itemBuilder: (context, job) {
+          final completed = job['phase'] == 'completed';
+          final result = job['result'] as Map?;
+          final session = result?['session'] as Map?;
+          final destination = job['destinationServerId'] as String?;
+          final source = provider.sessions
+              .where(
+                (s) =>
+                    s.serverId == job['serverId'] && s.id == job['sessionId'],
+              )
+              .firstOrNull;
+          final total = (job['totalBytes'] as num?)?.toDouble() ?? 0;
+          final bytes = (job['bytes'] as num?)?.toDouble() ?? 0;
+          final label = switch (job['phase']) {
+            'completed' => 'Complete',
+            'failed' => 'Paused',
+            'preparing' => 'Preparing',
+            'importing' => 'Restoring session',
+            'finalizing' => 'Finishing',
+            'transferring' => 'Transferring',
+            _ => 'Waiting for connection',
+          };
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(
+              session?['title'] as String? ??
+                  source?.title ??
+                  'Session transfer',
+            ),
+            subtitle: Text(
+              '${job['serverName']} → ${job['destinationServerName'] ?? 'Destination'}\n$label${total > 0 && !completed ? ' · ${(bytes / total * 100).round()}%' : ''}${job['warning'] != null ? '\n${job['warning']}' : ''}${job['error'] != null ? '\n${job['error']}' : ''}',
+            ),
+            trailing: destination == null
+                ? null
+                : TextButton(
+                    onPressed: completed && session != null
+                        ? () {
+                            Navigator.pop(dialogContext);
+                            _openSession(
+                              this.context,
+                              sessionId: session['id'] as String,
+                              serverId: destination,
+                            );
+                          }
+                        : source == null
+                        ? null
+                        : () {
+                            Navigator.pop(dialogContext);
+                            _showTeleportSessionSheet(
+                              this.context,
+                              source,
+                              resume: job,
+                            );
+                          },
+                    child: Text(completed ? 'Open' : 'Resume'),
                   ),
-                );
-              },
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => setDialogState(() {
-                jobs = provider.sessionTeleportHistory();
-              }),
-              child: const Text('Refresh'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
@@ -3428,10 +3338,10 @@ class _SessionsTabState extends State<SessionsTab> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Start a Fresh Thread?'),
+        title: const Text('Start a new thread?'),
         content: const Text(
-          'This session will continue in a fresh Codex thread with durable '
-          'memory and recent runs. Its name, pin, and visible history stay intact.',
+          'Continue this session with less context. Its name, pin, and chat history stay here. '
+          'The agent can use Remember to look up earlier transcripts.',
         ),
         actions: [
           TextButton(
@@ -3440,7 +3350,7 @@ class _SessionsTabState extends State<SessionsTab> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Start Fresh'),
+            child: const Text('Start new thread'),
           ),
         ],
       ),
@@ -3737,346 +3647,322 @@ class _SessionsTabState extends State<SessionsTab> {
             : () => _showOfflineSessionSnack(context, session),
         child: Opacity(
           opacity: isAvailable ? 1 : 0.48,
-          child: Container(
-            decoration: BoxDecoration(
-              color: selected || active
-                  ? theme.colorScheme.primary.withAlpha(28)
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(widget.sidebar ? 8 : 0),
-              border: active
-                  ? Border.all(color: theme.colorScheme.primary.withAlpha(90))
+          child: SessionBackendWatermark(
+            backend: session.backend ?? 'claude',
+            child: Container(
+              decoration: BoxDecoration(
+                color: selected || active
+                    ? theme.colorScheme.primary.withAlpha(28)
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(widget.sidebar ? 8 : 0),
+                border: active
+                    ? Border.all(color: theme.colorScheme.primary.withAlpha(90))
+                    : null,
+              ),
+              margin: widget.sidebar
+                  ? const EdgeInsets.symmetric(horizontal: 6, vertical: 2)
                   : null,
-            ),
-            margin: widget.sidebar
-                ? const EdgeInsets.symmetric(horizontal: 6, vertical: 2)
-                : null,
-            padding: EdgeInsets.fromLTRB(
-              compact ? 10 : 16,
-              compact ? 8 : 12,
-              compact ? 8 : 16,
-              compact ? 8 : 12,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Padding(
-                  padding: EdgeInsets.only(top: 2, right: compact ? 8 : 12),
-                  child: _selectionMode
-                      ? Checkbox(
-                          value: selected,
-                          onChanged: isAvailable
-                              ? (_) => _toggleSessionSelection(session)
-                              : null,
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                        )
-                      : showBusy
-                      ? SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: theme.colorScheme.primary,
+              padding: EdgeInsets.fromLTRB(
+                compact ? 10 : 16,
+                compact ? 8 : 12,
+                compact ? 8 : 16,
+                compact ? 8 : 12,
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: EdgeInsets.only(top: 2, right: compact ? 8 : 12),
+                    child: _selectionMode
+                        ? Checkbox(
+                            value: selected,
+                            onChanged: isAvailable
+                                ? (_) => _toggleSessionSelection(session)
+                                : null,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          )
+                        : showBusy
+                        ? SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: theme.colorScheme.primary,
+                            ),
+                          )
+                        : Icon(
+                            delegated
+                                ? Icons.subdirectory_arrow_right
+                                : provider.isSessionPinned(session.id)
+                                ? Icons.push_pin
+                                : isAvailable
+                                ? Icons.terminal
+                                : Icons.cloud_off_outlined,
+                            size: compact ? 18 : 20,
+                            color: provider.isSessionPinned(session.id)
+                                ? theme.colorScheme.primary.withAlpha(180)
+                                : theme.colorScheme.onSurface.withAlpha(128),
                           ),
-                        )
-                      : Icon(
-                          delegated
-                              ? Icons.subdirectory_arrow_right
-                              : provider.isSessionPinned(session.id)
-                              ? Icons.push_pin
-                              : isAvailable
-                              ? Icons.terminal
-                              : Icons.cloud_off_outlined,
-                          size: compact ? 18 : 20,
-                          color: provider.isSessionPinned(session.id)
-                              ? theme.colorScheme.primary.withAlpha(180)
-                              : theme.colorScheme.onSurface.withAlpha(128),
-                        ),
-                ),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // Line 1: title, or project folder if no title.
-                      Text(
-                        primaryText,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: compact ? 13.5 : 15.5,
-                          color: Color.lerp(
-                            theme.colorScheme.onSurface,
-                            theme.colorScheme.primary,
-                            0.18,
-                          ),
-                        ),
-                      ),
-                      if (showSecondaryText) ...[
-                        const SizedBox(height: 3),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Line 1: title, or project folder if no title.
                         Text(
-                          secondaryText,
+                          primaryText,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize: 11.5,
-                            color: theme.colorScheme.onSurface.withAlpha(132),
+                            fontWeight: FontWeight.w700,
+                            fontSize: compact ? 13.5 : 15.5,
+                            color: Color.lerp(
+                              theme.colorScheme.onSurface,
+                              theme.colorScheme.primary,
+                              0.18,
+                            ),
                           ),
                         ),
-                      ],
-                      // Line 3: status/time, path, and compact badges.
-                      const SizedBox(height: 3),
-                      if (widget.sidebar)
-                        Wrap(
-                          spacing: 6,
-                          runSpacing: 3,
-                          crossAxisAlignment: WrapCrossAlignment.center,
-                          children: [
-                            Text(
-                              statusText,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
+                        if (showSecondaryText) ...[
+                          const SizedBox(height: 3),
+                          Text(
+                            secondaryText,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: const Color(0xFFD6D6D6),
                             ),
-                            _BackendBadge(backend: session.backend ?? 'claude'),
-                            if (provider.serverConfigs.length > 1)
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(
-                                  maxWidth: 130,
+                          ),
+                        ],
+                        // Line 3: status/time, path, and compact badges.
+                        const SizedBox(height: 3),
+                        if (widget.sidebar)
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 3,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                statusText,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: const Color(0xFFD6D6D6),
                                 ),
+                              ),
+                              if (provider.serverConfigs.length > 1)
+                                ConstrainedBox(
+                                  constraints: const BoxConstraints(
+                                    maxWidth: 130,
+                                  ),
+                                  child: Text(
+                                    session.serverName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: const Color(0xFFD6D6D6),
+                                    ),
+                                  ),
+                                ),
+                              if (!isAvailable)
+                                Text(
+                                  _serverStatusLabel(status),
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                              if (delegated)
+                                const Text(
+                                  'AGENT',
+                                  style: TextStyle(fontSize: 10),
+                                ),
+                            ],
+                          )
+                        else
+                          Row(
+                            children: [
+                              Flexible(
                                 child: Text(
-                                  session.serverName,
+                                  metaText,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: theme.colorScheme.onSurfaceVariant,
+                                    color: showBusy
+                                        ? theme.colorScheme.primary
+                                        : const Color(0xFFD6D6D6),
                                   ),
                                 ),
                               ),
-                            if (!isAvailable)
-                              Text(
-                                _serverStatusLabel(status),
-                                style: const TextStyle(fontSize: 11),
-                              ),
-                            if (delegated)
-                              const Text(
-                                'AGENT',
-                                style: TextStyle(fontSize: 10),
-                              ),
-                          ],
-                        )
-                      else
-                        Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                metaText,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: showBusy
-                                      ? theme.colorScheme.primary
-                                      : theme.colorScheme.onSurface.withAlpha(
-                                          128,
-                                        ),
-                                ),
-                              ),
-                            ),
-                            if (session.serverName.isNotEmpty &&
-                                provider.serverConfigs.length > 1) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: session.serverColor != null
-                                      ? Color(
-                                          session.serverColor!,
-                                        ).withAlpha(showBusy ? 200 : 140)
-                                      : theme.colorScheme.primaryContainer
-                                            .withAlpha(120),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  session.serverName,
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: session.serverColor != null
-                                        ? FontWeight.w500
-                                        : null,
+                              if (session.serverName.isNotEmpty &&
+                                  provider.serverConfigs.length > 1) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
                                     color: session.serverColor != null
-                                        ? Colors.white
-                                        : theme.colorScheme.onPrimaryContainer,
+                                        ? Color(
+                                            session.serverColor!,
+                                          ).withAlpha(showBusy ? 200 : 140)
+                                        : theme.colorScheme.primaryContainer
+                                              .withAlpha(120),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    session.serverName,
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: session.serverColor != null
+                                          ? FontWeight.w500
+                                          : null,
+                                      color: session.serverColor != null
+                                          ? Colors.white
+                                          : theme
+                                                .colorScheme
+                                                .onPrimaryContainer,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
-                            if (!isAvailable) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color:
-                                      theme.colorScheme.surfaceContainerHighest,
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  _serverStatusLabel(status).toUpperCase(),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.5,
-                                    color: theme.colorScheme.onSurfaceVariant,
+                              ],
+                              if (!isAvailable) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: theme
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    _serverStatusLabel(status).toUpperCase(),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.5,
+                                      color: const Color(0xFFD6D6D6),
+                                    ),
                                   ),
                                 ),
-                              ),
-                            ],
-                            // Always identify the harness so mixed and
-                            // single-backend lists use the same visual language.
-                            const SizedBox(width: 6),
-                            _BackendBadge(backend: session.backend ?? 'claude'),
-                            if (delegated) ...[
-                              const SizedBox(width: 6),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 5,
-                                  vertical: 1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: theme.colorScheme.secondaryContainer
-                                      .withAlpha(170),
-                                  borderRadius: BorderRadius.circular(4),
-                                ),
-                                child: Text(
-                                  'AGENT',
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w600,
-                                    letterSpacing: 0.5,
-                                    color:
-                                        theme.colorScheme.onSecondaryContainer,
+                              ],
+                              if (delegated) ...[
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 5,
+                                    vertical: 1,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: theme.colorScheme.secondaryContainer
+                                        .withAlpha(170),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'AGENT',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      letterSpacing: 0.5,
+                                      color: theme
+                                          .colorScheme
+                                          .onSecondaryContainer,
+                                    ),
                                   ),
                                 ),
-                              ),
+                              ],
                             ],
-                          ],
-                        ),
-                      if (session.backend == 'codex' &&
-                          session.freshThreadPending) ...[
-                        const SizedBox(height: 7),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
                           ),
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color: theme.colorScheme.primary.withAlpha(150),
+                        if (session.backend == 'codex' &&
+                            session.freshThreadPending) ...[
+                          const SizedBox(height: 7),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                              vertical: 6,
                             ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.check_circle_outline,
-                                size: 16,
-                                color: theme.colorScheme.primary,
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: theme.colorScheme.primary.withAlpha(150),
                               ),
-                              const SizedBox(width: 7),
-                              Text(
-                                'Fresh thread ready',
-                                style: TextStyle(
-                                  fontSize: 11,
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.check_circle_outline,
+                                  size: 16,
                                   color: theme.colorScheme.primary,
                                 ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ] else if (session.backend == 'codex' &&
-                          session.compactionsSinceRollover > 10) ...[
-                        const SizedBox(height: 7),
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            border: Border.all(
-                              color: theme.colorScheme.tertiary.withAlpha(150),
-                            ),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                Icons.warning_amber_outlined,
-                                size: 16,
-                                color: theme.colorScheme.tertiary,
-                              ),
-                              const SizedBox(width: 7),
-                              Expanded(
-                                child: Text(
-                                  '${session.compactionsSinceRollover} compactions. '
-                                  'Start a fresh thread from the session menu.',
+                                const SizedBox(width: 7),
+                                Text(
+                                  'Fresh thread ready',
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: theme.colorScheme.tertiary,
+                                    color: theme.colorScheme.primary,
                                   ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
-                        ),
+                        ] else if (session.backend == 'codex' &&
+                            session.compactionsSinceRollover > 10)
+                          SessionCompactionNotice(
+                            key: ValueKey('compaction-${_sessionKey(session)}'),
+                            serverId: session.serverId,
+                            sessionId: session.id,
+                            compactions: session.compactionsSinceRollover,
+                            onStartFresh: isAvailable && !_selectionMode
+                                ? () =>
+                                      _confirmStartFreshThread(context, session)
+                                : null,
+                          ),
                       ],
-                    ],
-                  ),
-                ),
-                if (!_selectionMode)
-                  Builder(
-                    builder: (buttonContext) => IconButton(
-                      tooltip: 'Session actions',
-                      icon: Icon(
-                        Icons.more_vert,
-                        size: 18,
-                        color: theme.colorScheme.onSurface.withAlpha(128),
-                      ),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                        minWidth: 32,
-                        minHeight: 32,
-                      ),
-                      onPressed: isAvailable
-                          ? _openingSessionKey == null
-                                ? () {
-                                    final box =
-                                        buttonContext.findRenderObject()!
-                                            as RenderBox;
-                                    _showSessionContextMenu(
-                                      context,
-                                      session,
-                                      anchor: Platform.isWindows
-                                          ? box.localToGlobal(
-                                                  Offset(0, box.size.height),
-                                                ) &
-                                                Size(box.size.width, 0)
-                                          : null,
-                                    );
-                                  }
-                                : null
-                          : () => _showOfflineSessionSnack(context, session),
                     ),
                   ),
-              ],
+                  if (!_selectionMode)
+                    Builder(
+                      builder: (buttonContext) => IconButton(
+                        tooltip: 'Session actions',
+                        icon: Icon(
+                          Icons.more_vert,
+                          size: 18,
+                          color: theme.colorScheme.onSurface.withAlpha(128),
+                        ),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 32,
+                          minHeight: 32,
+                        ),
+                        onPressed: isAvailable
+                            ? _openingSessionKey == null
+                                  ? () {
+                                      final box =
+                                          buttonContext.findRenderObject()!
+                                              as RenderBox;
+                                      _showSessionContextMenu(
+                                        context,
+                                        session,
+                                        anchor: Platform.isWindows
+                                            ? box.localToGlobal(
+                                                    Offset(0, box.size.height),
+                                                  ) &
+                                                  Size(box.size.width, 0)
+                                            : null,
+                                      );
+                                    }
+                                  : null
+                            : () => _showOfflineSessionSnack(context, session),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -4091,40 +3977,6 @@ class _SessionsTabState extends State<SessionsTab> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('$server is offline. Reconnect it to open this session.'),
-      ),
-    );
-  }
-}
-
-class _BackendBadge extends StatelessWidget {
-  final String backend;
-
-  const _BackendBadge({required this.backend});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isCodex = backend == 'codex';
-    final background = isCodex
-        ? theme.colorScheme.tertiaryContainer
-        : theme.colorScheme.primaryContainer;
-    final foreground = isCodex
-        ? theme.colorScheme.onTertiaryContainer
-        : theme.colorScheme.onPrimaryContainer;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-      decoration: BoxDecoration(
-        color: background.withAlpha(170),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        isCodex ? 'CODEX' : 'CLAUDE',
-        style: TextStyle(
-          fontSize: 10,
-          fontWeight: FontWeight.w600,
-          letterSpacing: 0.5,
-          color: foreground,
-        ),
       ),
     );
   }

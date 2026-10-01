@@ -7,7 +7,7 @@ class OutgoingQueueNotice extends StatelessWidget {
   final ChatProvider provider;
   @override
   Widget build(BuildContext context) {
-    final count = provider.pendingOutgoing.length;
+    final count = provider.activeDeliveryProblems.length;
     if (count == 0 && provider.outgoingQueueError == null) {
       return const SizedBox.shrink();
     }
@@ -18,7 +18,9 @@ class OutgoingQueueNotice extends StatelessWidget {
           Expanded(
             child: Text(
               provider.outgoingQueueError ??
-                  '$count ${count == 1 ? 'request waiting' : 'requests waiting'}',
+                  (count == 1
+                      ? 'Delivery needs attention'
+                      : '$count delivery problems'),
             ),
           ),
           TextButton(
@@ -27,7 +29,7 @@ class OutgoingQueueNotice extends StatelessWidget {
               builder: (context) => ListenableBuilder(
                 listenable: provider,
                 builder: (context, _) => AlertDialog(
-                  title: const Text('Waiting to send'),
+                  title: const Text('Delivery problems'),
                   content: SizedBox(
                     width: 480,
                     child: SingleChildScrollView(
@@ -37,10 +39,11 @@ class OutgoingQueueNotice extends StatelessWidget {
                         children: [
                           if (provider.outgoingQueueError != null)
                             Text(provider.outgoingQueueError!),
-                          if (provider.pendingOutgoing.isEmpty &&
+                          if (provider.activeDeliveryProblems.isEmpty &&
                               provider.outgoingQueueError == null)
-                            const Text('All requests delivered.'),
-                          for (final request in provider.pendingOutgoing) ...[
+                            const Text('No delivery problems.'),
+                          for (final request
+                              in provider.activeDeliveryProblems) ...[
                             Text(
                               request.displayText,
                               maxLines: 4,
