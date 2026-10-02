@@ -5,6 +5,11 @@ class ChatImageSource {
   final String source;
   final String label;
 
+  /// User uploads already have a durable server path; assistant images still
+  /// require snapshot IDs through [parse].
+  factory ChatImageSource.upload(String path, {required String name}) =>
+      ChatImageSource._(source: path, label: name);
+
   static ChatImageSource parse(String source, {String label = ''}) {
     final uri = Uri.tryParse(source.trim());
     final id = uri?.queryParameters['id'] ?? '';
@@ -18,8 +23,9 @@ class ChatImageSource {
     return ChatImageSource._(source: uri.toString(), label: label.trim());
   }
 
-  String get fileName =>
-      Uri.parse(source).queryParameters['name'] ?? 'image.png';
+  String get fileName => source.startsWith('socketagent://')
+      ? Uri.parse(source).queryParameters['name'] ?? 'image.png'
+      : label;
 }
 
 class ChatImageComparison {

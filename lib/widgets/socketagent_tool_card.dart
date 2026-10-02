@@ -92,7 +92,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: accent.withAlpha(80)),
       ),
@@ -126,7 +126,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 10.5,
-                        color: const Color(0xFFA6ADC8),
+                        color: const Color(0xFFB0B0B0),
                       ),
                     ),
                   ),
@@ -143,7 +143,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF6C7086),
+                      color: const Color(0xFF767676),
                     ),
                 ],
               ),
@@ -153,7 +153,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
             Container(
               constraints: const BoxConstraints(maxHeight: 360),
               decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFF313244))),
+                border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
               ),
               child: ScrollPassthrough(
                 child: SingleChildScrollView(
@@ -179,7 +179,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
                             style: GoogleFonts.jetBrainsMono(
                               fontSize: 10.5,
                               height: 1.4,
-                              color: const Color(0xFFCDD6F4),
+                              color: const Color(0xFFE6E6E6),
                             ),
                           ),
                       ],

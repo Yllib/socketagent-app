@@ -72,10 +72,10 @@ class _WorkflowCardState extends State<WorkflowCard> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       child: Material(
-        color: const Color(0xFF181825),
+        color: const Color(0xFF121212),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
-          side: const BorderSide(color: Color(0xFF45475A)),
+          side: const BorderSide(color: Color(0xFF4A4A4A)),
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -112,7 +112,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
                           Text(
                             title,
                             style: const TextStyle(
-                              color: Color(0xFFCDD6F4),
+                              color: Color(0xFFE6E6E6),
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
@@ -123,7 +123,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                color: Color(0xFFA6ADC8),
+                                color: Color(0xFFB0B0B0),
                                 fontSize: 11,
                               ),
                             ),
@@ -151,7 +151,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
                     const SizedBox(width: 5),
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
-                      color: const Color(0xFF7F849C),
+                      color: const Color(0xFF888888),
                       size: 18,
                     ),
                   ],
@@ -178,13 +178,13 @@ class _WorkflowCardState extends State<WorkflowCard> {
                         .toList(),
                   ),
                 ),
-              const Divider(height: 1, color: Color(0xFF313244)),
+              const Divider(height: 1, color: Color(0xFF2E2E2E)),
               if (phases.isEmpty && progress.isEmpty)
                 const Padding(
                   padding: EdgeInsets.all(12),
                   child: Text(
                     'Waiting for workflow progress…',
-                    style: TextStyle(color: Color(0xFF7F849C), fontSize: 11),
+                    style: TextStyle(color: Color(0xFF888888), fontSize: 11),
                   ),
                 )
               else
@@ -211,12 +211,12 @@ class _WorkflowCardState extends State<WorkflowCard> {
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: const BoxDecoration(
-                    border: Border(top: BorderSide(color: Color(0xFF313244))),
+                    border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
                   ),
                   child: Text(
                     _text('resultPreview'),
                     style: const TextStyle(
-                      color: Color(0xFFCDD6F4),
+                      color: Color(0xFFE6E6E6),
                       fontSize: 11,
                       height: 1.35,
                     ),
@@ -250,7 +250,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
           if (detail != null && detail.isNotEmpty)
             Text(
               detail,
-              style: const TextStyle(color: Color(0xFF7F849C), fontSize: 10),
+              style: const TextStyle(color: Color(0xFF888888), fontSize: 10),
             ),
           const SizedBox(height: 4),
           ...agents.map(_agent),
@@ -297,13 +297,13 @@ class _WorkflowCardState extends State<WorkflowCard> {
             ),
       title: Text(
         agent['label']?.toString() ?? agent['agentId']?.toString() ?? 'Agent',
-        style: const TextStyle(color: Color(0xFFCDD6F4), fontSize: 11),
+        style: const TextStyle(color: Color(0xFFE6E6E6), fontSize: 11),
       ),
       subtitle: details.isEmpty
           ? null
           : Text(
               details.join(' · '),
-              style: const TextStyle(color: Color(0xFF7F849C), fontSize: 9),
+              style: const TextStyle(color: Color(0xFF888888), fontSize: 9),
             ),
       children: [
         if (agent['promptPreview']?.toString().isNotEmpty == true)
@@ -324,7 +324,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
         Text(
           label,
           style: const TextStyle(
-            color: Color(0xFF7F849C),
+            color: Color(0xFF888888),
             fontSize: 8,
             fontWeight: FontWeight.w600,
           ),
@@ -332,7 +332,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
         Text(
           text,
           style: const TextStyle(
-            color: Color(0xFFA6ADC8),
+            color: Color(0xFFB0B0B0),
             fontSize: 10,
             height: 1.3,
           ),

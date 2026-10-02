@@ -6,9 +6,11 @@ import android.content.ClipData
 import android.os.Build
 import android.net.Uri
 import android.provider.Settings
+import android.view.WindowInsets
 import android.webkit.CookieManager
 import android.webkit.MimeTypeMap
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterView
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import androidx.core.content.FileProvider
@@ -20,6 +22,36 @@ class MainActivity : FlutterActivity() {
     private var wasAssistIntent = false
     private var methodChannel: MethodChannel? = null
     private var pendingDeepLink: String? = null
+
+    override fun onResume() {
+        super.onResume()
+        refreshKeyboardInsets()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) refreshKeyboardInsets()
+    }
+
+    private fun refreshKeyboardInsets() {
+        val flutterView = findViewById<FlutterView>(FLUTTER_VIEW_ID) ?: return
+        flutterView.requestApplyInsets()
+        flutterView.postOnAnimation {
+            if (!flutterView.isAttachedToWindow || !flutterView.hasWindowFocus()) {
+                return@postOnAnimation
+            }
+            // An interrupted IME animation can leave Flutter's inset listener
+            // deferring the keyboard-hidden update. Read the current window state
+            // after regaining focus and deliver it directly to Flutter's viewport.
+            // Leave visible-keyboard animation updates to the normal listener.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val insets = flutterView.rootWindowInsets ?: return@postOnAnimation
+                if (!insets.isVisible(WindowInsets.Type.ime())) {
+                    flutterView.onApplyWindowInsets(insets)
+                }
+            }
+        }
+    }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
         moonshine?.close()

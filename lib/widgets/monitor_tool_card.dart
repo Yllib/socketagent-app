@@ -116,7 +116,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: const Color(0xFF89B4FA).withAlpha(80)),
       ),
@@ -157,7 +157,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFA6ADC8),
+                        color: const Color(0xFFB0B0B0),
                       ),
                     ),
                   ),
@@ -168,7 +168,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF6C7086),
+                      color: const Color(0xFF767676),
                     ),
                   ],
                 ],
@@ -193,9 +193,9 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
             Container(
               constraints: const BoxConstraints(maxHeight: 300),
               decoration: const BoxDecoration(
-                color: Color(0xFF181825),
+                color: Color(0xFF121212),
                 border: Border(
-                  top: BorderSide(color: Color(0xFF313244), width: 1),
+                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
                 ),
                 borderRadius: BorderRadius.vertical(
                   bottom: Radius.circular(12),
@@ -284,7 +284,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
     value,
     style: GoogleFonts.jetBrainsMono(
       fontSize: 10,
-      color: const Color(0xFF6C7086),
+      color: const Color(0xFF767676),
     ),
   );
 
@@ -294,7 +294,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
       fontSize: 9,
       fontWeight: FontWeight.bold,
       letterSpacing: 0.8,
-      color: const Color(0xFF6C7086),
+      color: const Color(0xFF767676),
     ),
   );
 
@@ -308,7 +308,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
         value,
         style: GoogleFonts.jetBrainsMono(
           fontSize: 10,
-          color: const Color(0xFFCDD6F4),
+          color: const Color(0xFFE6E6E6),
         ),
       ),
     ],

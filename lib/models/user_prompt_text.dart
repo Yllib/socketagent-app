@@ -1,3 +1,5 @@
+import 'message_attachment.dart';
+
 // Parsing for the decorations the server adds to a user prompt.
 //
 // A prompt reaches the client with attachment markers, cancel notices and
@@ -19,7 +21,12 @@ final RegExp systemNoiseRegex = RegExp(
 
 /// Something that happened alongside a prompt and renders as its own small
 /// card above the bubble.
-enum UserPromptNoticeKind { cancelled, todoDismissed, fileUpload, secretAttachment, scheduledTask }
+enum UserPromptNoticeKind {
+  cancelled,
+  todoDismissed,
+  secretAttachment,
+  scheduledTask,
+}
 
 class UserPromptNotice {
   const UserPromptNotice({
@@ -42,10 +49,13 @@ class ParsedUserPrompt {
     required this.text,
     required this.notices,
     required this.hidden,
+    this.attachments = const [],
   });
 
-  /// What the user's bubble shows. Empty means there is no bubble.
+  /// The user's words. An attachment-only bubble may have empty text.
   final String text;
+
+  final List<MessageAttachment> attachments;
 
   /// Notices to render above the bubble, in the order they appeared.
   final List<UserPromptNotice> notices;
@@ -59,8 +69,12 @@ final _cancelPrefix = RegExp(
   r'^\[The user cancelled your previous action\. Follow their instructions below\.\][\s]*',
 );
 final _systemPrefix = RegExp(r'^\[System: [^\]]*\][\s]*');
-final _todoDismissPrefix = RegExp(r'^\[The user dismissed the task list\..*?\][\s]*');
-final _attachedFilePrefix = RegExp(r'^\[Attached file: (.+?)\]\n?');
+final _todoDismissPrefix = RegExp(
+  r'^\[The user dismissed the task list\..*?\][\s]*',
+);
+final _attachedFilePrefix = RegExp(
+  r'^\[Attached file: ([^\r\n]+)\](?:\r?\n|$)',
+);
 final _attachedSecretPrefix = RegExp(r'^\[Attached secret: (.+)\]\n?');
 
 /// Splits a stored user prompt into the bubble text and its notices.
@@ -75,15 +89,18 @@ ParsedUserPrompt parseUserPrompt(
 }) {
   var text = content;
   final notices = <UserPromptNotice>[];
+  final attachments = <MessageAttachment>[];
 
   final cancelled = _cancelPrefix.firstMatch(text);
   if (cancelled != null) {
     text = text.substring(cancelled.end);
-    notices.add(const UserPromptNotice(
-      kind: UserPromptNoticeKind.cancelled,
-      text: 'Action cancelled',
-      toolName: 'cancelled',
-    ));
+    notices.add(
+      const UserPromptNotice(
+        kind: UserPromptNoticeKind.cancelled,
+        text: 'Action cancelled',
+        toolName: 'cancelled',
+      ),
+    );
   }
 
   // Restart continuation prompts reach the model but are not the user talking.
@@ -98,33 +115,33 @@ ParsedUserPrompt parseUserPrompt(
   final todoDismissed = _todoDismissPrefix.firstMatch(text);
   if (todoDismissed != null) {
     text = text.substring(todoDismissed.end);
-    notices.add(const UserPromptNotice(
-      kind: UserPromptNoticeKind.todoDismissed,
-      text: 'Task list dismissed',
-      toolName: 'dismissed',
-    ));
+    notices.add(
+      const UserPromptNotice(
+        kind: UserPromptNoticeKind.todoDismissed,
+        text: 'Task list dismissed',
+        toolName: 'dismissed',
+      ),
+    );
   }
 
   while (true) {
     final file = _attachedFilePrefix.firstMatch(text);
     if (file != null) {
       text = text.substring(file.end);
-      notices.add(UserPromptNotice(
-        kind: UserPromptNoticeKind.fileUpload,
-        text: 'Uploaded: ${file.group(1)!.split('/').last}',
-        toolName: 'uploaded',
-      ));
+      attachments.add(MessageAttachment.server(file.group(1)!));
       continue;
     }
     final secret = _attachedSecretPrefix.firstMatch(text);
     if (secret != null) {
       final decoded = decodeSecret?.call(secret.group(1)!);
       if (decoded != null) {
-        notices.add(UserPromptNotice(
-          kind: UserPromptNoticeKind.secretAttachment,
-          text: 'Attached secret: ${decoded.label} (${decoded.scope})',
-          toolName: 'secure_attached',
-        ));
+        notices.add(
+          UserPromptNotice(
+            kind: UserPromptNoticeKind.secretAttachment,
+            text: 'Attached secret: ${decoded.label} (${decoded.scope})',
+            toolName: 'secure_attached',
+          ),
+        );
       }
       text = text.substring(secret.end);
       continue;
@@ -162,5 +179,6 @@ ParsedUserPrompt parseUserPrompt(
     text: text.replaceAll(systemNoiseRegex, '').trim(),
     notices: notices,
     hidden: false,
+    attachments: attachments,
   );
 }

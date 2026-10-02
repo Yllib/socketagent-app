@@ -88,7 +88,7 @@ class _RawEventCardState extends State<RawEventCard> {
                         height: 10,
                         child: CircularProgressIndicator(
                           strokeWidth: 1.5,
-                          color: Color(0xFF585B70),
+                          color: Color(0xFF5E5E5E),
                         ),
                       ),
                     ),
@@ -96,7 +96,7 @@ class _RawEventCardState extends State<RawEventCard> {
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 16,
-                    color: const Color(0xFF585B70),
+                    color: const Color(0xFF5E5E5E),
                   ),
                 ],
               ),
@@ -104,7 +104,7 @@ class _RawEventCardState extends State<RawEventCard> {
           ),
           // Expanded: show each content block as a section
           if (_expanded) ...[
-            const Divider(height: 1, color: Color(0xFF313244)),
+            const Divider(height: 1, color: Color(0xFF2E2E2E)),
             // Metadata row
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
@@ -158,7 +158,7 @@ class _RawEventCardState extends State<RawEventCard> {
                 style: const TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 9,
-                  color: Color(0xFF6C7086),
+                  color: Color(0xFF767676),
                 ),
               ),
               if (!b.complete) ...[
@@ -168,7 +168,7 @@ class _RawEventCardState extends State<RawEventCard> {
                   height: 8,
                   child: CircularProgressIndicator(
                     strokeWidth: 1.5,
-                    color: Color(0xFF585B70),
+                    color: Color(0xFF5E5E5E),
                   ),
                 ),
               ],
@@ -181,7 +181,7 @@ class _RawEventCardState extends State<RawEventCard> {
             margin: const EdgeInsets.fromLTRB(10, 2, 10, 6),
             constraints: const BoxConstraints(maxHeight: 200),
             decoration: BoxDecoration(
-              color: const Color(0xFF11111B),
+              color: const Color(0xFF0C0C0C),
               borderRadius: BorderRadius.circular(4),
             ),
             child: ScrollPassthrough(
@@ -194,7 +194,7 @@ class _RawEventCardState extends State<RawEventCard> {
                     fontSize: 11,
                     color: isToolUse
                         ? Colors.orange.shade100
-                        : const Color(0xFFA6ADC8),
+                        : const Color(0xFFB0B0B0),
                   ),
                 ),
               ),
@@ -232,7 +232,7 @@ class _RawEventCardState extends State<RawEventCard> {
                     style: const TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 9,
-                      color: Color(0xFF6C7086),
+                      color: Color(0xFF767676),
                     ),
                   ),
                 ),
@@ -245,7 +245,7 @@ class _RawEventCardState extends State<RawEventCard> {
             margin: const EdgeInsets.fromLTRB(10, 2, 10, 6),
             constraints: const BoxConstraints(maxHeight: 150),
             decoration: BoxDecoration(
-              color: const Color(0xFF11111B),
+              color: const Color(0xFF0C0C0C),
               borderRadius: BorderRadius.circular(4),
             ),
             child: ScrollPassthrough(
@@ -348,13 +348,13 @@ class _RawEventCardState extends State<RawEventCard> {
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 16,
-                    color: const Color(0xFF585B70),
+                    color: const Color(0xFF5E5E5E),
                   ),
                 ],
               ),
             ),
             if (_expanded && item.modelUsage != null) ...[
-              const Divider(height: 1, color: Color(0xFF313244)),
+              const Divider(height: 1, color: Color(0xFF2E2E2E)),
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
                 child: Wrap(
@@ -418,7 +418,7 @@ class _RawEventCardState extends State<RawEventCard> {
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         fontSize: 11,
-                        color: Color(0xFFA6ADC8),
+                        color: Color(0xFFB0B0B0),
                       ),
                     ),
                   ),
@@ -426,13 +426,13 @@ class _RawEventCardState extends State<RawEventCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 16,
-                      color: const Color(0xFF585B70),
+                      color: const Color(0xFF5E5E5E),
                     ),
                 ],
               ),
             ),
             if (_expanded && rawJson.isNotEmpty) ...[
-              const Divider(height: 1, color: Color(0xFF313244)),
+              const Divider(height: 1, color: Color(0xFF2E2E2E)),
               Container(
                 constraints: const BoxConstraints(maxHeight: 240),
                 padding: const EdgeInsets.all(10),
@@ -443,7 +443,7 @@ class _RawEventCardState extends State<RawEventCard> {
                       style: const TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 10,
-                        color: Color(0xFFA6ADC8),
+                        color: Color(0xFFB0B0B0),
                       ),
                     ),
                   ),
@@ -462,7 +462,7 @@ class _RawEventCardState extends State<RawEventCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(8),
         border: Border(left: BorderSide(color: color, width: 3)),
       ),
@@ -494,7 +494,7 @@ class _RawEventCardState extends State<RawEventCard> {
                 style: const TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 10,
-                  color: Color(0xFF9399B2),
+                  color: Color(0xFF9A9A9A),
                 ),
               ),
             ),
@@ -561,7 +561,7 @@ class _RawEventCardState extends State<RawEventCard> {
           style: const TextStyle(
             fontFamily: 'monospace',
             fontSize: 9,
-            color: Color(0xFF6C7086),
+            color: Color(0xFF767676),
           ),
         ),
         Text(
@@ -569,7 +569,7 @@ class _RawEventCardState extends State<RawEventCard> {
           style: const TextStyle(
             fontFamily: 'monospace',
             fontSize: 9,
-            color: Color(0xFFA6ADC8),
+            color: Color(0xFFB0B0B0),
           ),
         ),
       ],
@@ -579,7 +579,7 @@ class _RawEventCardState extends State<RawEventCard> {
   static const _tsStyle = TextStyle(
     fontFamily: 'monospace',
     fontSize: 9,
-    color: Color(0xFF585B70),
+    color: Color(0xFF5E5E5E),
   );
 
   static String _time(DateTime dt) {

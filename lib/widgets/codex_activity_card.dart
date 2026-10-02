@@ -260,7 +260,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _accent.withAlpha(85)),
       ),
@@ -294,7 +294,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 10.5,
-                        color: const Color(0xFFA6ADC8),
+                        color: const Color(0xFFB0B0B0),
                       ),
                     ),
                   ),
@@ -311,10 +311,10 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF6C7086),
+                      color: const Color(0xFF767676),
                     )
                   else
-                    const Icon(Icons.check, size: 16, color: Color(0xFF6C7086)),
+                    const Icon(Icons.check, size: 16, color: Color(0xFF767676)),
                 ],
               ),
             ),
@@ -363,7 +363,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
     if (results.isEmpty) return _section('RESULTS', _pretty(decoded));
     return Container(
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF313244))),
+        border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -391,7 +391,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                   SelectableText(
                     title,
                     style: const TextStyle(
-                      color: Color(0xFFCDD6F4),
+                      color: Color(0xFFE6E6E6),
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
@@ -412,7 +412,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                         maxLines: 4,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Color(0xFFA6ADC8),
+                          color: Color(0xFFB0B0B0),
                           fontSize: 10,
                           height: 1.3,
                         ),
@@ -433,7 +433,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 280),
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF313244))),
+        border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -449,7 +449,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                   content,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10.5,
-                    color: const Color(0xFFCDD6F4),
+                    color: const Color(0xFFE6E6E6),
                     height: 1.4,
                   ),
                 ),

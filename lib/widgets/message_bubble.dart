@@ -8,6 +8,7 @@ import '../services/socketagent_link_router.dart';
 import 'adaptive_action_sheet.dart';
 import 'inline_chat_images.dart';
 import 'message_timestamp.dart';
+import 'message_attachments.dart';
 
 class MessageBubble extends StatelessWidget {
   static const _nativeChannel = MethodChannel('com.socketagent.app/intent');
@@ -134,9 +135,27 @@ class MessageBubble extends StatelessWidget {
                 ),
               ),
               child: isUser
-                  ? SelectableText(
-                      message.textContent,
-                      style: TextStyle(color: textColor, fontSize: 15),
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (message.attachments.isNotEmpty)
+                          IconTheme(
+                            data: IconThemeData(color: textColor),
+                            child: DefaultTextStyle(
+                              style: TextStyle(color: textColor, fontSize: 15),
+                              child: MessageAttachments(
+                                attachments: message.attachments,
+                                sourceServerId: sourceServerId,
+                              ),
+                            ),
+                          ),
+                        if (message.textContent.isNotEmpty)
+                          SelectableText(
+                            message.textContent,
+                            style: TextStyle(color: textColor, fontSize: 15),
+                          ),
+                      ],
                     )
                   : SelectionArea(
                       // MarkdownBody's selectable mode creates one independent
@@ -201,15 +220,15 @@ class MessageBubble extends StatelessWidget {
                             fontStyle: FontStyle.italic,
                           ),
                           code: GoogleFonts.jetBrainsMono(
-                            color: const Color(0xFFCDD6F4),
-                            backgroundColor: const Color(0xFF1E1E2E),
+                            color: const Color(0xFFE6E6E6),
+                            backgroundColor: const Color(0xFF181818),
                             fontSize: 13,
                           ),
                           codeblockDecoration: BoxDecoration(
-                            color: const Color(0xFF1E1E2E),
+                            color: const Color(0xFF181818),
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                              color: const Color(0xFF313244),
+                              color: const Color(0xFF2E2E2E),
                               width: 1,
                             ),
                           ),
@@ -708,6 +727,9 @@ class _RewindButtonState extends State<_RewindButton> {
 
   @override
   Widget build(BuildContext context) {
+    // Shades of the accent, which follows the session's backend.
+    final accent = Theme.of(context).colorScheme.primary;
+    final light = Color.lerp(accent, Colors.white, .55)!;
     return GestureDetector(
       onTap: _handleTap,
       child: AnimatedContainer(
@@ -716,20 +738,18 @@ class _RewindButtonState extends State<_RewindButton> {
         height: 24,
         decoration: BoxDecoration(
           color: _pressed
-              ? Colors.orange.shade600
-              : Colors.orange.shade800.withAlpha(200),
+              ? accent
+              : Color.lerp(accent, Colors.black, .4)!.withAlpha(220),
           shape: BoxShape.circle,
           border: Border.all(
-            color: _pressed
-                ? Colors.orange.shade200
-                : Colors.orange.shade300.withAlpha(120),
+            color: _pressed ? light : light.withAlpha(120),
             width: _pressed ? 1.5 : 1,
           ),
         ),
         child: Icon(
           Icons.undo,
           size: 13,
-          color: _pressed ? Colors.white : Colors.orange.shade200,
+          color: _pressed ? Colors.white : light,
         ),
       ),
     );

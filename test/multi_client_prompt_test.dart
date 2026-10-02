@@ -156,7 +156,7 @@ Future<void> withSession(
       );
       onClientMessage(jsonDecode(utf8.decode(plaintext)) as Map<String, dynamic>);
     });
-    connected.complete(socket);
+    if (!connected.isCompleted) connected.complete(socket);
   });
 
   final provider = ChatProvider();

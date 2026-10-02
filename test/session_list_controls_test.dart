@@ -168,6 +168,67 @@ void main() {
     },
   );
 
+  testWidgets('notice changes do not resize or move the watermark', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    for (final compact in [false, true]) {
+      for (final width in [320.0, 600.0]) {
+        Future<void> pumpRow(bool showNotice) async {
+          await tester.pumpWidget(
+            app(
+              Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: width,
+                  child: SessionBackendWatermark(
+                    backend: 'codex',
+                    compact: compact,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          height: compact ? 56 : 80,
+                          child: const Text('Session details'),
+                        ),
+                        if (showNotice)
+                          SessionCompactionNotice(
+                            serverId: 'watermark-test',
+                            sessionId: 'session',
+                            compactions: 38,
+                            onStartFresh: () {},
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+
+        await pumpRow(false);
+        final mark = tester.getRect(find.byType(Image));
+        final row = tester.getSize(find.byType(SessionBackendWatermark));
+        await pumpRow(true);
+        expect(tester.getRect(find.byType(Image)), mark);
+        expect(
+          tester.getSize(find.byType(SessionBackendWatermark)).height,
+          greaterThan(row.height),
+        );
+        await tester.tap(find.byTooltip('Dismiss for 15 more compactions'));
+        await tester.pumpAndSettle();
+        expect(tester.getRect(find.byType(Image)), mark);
+        expect(tester.getSize(find.byType(SessionBackendWatermark)), row);
+        // Each layout case starts with an undismissed notice.
+        SharedPreferences.setMockInitialValues({});
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    }
+  });
+
   testWidgets('watermark preserves session tap and small row layout', (
     tester,
   ) async {

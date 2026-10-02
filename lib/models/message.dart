@@ -1,3 +1,5 @@
+import 'message_attachment.dart';
+
 enum MessageSender { user, assistant, system }
 
 String normalizeSocketAgentToolName(String rawName) {
@@ -50,6 +52,7 @@ class ChatMessage {
 
   // Text content (for text, result, error types)
   String textContent;
+  List<MessageAttachment> attachments;
 
   // Tool call fields
   final String? toolName;
@@ -124,6 +127,7 @@ class ChatMessage {
     required this.type,
     required this.timestamp,
     this.textContent = '',
+    this.attachments = const [],
     this.toolName,
     this.toolInput,
     this.toolUseId,

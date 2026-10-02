@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:app/models/message.dart';
 import 'package:app/services/outgoing_queue.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,6 +53,11 @@ void main() {
               const Duration(seconds: 5),
             );
             expect(upload['sessionId'], 'shared-session');
+            final bubble = provider.messages.lastWhere(
+              (message) => message.sender == MessageSender.user,
+            );
+            expect(bubble.attachments.single.name, 'example.txt');
+            expect(bubble.attachments.single.isLocal, isTrue);
             expect((await OutgoingQueue().load()).single.files, isNotEmpty);
             await file.delete();
             provider.resumeSession(
@@ -72,6 +78,8 @@ void main() {
               '[Attached file: /saved/example.txt]\nlook at this file',
             );
             expect(provider.activeSessionId, 'other-session');
+            expect(bubble.attachments.single.path, '/saved/example.txt');
+            expect(bubble.attachments.single.isLocal, isFalse);
             expect(
               (await OutgoingQueue().load()).single.files.single['serverPath'],
               '/saved/example.txt',
@@ -81,6 +89,31 @@ void main() {
               'messageId': prompt['messageId'],
             });
             expect(await OutgoingQueue().load(), isEmpty);
+            provider.resumeSession(
+              'shared-session',
+              serverId: 'multi-client-server',
+            );
+            await send({
+              'type': 'session_history',
+              'total': 1,
+              'offset': 0,
+              'messages': [
+                {
+                  'role': 'user',
+                  'content': prompt['text'],
+                  'uuid': 'uploaded-prompt',
+                  'entryId': 'upload-entry',
+                  'sessionSeq': 1,
+                  'revision': 1,
+                },
+              ],
+            });
+            final recovered = provider.messages.singleWhere(
+              (message) => message.uuid == 'uploaded-prompt',
+            );
+            expect(recovered.textContent, 'look at this file');
+            expect(recovered.attachments.single.path, '/saved/example.txt');
+            expect(recovered.attachments.single.isLocal, isFalse);
           },
           onClientMessage: (event) {
             received.add(event);

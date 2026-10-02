@@ -50,12 +50,18 @@ bool fileEventBelongsToVisibleSession({
 /// backend's canonical SendFile tool call arrives afterward.
 void mergeSendFileTransportMetadata(
   Map<String, dynamic> canonicalInput,
-  Map<String, dynamic>? availabilityInput,
-) {
+  Map<String, dynamic>? availabilityInput, {
+  bool authoritative = false,
+}) {
   if (availabilityInput == null) return;
+  final currentId = canonicalInput['_file_id']?.toString() ?? '';
+  final incomingId = availabilityInput['_file_id']?.toString() ?? '';
   for (final key in _fileMetadataKeys) {
     final value = availabilityInput[key];
-    if (value != null && !canonicalInput.containsKey(key)) {
+    if (value != null &&
+        (authoritative ||
+            !canonicalInput.containsKey(key) ||
+            (currentId.startsWith('fm_') && incomingId.startsWith('send_')))) {
       canonicalInput[key] = value;
     }
   }

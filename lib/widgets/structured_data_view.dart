@@ -106,9 +106,9 @@ class StructuredDataView extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(9, 8, 9, 1),
         decoration: BoxDecoration(
-          color: const Color(0xFF181825),
+          color: const Color(0xFF121212),
           borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: const Color(0xFF313244)),
+          border: Border.all(color: const Color(0xFF2E2E2E)),
         ),
         child: StructuredDataView(
           value: nested,
@@ -126,7 +126,7 @@ class StructuredDataView extends StatelessWidget {
       style: GoogleFonts.jetBrainsMono(
         fontSize: 10.5,
         height: 1.35,
-        color: muted ? const Color(0xFF6C7086) : const Color(0xFFCDD6F4),
+        color: muted ? const Color(0xFF767676) : const Color(0xFFE6E6E6),
         fontStyle: muted ? FontStyle.italic : FontStyle.normal,
       ),
     );

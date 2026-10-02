@@ -16,9 +16,9 @@ class PanelHideNotice extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF313244)),
+        border: Border.all(color: const Color(0xFF2E2E2E)),
       ),
       child: Row(
         children: [
@@ -33,7 +33,7 @@ class PanelHideNotice extends StatelessWidget {
                     fontSize: 11,
                     height: 1.2,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFFCDD6F4),
+                    color: Color(0xFFE6E6E6),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -42,7 +42,7 @@ class PanelHideNotice extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 10,
                     height: 1.2,
-                    color: Color(0xFFA6ADC8),
+                    color: Color(0xFFB0B0B0),
                   ),
                 ),
               ],

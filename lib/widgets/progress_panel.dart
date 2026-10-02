@@ -76,7 +76,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
     return Container(
       margin: EdgeInsets.symmetric(horizontal: 8, vertical: _expanded ? 4 : 2),
       child: Material(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         shape: RoundedRectangleBorder(
           borderRadius: radius,
           side: BorderSide(color: widget.accent.withAlpha(65)),
@@ -118,7 +118,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
                           style: const TextStyle(
                             fontSize: 11,
                             height: 1.4,
-                            color: Color(0xFFA6ADC8),
+                            color: Color(0xFFB0B0B0),
                           ),
                         ),
                       ),
@@ -128,7 +128,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
                         child: Icon(
                           _expanded ? Icons.expand_less : Icons.expand_more,
                           size: 18,
-                          color: const Color(0xFF6C7086),
+                          color: const Color(0xFF767676),
                         ),
                       ),
                       if (widget.onDismiss != null)
@@ -150,7 +150,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
                           icon: const Icon(
                             Icons.visibility_off_outlined,
                             size: 16,
-                            color: Color(0xFF6C7086),
+                            color: Color(0xFF767676),
                           ),
                         ),
                     ],
@@ -167,7 +167,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
                     child: LinearProgressIndicator(
                       value: progress,
                       minHeight: 3,
-                      backgroundColor: const Color(0xFF313244),
+                      backgroundColor: const Color(0xFF2E2E2E),
                       color: widget.accent,
                     ),
                   ),
@@ -197,7 +197,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
                             style: const TextStyle(
                               fontSize: 12,
                               height: 1.4,
-                              color: Color(0xFFA6ADC8),
+                              color: Color(0xFFB0B0B0),
                             ),
                           ),
                         ),
@@ -282,7 +282,7 @@ class _ProgressPanelRowState extends State<ProgressPanelRow> {
         ? const Color(0xFFA6E3A1)
         : active
         ? const Color(0xFFF9E2AF)
-        : const Color(0xFF6C7086);
+        : const Color(0xFF767676);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: ConstrainedBox(
@@ -302,8 +302,8 @@ class _ProgressPanelRowState extends State<ProgressPanelRow> {
                   fontSize: 12,
                   height: 1.4,
                   color: completed
-                      ? const Color(0xFFA6ADC8)
-                      : const Color(0xFFCDD6F4),
+                      ? const Color(0xFFB0B0B0)
+                      : const Color(0xFFE6E6E6),
                   fontWeight: active ? FontWeight.w600 : FontWeight.normal,
                   decoration: completed && entry.strikeCompleted
                       ? TextDecoration.lineThrough
@@ -330,7 +330,7 @@ class _ProgressPanelRowState extends State<ProgressPanelRow> {
                       icon: const Icon(
                         Icons.close,
                         size: 14,
-                        color: Color(0xFF6C7086),
+                        color: Color(0xFF767676),
                       ),
                     ),
             ),

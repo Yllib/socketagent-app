@@ -102,4 +102,43 @@ void main() {
       ),
     );
   });
+
+  test(
+    'restore progress comes from the destination while it imports',
+    () async {
+      var polls = 0;
+      final shown = <({int done, int total})>[];
+      final transfer = SessionTeleport(
+        pollInterval: Duration.zero,
+        request: (server, message) async {
+          if (server == 'destination') {
+            return {
+              'ok': true,
+              'job': {
+                'phase': 'importing',
+                'restoredEntries': 400,
+                'totalEntries': 1000,
+              },
+            };
+          }
+          polls++;
+          return {
+            'ok': true,
+            'job': {
+              'phase': polls == 1 ? 'importing' : 'completed',
+              'bytes': 2048,
+              'totalBytes': 2048,
+            },
+          };
+        },
+      );
+      await transfer.watch(
+        serverId: 'source',
+        peerServerId: 'destination',
+        jobId: newTeleportId(),
+        onProgress: (job) => shown.add(teleportProgress(job)),
+      );
+      expect(shown.first, (done: 400, total: 1000));
+    },
+  );
 }

@@ -27,10 +27,10 @@ class ActiveBrowserStrip extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Material(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
-          side: const BorderSide(color: Color(0xFF313244)),
+          side: const BorderSide(color: Color(0xFF2E2E2E)),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -53,7 +53,7 @@ class ActiveBrowserStrip extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 11,
-                              color: Color(0xFFA6ADC8),
+                              color: Color(0xFFB0B0B0),
                             ),
                           ),
                         ),
@@ -78,7 +78,7 @@ class ActiveBrowserStrip extends StatelessWidget {
                   const Icon(
                     Icons.chevron_right,
                     size: 16,
-                    color: Color(0xFF6C7086),
+                    color: Color(0xFF767676),
                   ),
                   if (onHide != null)
                     IconButton(
@@ -95,7 +95,7 @@ class ActiveBrowserStrip extends StatelessWidget {
                         height: 24,
                       ),
                       iconSize: 16,
-                      color: const Color(0xFF6C7086),
+                      color: const Color(0xFF767676),
                       icon: const Icon(Icons.visibility_off_outlined),
                     ),
                 ],

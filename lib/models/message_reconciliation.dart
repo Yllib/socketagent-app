@@ -1,4 +1,5 @@
 import 'message.dart';
+import 'file_event_routing.dart';
 
 /// Stable identity for a fully-applied, acknowledgement-tracked event. The
 /// transport delivery ID identifies one send attempt, while this key also
@@ -644,6 +645,20 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
     }
   }
   if (live.type == MessageType.toolCall) {
+    if (live.toolName == 'SendFile' && live.toolInput != null) {
+      final incoming = snapshot.toolInput;
+      if (snapshotIsNewer &&
+          incoming?['_file_id'] != null &&
+          !(incoming!['_file_id'].toString().startsWith('fm_') &&
+              live.toolInput!['_file_id']?.toString().startsWith('send_') ==
+                  true)) {
+        for (final key in const ['_file_id', '_file_name', '_file_size']) {
+          if (incoming[key] != null) live.toolInput![key] = incoming[key];
+        }
+      } else {
+        mergeSendFileTransportMetadata(live.toolInput!, incoming);
+      }
+    }
     final liveOutput = live.toolOutput ?? '';
     final snapshotOutput = snapshot.toolOutput ?? '';
     final snapshotHasNewerOutput =
@@ -664,6 +679,9 @@ void _mergeSnapshotStateIntoLive(ChatMessage live, ChatMessage snapshot) {
 
   final liveText = live.textContent;
   final snapshotText = snapshot.textContent;
+  if (snapshot.attachments.isNotEmpty) {
+    live.attachments = snapshot.attachments;
+  }
   if (snapshotText.length > liveText.length &&
       (liveText.isEmpty || snapshotText.startsWith(liveText))) {
     live.textContent = snapshotText;

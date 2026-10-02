@@ -37,7 +37,7 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: accent.withAlpha(85)),
       ),
@@ -104,7 +104,7 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                     Text(
                       _title.isEmpty ? 'Phone notification' : _title,
                       style: const TextStyle(
-                        color: Color(0xFFCDD6F4),
+                        color: Color(0xFFE6E6E6),
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
@@ -118,7 +118,7 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                             ? TextOverflow.visible
                             : TextOverflow.ellipsis,
                         style: const TextStyle(
-                          color: Color(0xFFA6ADC8),
+                          color: Color(0xFFB0B0B0),
                           fontSize: 11.5,
                           height: 1.35,
                         ),
@@ -133,7 +133,7 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                   child: Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 18,
-                    color: const Color(0xFF6C7086),
+                    color: const Color(0xFF767676),
                   ),
                 ),
             ],

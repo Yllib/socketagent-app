@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'config/app_distribution.dart';
 import 'services/chat_provider.dart';
+import 'config/app_theme.dart';
 import 'services/desktop_workspace_controller.dart';
 import 'services/desktop_window_service.dart';
 import 'services/desktop_audio.dart';
@@ -120,14 +121,7 @@ class ClaudeAssistantApp extends StatelessWidget {
             : child ?? const SizedBox.shrink(),
         debugShowCheckedModeBanner: false,
         navigatorObservers: [routeObserver],
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: const Color(0xFFD97706),
-            brightness: Brightness.dark,
-          ),
-          useMaterial3: true,
-          brightness: Brightness.dark,
-        ),
+        theme: appTheme(),
         home: const AppLauncher(),
       ),
     );

@@ -22,15 +22,17 @@ void main() {
     expect(parsed.hidden, isFalse);
   });
 
-  test('attachments become notices and leave the prompt behind', () {
+  test('file attachments retain paths while secrets remain notices', () {
     final parsed = parse(
       '[Attached file: /home/billy/notes/todo.md]\n'
       '[Attached secret: {"label":"API key","scope":"project"}]\n'
       'look at these',
     );
     expect(parsed.text, 'look at these');
+    expect(parsed.attachments.single.path, '/home/billy/notes/todo.md');
+    expect(parsed.attachments.single.name, 'todo.md');
+    expect(parsed.attachments.single.isLocal, isFalse);
     expect(parsed.notices.map((n) => n.text), [
-      'Uploaded: todo.md',
       'Attached secret: API key (project)',
     ]);
   });

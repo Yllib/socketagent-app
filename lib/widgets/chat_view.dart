@@ -2133,9 +2133,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF45475A)),
+        border: Border.all(color: const Color(0xFF4A4A4A)),
       ),
       child: Row(
         children: [
@@ -2144,7 +2144,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           Expanded(
             child: Text(
               msg.textContent,
-              style: const TextStyle(fontSize: 12, color: Color(0xFFA6ADC8)),
+              style: const TextStyle(fontSize: 12, color: Color(0xFFB0B0B0)),
             ),
           ),
         ],
@@ -2266,7 +2266,7 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1E2E),
+          color: const Color(0xFF181818),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: baseColor.withAlpha(40)),
         ),
@@ -2290,7 +2290,7 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
-                  color: const Color(0xFF6C7086),
+                  color: const Color(0xFF767676),
                 ),
               ],
             ),
@@ -2306,16 +2306,16 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
                   lineColor = Colors.yellow.shade300;
                   lineIcon = Icons.play_circle_fill;
                 } else if (line.startsWith('+ ')) {
-                  lineColor = const Color(0xFFA6ADC8);
+                  lineColor = const Color(0xFFB0B0B0);
                   lineIcon = Icons.radio_button_unchecked;
                 } else if (line.startsWith('- ')) {
                   lineColor = Colors.red.shade300;
                   lineIcon = Icons.remove_circle_outline;
                 } else if (line.startsWith('\u25cb ')) {
-                  lineColor = const Color(0xFF585B70);
+                  lineColor = const Color(0xFF5E5E5E);
                   lineIcon = Icons.radio_button_unchecked;
                 } else {
-                  lineColor = const Color(0xFFA6ADC8);
+                  lineColor = const Color(0xFFB0B0B0);
                   lineIcon = Icons.info_outline;
                 }
 

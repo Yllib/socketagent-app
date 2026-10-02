@@ -7,6 +7,24 @@ import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
 import 'replace_file.dart';
 
+Map<String, dynamic> _retainFileDelivery(
+  Map<String, dynamic> incoming,
+  Map existing,
+) => {
+  if (incoming['entryId'] == existing['entryId'] &&
+      incoming['toolUseId'] == existing['toolUseId'] &&
+      existing['fileId'] is String)
+    for (final key in const [
+      'fileId',
+      'fileName',
+      'fileSize',
+      'fileVersion',
+      'fileDeliveryPath',
+    ])
+      if (existing[key] != null) key: existing[key],
+  ...incoming,
+};
+
 Map<String, dynamic> mergeTranscriptCachePayloads(
   Map<String, dynamic> current,
   Map<String, dynamic> incoming,
@@ -36,7 +54,9 @@ Map<String, dynamic> mergeTranscriptCachePayloads(
     }
     final existingRevision = (existing['revision'] as num?)?.toInt() ?? 0;
     final incomingRevision = (entry['revision'] as num?)?.toInt() ?? 0;
-    if (incomingRevision >= existingRevision) mergedByIdentity[key] = entry;
+    if (incomingRevision >= existingRevision) {
+      mergedByIdentity[key] = _retainFileDelivery(entry, existing);
+    }
   }
 
   final mergedEntries =
@@ -131,7 +151,10 @@ Map<String, dynamic> mergeLiveTranscriptCacheEntry(
         (messages[existingIndex]['revision'] as num?)?.toInt() ?? 0;
     final incomingRevision = (entry['revision'] as num?)?.toInt() ?? 0;
     if (incomingRevision >= existingRevision) {
-      messages[existingIndex] = Map<String, dynamic>.from(entry);
+      messages[existingIndex] = _retainFileDelivery(
+        entry,
+        messages[existingIndex],
+      );
     }
     return Map<String, dynamic>.from(current)..['messages'] = messages;
   }
@@ -511,6 +534,42 @@ class SessionTranscriptCache {
       sessionId,
       mergeTranscriptCachePayloads(current, olderPage),
     );
+  }
+
+  /// Availability follows the tool call and carries its durable delivery ID.
+  /// Enrich only that invocation, never every card sharing the source path.
+  Future<void> mergeFileDelivery(
+    String serverId,
+    String sessionId,
+    Map<String, dynamic> event,
+  ) async {
+    final entryId = event['entryId']?.toString() ?? '';
+    final toolUseId = event['toolUseId']?.toString() ?? '';
+    if (entryId.isEmpty && toolUseId.isEmpty) return;
+    await load(serverId, sessionId);
+    final current = peek(serverId, sessionId);
+    final rows = current?['messages'];
+    if (current == null || rows is! List) return;
+    final index = rows.indexWhere(
+      (row) =>
+          row is Map &&
+          row['role'] == 'tool_call' &&
+          (entryId.isNotEmpty
+              ? row['entryId'] == entryId
+              : row['toolUseId'] == toolUseId),
+    );
+    if (index < 0) return;
+    final row = Map<String, dynamic>.from(rows[index] as Map);
+    row['fileId'] = event['fileId'];
+    row['fileName'] = event['fileName'];
+    if (event['fileSize'] != null) row['fileSize'] = event['fileSize'];
+    if (event['fileVersion'] != null) row['fileVersion'] = event['fileVersion'];
+    if (event['downloadPath'] != null) {
+      row['fileDeliveryPath'] = event['downloadPath'];
+    }
+    final updated = [...rows];
+    updated[index] = row;
+    await save(serverId, sessionId, {...current, 'messages': updated});
   }
 
   Future<void> mergeLiveEntry(

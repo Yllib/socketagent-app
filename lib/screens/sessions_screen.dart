@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
+import '../services/session_teleport.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
 import '../models/session_grouping.dart';
+import '../models/session_list_filter.dart';
 import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/transfer_history_dialog.dart';
 import '../widgets/computer_filter_dialog.dart';
@@ -17,6 +19,9 @@ import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
 import 'session_browser_screen.dart';
+
+/// Teleport asks before sending a transcript at least this large, uncompressed.
+const _largeTranscriptBytes = 100 * 1024 * 1024;
 
 enum _SessionMenuAction {
   pin,
@@ -62,6 +67,31 @@ class _SessionsTabState extends State<SessionsTab> {
   int _globalSearchGeneration = 0;
   bool _globalSearchLoading = false;
   List<Map<String, dynamic>> _globalSearchResults = const [];
+  bool _filtersChanged = false;
+
+  @override
+  void initState() {
+    super.initState();
+    SessionListFilter.load().then((saved) {
+      // A filter picked while this loaded wins over the saved one.
+      if (!mounted || _filtersChanged) return;
+      setState(() {
+        _selectedServerFilterIds.addAll(saved.computerIds);
+        _connectedOnlyFilter = saved.connectedOnly;
+        _backendFilter = saved.backend;
+      });
+    });
+  }
+
+  /// Call after any filter change, inside or after its setState.
+  void _saveFilters() {
+    _filtersChanged = true;
+    SessionListFilter(
+      computerIds: {..._selectedServerFilterIds},
+      connectedOnly: _connectedOnlyFilter,
+      backend: _backendFilter,
+    ).save();
+  }
 
   @override
   void dispose() {
@@ -1625,6 +1655,7 @@ class _SessionsTabState extends State<SessionsTab> {
         ..addAll(selected.ids);
       _connectedOnlyFilter = selected.connectedOnly;
     });
+    _saveFilters();
   }
 
   Widget _desktopFilters(BuildContext context, ChatProvider provider) {
@@ -1651,9 +1682,10 @@ class _SessionsTabState extends State<SessionsTab> {
             child: PopupMenuButton<String>(
               tooltip: 'Backend filter',
               initialValue: _backendFilter ?? 'all',
-              onSelected: (value) => setState(
-                () => _backendFilter = value == 'all' ? null : value,
-              ),
+              onSelected: (value) {
+                setState(() => _backendFilter = value == 'all' ? null : value);
+                _saveFilters();
+              },
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'all', child: Text('All backends')),
                 PopupMenuItem(value: 'codex', child: Text('Codex')),
@@ -1725,6 +1757,7 @@ class _SessionsTabState extends State<SessionsTab> {
                       setState(() {
                         _backendFilter = value == 'all' ? null : value;
                       });
+                      _saveFilters();
                     },
                     itemBuilder: (_) => const [
                       PopupMenuItem(value: 'all', child: Text('All backends')),
@@ -1778,6 +1811,7 @@ class _SessionsTabState extends State<SessionsTab> {
                           _globalSearchLoading = false;
                           _globalSearchResults = const [];
                         });
+                        _saveFilters();
                       },
                     ),
                 ],
@@ -2530,8 +2564,7 @@ class _SessionsTabState extends State<SessionsTab> {
                     s.serverId == job['serverId'] && s.id == job['sessionId'],
               )
               .firstOrNull;
-          final total = (job['totalBytes'] as num?)?.toDouble() ?? 0;
-          final bytes = (job['bytes'] as num?)?.toDouble() ?? 0;
+          final progress = teleportProgress(job);
           final label = switch (job['phase']) {
             'completed' => 'Complete',
             'failed' => 'Paused',
@@ -2549,7 +2582,7 @@ class _SessionsTabState extends State<SessionsTab> {
                   'Session transfer',
             ),
             subtitle: Text(
-              '${job['serverName']} → ${job['destinationServerName'] ?? 'Destination'}\n$label${total > 0 && !completed ? ' · ${(bytes / total * 100).round()}%' : ''}${job['warning'] != null ? '\n${job['warning']}' : ''}${job['error'] != null ? '\n${job['error']}' : ''}',
+              '${job['serverName']} → ${job['destinationServerName'] ?? 'Destination'}\n$label${progress.total > 0 && !completed ? ' · ${(progress.done / progress.total * 100).round()}%' : ''}${job['warning'] != null ? '\n${job['warning']}' : ''}${job['error'] != null ? '\n${job['error']}' : ''}',
             ),
             trailing: destination == null
                 ? null
@@ -2589,6 +2622,45 @@ class _SessionsTabState extends State<SessionsTab> {
       SessionTransferStage.importing => 'Restoring session…',
       SessionTransferStage.finalizing => 'Finishing transfer…',
     };
+  }
+
+  /// Asks how to transfer a very large transcript. Returns true to truncate,
+  /// false to keep it whole, and null to cancel.
+  Future<bool?> _confirmLargeTranscript(
+    BuildContext context, {
+    required int fullBytes,
+    required int truncatedBytes,
+  }) {
+    String size(int bytes) => bytes >= 1024 * 1024 * 1024
+        ? '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB'
+        : '${(bytes / (1024 * 1024)).round()} MB';
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Large transcript'),
+        content: Text(
+          'Full: ${size(fullBytes)}\n'
+          'Truncated: ${size(truncatedBytes)}\n\n'
+          'Truncating keeps the first 1 KB of each large tool output. '
+          'Remember search finds the same results, but those outputs '
+          'can no longer be read in full.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Truncate'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Keep full'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showTeleportSessionSheet(
@@ -2657,8 +2729,8 @@ class _SessionsTabState extends State<SessionsTab> {
     var move = resume == null || resume['mode'] == 'move';
     var transferring = false;
     SessionTransferStage? stage;
-    var transferredBytes = 0;
-    var totalBytes = 0;
+    var progressDone = 0;
+    var progressTotal = 0;
     String? error;
     final cwdController = TextEditingController(
       text:
@@ -2706,19 +2778,43 @@ class _SessionsTabState extends State<SessionsTab> {
                 stage = SessionTransferStage.exporting;
               });
               try {
+                // A resumed job keeps the choice it was started with.
+                var truncateTranscript = resume?['transcript'] == 'truncated';
+                if (resume == null) {
+                  final size = await provider.estimateSessionTransfer(session);
+                  if (size.fullBytes >= _largeTranscriptBytes &&
+                      size.truncatedBytes < size.fullBytes) {
+                    if (!sheetContext.mounted) return;
+                    final truncate = await _confirmLargeTranscript(
+                      sheetContext,
+                      fullBytes: size.fullBytes,
+                      truncatedBytes: size.truncatedBytes,
+                    );
+                    if (!sheetContext.mounted) return;
+                    if (truncate == null) {
+                      setSheetState(() {
+                        transferring = false;
+                        stage = null;
+                      });
+                      return;
+                    }
+                    truncateTranscript = truncate;
+                  }
+                }
                 final result = await provider.transferSession(
                   source: session,
                   destinationServerId: destinationServerId,
                   destinationCwd: cwdController.text,
                   destinationBackend: destinationBackend,
                   move: move,
+                  truncateTranscript: truncateTranscript,
                   resumeJobId: resume?['jobId'] as String?,
                   keepWatching: () => sheetContext.mounted,
-                  onProgress: (bytes, total) {
+                  onProgress: (done, total) {
                     if (!sheetContext.mounted) return;
                     setSheetState(() {
-                      transferredBytes = bytes;
-                      totalBytes = total;
+                      progressDone = done;
+                      progressTotal = total;
                     });
                   },
                   onStage: (next) {
@@ -2965,14 +3061,14 @@ class _SessionsTabState extends State<SessionsTab> {
                     if (transferring && stage != null) ...[
                       const SizedBox(height: 16),
                       Text(_sessionTransferStageLabel(stage!)),
-                      if (totalBytes > 0) ...[
+                      if (progressTotal > 0) ...[
                         const SizedBox(height: 8),
                         LinearProgressIndicator(
-                          value: (transferredBytes / totalBytes).clamp(0, 1),
+                          value: (progressDone / progressTotal).clamp(0, 1),
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${(transferredBytes / totalBytes * 100).round()}%',
+                          '${(progressDone / progressTotal * 100).round()}%',
                         ),
                       ],
                       const SizedBox(height: 8),
@@ -3523,7 +3619,8 @@ class _SessionsTabState extends State<SessionsTab> {
     bool compact = false,
     bool delegated = false,
   }) {
-    final theme = Theme.of(context);
+    // Accents in the row take the backend's brand color.
+    final theme = backendTheme(session.backend);
     final provider = context.read<ChatProvider>();
     final status = provider.sessionServerStatus(session);
     final isAvailable = provider.isSessionAvailable(session);
@@ -3584,384 +3681,413 @@ class _SessionsTabState extends State<SessionsTab> {
       if (displayCwd.isNotEmpty) displayCwd,
     ].join(' · ');
 
-    return Dismissible(
-      key: Key('${session.serverId}:${session.id}'),
-      direction: !_selectionMode && isAvailable && _openingSessionKey == null
-          ? DismissDirection.horizontal
-          : DismissDirection.none,
-      background: Container(
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.only(left: 20),
-        color: Colors.blue.shade700,
-        child: const Icon(Icons.cleaning_services, color: Colors.white),
-      ),
-      secondaryBackground: Container(
-        alignment: Alignment.centerRight,
-        padding: const EdgeInsets.only(right: 20),
-        color: Colors.orange.shade700,
-        child: const Icon(Icons.archive, color: Colors.white),
-      ),
-      confirmDismiss: (dir) async {
-        if (!isAvailable) {
-          _showOfflineSessionSnack(context, session);
+    return Theme(
+      data: theme,
+      child: Dismissible(
+        key: Key('${session.serverId}:${session.id}'),
+        direction: !_selectionMode && isAvailable && _openingSessionKey == null
+            ? DismissDirection.horizontal
+            : DismissDirection.none,
+        background: Container(
+          alignment: Alignment.centerLeft,
+          padding: const EdgeInsets.only(left: 20),
+          color: Colors.blue.shade700,
+          child: const Icon(Icons.cleaning_services, color: Colors.white),
+        ),
+        secondaryBackground: Container(
+          alignment: Alignment.centerRight,
+          padding: const EdgeInsets.only(right: 20),
+          color: Colors.orange.shade700,
+          child: const Icon(Icons.archive, color: Colors.white),
+        ),
+        confirmDismiss: (dir) async {
+          if (!isAvailable) {
+            _showOfflineSessionSnack(context, session);
+            return false;
+          }
+          if (dir == DismissDirection.endToStart) {
+            return _confirmArchiveSession(context, session);
+          }
+          await _confirmClearContext(context, session);
           return false;
-        }
-        if (dir == DismissDirection.endToStart) {
-          return _confirmArchiveSession(context, session);
-        }
-        await _confirmClearContext(context, session);
-        return false;
-      },
-      child: InkWell(
-        onSecondaryTapUp:
-            Platform.isWindows && !_selectionMode && _openingSessionKey == null
-            ? (details) {
-                if (isAvailable) {
-                  _showSessionContextMenu(
-                    context,
-                    session,
-                    anchor: details.globalPosition & Size.zero,
-                  );
-                } else {
-                  _showOfflineSessionSnack(context, session);
-                }
-              }
-            : null,
-        onTap: _selectionMode
-            ? isAvailable
-                  ? () => _toggleSessionSelection(session)
-                  : () => _showOfflineSessionSnack(context, session)
-            : isAvailable
-            ? _openingSessionKey == null
-                  ? () => _openSession(
+        },
+        child: InkWell(
+          onSecondaryTapUp:
+              Platform.isWindows &&
+                  !_selectionMode &&
+                  _openingSessionKey == null
+              ? (details) {
+                  if (isAvailable) {
+                    _showSessionContextMenu(
                       context,
-                      sessionId: session.id,
-                      serverId: session.serverId,
-                    )
-                  : null
-            : () => _showOfflineSessionSnack(context, session),
-        onLongPress: isAvailable
-            ? _openingSessionKey == null
-                  ? () => _enterSelection(session)
-                  : null
-            : () => _showOfflineSessionSnack(context, session),
-        child: Opacity(
-          opacity: isAvailable ? 1 : 0.48,
-          child: SessionBackendWatermark(
-            backend: session.backend ?? 'claude',
-            child: Container(
-              decoration: BoxDecoration(
-                color: selected || active
-                    ? theme.colorScheme.primary.withAlpha(28)
-                    : Colors.transparent,
-                borderRadius: BorderRadius.circular(widget.sidebar ? 8 : 0),
-                border: active
-                    ? Border.all(color: theme.colorScheme.primary.withAlpha(90))
-                    : null,
-              ),
-              margin: widget.sidebar
-                  ? const EdgeInsets.symmetric(horizontal: 6, vertical: 2)
-                  : null,
-              padding: EdgeInsets.fromLTRB(
-                compact ? 10 : 16,
-                compact ? 8 : 12,
-                compact ? 8 : 16,
-                compact ? 8 : 12,
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Padding(
-                    padding: EdgeInsets.only(top: 2, right: compact ? 8 : 12),
-                    child: _selectionMode
-                        ? Checkbox(
-                            value: selected,
-                            onChanged: isAvailable
-                                ? (_) => _toggleSessionSelection(session)
-                                : null,
-                            visualDensity: VisualDensity.compact,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
-                          )
-                        : showBusy
-                        ? SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: theme.colorScheme.primary,
-                            ),
-                          )
-                        : Icon(
-                            delegated
-                                ? Icons.subdirectory_arrow_right
-                                : provider.isSessionPinned(session.id)
-                                ? Icons.push_pin
-                                : isAvailable
-                                ? Icons.terminal
-                                : Icons.cloud_off_outlined,
-                            size: compact ? 18 : 20,
-                            color: provider.isSessionPinned(session.id)
-                                ? theme.colorScheme.primary.withAlpha(180)
-                                : theme.colorScheme.onSurface.withAlpha(128),
-                          ),
-                  ),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Line 1: title, or project folder if no title.
-                        Text(
-                          primaryText,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontWeight: FontWeight.w700,
-                            fontSize: compact ? 13.5 : 15.5,
-                            color: Color.lerp(
-                              theme.colorScheme.onSurface,
-                              theme.colorScheme.primary,
-                              0.18,
-                            ),
-                          ),
+                      session,
+                      anchor: details.globalPosition & Size.zero,
+                    );
+                  } else {
+                    _showOfflineSessionSnack(context, session);
+                  }
+                }
+              : null,
+          onTap: _selectionMode
+              ? isAvailable
+                    ? () => _toggleSessionSelection(session)
+                    : () => _showOfflineSessionSnack(context, session)
+              : isAvailable
+              ? _openingSessionKey == null
+                    ? () => _openSession(
+                        context,
+                        sessionId: session.id,
+                        serverId: session.serverId,
+                      )
+                    : null
+              : () => _showOfflineSessionSnack(context, session),
+          onLongPress: isAvailable
+              ? _openingSessionKey == null
+                    ? () => _enterSelection(session)
+                    : null
+              : () => _showOfflineSessionSnack(context, session),
+          child: Opacity(
+            opacity: isAvailable ? 1 : 0.48,
+            child: SessionBackendWatermark(
+              backend: session.backend ?? 'claude',
+              compact: compact,
+              child: Container(
+                decoration: BoxDecoration(
+                  color: selected || active
+                      ? theme.colorScheme.primary.withAlpha(28)
+                      : null,
+                  gradient: selected || active
+                      ? null
+                      : LinearGradient(
+                          colors: [
+                            theme.colorScheme.primary.withAlpha(30),
+                            theme.colorScheme.primary.withAlpha(0),
+                          ],
+                          stops: const [0, .7],
                         ),
-                        if (showSecondaryText) ...[
-                          const SizedBox(height: 3),
+                  borderRadius: BorderRadius.circular(widget.sidebar ? 8 : 0),
+                  border: active
+                      ? Border.all(
+                          color: theme.colorScheme.primary.withAlpha(90),
+                        )
+                      : null,
+                ),
+                margin: widget.sidebar
+                    ? const EdgeInsets.symmetric(horizontal: 6, vertical: 2)
+                    : null,
+                padding: EdgeInsets.fromLTRB(
+                  compact ? 10 : 16,
+                  compact ? 8 : 12,
+                  compact ? 8 : 16,
+                  compact ? 8 : 12,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(top: 2, right: compact ? 8 : 12),
+                      child: _selectionMode
+                          ? Checkbox(
+                              value: selected,
+                              onChanged: isAvailable
+                                  ? (_) => _toggleSessionSelection(session)
+                                  : null,
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            )
+                          : showBusy
+                          ? SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: theme.colorScheme.primary,
+                              ),
+                            )
+                          : Icon(
+                              delegated
+                                  ? Icons.subdirectory_arrow_right
+                                  : provider.isSessionPinned(session.id)
+                                  ? Icons.push_pin
+                                  : isAvailable
+                                  ? Icons.terminal
+                                  : Icons.cloud_off_outlined,
+                              size: compact ? 18 : 20,
+                              color: provider.isSessionPinned(session.id)
+                                  ? theme.colorScheme.primary.withAlpha(180)
+                                  : theme.colorScheme.onSurface.withAlpha(128),
+                            ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Line 1: title, or project folder if no title.
                           Text(
-                            secondaryText,
+                            primaryText,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 11.5,
-                              color: const Color(0xFFD6D6D6),
+                              fontWeight: FontWeight.w700,
+                              fontSize: compact ? 13.5 : 15.5,
+                              color: Color.lerp(
+                                theme.colorScheme.onSurface,
+                                theme.colorScheme.primary,
+                                0.18,
+                              ),
                             ),
                           ),
-                        ],
-                        // Line 3: status/time, path, and compact badges.
-                        const SizedBox(height: 3),
-                        if (widget.sidebar)
-                          Wrap(
-                            spacing: 6,
-                            runSpacing: 3,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              Text(
-                                statusText,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: const Color(0xFFD6D6D6),
-                                ),
+                          if (showSecondaryText) ...[
+                            const SizedBox(height: 3),
+                            Text(
+                              secondaryText,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: const Color(0xFFD6D6D6),
                               ),
-                              if (provider.serverConfigs.length > 1)
-                                ConstrainedBox(
-                                  constraints: const BoxConstraints(
-                                    maxWidth: 130,
+                            ),
+                          ],
+                          // Line 3: status/time, path, and compact badges.
+                          const SizedBox(height: 3),
+                          if (widget.sidebar)
+                            Wrap(
+                              spacing: 6,
+                              runSpacing: 3,
+                              crossAxisAlignment: WrapCrossAlignment.center,
+                              children: [
+                                Text(
+                                  statusText,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: const Color(0xFFD6D6D6),
                                   ),
+                                ),
+                                if (provider.serverConfigs.length > 1)
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 130,
+                                    ),
+                                    child: Text(
+                                      session.serverName,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: const Color(0xFFD6D6D6),
+                                      ),
+                                    ),
+                                  ),
+                                if (!isAvailable)
+                                  Text(
+                                    _serverStatusLabel(status),
+                                    style: const TextStyle(fontSize: 11),
+                                  ),
+                                if (delegated)
+                                  const Text(
+                                    'AGENT',
+                                    style: TextStyle(fontSize: 10),
+                                  ),
+                              ],
+                            )
+                          else
+                            Row(
+                              children: [
+                                Flexible(
                                   child: Text(
-                                    session.serverName,
+                                    metaText,
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       fontSize: 11,
-                                      color: const Color(0xFFD6D6D6),
+                                      color: showBusy
+                                          ? theme.colorScheme.primary
+                                          : const Color(0xFFD6D6D6),
                                     ),
                                   ),
                                 ),
-                              if (!isAvailable)
-                                Text(
-                                  _serverStatusLabel(status),
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                              if (delegated)
-                                const Text(
-                                  'AGENT',
-                                  style: TextStyle(fontSize: 10),
-                                ),
-                            ],
-                          )
-                        else
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  metaText,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: showBusy
-                                        ? theme.colorScheme.primary
-                                        : const Color(0xFFD6D6D6),
-                                  ),
-                                ),
-                              ),
-                              if (session.serverName.isNotEmpty &&
-                                  provider.serverConfigs.length > 1) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: session.serverColor != null
-                                        ? Color(
-                                            session.serverColor!,
-                                          ).withAlpha(showBusy ? 200 : 140)
-                                        : theme.colorScheme.primaryContainer
-                                              .withAlpha(120),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    session.serverName,
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: session.serverColor != null
-                                          ? FontWeight.w500
-                                          : null,
+                                if (session.serverName.isNotEmpty &&
+                                    provider.serverConfigs.length > 1) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 5,
+                                      vertical: 1,
+                                    ),
+                                    decoration: BoxDecoration(
                                       color: session.serverColor != null
-                                          ? Colors.white
-                                          : theme
-                                                .colorScheme
-                                                .onPrimaryContainer,
+                                          ? Color(
+                                              session.serverColor!,
+                                            ).withAlpha(showBusy ? 200 : 140)
+                                          : theme.colorScheme.primaryContainer
+                                                .withAlpha(120),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      session.serverName,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: session.serverColor != null
+                                            ? FontWeight.w500
+                                            : null,
+                                        color: session.serverColor != null
+                                            ? Colors.white
+                                            : theme
+                                                  .colorScheme
+                                                  .onPrimaryContainer,
+                                      ),
                                     ),
                                   ),
-                                ),
-                              ],
-                              if (!isAvailable) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: theme
-                                        .colorScheme
-                                        .surfaceContainerHighest,
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    _serverStatusLabel(status).toUpperCase(),
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 0.5,
-                                      color: const Color(0xFFD6D6D6),
+                                ],
+                                if (!isAvailable) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 5,
+                                      vertical: 1,
                                     ),
-                                  ),
-                                ),
-                              ],
-                              if (delegated) ...[
-                                const SizedBox(width: 6),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 5,
-                                    vertical: 1,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: theme.colorScheme.secondaryContainer
-                                        .withAlpha(170),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    'AGENT',
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w600,
-                                      letterSpacing: 0.5,
+                                    decoration: BoxDecoration(
                                       color: theme
                                           .colorScheme
-                                          .onSecondaryContainer,
+                                          .surfaceContainerHighest,
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      _serverStatusLabel(status).toUpperCase(),
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.5,
+                                        color: const Color(0xFFD6D6D6),
+                                      ),
                                     ),
                                   ),
-                                ),
+                                ],
+                                if (delegated) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 5,
+                                      vertical: 1,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: theme
+                                          .colorScheme
+                                          .secondaryContainer
+                                          .withAlpha(170),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      'AGENT',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.5,
+                                        color: theme
+                                            .colorScheme
+                                            .onSecondaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ],
-                            ],
-                          ),
-                        if (session.backend == 'codex' &&
-                            session.freshThreadPending) ...[
-                          const SizedBox(height: 7),
-                          Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 6,
                             ),
-                            decoration: BoxDecoration(
-                              border: Border.all(
-                                color: theme.colorScheme.primary.withAlpha(150),
+                          if (session.backend == 'codex' &&
+                              session.freshThreadPending) ...[
+                            const SizedBox(height: 7),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 6,
                               ),
-                            ),
-                            child: Row(
-                              children: [
-                                Icon(
-                                  Icons.check_circle_outline,
-                                  size: 16,
-                                  color: theme.colorScheme.primary,
-                                ),
-                                const SizedBox(width: 7),
-                                Text(
-                                  'Fresh thread ready',
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: theme.colorScheme.primary,
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: theme.colorScheme.primary.withAlpha(
+                                    150,
                                   ),
                                 ),
-                              ],
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.check_circle_outline,
+                                    size: 16,
+                                    color: theme.colorScheme.primary,
+                                  ),
+                                  const SizedBox(width: 7),
+                                  Text(
+                                    'Fresh thread ready',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: theme.colorScheme.primary,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                        ] else if (session.backend == 'codex' &&
-                            session.compactionsSinceRollover > 10)
-                          SessionCompactionNotice(
-                            key: ValueKey('compaction-${_sessionKey(session)}'),
-                            serverId: session.serverId,
-                            sessionId: session.id,
-                            compactions: session.compactionsSinceRollover,
-                            onStartFresh: isAvailable && !_selectionMode
-                                ? () =>
-                                      _confirmStartFreshThread(context, session)
-                                : null,
-                          ),
-                      ],
-                    ),
-                  ),
-                  if (!_selectionMode)
-                    Builder(
-                      builder: (buttonContext) => IconButton(
-                        tooltip: 'Session actions',
-                        icon: Icon(
-                          Icons.more_vert,
-                          size: 18,
-                          color: theme.colorScheme.onSurface.withAlpha(128),
-                        ),
-                        padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                          minWidth: 32,
-                          minHeight: 32,
-                        ),
-                        onPressed: isAvailable
-                            ? _openingSessionKey == null
-                                  ? () {
-                                      final box =
-                                          buttonContext.findRenderObject()!
-                                              as RenderBox;
-                                      _showSessionContextMenu(
-                                        context,
-                                        session,
-                                        anchor: Platform.isWindows
-                                            ? box.localToGlobal(
-                                                    Offset(0, box.size.height),
-                                                  ) &
-                                                  Size(box.size.width, 0)
-                                            : null,
-                                      );
-                                    }
-                                  : null
-                            : () => _showOfflineSessionSnack(context, session),
+                          ] else if (session.backend == 'codex' &&
+                              session.compactionsSinceRollover > 10)
+                            SessionCompactionNotice(
+                              key: ValueKey(
+                                'compaction-${_sessionKey(session)}',
+                              ),
+                              serverId: session.serverId,
+                              sessionId: session.id,
+                              compactions: session.compactionsSinceRollover,
+                              onStartFresh: isAvailable && !_selectionMode
+                                  ? () => _confirmStartFreshThread(
+                                      context,
+                                      session,
+                                    )
+                                  : null,
+                            ),
+                        ],
                       ),
                     ),
-                ],
+                    if (!_selectionMode)
+                      Builder(
+                        builder: (buttonContext) => IconButton(
+                          tooltip: 'Session actions',
+                          icon: Icon(
+                            Icons.more_vert,
+                            size: 18,
+                            color: theme.colorScheme.onSurface.withAlpha(128),
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(
+                            minWidth: 32,
+                            minHeight: 32,
+                          ),
+                          onPressed: isAvailable
+                              ? _openingSessionKey == null
+                                    ? () {
+                                        final box =
+                                            buttonContext.findRenderObject()!
+                                                as RenderBox;
+                                        _showSessionContextMenu(
+                                          context,
+                                          session,
+                                          anchor: Platform.isWindows
+                                              ? box.localToGlobal(
+                                                      Offset(
+                                                        0,
+                                                        box.size.height,
+                                                      ),
+                                                    ) &
+                                                    Size(box.size.width, 0)
+                                              : null,
+                                        );
+                                      }
+                                    : null
+                              : () =>
+                                    _showOfflineSessionSnack(context, session),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
           ),

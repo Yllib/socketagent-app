@@ -324,7 +324,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
 
     final accentColor = widget.greenTheme
         ? const Color(0xFFA6E3A1)
-        : _toolAccentColor(rawToolName);
+        : _toolAccent;
 
     // Always expandable if there's content to show
     final writeContent = _isWriteTool
@@ -343,10 +343,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: isBg ? const Color(0xFF1E2030) : const Color(0xFF1E1E2E),
+        color: isBg ? const Color(0xFF1C1C1C) : const Color(0xFF181818),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isBg ? accentColor.withAlpha(120) : accentColor.withAlpha(80),
+          color: isBg ? accentColor.withAlpha(120) : const Color(0xFF2E2E2E),
           width: 1,
         ),
       ),
@@ -398,7 +398,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                       _isBash ? _bashSummary : _toolDescription,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFA6ADC8),
+                        color: const Color(0xFFB0B0B0),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -440,10 +440,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF6C7086),
+                      color: const Color(0xFF767676),
                     )
                   else if (gotResult && !isStreaming)
-                    const Icon(Icons.check, size: 16, color: Color(0xFF6C7086))
+                    const Icon(Icons.check, size: 16, color: Color(0xFF767676))
                   else ...[
                     if (elapsed > 0)
                       Padding(
@@ -452,7 +452,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                           '${elapsed.toStringAsFixed(0)}s',
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 10,
-                            color: const Color(0xFF6C7086),
+                            color: const Color(0xFF767676),
                           ),
                         ),
                       ),
@@ -474,7 +474,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
             Container(
               decoration: const BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF313244), width: 1),
+                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
                 ),
               ),
               padding: const EdgeInsets.all(12),
@@ -492,7 +492,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 9.5,
-                        color: const Color(0xFF6C7086),
+                        color: const Color(0xFF767676),
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -512,7 +512,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               constraints: const BoxConstraints(maxHeight: 300),
               decoration: const BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF313244), width: 1),
+                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
                 ),
               ),
               child: ScrollPassthrough(
@@ -528,7 +528,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               constraints: const BoxConstraints(maxHeight: 300),
               decoration: const BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF313244), width: 1),
+                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
                 ),
               ),
               child: ScrollPassthrough(
@@ -566,7 +566,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               padding: const EdgeInsets.all(12),
               decoration: const BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF313244), width: 1),
+                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
                 ),
               ),
               child: Row(
@@ -577,7 +577,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     height: 14,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Color(0xFF6C7086),
+                      color: Color(0xFF767676),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -585,7 +585,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     'Loading image...',
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 11,
-                      color: const Color(0xFF6C7086),
+                      color: const Color(0xFF767676),
                     ),
                   ),
                 ],
@@ -609,7 +609,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       case 'error':
         return const Color(0xFFF38BA8); // red
       default:
-        return const Color(0xFFA6ADC8); // grey
+        return const Color(0xFFB0B0B0); // grey
     }
   }
 
@@ -629,7 +629,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
+        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -655,7 +655,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   taskOutput,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 11,
-                    color: const Color(0xFFCDD6F4),
+                    color: const Color(0xFFE6E6E6),
                     height: 1.4,
                   ),
                 ),
@@ -675,7 +675,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       child: Container(
         constraints: const BoxConstraints(maxHeight: 300),
         decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
+          border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
         ),
         padding: const EdgeInsets.all(8),
         child: ClipRRect(
@@ -732,7 +732,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 400),
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
+        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -747,7 +747,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   '${lines.length} lines',
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
-                    color: const Color(0xFF6C7086),
+                    color: const Color(0xFF767676),
                   ),
                 ),
               ),
@@ -762,7 +762,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                         '${i + 1}',
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 11,
-                          color: const Color(0xFF6C7086),
+                          color: const Color(0xFF767676),
                           height: 1.4,
                         ),
                         textAlign: TextAlign.right,
@@ -794,23 +794,20 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
+        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(12),
           child: structured != null
-              ? StructuredDataView(
-                  value: structured,
-                  accent: _toolAccentColor(widget.message.toolName ?? 'Tool'),
-                )
+              ? StructuredDataView(value: structured, accent: _toolAccent)
               : SelectableText(
                   text ?? '',
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 11,
                     color: muted
-                        ? const Color(0xFF6C7086)
-                        : const Color(0xFFCDD6F4),
+                        ? const Color(0xFF767676)
+                        : const Color(0xFFE6E6E6),
                     height: 1.4,
                     fontStyle: muted ? FontStyle.italic : FontStyle.normal,
                   ),
@@ -824,7 +821,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF313244), width: 1)),
+        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -835,17 +832,14 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               Text(
                 'INPUT',
                 style: TextStyle(
-                  color: _toolAccentColor(widget.message.toolName ?? 'Tool'),
+                  color: _toolAccent,
                   fontSize: 9,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 0.5,
                 ),
               ),
               const SizedBox(height: 7),
-              StructuredDataView(
-                value: input,
-                accent: _toolAccentColor(widget.message.toolName ?? 'Tool'),
-              ),
+              StructuredDataView(value: input, accent: _toolAccent),
             ],
           ),
         ),
@@ -863,7 +857,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         if (line.startsWith('---') ||
             line.startsWith('+++') ||
             line.startsWith('@@')) {
-          textColor = const Color(0xFFA6ADC8);
+          textColor = const Color(0xFFB0B0B0);
           bgColor = null;
         } else if (line.startsWith('-')) {
           textColor = const Color(0xFFF38BA8); // red
@@ -872,7 +866,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           textColor = const Color(0xFFA6E3A1); // green
           bgColor = const Color(0xFFA6E3A1).withAlpha(20);
         } else {
-          textColor = const Color(0xFFCDD6F4);
+          textColor = const Color(0xFFE6E6E6);
           bgColor = null;
         }
         return Container(
@@ -931,39 +925,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     );
   }
 
-  static Color _toolAccentColor(String toolName) {
-    switch (toolName) {
-      case 'Bash':
-      case 'Exec':
-        return const Color(0xFFF9E2AF); // yellow
-      case 'Read':
-        return const Color(0xFFA6E3A1); // green
-      case 'Write':
-        return const Color(0xFFFAB387); // peach
-      case 'Edit':
-        return const Color(0xFFCBA6F7); // mauve
-      case 'Grep':
-        return const Color(0xFF94E2D5); // teal
-      case 'Glob':
-        return const Color(0xFF89DCFE); // sky
-      case 'WebSearch':
-        return const Color(0xFFB4BEFE); // lavender
-      case 'WebFetch':
-        return const Color(0xFF74C7EC); // sapphire
-      case 'ViewImage':
-      case 'ImageGeneration':
-        return const Color(0xFFA6E3A1); // green
-      case 'TodoWrite':
-        return const Color(0xFFF2CDCD); // flamingo
-      case 'TaskOutput':
-        return const Color(0xFFF9E2AF); // yellow
-      case 'Task':
-      case 'Agent':
-        return const Color(0xFFEBA0AC); // maroon
-      default:
-        return const Color(0xFF89B4FA); // blue
-    }
-  }
+  /// Tool cards take the session's accent, which follows its backend.
+  Color get _toolAccent => Theme.of(context).colorScheme.primary;
 
   IconData _toolIcon(String toolName) {
     switch (toolName) {

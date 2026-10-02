@@ -157,13 +157,13 @@ class FileCard extends StatelessWidget {
                   details.globalPosition.dx,
                   details.globalPosition.dy,
                 ),
-                color: const Color(0xFF313244),
+                color: const Color(0xFF2E2E2E),
                 items: [
                   const PopupMenuItem(
                     value: 'redownload',
                     child: Text(
                       'Re-download',
-                      style: TextStyle(color: Color(0xFFCDD6F4)),
+                      style: TextStyle(color: Color(0xFFE6E6E6)),
                     ),
                   ),
                 ],
@@ -178,9 +178,9 @@ class FileCard extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFF1E1E2E),
+          color: const Color(0xFF181818),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF45475A), width: 1),
+          border: Border.all(color: const Color(0xFF4A4A4A), width: 1),
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -197,7 +197,7 @@ class FileCard extends StatelessWidget {
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: const Color(0xFFCDD6F4),
+                        color: const Color(0xFFE6E6E6),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -207,7 +207,7 @@ class FileCard extends StatelessWidget {
                       subtitle,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 10,
-                        color: const Color(0xFF6C7086),
+                        color: const Color(0xFF767676),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -260,7 +260,7 @@ class FileCard extends StatelessWidget {
                 const Icon(
                   Icons.insert_drive_file,
                   size: 20,
-                  color: Color(0xFF585B70),
+                  color: Color(0xFF5E5E5E),
                 ),
             ],
           ),

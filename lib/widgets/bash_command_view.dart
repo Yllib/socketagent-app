@@ -859,7 +859,7 @@ class _BashCommandViewState extends State<BashCommandView> {
       style: GoogleFonts.jetBrainsMono(
         fontSize: 11,
         height: 1.45,
-        color: const Color(0xFFCDD6F4),
+        color: const Color(0xFFE6E6E6),
       ),
     );
   }
@@ -888,12 +888,12 @@ class _BashCommandViewState extends State<BashCommandView> {
         return const TextStyle(color: Color(0xFF94E2D5));
       case ShellTokenKind.comment:
         return const TextStyle(
-          color: Color(0xFF6C7086),
+          color: Color(0xFF767676),
           fontStyle: FontStyle.italic,
         );
       case ShellTokenKind.word:
       case ShellTokenKind.whitespace:
-        return const TextStyle(color: Color(0xFFCDD6F4));
+        return const TextStyle(color: Color(0xFFE6E6E6));
     }
   }
 
@@ -958,7 +958,7 @@ class _BashCommandViewState extends State<BashCommandView> {
                 SelectableText(
                   command,
                   style: GoogleFonts.jetBrainsMono(
-                    color: const Color(0xFFA6ADC8),
+                    color: const Color(0xFFB0B0B0),
                     fontSize: 12,
                   ),
                 ),

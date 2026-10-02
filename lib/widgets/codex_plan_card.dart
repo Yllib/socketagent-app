@@ -67,7 +67,7 @@ class CodexPlanCard extends StatelessWidget {
                                 'Step dismissed…',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Color(0xFFA6ADC8),
+                                  color: Color(0xFFB0B0B0),
                                 ),
                               ),
                             ),

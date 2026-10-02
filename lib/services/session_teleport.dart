@@ -16,6 +16,22 @@ String newTeleportId() {
   return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
 }
 
+/// How far along a transfer job is: history entries restored while the
+/// destination imports, otherwise bundle bytes transferred.
+({int done, int total}) teleportProgress(Map<String, dynamic> job) {
+  final entries = (job['totalEntries'] as num?)?.toInt() ?? 0;
+  if (entries > 0) {
+    return (
+      done: (job['restoredEntries'] as num?)?.toInt() ?? 0,
+      total: entries,
+    );
+  }
+  return (
+    done: (job['bytes'] as num?)?.toInt() ?? 0,
+    total: (job['totalBytes'] as num?)?.toInt() ?? 0,
+  );
+}
+
 /// The app authorizes durable jobs and watches them. Session bytes never cross it.
 class SessionTeleport {
   SessionTeleport({
@@ -71,10 +87,25 @@ class SessionTeleport {
     bool Function()? keepWatching,
   }) async {
     while (keepWatching?.call() ?? true) {
+      Map<String, dynamic>? peer;
+      if (peerServerId != null) {
+        try {
+          peer = await status(peerServerId, jobId);
+        } on TimeoutException {
+          // The server reconnects independently; keep watching the accepted job.
+        }
+      }
       try {
         final job = await status(serverId, jobId);
         if (job != null) {
-          onProgress(job);
+          // Only the destination knows how far its restore has gotten.
+          onProgress({
+            ...job,
+            if (peer?['totalEntries'] != null) ...{
+              'restoredEntries': peer!['restoredEntries'],
+              'totalEntries': peer['totalEntries'],
+            },
+          });
           if (job['phase'] == 'completed') return job;
           if (job['phase'] == 'failed') {
             throw StateError(
@@ -85,18 +116,10 @@ class SessionTeleport {
       } on TimeoutException {
         onProgress({'phase': 'waiting', 'connectionLost': true});
       }
-      if (peerServerId != null) {
-        try {
-          final peer = await status(peerServerId, jobId);
-          if (peer?['phase'] == 'failed') {
-            throw StateError(
-              peer?['error']?.toString() ??
-                  'The destination paused this transfer.',
-            );
-          }
-        } on TimeoutException {
-          // The server reconnects independently; keep watching the accepted job.
-        }
+      if (peer?['phase'] == 'failed') {
+        throw StateError(
+          peer?['error']?.toString() ?? 'The destination paused this transfer.',
+        );
       }
       await Future<void>.delayed(pollInterval);
     }

@@ -20,9 +20,9 @@ class ReminderCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF45475A), width: 1),
+        border: Border.all(color: const Color(0xFF4A4A4A), width: 1),
       ),
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -44,7 +44,7 @@ class ReminderCard extends StatelessWidget {
                 '$title  $timeStr',
                 style: GoogleFonts.jetBrainsMono(
                   fontSize: 11,
-                  color: const Color(0xFFA6ADC8),
+                  color: const Color(0xFFB0B0B0),
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

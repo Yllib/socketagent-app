@@ -30,9 +30,9 @@ class _SpeakCardState extends State<SpeakCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF1E1E2E),
+        color: const Color(0xFF181818),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF45475A), width: 1),
+        border: Border.all(color: const Color(0xFF4A4A4A), width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -67,7 +67,7 @@ class _SpeakCardState extends State<SpeakCard> {
                       preview,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFA6ADC8),
+                        color: const Color(0xFFB0B0B0),
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -96,7 +96,7 @@ class _SpeakCardState extends State<SpeakCard> {
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 18,
-                    color: const Color(0xFF6C7086),
+                    color: const Color(0xFF767676),
                   ),
                 ],
               ),
@@ -106,7 +106,7 @@ class _SpeakCardState extends State<SpeakCard> {
             Container(
               decoration: const BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF313244), width: 1),
+                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
                 ),
               ),
               padding: const EdgeInsets.all(12),
@@ -114,7 +114,7 @@ class _SpeakCardState extends State<SpeakCard> {
                 text,
                 style: GoogleFonts.jetBrainsMono(
                   fontSize: 12,
-                  color: const Color(0xFFCDD6F4),
+                  color: const Color(0xFFE6E6E6),
                   height: 1.5,
                 ),
               ),

@@ -390,7 +390,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                           icon: const Icon(
                             Icons.visibility_off_outlined,
                             size: 16,
-                            color: Color(0xFF6C7086),
+                            color: Color(0xFF767676),
                           ),
                         ),
                     ],
@@ -565,7 +565,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                       isCompleted ? Icons.close : Icons.stop_circle_outlined,
                       size: isCompleted ? 14 : 16,
                       color: isCompleted
-                          ? const Color(0xFF6C7086)
+                          ? const Color(0xFF767676)
                           : Colors.red.shade300,
                     ),
                   ),
@@ -578,9 +578,9 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
               child: Container(
                 margin: const EdgeInsets.only(left: 24, right: 8, bottom: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E1E2E),
+                  color: const Color(0xFF181818),
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFF313244)),
+                  border: Border.all(color: const Color(0xFF2E2E2E)),
                 ),
                 child: SingleChildScrollView(
                   child: entry.kind == 'subagent'
@@ -593,7 +593,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                             entry.bashOutput ?? '',
                             style: GoogleFonts.jetBrainsMono(
                               fontSize: 10,
-                              color: const Color(0xFFCDD6F4),
+                              color: const Color(0xFFE6E6E6),
                               height: 1.3,
                             ),
                             maxLines: 50,
@@ -617,7 +617,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFF313244))),
+              border: Border(bottom: BorderSide(color: Color(0xFF2E2E2E))),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -636,7 +636,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   entry.resultOutput!,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
-                    color: const Color(0xFFCDD6F4),
+                    color: const Color(0xFFE6E6E6),
                     height: 1.4,
                   ),
                 ),
@@ -648,7 +648,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFF313244))),
+              border: Border(bottom: BorderSide(color: Color(0xFF2E2E2E))),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -667,7 +667,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   entry.prompt!,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
-                    color: const Color(0xFFA6ADC8),
+                    color: const Color(0xFFB0B0B0),
                     height: 1.4,
                   ),
                 ),
@@ -706,7 +706,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           if (state['summary']?.toString().isNotEmpty == true)
             Text(
               state['summary'].toString(),
-              style: const TextStyle(fontSize: 10, color: Color(0xFFA6ADC8)),
+              style: const TextStyle(fontSize: 10, color: Color(0xFFB0B0B0)),
             ),
           if (metrics.isNotEmpty) ...[
             const SizedBox(height: 4),
@@ -763,7 +763,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                               style: const TextStyle(
-                                color: Color(0xFFCDD6F4),
+                                color: Color(0xFFE6E6E6),
                                 fontSize: 9,
                               ),
                             ),
@@ -804,7 +804,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Text(
               msg.textContent,
-              style: const TextStyle(fontSize: 12, color: Color(0xFFA6ADC8)),
+              style: const TextStyle(fontSize: 12, color: Color(0xFFB0B0B0)),
             ),
           );
         }

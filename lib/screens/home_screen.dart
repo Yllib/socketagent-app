@@ -43,6 +43,7 @@ import '../services/work_review_repository.dart';
 import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
 import 'session_memory_screen.dart';
+import '../widgets/session_backend_watermark.dart';
 
 /// One row of the context dialog, optionally opening onto its own rows.
 ///
@@ -285,7 +286,9 @@ Future<void> openConversation(
   );
 }
 
-class HomeScreen extends StatefulWidget {
+/// The chat window. Its theme takes the active session's backend color, so
+/// accents throughout the conversation read as Claude or Codex.
+class HomeScreen extends StatelessWidget {
   final bool autoStartVoice;
 
   final bool embedded;
@@ -302,10 +305,41 @@ class HomeScreen extends StatefulWidget {
   });
 
   @override
-  State<HomeScreen> createState() => HomeScreenState();
+  Widget build(BuildContext context) => Selector<ChatProvider, String?>(
+    selector: (_, provider) => provider.activeSessionBackend,
+    builder: (context, backend, child) => Theme(
+      data: backend == null ? Theme.of(context) : backendTheme(backend),
+      child: child!,
+    ),
+    child: _ChatScreen(
+      autoStartVoice: autoStartVoice,
+      embedded: embedded,
+      visible: visible,
+      sidebarVisible: sidebarVisible,
+      onToggleSidebar: onToggleSidebar,
+    ),
+  );
 }
 
-class HomeScreenState extends State<HomeScreen> {
+class _ChatScreen extends StatefulWidget {
+  final bool autoStartVoice;
+  final bool embedded;
+  final bool visible;
+  final bool sidebarVisible;
+  final VoidCallback? onToggleSidebar;
+  const _ChatScreen({
+    required this.autoStartVoice,
+    required this.embedded,
+    required this.visible,
+    required this.sidebarVisible,
+    required this.onToggleSidebar,
+  });
+
+  @override
+  State<_ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<_ChatScreen> {
   final TextEditingController _textController = TextEditingController();
   final FocusNode _focusNode = FocusNode();
   final GlobalKey<ChatViewState> _chatViewKey = GlobalKey();
@@ -520,7 +554,7 @@ class HomeScreenState extends State<HomeScreen> {
   }
 
   @override
-  void didUpdateWidget(covariant HomeScreen oldWidget) {
+  void didUpdateWidget(covariant _ChatScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.visible != widget.visible) {
       final provider = context.read<ChatProvider>();
@@ -1013,17 +1047,30 @@ class HomeScreenState extends State<HomeScreen> {
             provider.activeSessionBackend == 'codex' && provider.codexFastMode
             ? _fastModeTheme()
             : _permissionModeTheme(displayPermMode);
-        final chatSurfaceColor = Theme.of(context).colorScheme.surface;
+        // HomeScreen already themed the accents for the backend. The header
+        // takes a tint of it unless permission or fast mode color it.
+        final backend = provider.activeSessionBackend;
+        final baseTheme = Theme.of(context);
+        final chatSurfaceColor = baseTheme.colorScheme.surface;
         final notificationFocus = provider.notificationTranscriptFocus;
         return Theme(
           data: sessionTheme != null
-              ? Theme.of(context).copyWith(
+              ? baseTheme.copyWith(
                   appBarTheme: AppBarTheme(
                     backgroundColor: sessionTheme.barColor,
                     foregroundColor: sessionTheme.textColor,
                   ),
                 )
-              : Theme.of(context),
+              : backend == null
+              ? baseTheme
+              : baseTheme.copyWith(
+                  appBarTheme: AppBarTheme(
+                    backgroundColor: Color.alphaBlend(
+                      backendColor(backend).withAlpha(40),
+                      chatSurfaceColor,
+                    ),
+                  ),
+                ),
           child: Scaffold(
             backgroundColor: chatSurfaceColor,
             resizeToAvoidBottomInset: true,
@@ -1051,137 +1098,135 @@ class HomeScreenState extends State<HomeScreen> {
                     ),
                   );
                 },
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            _sessionHeaderTitle(provider, isPlan: isPlan),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: sessionTheme?.textColor,
+                child: _withBackendWatermark(
+                  provider.activeSessionBackend,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _sessionHeaderTitle(provider, isPlan: isPlan),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: sessionTheme?.textColor,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  _activeComputerName(provider),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color:
-                                        (sessionTheme?.textColor ??
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface)
-                                            .withAlpha(178),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              _buildHarnessBadge(
-                                provider.activeSessionBackend,
-                                sessionTheme?.textColor,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        if (provider.lastUsage != null)
-                          _buildUsageIndicator(provider.lastUsage!),
-                        _buildConnectionIndicator(provider.connectionStatus),
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    Row(
-                      children: [
-                        if (provider.activeSessionId != null ||
-                            provider.isPendingNewSession)
-                          GestureDetector(
-                            onTap: () => _showPermissionModePicker(provider),
+                        ],
+                      ),
+                      const SizedBox(height: 1),
+                      Row(
+                        children: [
+                          Expanded(
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(
-                                  _permissionModeIcon(displayPermMode),
-                                  size: 11,
-                                  color:
-                                      (sessionTheme?.textColor ??
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface)
-                                          .withAlpha(178),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _permissionModeLabel(
-                                    displayPermMode,
-                                    backend: provider.activeSessionBackend,
+                                Flexible(
+                                  child: Text(
+                                    _activeComputerName(provider),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color:
+                                          (sessionTheme?.textColor ??
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface)
+                                              .withAlpha(178),
+                                    ),
                                   ),
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color:
-                                        (sessionTheme?.textColor ??
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface)
-                                            .withAlpha(178),
-                                  ),
-                                ),
-                                Icon(
-                                  Icons.arrow_drop_down,
-                                  size: 14,
-                                  color:
-                                      (sessionTheme?.textColor ??
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface)
-                                          .withAlpha(128),
                                 ),
                               ],
                             ),
                           ),
-                        if (provider.activeSessionCwd != null)
-                          Expanded(
-                            child: Tooltip(
-                              message: provider.activeSessionCwd!,
-                              child: Text(
-                                _compactCwd(provider.activeSessionCwd!),
-                                textAlign: TextAlign.right,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontFamily: 'monospace',
-                                  color:
-                                      (sessionTheme?.textColor ??
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface)
-                                          .withAlpha(178),
+                          const SizedBox(width: 8),
+                          if (provider.lastUsage != null)
+                            _buildUsageIndicator(provider.lastUsage!),
+                          _buildConnectionIndicator(provider.connectionStatus),
+                        ],
+                      ),
+                      const SizedBox(height: 1),
+                      Row(
+                        children: [
+                          if (provider.activeSessionId != null ||
+                              provider.isPendingNewSession)
+                            GestureDetector(
+                              onTap: () => _showPermissionModePicker(provider),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _permissionModeIcon(displayPermMode),
+                                    size: 11,
+                                    color:
+                                        (sessionTheme?.textColor ??
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface)
+                                            .withAlpha(178),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    _permissionModeLabel(
+                                      displayPermMode,
+                                      backend: provider.activeSessionBackend,
+                                    ),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color:
+                                          (sessionTheme?.textColor ??
+                                                  Theme.of(
+                                                    context,
+                                                  ).colorScheme.onSurface)
+                                              .withAlpha(178),
+                                    ),
+                                  ),
+                                  Icon(
+                                    Icons.arrow_drop_down,
+                                    size: 14,
+                                    color:
+                                        (sessionTheme?.textColor ??
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface)
+                                            .withAlpha(128),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (provider.activeSessionCwd != null)
+                            Expanded(
+                              child: Tooltip(
+                                message: provider.activeSessionCwd!,
+                                child: Text(
+                                  _compactCwd(provider.activeSessionCwd!),
+                                  textAlign: TextAlign.right,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontFamily: 'monospace',
+                                    color:
+                                        (sessionTheme?.textColor ??
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface)
+                                            .withAlpha(178),
+                                  ),
                                 ),
                               ),
                             ),
-                          ),
-                      ],
-                    ),
-                  ],
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1416,7 +1461,12 @@ class HomeScreenState extends State<HomeScreen> {
     }
     if (provider.rawMode) flags.add('RAW');
     final suffix = flags.isEmpty ? '' : ' [${flags.join('·')}]';
-    return (hasTitle ? title : 'SocketAgent') + suffix;
+    // Untitled sessions go by their project folder, as in the session list.
+    final folder = (provider.activeSessionCwd ?? '')
+        .split(RegExp(r'[\\/]'))
+        .lastWhere((part) => part.isNotEmpty, orElse: () => '');
+    final fallback = folder.isEmpty ? 'New session' : folder;
+    return (hasTitle ? title : fallback) + suffix;
   }
 
   String _activeComputerName(ChatProvider provider) {
@@ -1429,37 +1479,10 @@ class HomeScreenState extends State<HomeScreen> {
         'Computer';
   }
 
-  Widget _buildHarnessBadge(String? backend, Color? foreground) {
-    final isCodex = backend == 'codex';
-    final color = isCodex ? const Color(0xFF89B4FA) : const Color(0xFFCBA6F7);
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withAlpha(38),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withAlpha(105)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            isCodex ? Icons.code : Icons.psychology_alt,
-            size: 10,
-            color: foreground ?? color,
-          ),
-          const SizedBox(width: 3),
-          Text(
-            isCodex ? 'Codex' : 'Claude',
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: foreground ?? color,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  /// The session's backend logo, faint behind the header text, as in the session list.
+  Widget _withBackendWatermark(String? backend, Widget child) => backend == null
+      ? child
+      : SessionBackendWatermark(backend: backend, compact: true, child: child);
 
   String _compactCwd(String cwd) {
     const maxLength = 42;

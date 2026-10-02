@@ -14,6 +14,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
@@ -33,6 +34,7 @@ import '../models/history_normalization.dart';
 import '../models/history_response_gate.dart';
 import '../models/hard_stop_protocol.dart';
 import '../models/composer_attachment.dart';
+import '../models/message_attachment.dart';
 import '../models/html_plan.dart';
 import '../models/archive_entry.dart';
 import '../models/user_prompt_text.dart';
@@ -669,8 +671,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         return (sessionId != null && sessionId == _activeSessionId) ||
             (_activeSessionId == null &&
                 _draftConversationId != null &&
-                request.payload['clientConversationId'] == _draftConversationId) ||
-            _messages.any((message) => message.id == request.id || message.uuid == request.id);
+                request.payload['clientConversationId'] ==
+                    _draftConversationId) ||
+            _messages.any(
+              (message) =>
+                  message.id == request.id || message.uuid == request.id,
+            );
       }).toList();
   DateTime? _currentPromptStartedAt;
   Timer? _promptRuntimeTimer;
@@ -692,7 +698,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<String> _pendingPrepends = [];
   int _pendingInjectedMessageCount = 0;
   final Set<String> _pendingLocalUserMessageIds = {};
-  // The visible bubble intentionally omits attachment metadata, while the
+  // The visible bubble separates attachment previews from text, while the
   // durable transcript stores the exact prompt sent to the server. Retain that
   // exact text until its positioned history event arrives so the live cache
   // never claims a complete cursor with a lossy user entry.
@@ -3363,12 +3369,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           type: MessageType.text,
           timestamp: request.createdAt,
           textContent: request.displayText,
+          attachments: _outgoingAttachments(request),
           isPending: true,
         ),
       );
       _pendingLocalUserMessageIds.add(request.id);
     }
   }
+
+  List<MessageAttachment> _outgoingAttachments(OutgoingRequest request) => [
+    for (final file in request.files)
+      MessageAttachment(
+        path: (file['serverPath'] ?? file['path']) as String,
+        name: file['name'] as String,
+        isLocal: file['serverPath'] == null,
+      ),
+  ];
 
   Future<bool> _sendDurableCommand(
     String serverId,
@@ -3530,6 +3546,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             );
             if (!_pendingPromptDispatches.containsKey(request.id)) break;
             await _outgoingQueue.save(request);
+            bubble.attachments = _outgoingAttachments(request);
+            notifyListeners();
           }
           if (!_pendingPromptDispatches.containsKey(request.id)) continue;
           if (request.files.isNotEmpty &&
@@ -3539,6 +3557,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             request.payload['attachmentsPrepared'] = true;
             await _outgoingQueue.save(request);
           }
+          bubble.attachments = _outgoingAttachments(request);
           bubble.uploadProgress = null;
           if (!_pendingPromptDispatches.containsKey(request.id) ||
               _outgoingDisposed) {
@@ -4632,6 +4651,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'reminder',
       'rate_limit_event',
       'session_transfer_job_result',
+      'session_transfer_estimate_result',
       'session_transfer_export_result',
       'session_transfer_import_result',
       'session_transfer_discard_result',
@@ -5120,6 +5140,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _enqueueDownloadEvent(msg, serverId);
           break;
         case 'session_transfer_job_result':
+        case 'session_transfer_estimate_result':
         case 'session_transfer_export_result':
         case 'session_transfer_import_result':
         case 'session_transfer_discard_result':
@@ -6556,8 +6577,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           (cacheMessageId == null
               ? null
               : _pendingCacheUserPromptContent.remove(cacheMessageId)) ??
-          localMessage?.textContent ??
-          msg['content']?.toString();
+          msg['content']?.toString() ??
+          localMessage?.textContent;
     }
     final entry = transcriptCacheEntryFromServerEvent(
       msg,
@@ -9946,6 +9967,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (idx >= 0) {
         _forgetOutgoing(clientMessageId);
         _messages[idx].uuid = uuid;
+        final content = msg['content'];
+        if (content is String) {
+          _messages[idx].attachments = _parseUserPrompt(content).attachments;
+        }
         applyTranscriptPosition(_messages[idx], msg);
         _messages = orderByTranscriptPosition(_messages);
         // The UUID acknowledges that the server persisted this prompt, but an
@@ -9987,14 +10012,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _messages = orderByTranscriptPosition([..._messages, card]);
       notifyListeners();
     }
-    if (prompt != null && (prompt.hidden || prompt.text.isEmpty)) {
+    if (prompt != null &&
+        (prompt.hidden ||
+            (prompt.text.isEmpty && prompt.attachments.isEmpty))) {
       // A prompt with nothing to show has no bubble on any client, so there is
       // nothing here to stamp either.
       return;
     }
     final arrived = prompt == null
         ? null
-        : _buildUserDisplayMessage(prompt.text);
+        : _buildUserDisplayMessage(
+            prompt.text,
+            attachments: prompt.attachments,
+          );
 
     // Find the most recent matching user text message without a UUID and
     // assign it. Matching on the text keeps a prompt sent from another client
@@ -10007,9 +10037,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           m.uuid == null &&
           (arrived == null ||
               (m.type == arrived.type &&
-                  m.textContent == arrived.textContent))) {
+                  m.textContent == arrived.textContent &&
+                  listEquals(
+                    m.attachments.map((file) => file.path).toList(),
+                    arrived.attachments.map((file) => file.path).toList(),
+                  )))) {
         _forgetOutgoing(m.id);
         m.uuid = uuid;
+        if (arrived != null) m.attachments = arrived.attachments;
         applyTranscriptPosition(m, msg);
         _messages = orderByTranscriptPosition(_messages);
         if (m.injectionPriority == null && m.uploadProgress == null) {
@@ -10065,7 +10100,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  ChatMessage _buildUserDisplayMessage(String text) {
+  ChatMessage _buildUserDisplayMessage(
+    String text, {
+    List<MessageAttachment> attachments = const [],
+  }) {
+    if (attachments.isNotEmpty) {
+      return ChatMessage.userText(text)..attachments = attachments;
+    }
     final skillMessage = _buildSkillInvocationMessage(text);
     return skillMessage ?? ChatMessage.userText(text);
   }
@@ -10179,6 +10220,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
         }
         _remapSessionIdentity(sessionServerId, replacesSessionId, sessionId);
+      } else if (sessionId == _activeSessionId) {
+        // Claude re-announces an open session on later turns, without a title.
+        previousTitle = _activeSessionTitle;
       }
       _activeSessionId = sessionId;
       if (serverId != null && serverId.isNotEmpty) {
@@ -10372,8 +10416,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           for (var i = 0; i < prompt.notices.length; i++) {
             loaded.add(_userPromptNoticeCard(prompt.notices[i], offset, i));
           }
-          if (prompt.text.isNotEmpty) {
-            final userMsg = _buildUserDisplayMessage(prompt.text);
+          if (!prompt.hidden &&
+              (prompt.text.isNotEmpty || prompt.attachments.isNotEmpty)) {
+            final userMsg = _buildUserDisplayMessage(
+              prompt.text,
+              attachments: prompt.attachments,
+            );
             // Restore uuid directly from history entry (for rewind support)
             userMsg.uuid = entry['uuid'] as String?;
             loaded.add(userMsg);
@@ -11088,6 +11136,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (filePath.isNotEmpty) {
               final historyFileId =
                   entry['fileId'] as String? ??
+                  toolInput['_file_id'] as String? ??
                   _filePathToId[_filePathKey(filePath)] ??
                   _stableFileTransferId(_filePathKey(filePath));
               final historyFileName =
@@ -11096,7 +11145,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final historyFileVersion = entry['fileVersion']?.toString();
               final historyDownloadPath = resolveHistoricalSendFileDownloadPath(
                 entry,
-                filePath,
+                _serverFiles[historyFileId] ?? filePath,
               );
               _serverFiles[historyFileId] = historyDownloadPath;
               _serverFileNames[historyFileId] = historyFileName;
@@ -11936,10 +11985,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _activeSessionServerId ?? _connMgr.activeServerId ?? '';
     if (promptServerId.isEmpty) return;
     // Capture routing and model choices before waiting for disk or uploads.
-    final displayText = text.trim().isEmpty
-        ? 'Attached files or secrets'
+    final displayText = text.trim().isEmpty && fileAttachments.isEmpty
+        ? 'Attached secrets'
         : text;
-    final userMsg = _buildUserDisplayMessage(displayText)..isPending = true;
+    final userMsg = _buildUserDisplayMessage(
+      displayText,
+      attachments: [
+        for (final file in fileAttachments)
+          MessageAttachment(path: file.path, name: file.name, isLocal: true),
+      ],
+    )..isPending = true;
     final useCodexFastMode = _activeSessionBackend == 'codex' && _codexFastMode;
     final promptPayload = <String, dynamic>{
       'type': 'prompt',
@@ -12042,6 +12097,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
       await _outgoingReady;
       await _outgoingQueue.stage(request);
+      userMsg.attachments = _outgoingAttachments(request);
       if ((_outgoingCancelEpochs[sendKey] ?? 0) != sendEpoch) {
         await _outgoingQueue.remove(request.id);
         userMsg.isPending = false;
@@ -14817,9 +14873,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     isConnected: (id) => _connMgr.statusOf(id) == ConnectionStatus.connected,
     isSupported: (id) => (_serverSessionTransferVersions[id] ?? 0) >= 2,
     request: (id, message) => _requestSessionTransfer(
-      id, message, timeout: const Duration(seconds: 15),
+      id,
+      message,
+      timeout: const Duration(seconds: 15),
     ),
   );
+
+  /// Uncompressed transcript sizes of [source], with every tool output and
+  /// with large outputs cut to their stored preview. Teleport asks before
+  /// truncating, so a clone stays lossless unless the user chooses otherwise.
+  Future<({int fullBytes, int truncatedBytes})> estimateSessionTransfer(
+    Session source,
+  ) async {
+    if ((_serverSessionTransferVersions[source.serverId] ?? 0) < 3) {
+      throw StateError('Update SocketAgent on both computers to use teleport.');
+    }
+    final reply = await _requestSessionTransfer(source.serverId, {
+      'type': 'session_transfer_estimate',
+      'sessionId': source.id,
+    }, timeout: const Duration(seconds: 60));
+    if (reply['ok'] != true) {
+      throw StateError(
+        reply['error']?.toString() ?? 'Could not measure this session',
+      );
+    }
+    return (
+      fullBytes: (reply['fullBytes'] as num?)?.toInt() ?? 0,
+      truncatedBytes: (reply['truncatedBytes'] as num?)?.toInt() ?? 0,
+    );
+  }
 
   Future<SessionTransferResult?> transferSession({
     required Session source,
@@ -14827,15 +14909,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String destinationCwd,
     required String destinationBackend,
     required bool move,
+    bool truncateTranscript = false,
     void Function(SessionTransferStage stage)? onStage,
-    void Function(int bytes, int total)? onProgress,
+    void Function(int done, int total)? onProgress,
     bool Function()? keepWatching,
     String? resumeJobId,
   }) async {
     for (final id in {source.serverId, destinationServerId}) {
-      if ((_serverSessionTransferVersions[id] ?? 0) < 2) {
+      if ((_serverSessionTransferVersions[id] ?? 0) < 3) {
         throw StateError(
-          'Update SocketAgent on both computers to use resumable teleport.',
+          'Update SocketAgent on both computers to use teleport.',
         );
       }
       if (_connMgr.statusOf(id) != ConnectionStatus.connected) {
@@ -14866,6 +14949,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               targetBackend == 'claude'
           ? 'exact'
           : 'handoff',
+      // Absent means full, which keeps jobs started by older builds resumable.
+      if (truncateTranscript) 'transcript': 'truncated',
     };
     // Keep the ID before the first request. Lost acknowledgements and app restarts
     // must retry the same operation, including a destination accepted on its own.
@@ -14973,10 +15058,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             'finalizing' => SessionTransferStage.finalizing,
             _ => SessionTransferStage.waiting,
           });
-          onProgress?.call(
-            (job['bytes'] as num?)?.toInt() ?? 0,
-            (job['totalBytes'] as num?)?.toInt() ?? 0,
-          );
+          final progress = teleportProgress(job);
+          onProgress?.call(progress.done, progress.total);
         },
       );
     }
@@ -16585,6 +16668,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final messageSessionId = msg['sessionId'] as String? ?? '';
       if (messageSessionId.isNotEmpty) {
         _downloadSessionIds[fileId] = messageSessionId;
+        if (currentServerId != null && currentServerId.isNotEmpty) {
+          unawaited(
+            _transcriptCache.mergeFileDelivery(
+              currentServerId,
+              messageSessionId,
+              msg,
+            ),
+          );
+        }
       }
       debugPrint(
         '[File] Available for download: $fileName (id=$fileId, path=$filePath)',
@@ -16611,7 +16703,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           '_file_id': fileId,
           '_file_name': fileName,
           if (fileSize != null && fileSize > 0) '_file_size': fileSize,
-        });
+        }, authoritative: true);
       } else {
         _messages.add(
           ChatMessage.toolCall(
