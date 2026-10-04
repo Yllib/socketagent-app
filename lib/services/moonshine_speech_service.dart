@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 import 'asr_model_manager.dart';
+import 'pcm_audio.dart';
 import 'speech_input.dart';
 import 'speech_recognition_settings.dart';
 
@@ -100,6 +101,11 @@ class MoonshineSpeechService implements SpeechInput {
       _revision++;
       _pushToTalk = pushToTalk;
       await channel.invokeMethod<void>('reset');
+      // A stereo-only microphone overrides the mono request.
+      var stereo = false;
+      await _recorder!.setOnConfigChanged(
+        (config) => stereo = config.numChannels == 2,
+      );
       final audio = await _recorder!.startStream(
         const RecordConfig(
           encoder: AudioEncoder.pcm16bits,
@@ -119,7 +125,7 @@ class MoonshineSpeechService implements SpeechInput {
                 if (_disposed || revision != _revision) return;
                 final result = await channel.invokeMapMethod<Object?, Object?>(
                   'audio',
-                  bytes,
+                  stereo ? downmixStereoPcm16(bytes) : bytes,
                 );
                 _accept(result, revision);
               })

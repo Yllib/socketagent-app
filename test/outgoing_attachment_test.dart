@@ -1,35 +1,51 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:app/models/message.dart';
 import 'package:app/services/outgoing_queue.dart';
+import 'package:cross_file/cross_file.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'multi_client_prompt_test.dart' show withSession;
 
-class TestPicker extends FilePicker {
+/// A picked file backed by a real file on disk.
+base class TestFile extends PlatformFile {
+  TestFile(this.file);
+  final File file;
+  @override
+  String get name => 'example.txt';
+  @override
+  Uri get uri => file.uri;
+  @override
+  XFile get xFile => XFile(file.path, name: name);
+  @override
+  int? lengthSync() => file.lengthSync();
+  @override
+  Future<int?> length() => file.length();
+  @override
+  Future<Uint8List> readAsBytes() => file.readAsBytes();
+  @override
+  Stream<Uint8List> readAsByteStream() =>
+      file.openRead().map(Uint8List.fromList);
+}
+
+class TestPicker extends FilePickerPlatform {
   TestPicker(this.file);
   final File file;
   @override
-  Future<FilePickerResult?> pickFiles({
+  Future<List<PlatformFile>> pickFiles({
     String? dialogTitle,
     String? initialDirectory,
     FileType type = FileType.any,
     List<String>? allowedExtensions,
     Function(FilePickerStatus)? onFileLoading,
-    bool allowCompression = true,
-    int compressionQuality = 30,
-    bool allowMultiple = false,
-    bool withData = false,
-    bool withReadStream = false,
-    bool lockParentWindow = false,
-    bool readSequential = false,
-  }) async => FilePickerResult([
-    PlatformFile(
-      name: 'example.txt',
-      path: file.path,
-      size: await file.length(),
-    ),
-  ]);
+    int compressionQuality = 0,
+    AndroidOptions androidOptions = const AndroidOptions(),
+    DarwinOptions darwinOptions = const DarwinOptions(),
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
+  }) async => [TestFile(file)];
 }
 
 void main() {
@@ -41,7 +57,7 @@ void main() {
       final file = await File(
         '${dir.path}/example.txt',
       ).writeAsString('file snapshot');
-      FilePicker.platform = TestPicker(file);
+      FilePickerPlatform.instance = TestPicker(file);
       final start = Completer<Map<String, dynamic>>();
       final received = <Map<String, dynamic>>[];
       try {

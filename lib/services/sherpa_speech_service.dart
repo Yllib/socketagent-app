@@ -6,6 +6,7 @@ import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
 import 'asr_model_manager.dart';
+import 'pcm_audio.dart';
 import 'speech_input.dart';
 import 'speech_recognition_settings.dart';
 
@@ -376,6 +377,11 @@ class SherpaSpeechService implements SpeechInput {
     }
 
     try {
+      // A stereo-only microphone overrides the mono request.
+      var stereo = false;
+      await _recorder!.setOnConfigChanged(
+        (config) => stereo = config.numChannels == 2,
+      );
       final micStream = await _recorder!.startStream(
         const RecordConfig(
           encoder: AudioEncoder.pcm16bits,
@@ -389,7 +395,10 @@ class SherpaSpeechService implements SpeechInput {
         (data) {
           if (_sessionActive && _isolateSendPort != null) {
             _isolateSendPort!.send(
-              _AudioData(Uint8List.fromList(data), _revision),
+              _AudioData(
+                stereo ? downmixStereoPcm16(data) : Uint8List.fromList(data),
+                _revision,
+              ),
             );
           }
         },

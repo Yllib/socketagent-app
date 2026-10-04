@@ -544,7 +544,7 @@ class _ArchiveScreenState extends State<ArchiveScreen>
       onRefresh: _refresh,
       child: ListView.separated(
         itemCount: archives.length,
-        separatorBuilder: (_, __) =>
+        separatorBuilder: (_, _) =>
             Divider(height: 1, color: theme.colorScheme.outline.withAlpha(40)),
         itemBuilder: (context, idx) => _buildArchiveRow(archives[idx]),
       ),

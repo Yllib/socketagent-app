@@ -232,7 +232,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
     return ListView.separated(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
       itemCount: epochs.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
+      separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final epoch = epochs[index];
         final active = epoch.endedAt == null;

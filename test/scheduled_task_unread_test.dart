@@ -9,7 +9,7 @@ Map<String, dynamic> taskWithRuns(
   'status': status,
   'runCount': runs.length,
   'runs': runs,
-  if (lastReadAt != null) 'lastReadAt': lastReadAt,
+  'lastReadAt': ?lastReadAt,
 };
 
 void main() {

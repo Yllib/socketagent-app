@@ -107,7 +107,7 @@ class FileOpenService {
     try {
       final opened = await nativeChannel.invokeMethod<bool>(
         'openDownloadedFile',
-        {'path': path, if (type != null) 'type': type},
+        {'path': path, 'type': ?type},
       );
       return opened == true
           ? OpenResult()

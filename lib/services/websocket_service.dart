@@ -730,11 +730,11 @@ class WebSocketService {
     send({
       'type': 'prompt',
       'text': text,
-      if (sessionId != null) 'sessionId': sessionId,
-      if (priority != null) 'priority': priority,
-      if (messageId != null) 'messageId': messageId,
-      if (cwd != null) 'cwd': cwd,
-      if (codexFastMode != null) 'codexFastMode': codexFastMode,
+      'sessionId': ?sessionId,
+      'priority': ?priority,
+      'messageId': ?messageId,
+      'cwd': ?cwd,
+      'codexFastMode': ?codexFastMode,
     });
   }
 
@@ -747,7 +747,7 @@ class WebSocketService {
   }
 
   void sendNewSession({String? cwd}) {
-    send({'type': 'new_session', if (cwd != null) 'cwd': cwd});
+    send({'type': 'new_session', 'cwd': ?cwd});
   }
 
   void sendResumeSession(String sessionId) {
@@ -787,7 +787,7 @@ class WebSocketService {
   }
 
   void sendAbort({String? sessionId}) {
-    send({'type': 'abort', if (sessionId != null) 'sessionId': sessionId});
+    send({'type': 'abort', 'sessionId': ?sessionId});
   }
 
   void sendStopTask(String taskId) {
@@ -807,7 +807,7 @@ class WebSocketService {
   }
 
   void sendSetModel(String? model) {
-    send({'type': 'set_model', if (model != null) 'model': model});
+    send({'type': 'set_model', 'model': ?model});
   }
 
   void sendSetPermissionMode(String mode) {
@@ -842,7 +842,7 @@ class WebSocketService {
   }) {
     send({
       'type': 'rewind_conversation',
-      if (sessionId != null) 'sessionId': sessionId,
+      'sessionId': ?sessionId,
       'userMessageUuid': userMessageUuid,
       'dryRun': dryRun,
       'rewindFiles': rewindFiles,

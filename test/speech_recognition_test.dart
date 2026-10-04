@@ -37,6 +37,11 @@ class _Recorder extends RecordPlatform {
   @override
   Future<void> dispose(String id) async {}
   @override
+  void setOnConfigChanged(
+    String id,
+    void Function(RecordConfig config)? callback,
+  ) {}
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 

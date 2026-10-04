@@ -29,7 +29,7 @@ class HtmlPlanExportService {
     required int revision,
   }) => html;
 
-  static Future<String?> export({
+  static Future<Uri?> export({
     required String title,
     required String html,
     required int revision,
@@ -39,7 +39,7 @@ class HtmlPlanExportService {
       html: html,
       revision: revision,
     );
-    return FilePicker.platform.saveFile(
+    return FilePicker.saveFile(
       dialogTitle: 'Export HTML plan',
       fileName: safeFileName(title, revision),
       type: FileType.custom,

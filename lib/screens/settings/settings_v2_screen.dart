@@ -1428,19 +1428,13 @@ class _SettingsV2ServerDetailScreenState
 
   Future<void> _importFirebaseProject() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final selected = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['json'],
-        withData: true,
       );
-      if (result == null || result.files.isEmpty) return;
-      final selected = result.files.single;
-      final bytes =
-          selected.bytes ??
-          (selected.path == null
-              ? null
-              : await File(selected.path!).readAsBytes());
-      if (bytes == null || bytes.isEmpty) {
+      if (selected == null) return;
+      final bytes = await selected.readAsBytes();
+      if (bytes.isEmpty) {
         throw const FormatException('The selected file is empty');
       }
       if (bytes.length > 1024 * 1024) {
@@ -1671,7 +1665,7 @@ class _SettingsGroup extends StatelessWidget {
                   ),
                 ),
               ),
-              if (action != null) action!,
+              ?action,
             ],
           ),
           const SizedBox(height: 8),

@@ -85,7 +85,7 @@ class NotificationService {
     final result = previous.then<T>((_) => operation());
     final tail = result.then<void>(
       (_) {},
-      onError: (Object _, StackTrace __) {},
+      onError: (Object _, StackTrace _) {},
     );
     _operationTailsById[id] = tail;
     unawaited(
@@ -272,8 +272,8 @@ class NotificationService {
   Future<void> _ensureTimeZoneInitialized() async {
     if (_timeZoneInitialized) return;
     tzdata.initializeTimeZones();
-    final timeZoneName = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(timeZoneName));
+    final timeZone = await FlutterTimezone.getLocalTimezone();
+    tz.setLocalLocation(tz.getLocation(timeZone.identifier));
     _timeZoneInitialized = true;
   }
 

@@ -103,12 +103,12 @@ class _HtmlPlanManagerSheetState extends State<HtmlPlanManagerSheet> {
 
   Future<void> _export(HtmlPlan plan) async {
     try {
-      final path = await HtmlPlanExportService.export(
+      final saved = await HtmlPlanExportService.export(
         title: plan.title,
         html: plan.html,
         revision: plan.currentRevision,
       );
-      if (path != null && mounted) {
+      if (saved != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Exported ${plan.title}')),
         );

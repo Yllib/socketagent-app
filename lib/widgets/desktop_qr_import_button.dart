@@ -14,8 +14,8 @@ class DesktopQrImportButton extends StatelessWidget {
     label: const Text('Open QR image'),
     onPressed: () async {
       try {
-        final result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
-        final path = result?.files.single.path;
+        final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
+        final path = picked?.path;
         if (path == null) return;
         final file = File(path);
         if (await file.length() > 20 * 1024 * 1024) throw const FormatException('Choose a QR image smaller than 20 MB.');

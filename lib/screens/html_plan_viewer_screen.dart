@@ -35,12 +35,12 @@ class _HtmlPlanViewerScreenState extends State<HtmlPlanViewerScreen> {
 
   Future<void> _export() async {
     try {
-      final path = await HtmlPlanExportService.export(
+      final saved = await HtmlPlanExportService.export(
         title: _plan.title,
         html: _plan.html,
         revision: _plan.currentRevision,
       );
-      if (path != null && mounted) {
+      if (saved != null && mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Exported ${_plan.title}')));

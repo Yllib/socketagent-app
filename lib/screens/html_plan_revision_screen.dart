@@ -161,12 +161,12 @@ class _HtmlPlanRevisionDetailScreenState
     final revision = _detail?.revision;
     if (revision == null) return;
     try {
-      final path = await HtmlPlanExportService.export(
+      final saved = await HtmlPlanExportService.export(
         title: revision.title,
         html: revision.html,
         revision: revision.revision,
       );
-      if (path != null && mounted) {
+      if (saved != null && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Exported revision ${revision.revision}')),
         );

@@ -61,7 +61,7 @@ class OutgoingQueue {
       base64Url.encode(utf8.encode(id)).replaceAll('=', '');
   Future<T> _serial<T>(Future<T> Function() operation) {
     final result = _writes.then((_) => operation());
-    _writes = result.then<void>((_) {}, onError: (Object _, StackTrace __) {});
+    _writes = result.then<void>((_) {}, onError: (Object _, StackTrace _) {});
     return result;
   }
 

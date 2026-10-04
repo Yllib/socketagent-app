@@ -35,10 +35,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    kotlinOptions {
-        jvmTarget = JavaVersion.VERSION_11
-    }
-
     defaultConfig {
         applicationId = socketAgentApplicationId
         minSdk = 24
@@ -170,4 +166,10 @@ dependencies {
 
 flutter {
     source = "../.."
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11
+    }
 }

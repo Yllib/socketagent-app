@@ -329,7 +329,7 @@ class PushNotificationService {
   }) {
     return _recordFinishedEvent({
       'sessionId': sessionId,
-      if (serverId != null) 'serverId': serverId,
+      'serverId': ?serverId,
       if (runStartedAt != null)
         'startedAt': runStartedAt.toUtc().toIso8601String(),
       if (finishedAt != null)

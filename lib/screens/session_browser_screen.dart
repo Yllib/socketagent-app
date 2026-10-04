@@ -395,7 +395,7 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
     }
     return ListView.separated(
       itemCount: _sessions.length,
-      separatorBuilder: (_, __) => const Divider(height: 1, indent: 56),
+      separatorBuilder: (_, _) => const Divider(height: 1, indent: 56),
       itemBuilder: (context, index) {
         final session = _sessions[index];
         final backend = session['backend']?.toString() ?? 'claude';

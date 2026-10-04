@@ -11,9 +11,12 @@ import 'paywall_screen.dart';
 enum _ConnectStage { ready, verifying, success, failure }
 
 class ConnectComputerScreen extends StatefulWidget {
-  const ConnectComputerScreen({super.key, this.firstRun = false});
+  const ConnectComputerScreen({super.key, this.firstRun = false, this.notice});
 
   final bool firstRun;
+
+  /// Replaces the intro line, for example to explain lost computers.
+  final String? notice;
 
   @override
   State<ConnectComputerScreen> createState() => _ConnectComputerScreenState();
@@ -80,9 +83,12 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Use Claude or Codex from this phone through an end-to-end encrypted connection.',
+                widget.notice ??
+                    'Use Claude or Codex from this phone through an end-to-end encrypted connection.',
                 style: theme.textTheme.bodyLarge?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                  color: widget.notice == null
+                      ? theme.colorScheme.onSurfaceVariant
+                      : theme.colorScheme.onSurface,
                 ),
                 textAlign: TextAlign.center,
               ),

@@ -12,8 +12,8 @@ Map<String, dynamic> backend(
   'enabled': true,
   'available': severity == 'ok',
   'severity': severity,
-  if (kind != null) 'kind': kind,
-  if (reason != null) 'reason': reason,
+  'kind': ?kind,
+  'reason': ?reason,
 };
 
 void main() {

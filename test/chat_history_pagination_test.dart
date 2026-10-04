@@ -1455,9 +1455,9 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
                   }
                 },
                 todos: const [],
-                onAnswer: (_, __) {},
-                onSecureInputSubmit: (_, __) {},
-                onSecureInputUseStored: (_, SecretMetadata __) {},
+                onAnswer: (_, _) {},
+                onSecureInputSubmit: (_, _) {},
+                onSecureInputUseStored: (_, SecretMetadata _) {},
                 onSecureInputCancel: (_) {},
                 onLoadMore: _loadMore,
               ),

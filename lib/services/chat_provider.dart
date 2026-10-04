@@ -514,6 +514,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final NotificationService _notifications = NotificationService();
   final CryptoService _crypto = CryptoService();
   final SecureStorageService _secureStorage = SecureStorageService();
+
+  /// Set when this update couldn't read the computers saved by a much older
+  /// app, so first-run setup can explain why they are gone.
+  bool get savedComputersLost => _savedComputersLost;
+  bool _savedComputersLost = false;
   final AiResponseReportService _aiResponseReports = AiResponseReportService();
   final _subscriptionRequiredController = StreamController<void>.broadcast();
   final _backendAuthRequiredController =
@@ -2205,6 +2210,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _loadSettings() async {
+    _savedComputersLost = await _secureStorage.lostDataInUpgrade();
     // First-time migration from SharedPreferences to SecureStorage
     await _migrateToSecureStorage();
 
@@ -2551,8 +2557,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'register_push_token',
       'fcmToken': token,
       'platform': 'android',
-      if (PushNotificationService().projectId case final projectId?)
-        'firebaseProjectId': projectId,
+      'firebaseProjectId': ?PushNotificationService().projectId,
     };
     if (serverId != null) {
       final config = _serverConfigs
@@ -6818,13 +6823,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'browser_session_input',
       'profile': profile,
       'action': action,
-      if (x != null) 'x': x,
-      if (y != null) 'y': y,
-      if (text != null) 'text': text,
-      if (key != null) 'key': key,
-      if (deltaX != null) 'deltaX': deltaX,
-      if (deltaY != null) 'deltaY': deltaY,
-      if (url != null) 'url': url,
+      'x': ?x,
+      'y': ?y,
+      'text': ?text,
+      'key': ?key,
+      'deltaX': ?deltaX,
+      'deltaY': ?deltaY,
+      'url': ?url,
     };
     if (serverId != null && serverId.isNotEmpty) {
       return _connMgr.sendToServer(serverId, message);
@@ -8713,7 +8718,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       payload:
           PushNotificationService.payloadForData({
             ...msg,
-            if (serverId != null) 'serverId': serverId,
+            'serverId': ?serverId,
           }) ??
           'sessions',
     );
@@ -9089,7 +9094,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final state = <String, dynamic>{
           ...?previous,
           'taskId': taskId,
-          if (toolUseId != null) 'toolUseId': toolUseId,
+          'toolUseId': ?toolUseId,
           'workflowName': previous?['workflowName'] ?? description,
           'summary': description,
           'status': 'running',
@@ -9130,7 +9135,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'summary': description,
           'taskType': taskType,
           'source': 'claude_sdk',
-          if (toolUseId != null) 'originToolUseId': toolUseId,
+          'originToolUseId': ?toolUseId,
         };
       }
     }
@@ -9294,8 +9299,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'status': status,
         'summary': enrichedSummary,
         'outputFile': outputFile,
-        if (resolvedOriginToolUseId != null)
-          'originToolUseId': resolvedOriginToolUseId,
+        'originToolUseId': ?resolvedOriginToolUseId,
       };
     }
 
@@ -9723,7 +9727,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setModel(String? model) {
-    _connMgr.send({'type': 'set_model', if (model != null) 'model': model});
+    _connMgr.send({'type': 'set_model', 'model': ?model});
     if (model != null) _sessionModel = model;
     _normalizeEffortForSelectedModel();
     notifyListeners();
@@ -11691,8 +11695,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'status': mergedStatus,
           if (nativeSnapshot)
             'terminalStatus': previous?['terminalStatus']
-          else if (restoredStatus != null)
-            'terminalStatus': restoredStatus,
+          else 'terminalStatus': ?restoredStatus,
           'toolUseId': m.toolUseId!,
           'isBackgrounded': m.isBackgrounded,
           if (m.backgroundTaskId != null) 'taskId': m.backgroundTaskId,
@@ -12005,7 +12008,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_activeSessionId == null)
         'clientConversationId': _draftConversationId ??= 'draft_${userMsg.id}',
       if (_activeSessionId != null) 'sessionId': _activeSessionId,
-      if (priority != null) 'priority': priority,
+      'priority': ?priority,
       'messageId': userMsg.id,
       if (_activeSessionId == null && _activeSessionCwd != null)
         'cwd': _activeSessionCwd,
@@ -12146,15 +12149,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> pickFiles({bool imagesOnly = false}) async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
+    final files = await FilePicker.pickFiles(
       type: imagesOnly ? FileType.image : FileType.any,
     );
-    if (result == null) return;
     final existingPaths = _pendingFileAttachments
         .map((item) => item.path)
         .toSet();
-    for (final file in result.files) {
+    for (final file in files) {
       final filePath = file.path;
       if (filePath == null || !existingPaths.add(filePath)) continue;
       _pendingFileAttachments.add(
@@ -12278,8 +12279,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'fileSize': fileSize,
         'totalChunks': totalChunks,
         'chunkSize': chunkSize,
-        if (targetSessionId != null) 'sessionId': targetSessionId,
-        if (targetCwd != null) 'cwd': targetCwd,
+        'sessionId': ?targetSessionId,
+        'cwd': ?targetCwd,
       })) {
         throw StateError('File upload transport is not connected');
       }
@@ -12945,7 +12946,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'sessionId': sessionId,
       'planId': plan.planId,
       'revision': revision,
-      if (baseRevision != null) 'baseRevision': baseRevision,
+      'baseRevision': ?baseRevision,
     });
     return completer.future.timeout(
       const Duration(seconds: 20),
@@ -13085,7 +13086,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _draftConversationId = 'draft_${DateTime.now().microsecondsSinceEpoch}';
     final msg = <String, dynamic>{
       'type': 'new_session',
-      if (effectiveCwd != null) 'cwd': effectiveCwd,
+      'cwd': ?effectiveCwd,
       'backend': effectiveBackend,
     };
     if (serverId != null) {
@@ -13389,7 +13390,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final enriched = <String, dynamic>{
       ...msg,
-      if (serverId != null) '_serverId': serverId,
+      '_serverId': ?serverId,
     };
     _terminalServerId ??= serverId;
 
@@ -13403,14 +13404,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'running': false,
           'exitCode': msg['exitCode'],
           if (msg['signal'] != null) 'signal': msg['signal'],
-          if (serverId != null) '_serverId': serverId,
+          '_serverId': ?serverId,
         };
         break;
       case 'terminal_error':
         _terminalStatus = {
           ...?_terminalStatus,
           'error': msg['message'],
-          if (serverId != null) '_serverId': serverId,
+          '_serverId': ?serverId,
         };
         break;
     }
@@ -13665,8 +13666,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final msg = <String, dynamic>{
       'type': 'set_server_settings',
-      if (defaultCwd != null) 'defaultCwd': defaultCwd,
-      if (systemPrompt != null) 'systemPrompt': systemPrompt,
+      'defaultCwd': ?defaultCwd,
+      'systemPrompt': ?systemPrompt,
       if (includeClaudeAutoCompactWindow)
         'claudeAutoCompactWindow': claudeAutoCompactWindow,
     };
@@ -13773,7 +13774,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': type,
       'requestId': requestId,
       'sessionId': sessionId,
-      if (objective != null) 'objective': objective,
+      'objective': ?objective,
       if (status != null) 'status': status.wireValue,
       if (includeTokenBudget) 'tokenBudget': tokenBudget,
     });
@@ -14120,13 +14121,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) => _sendSessionMemoryRequest(
     'upsert_session_memory',
     values: {
-      if (entryId != null) 'entryId': entryId,
+      'entryId': ?entryId,
       'kind': kind.wireValue,
       'text': text,
       'pinned': pinned,
       'status': status,
-      if (sourceSessionSeq != null) 'sourceSessionSeq': sourceSessionSeq,
-      if (sourceEntryId != null) 'sourceEntryId': sourceEntryId,
+      'sourceSessionSeq': ?sourceSessionSeq,
+      'sourceEntryId': ?sourceEntryId,
     },
   );
 
@@ -14144,11 +14145,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) => _sendSessionMemoryRequest(
     'set_session_memory_settings',
     values: {
-      if (autoRollover != null) 'autoRollover': autoRollover,
-      if (maxCompactions != null) 'maxCompactions': maxCompactions,
-      if (maxPostCompactionTokens != null)
-        'maxPostCompactionTokens': maxPostCompactionTokens,
-      if (recentRuns != null) 'recentRuns': recentRuns,
+      'autoRollover': ?autoRollover,
+      'maxCompactions': ?maxCompactions,
+      'maxPostCompactionTokens': ?maxPostCompactionTokens,
+      'recentRuns': ?recentRuns,
     },
   );
 
@@ -14613,8 +14613,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'requestId': requestId,
       'path': dirPath,
       'includeHidden': includeHidden,
-      if (offset != null) 'offset': offset,
-      if (limit != null) 'limit': limit,
+      'offset': ?offset,
+      'limit': ?limit,
       if (anchorPath != null && anchorPath.isNotEmpty) 'anchorPath': anchorPath,
     };
     if (serverId != null) {
@@ -15300,7 +15300,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'resume_session',
       'sessionId': sessionId,
       'cwd': cwd,
-      if (backend != null) 'backend': backend,
+      'backend': ?backend,
       'historyRequestId': historyRequestId,
     };
     if (serverId != null) {
@@ -15366,7 +15366,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) {
     final msg = <String, dynamic>{
       'type': 'schedule_task',
-      if (linkedSessionId != null) 'linkedSessionId': linkedSessionId,
+      'linkedSessionId': ?linkedSessionId,
       if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
       'prompt': prompt,
       'cwd': cwd,
@@ -17400,7 +17400,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final msg = {
       'type': 'file_download_ack',
       'fileId': fileId,
-      if (token != null) 'transferToken': token,
+      'transferToken': ?token,
       'receivedBytes': received,
       if (ready) 'ready': true,
     };

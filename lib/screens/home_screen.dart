@@ -3211,7 +3211,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       isScrollControlled: true,
       builder: (sheetContext) => AnimatedBuilder(
         animation: provider,
-        builder: (_, __) => DraggableScrollableSheet(
+        builder: (_, _) => DraggableScrollableSheet(
           initialChildSize: 0.55,
           minChildSize: 0.3,
           maxChildSize: 0.85,

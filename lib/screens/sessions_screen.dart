@@ -1013,8 +1013,8 @@ class _SessionsTabState extends State<SessionsTab> {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
-                            if (serverChipWidget != null) serverChipWidget,
-                            if (backendChipWidget != null) backendChipWidget,
+                            ?serverChipWidget,
+                            ?backendChipWidget,
                           ],
                         ),
                       ),
@@ -1083,7 +1083,7 @@ class _SessionsTabState extends State<SessionsTab> {
                           scrollDirection: Axis.horizontal,
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           itemCount: recentCwds.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 6),
+                          separatorBuilder: (_, _) => const SizedBox(width: 6),
                           itemBuilder: (_, i) {
                             final cwd = recentCwds[i];
                             // Show the trailing path component for compactness;
@@ -1991,7 +1991,7 @@ class _SessionsTabState extends State<SessionsTab> {
           child: ListView.separated(
             padding: const EdgeInsets.only(bottom: 80),
             itemCount: visible.length,
-            separatorBuilder: (_, __) => const Divider(height: 1, indent: 56),
+            separatorBuilder: (_, _) => const Divider(height: 1, indent: 56),
             itemBuilder: (context, index) {
               final session = visible[index];
               final backend = session['backend']?.toString() ?? 'claude';

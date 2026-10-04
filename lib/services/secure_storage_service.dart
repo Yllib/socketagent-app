@@ -10,6 +10,18 @@ class SecureStorageService {
     ),
   );
 
+  /// Whether a plugin upgrade left stored data unreadable (Android only).
+  /// v11 can't read data from apps before v1.0.98 (plugin v9 and earlier),
+  /// and resetOnError then deletes it. Call before the first read; it never
+  /// changes storage itself.
+  Future<bool> lostDataInUpgrade() async {
+    try {
+      return (await _storage.checkUpgradeStatus()).hasDataLoss;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ────────── Credentials ──────────
 
   /// Auth token for direct server connections

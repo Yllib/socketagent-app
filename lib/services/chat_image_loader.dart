@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import '../models/inline_chat_media.dart';
@@ -66,16 +65,12 @@ class ChatImageLoader {
 
   static Future<bool> save(ChatImageSource source, Uint8List bytes) async {
     final name = source.fileName.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
-    final target = await FilePicker.platform.saveFile(
+    // The picker writes the bytes on every platform.
+    final target = await FilePicker.saveFile(
       dialogTitle: 'Save image',
       fileName: name,
       bytes: bytes,
     );
-    if (target == null) return false;
-    // Mobile's document picker writes the bytes; desktop returns the chosen path.
-    if (!Platform.isAndroid && !Platform.isIOS) {
-      await File(target).writeAsBytes(bytes, flush: true);
-    }
-    return true;
+    return target != null;
   }
 }

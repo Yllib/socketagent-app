@@ -197,7 +197,7 @@ class _ServersScreenState extends State<ServersScreen> {
                         [
                           transportLabel,
                           notificationsLabel,
-                          if (backendWarningLabel != null) backendWarningLabel,
+                          ?backendWarningLabel,
                         ].join(' • '),
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,

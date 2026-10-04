@@ -794,8 +794,7 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
     final provider = context.read<ChatProvider>();
     final serverId = _effectiveServerId(provider);
     if (serverId == null) return;
-    final result = await FilePicker.platform.pickFiles();
-    final file = result?.files.single;
+    final file = await FilePicker.pickFile();
     final localPath = file?.path;
     if (file == null || localPath == null) return;
 
@@ -1495,7 +1494,7 @@ class _RootChips extends StatelessWidget {
             onSelected: (_) => onTap(root.path),
           );
         },
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemCount: roots.length,
       ),
     );
