@@ -56,6 +56,7 @@ import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
+import 'local_route.dart';
 import 'local_speech_service.dart';
 import 'speech_recognition_settings.dart';
 import 'asr_model_manager.dart';
@@ -2132,6 +2133,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _appInForeground = resumed;
     if (resumed) {
       _syncOngoingSessionNotifications();
+      _connMgr.refreshRoutes();
       requestServerSettings();
       _resumeActiveSessionAfterForeground();
     } else {
@@ -2355,6 +2357,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
+    _connMgr.onRouteChanged = _saveAutoRoute;
     await _connMgr.setServers(_serverConfigs);
     await _restoreDownloads();
     _connMgr.connectAll();
@@ -2744,6 +2747,65 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Keeps the provider's copy in step after auto routing switched a
+  /// computer's route or LAN address.
+  void _saveAutoRoute(ServerConfig config) {
+    final index = _serverConfigs.indexWhere((c) => c.id == config.id);
+    if (index < 0) return;
+    _serverConfigs[index] = config;
+    unawaited(_saveServerConfigs());
+    notifyListeners();
+  }
+
+  /// Stores the LAN details a server reports, so an auto-routed computer
+  /// paired over the relay can switch to a direct connection at home, and
+  /// one whose address changed finds it again. Fixed-route computers keep
+  /// what the user entered.
+  Future<void> _captureDirectRouteFromCapabilities(
+    String serverId,
+    Map<String, dynamic> msg,
+  ) async {
+    final route = msg['directRoute'];
+    if (route is! Map) return;
+    final hosts = route['hosts'];
+    final port = route['port'];
+    final token = route['token'];
+    if (hosts is! List || port is! int || token is! String || token.isEmpty) {
+      return;
+    }
+    final addresses = hosts
+        .whereType<String>()
+        .where((h) => h.isNotEmpty)
+        .toList();
+    final before = _serverConfigs.where((c) => c.id == serverId).firstOrNull;
+    if (before == null || !before.autoRoute || addresses.isEmpty) return;
+    // A direct socket is already on a working address; keep it. Otherwise
+    // store one that answers from here: the server can't tell its LAN from
+    // a VPN adapter, so its first address may be the wrong one. Away from
+    // its network nothing answers and the server's order stands.
+    final host = !before.useRelay && addresses.contains(before.host)
+        ? before.host
+        : await firstReachable(addresses, port) ??
+              (addresses.contains(before.host) ? before.host : addresses.first);
+    final index = _serverConfigs.indexWhere((c) => c.id == serverId);
+    if (index < 0) return;
+    final existing = _serverConfigs[index];
+    if (existing.host == host &&
+        existing.port == port &&
+        existing.token == token) {
+      return;
+    }
+    final updated = existing.copyWith(host: host, port: port, token: token);
+    _serverConfigs[index] = updated;
+    await _saveServerConfigs();
+    await _connMgr.setServers(_serverConfigs);
+    // Over the relay, check whether this phone can reach it directly now.
+    if (updated.useRelay) {
+      unawaited(_connMgr.routeServer(serverId, force: true));
+    }
+    notifyListeners();
+  }
+
   Future<void> _captureRelayPairingFromCapabilities(
     String serverId,
     Map<String, dynamic> msg,
@@ -2824,8 +2886,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Whether [candidate] is a computer already in the list, over either the
+  /// relay or a direct connection. Both use the same server public key.
   bool hasServerConnection(ServerConfig candidate) => _serverConfigs.any(
-    (existing) => existing.connectionIdentity == candidate.connectionIdentity,
+    (existing) =>
+        existing.connectionIdentity == candidate.connectionIdentity ||
+        (candidate.serverPubkey.isNotEmpty &&
+            existing.serverPubkey == candidate.serverPubkey),
   );
 
   Future<ServerProbeResult> probeServerConnection(
@@ -4905,6 +4972,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               unawaited(
                 (() async {
                   await _captureRelayPairingFromCapabilities(serverId, msg);
+                  await _captureDirectRouteFromCapabilities(serverId, msg);
                   if (_connMgr.statusOf(serverId) ==
                       ConnectionStatus.connected) {
                     await _syncPushRegistrationForServer(serverId);

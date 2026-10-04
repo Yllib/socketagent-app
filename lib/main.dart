@@ -49,6 +49,7 @@ Future<Widget> _initializeApp() async {
   }
   await NotificationService().initialize();
   final chatProvider = ChatProvider();
+  chatProvider.connMgr.watchNetworkChanges();
   WorkReviewRepository? workReviews;
   try {
     await chatProvider.settingsReady;

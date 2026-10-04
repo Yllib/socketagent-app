@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -25,6 +27,10 @@ class ConnectComputerScreen extends StatefulWidget {
 class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
   _ConnectStage _stage = _ConnectStage.ready;
   ServerConfig? _candidate;
+  // Reruns the last attempt for Try again.
+  Future<void> Function()? _lastAttempt;
+  // Bumped by each attempt, so a stale probe can't overwrite a newer one.
+  int _attempt = 0;
   ServerProbeResult? _probe;
   String? _error;
   bool _saving = false;
@@ -307,8 +313,10 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
               ),
               TextButton(
                 onPressed: () => setState(() {
+                  _attempt++;
                   _stage = _ConnectStage.ready;
                   _candidate = null;
+                  _lastAttempt = null;
                   _probe = null;
                   _error = null;
                 }),
@@ -323,29 +331,59 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
 
   Future<void> _scanPairingCode() async {
     final provider = context.read<ChatProvider>();
-    final result = await Navigator.of(context).push<PairingResult>(
+    final pairing = await Navigator.of(context).push<PairingResult>(
       MaterialPageRoute(
         builder: (_) => PairScreen(cryptoService: provider.crypto),
       ),
     );
-    if (!mounted || result == null) return;
+    if (!mounted || pairing == null) return;
+    await _connectPairing(pairing);
+  }
+
+  /// Connects directly when this phone shares the computer's network, and
+  /// through the relay otherwise. The computer is saved with both sets of
+  /// details and auto routing, so it keeps working wherever the phone goes.
+  Future<void> _connectPairing(PairingResult pairing) async {
+    _lastAttempt = () => _connectPairing(pairing);
+    final attempt = ++_attempt;
+    final provider = context.read<ChatProvider>();
+    final sortOrder = provider.serverConfigs.length;
+    final lan = lanCandidates(pairing, sortOrder);
+    final relay = relayCandidate(pairing, sortOrder);
+    if (_alreadyConnected(provider, [...lan, relay])) return;
+
+    if (lan.isNotEmpty) {
+      _startVerifying(lan.first);
+      // A phone on another network gets no answer, so don't wait long.
+      final (candidate, probe) = await _firstSuccessfulProbe(
+        provider,
+        lan,
+        timeout: const Duration(seconds: 6),
+      );
+      if (!mounted || attempt != _attempt) return;
+      if (probe.success) return _succeed(candidate, probe);
+    }
 
     final relayReady = await _ensureRelayAccess(provider);
-    if (!mounted || !relayReady) return;
-
-    final candidate = ServerConfig(
-      id: ServerConfig.generateId(),
-      name: 'Computer',
-      host: '',
-      port: 8085,
-      token: '',
-      useRelay: true,
-      sortOrder: provider.serverConfigs.length,
-      relayUrl: result.relayUrl,
-      pairingToken: result.pairingToken,
-      serverPubkey: result.serverPubkey,
-    );
-    await _verify(candidate);
+    if (!mounted || attempt != _attempt) return;
+    if (!relayReady) {
+      if (lan.isEmpty) {
+        setState(() => _stage = _ConnectStage.ready);
+      } else {
+        _fail(
+          lan.first,
+          null,
+          'Couldn’t reach the computer at ${lan.map((c) => c.host).join(' or ')}. '
+          'Connect this phone to the same Wi-Fi as the computer, or use the relay to connect from anywhere.',
+        );
+      }
+      return;
+    }
+    _startVerifying(relay);
+    final probe = await provider.probeServerConnection(relay);
+    if (!mounted || attempt != _attempt) return;
+    if (probe.success) return _succeed(relay, probe);
+    _fail(relay, probe, probe.message);
   }
 
   Future<bool> _ensureRelayAccess(ChatProvider provider) async {
@@ -376,34 +414,44 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
   }
 
   Future<void> _verify(ServerConfig candidate) async {
+    _lastAttempt = () => _verify(candidate);
+    final attempt = ++_attempt;
     final provider = context.read<ChatProvider>();
-    if (provider.hasServerConnection(candidate)) {
+    if (_alreadyConnected(provider, [candidate])) return;
+    _startVerifying(candidate);
+    final probe = await provider.probeServerConnection(candidate);
+    if (!mounted || attempt != _attempt) return;
+    if (probe.success) return _succeed(candidate, probe);
+    _fail(candidate, probe, probe.message);
+  }
+
+  bool _alreadyConnected(ChatProvider provider, List<ServerConfig> candidates) {
+    final existing = candidates.where(provider.hasServerConnection);
+    if (existing.isEmpty) return false;
+    _fail(
+      existing.first,
+      null,
+      'That computer is already connected to SocketAgent.',
+    );
+    return true;
+  }
+
+  void _startVerifying(ServerConfig candidate) => setState(() {
+    _candidate = candidate;
+    _probe = null;
+    _error = null;
+    _stage = _ConnectStage.verifying;
+  });
+
+  void _fail(ServerConfig candidate, ServerProbeResult? probe, String? error) =>
       setState(() {
         _candidate = candidate;
-        _error = 'That computer is already connected to SocketAgent.';
-        _stage = _ConnectStage.failure;
-      });
-      return;
-    }
-
-    setState(() {
-      _candidate = candidate;
-      _probe = null;
-      _error = null;
-      _stage = _ConnectStage.verifying;
-    });
-    final probe = await provider.probeServerConnection(candidate);
-    if (!mounted || _candidate?.id != candidate.id) return;
-
-    if (!probe.success) {
-      setState(() {
         _probe = probe;
-        _error = probe.message;
+        _error = error;
         _stage = _ConnectStage.failure;
       });
-      return;
-    }
 
+  void _succeed(ServerConfig candidate, ServerProbeResult probe) {
     final suggestedName = _cleanComputerName(probe.suggestedServerName);
     setState(() {
       _probe = probe;
@@ -416,12 +464,12 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
   }
 
   Future<void> _retry() async {
-    final candidate = _candidate;
-    if (candidate == null) {
+    final attempt = _lastAttempt;
+    if (attempt == null) {
       setState(() => _stage = _ConnectStage.ready);
       return;
     }
-    await _verify(candidate);
+    await attempt();
   }
 
   Future<void> _saveVerifiedServer() async {
@@ -433,6 +481,76 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
     if (!mounted) return;
     if (!widget.firstRun) Navigator.of(context).pop(_candidate);
   }
+}
+
+/// Probes [candidates] in parallel. Returns the first that connects, or else
+/// the most useful failure: a computer that answered and refused says more
+/// than an address that never answered.
+Future<(ServerConfig, ServerProbeResult)> _firstSuccessfulProbe(
+  ChatProvider provider,
+  List<ServerConfig> candidates, {
+  required Duration timeout,
+}) {
+  final done = Completer<(ServerConfig, ServerProbeResult)>();
+  final failures = <(ServerConfig, ServerProbeResult)?>[
+    for (final _ in candidates) null,
+  ];
+  for (final (index, candidate) in candidates.indexed) {
+    unawaited(
+      provider.probeServerConnection(candidate, timeout: timeout).then((probe) {
+        if (done.isCompleted) return;
+        if (probe.success) {
+          done.complete((candidate, probe));
+          return;
+        }
+        failures[index] = (candidate, probe);
+        if (failures.any((failure) => failure == null)) return;
+        final settled = failures.nonNulls.toList();
+        done.complete(
+          settled.firstWhere(
+            (failure) =>
+                failure.$2.failureKind != ServerProbeFailureKind.unreachable &&
+                failure.$2.failureKind != ServerProbeFailureKind.timedOut,
+            orElse: () => settled.first,
+          ),
+        );
+      }),
+    );
+  }
+  return done.future;
+}
+
+/// One direct candidate per LAN address in [pairing]. Each also carries the
+/// relay details, so auto routing can move it to the relay away from home.
+List<ServerConfig> lanCandidates(PairingResult pairing, int sortOrder) {
+  final local = pairing.local;
+  if (local == null) return const [];
+  return [
+    for (final host in local.hosts)
+      relayCandidate(
+        pairing,
+        sortOrder,
+      ).copyWith(name: host, host: host, useRelay: false),
+  ];
+}
+
+/// The relay connection for [pairing], with the likeliest LAN address kept
+/// so auto routing can switch to a direct connection later.
+ServerConfig relayCandidate(PairingResult pairing, int sortOrder) {
+  final local = pairing.local;
+  return ServerConfig(
+    id: ServerConfig.generateId(),
+    name: 'Computer',
+    host: local?.hosts.first ?? '',
+    port: local?.port ?? 8085,
+    token: local?.token ?? '',
+    useRelay: true,
+    autoRoute: true,
+    sortOrder: sortOrder,
+    relayUrl: pairing.relayUrl,
+    pairingToken: pairing.pairingToken,
+    serverPubkey: pairing.serverPubkey,
+  );
 }
 
 class DirectConnectionScreen extends StatefulWidget {
@@ -463,45 +581,41 @@ class _DirectConnectionScreenState extends State<DirectConnectionScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final command = TextStyle(
+      fontFamily: 'monospace',
+      fontWeight: FontWeight.w700,
+      color: theme.colorScheme.onSurface,
+    );
     return Scaffold(
       appBar: AppBar(title: const Text('Direct connection')),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
           children: [
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.tertiaryContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            Text(
+              'Scanning the pairing code already connects directly when this phone is on the computer\'s network. '
+              'Use this form for another address, such as a VPN like Tailscale.',
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 8),
+            Text.rich(
+              TextSpan(
+                text: 'Run ',
                 children: [
-                  Icon(
-                    Icons.info_outline,
-                    color: theme.colorScheme.onTertiaryContainer,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Advanced: your phone must already be able to reach this computer through port forwarding, firewall rules, or a VPN.',
-                      style: TextStyle(
-                        color: theme.colorScheme.onTertiaryContainer,
-                      ),
-                    ),
-                  ),
+                  TextSpan(text: 'socketagent direct', style: command),
+                  const TextSpan(text: ' on the computer to see these values.'),
                 ],
               ),
+              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
             TextField(
               controller: _host,
               autocorrect: false,
               keyboardType: TextInputType.url,
               decoration: const InputDecoration(
                 labelText: 'Computer address',
-                hintText: 'agents.example.com or 203.0.113.10',
+                hintText: '192.168.1.20 or 100.64.0.5',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.dns_outlined),
               ),

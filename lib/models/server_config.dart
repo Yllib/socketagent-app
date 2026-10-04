@@ -6,7 +6,14 @@ class ServerConfig {
   final String host;
   final int port;
   final String token;
+
+  /// The route in use. With [autoRoute] the app updates it as the phone moves
+  /// between the computer's network and anywhere else.
   final bool useRelay;
+
+  /// Whether the app picks direct or relay on each connect. Off means
+  /// [useRelay] is the user's fixed choice.
+  final bool autoRoute;
   final bool expectedOnline;
   final int sortOrder;
   // Per-server relay pairing data
@@ -25,6 +32,7 @@ class ServerConfig {
     required this.port,
     required this.token,
     this.useRelay = false,
+    this.autoRoute = false,
     this.expectedOnline = false,
     this.sortOrder = 0,
     this.relayUrl = '',
@@ -43,7 +51,8 @@ class ServerConfig {
   /// once under different local IDs, which opened duplicate relay sockets and
   /// caused every live event/history snapshot to arrive more than once.
   String get connectionIdentity {
-    if (useRelay) {
+    // An auto-routed computer is the same server on either route.
+    if (useRelay || (autoRoute && isRelayPaired)) {
       if (!isRelayPaired) return ['relay-unconfigured', id].join('\u0001');
       return [
         'relay',
@@ -70,7 +79,8 @@ class ServerConfig {
   static String normalizeServerPubkey(String value) {
     final trimmed = value.trim();
     final parts = trimmed.split('|');
-    if (parts.length == 3 && (parts[0] == 'SA' || parts[0] == 'SC')) {
+    if ((parts.length == 3 || parts.length == 6) &&
+        (parts[0] == 'SA' || parts[0] == 'SC')) {
       return parts[2].trim();
     }
     return trimmed;
@@ -84,6 +94,9 @@ class ServerConfig {
       port: json['port'] as int,
       token: json['token'] as String,
       useRelay: json['useRelay'] as bool? ?? false,
+      // Computers saved before auto routing keep direct if the user chose it.
+      // Relay computers start finding a direct route once the server sends one.
+      autoRoute: json['autoRoute'] as bool? ?? json['useRelay'] == true,
       expectedOnline: json['expectedOnline'] as bool? ?? false,
       sortOrder: json['sortOrder'] as int? ?? 0,
       relayUrl: json['relayUrl'] as String? ?? '',
@@ -102,6 +115,7 @@ class ServerConfig {
     'port': port,
     'token': token,
     'useRelay': useRelay,
+    'autoRoute': autoRoute,
     'expectedOnline': expectedOnline,
     'sortOrder': sortOrder,
     'relayUrl': relayUrl,
@@ -119,6 +133,7 @@ class ServerConfig {
     int? port,
     String? token,
     bool? useRelay,
+    bool? autoRoute,
     bool? expectedOnline,
     int? sortOrder,
     String? relayUrl,
@@ -135,6 +150,7 @@ class ServerConfig {
       port: port ?? this.port,
       token: token ?? this.token,
       useRelay: useRelay ?? this.useRelay,
+      autoRoute: autoRoute ?? this.autoRoute,
       expectedOnline: expectedOnline ?? this.expectedOnline,
       sortOrder: sortOrder ?? this.sortOrder,
       relayUrl: relayUrl ?? this.relayUrl,

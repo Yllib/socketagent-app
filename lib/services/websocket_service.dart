@@ -125,6 +125,9 @@ class WebSocketService {
   ConnectionStatus get status => _status;
   ConnectionMode get mode => _mode;
 
+  /// Whether a retry is scheduled. False after an intentional [disconnect].
+  bool get reconnecting => _reconnectTimer?.isActive ?? false;
+
   void configure({
     required String host,
     required int port,

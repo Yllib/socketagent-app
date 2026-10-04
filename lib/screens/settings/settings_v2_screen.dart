@@ -828,13 +828,23 @@ class _SettingsV2ServerDetailScreenState
                 children: [
                   _DetailRow(
                     icon: config.useRelay ? Icons.cloud : Icons.dns,
-                    title: config.useRelay ? 'Relay' : 'Direct',
-                    subtitle: config.useRelay
+                    title: config.autoRoute
+                        ? 'Auto'
+                        : config.useRelay
+                        ? 'Relay'
+                        : 'Direct',
+                    subtitle: config.autoRoute
+                        ? (config.useRelay
+                              ? 'Using the relay'
+                              : 'Direct to ${config.host}:${config.port}')
+                        : config.useRelay
                         ? (config.isRelayPaired ? 'Paired' : 'Not paired')
                         : '${config.host}:${config.port}',
                     trailing: connected ? 'Connected' : _statusLabel(status),
                   ),
-                  if (config.useRelay &&
+                  // Auto picks the route itself; the edit dialog changes it.
+                  if (!config.autoRoute &&
+                      config.useRelay &&
                       config.host.isNotEmpty &&
                       config.serverPubkey.isNotEmpty)
                     _ButtonRow(
@@ -844,7 +854,9 @@ class _SettingsV2ServerDetailScreenState
                         config.copyWith(useRelay: false),
                       ),
                     )
-                  else if (!config.useRelay && config.isRelayPaired)
+                  else if (!config.autoRoute &&
+                      !config.useRelay &&
+                      config.isRelayPaired)
                     _ButtonRow(
                       primaryLabel: 'Use Relay',
                       primaryIcon: Icons.cloud,
@@ -1730,7 +1742,7 @@ class _ServerTile extends StatelessWidget {
           title: Text(config.name),
           subtitle: Text(
             [
-              config.useRelay ? 'Relay' : 'Direct',
+              _routeLabel(config),
               _statusLabel(status),
               if (!build.isEmpty) build.compactLabel,
               config.expectedOnline ? 'always on' : 'on demand',
@@ -1795,7 +1807,7 @@ class _ServerHeader extends StatelessWidget {
                 ),
                 Text(
                   [
-                    config.useRelay ? 'Relay' : 'Direct',
+                    _routeLabel(config),
                     _statusLabel(status),
                     if (!build.isEmpty) build.compactLabel,
                   ].join(' · '),
@@ -3235,8 +3247,7 @@ Future<void> _openServerList(
           return AdaptiveSheetAction(
             value: server,
             label: server.name,
-            subtitle:
-                '${server.useRelay ? 'Relay' : 'Direct'} · ${_statusLabel(status)}',
+            subtitle: '${_routeLabel(server)} · ${_statusLabel(status)}',
             icon: server.useRelay ? Icons.cloud_outlined : Icons.dns_outlined,
             trailing: const Icon(Icons.chevron_right),
           );
@@ -3271,7 +3282,13 @@ void _showServerDialog(
   bool tokenVisible = false;
   bool pubkeyVisible = false;
   int? selectedColor = existing?.colorValue;
-  bool useRelay = existing?.useRelay ?? true;
+  var route = existing == null
+      ? _Route.relay
+      : existing.autoRoute
+      ? _Route.auto
+      : existing.useRelay
+      ? _Route.relay
+      : _Route.direct;
   bool expectedOnline = existing?.expectedOnline ?? false;
   final canEditSystemPrompt =
       existing != null &&
@@ -3396,27 +3413,39 @@ void _showServerDialog(
               const SizedBox(height: 16),
               SizedBox(
                 width: double.infinity,
-                child: SegmentedButton<bool>(
+                child: SegmentedButton<_Route>(
                   showSelectedIcon: false,
-                  selected: {useRelay},
+                  selected: {route},
                   segments: const [
-                    ButtonSegment<bool>(
-                      value: true,
+                    ButtonSegment(
+                      value: _Route.auto,
+                      icon: Icon(Icons.swap_horiz, size: 18),
+                      label: Text('Auto'),
+                    ),
+                    ButtonSegment(
+                      value: _Route.relay,
                       icon: Icon(Icons.cloud, size: 18),
                       label: Text('Relay'),
                     ),
-                    ButtonSegment<bool>(
-                      value: false,
+                    ButtonSegment(
+                      value: _Route.direct,
                       icon: Icon(Icons.dns, size: 18),
                       label: Text('Direct'),
                     ),
                   ],
                   onSelectionChanged: (values) =>
-                      setDialogState(() => useRelay = values.first),
+                      setDialogState(() => route = values.first),
                 ),
               ),
               const SizedBox(height: 12),
-              if (useRelay)
+              if (route == _Route.auto)
+                Text(
+                  'Direct on the computer\'s network, the relay everywhere else.',
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                )
+              else if (route == _Route.relay)
                 _RelayPairingNote(isPaired: existing?.isRelayPaired == true)
               else ...[
                 TextField(
@@ -3486,21 +3515,22 @@ void _showServerDialog(
           ),
           FilledButton.icon(
             icon: Icon(
-              useRelay && !(existing?.isRelayPaired ?? false)
+              _needsRelayPairing(route, existing)
                   ? Icons.qr_code_scanner
                   : Icons.check,
               size: 16,
             ),
             label: Text(
               existing == null
-                  ? useRelay
+                  ? _needsRelayPairing(route, existing)
                         ? 'Add & Pair'
                         : 'Add'
-                  : useRelay && !existing.isRelayPaired
+                  : _needsRelayPairing(route, existing)
                   ? 'Save & Pair'
                   : 'Save',
             ),
             onPressed: () async {
+              final needsPairing = _needsRelayPairing(route, existing);
               final config = _serverConfigFromInputs(
                 provider: provider,
                 existing: existing,
@@ -3511,7 +3541,7 @@ void _showServerDialog(
                 port: int.tryParse(portCtrl.text.trim()) ?? 8085,
                 token: tokenCtrl.text.trim(),
                 serverPubkey: pubkeyCtrl.text.trim(),
-                useRelay: useRelay,
+                route: route,
                 expectedOnline: expectedOnline,
                 colorValue: selectedColor,
               );
@@ -3519,16 +3549,16 @@ void _showServerDialog(
                 ScaffoldMessenger.of(dialogContext).showSnackBar(
                   SnackBar(
                     content: Text(
-                      useRelay
-                          ? 'Enter a name for the computer'
-                          : 'Enter a host and computer public key for direct connection',
+                      route == _Route.direct
+                          ? 'Enter a host and computer public key for direct connection'
+                          : 'Enter a name for the computer',
                     ),
                   ),
                 );
                 return;
               }
 
-              if (useRelay) {
+              if (route == _Route.relay || needsPairing) {
                 final hasRelayAccess = await _ensureRelayAccess(
                   context,
                   provider,
@@ -3546,9 +3576,13 @@ void _showServerDialog(
                 await provider.updateServer(config);
               }
 
+              if (config.autoRoute) {
+                unawaited(provider.connMgr.routeServer(config.id, force: true));
+              }
+
               if (dialogContext.mounted) Navigator.pop(dialogContext);
 
-              if (useRelay && !config.isRelayPaired && context.mounted) {
+              if (needsPairing && context.mounted) {
                 _pairServerRelay(
                   context,
                   provider,
@@ -3570,6 +3604,26 @@ void _showServerDialog(
     tokenCtrl.dispose();
     pubkeyCtrl.dispose();
   });
+}
+
+enum _Route { auto, relay, direct }
+
+/// Whether saving with [route] leaves the computer with no way in until the
+/// relay is paired. Auto can start from direct details alone.
+bool _needsRelayPairing(_Route route, ServerConfig? existing) {
+  if (route == _Route.direct || existing?.isRelayPaired == true) return false;
+  if (route == _Route.relay) return true;
+  return existing == null ||
+      existing.token.isEmpty ||
+      existing.serverPubkey.isEmpty;
+}
+
+/// How a computer connects, for list rows.
+String _routeLabel(ServerConfig config) {
+  final route = config.useRelay ? 'relay' : 'direct';
+  return config.autoRoute
+      ? 'Auto · $route'
+      : '${route[0].toUpperCase()}${route.substring(1)}';
 }
 
 class _RelayPairingNote extends StatelessWidget {
@@ -3611,21 +3665,28 @@ ServerConfig? _serverConfigFromInputs({
   required int port,
   required String token,
   required String serverPubkey,
-  required bool useRelay,
+  required _Route route,
   required bool expectedOnline,
   required int? colorValue,
 }) {
-  if (useRelay && name.isEmpty) return null;
-  if (!useRelay && host.isEmpty) return null;
-  if (!useRelay && serverPubkey.isEmpty) return null;
+  final direct = route == _Route.direct;
+  if (!direct && name.isEmpty) return null;
+  if (direct && host.isEmpty) return null;
+  if (direct && serverPubkey.isEmpty) return null;
 
   return ServerConfig(
     id: existing?.id ?? ServerConfig.generateId(),
     name: name.isEmpty ? host : name,
-    host: useRelay ? existing?.host ?? host : host,
-    port: useRelay ? existing?.port ?? port : port,
-    token: useRelay ? existing?.token ?? token : token,
-    useRelay: useRelay,
+    host: direct ? host : existing?.host ?? host,
+    port: direct ? port : existing?.port ?? port,
+    token: direct ? token : existing?.token ?? token,
+    // Auto starts from the route in use; the connection manager re-picks it.
+    useRelay: switch (route) {
+      _Route.relay => true,
+      _Route.direct => false,
+      _Route.auto => existing?.useRelay ?? true,
+    },
+    autoRoute: route == _Route.auto,
     expectedOnline: expectedOnline,
     sortOrder: existing?.sortOrder ?? provider.serverConfigs.length,
     relayUrl: existing?.relayUrl ?? '',
