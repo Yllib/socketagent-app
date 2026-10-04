@@ -21,14 +21,13 @@ void main() {
     'confirmation cannot dismiss a reopened item or stop another session',
     (tester) async {
       final provider = ChatProvider();
-      addTearDown(provider.dispose);
       var status = 'completed';
       var session = 'first';
       var stops = 0;
       late StateSetter update;
       await tester.pumpWidget(
-        ChangeNotifierProvider<ChatProvider>.value(
-          value: provider,
+        ChangeNotifierProvider<ChatProvider>(
+          create: (_) => provider,
           child: MaterialApp(
             home: Scaffold(
               body: StatefulBuilder(
@@ -74,13 +73,12 @@ void main() {
     'hide does not stop work; stop confirms; finished items dismiss',
     (tester) async {
       final provider = ChatProvider();
-      addTearDown(provider.dispose);
       var hidden = false;
       var stopped = 0;
       Future<void> pump(String status, {bool notice = false}) async {
         await tester.pumpWidget(
-          ChangeNotifierProvider<ChatProvider>.value(
-            value: provider,
+          ChangeNotifierProvider<ChatProvider>(
+            create: (_) => provider,
             child: MaterialApp(
               home: Scaffold(
                 body: SizedBox(
@@ -151,10 +149,9 @@ void main() {
     tester,
   ) async {
     final provider = ChatProvider();
-    addTearDown(provider.dispose);
     await tester.pumpWidget(
-      ChangeNotifierProvider<ChatProvider>.value(
-        value: provider,
+      ChangeNotifierProvider<ChatProvider>(
+        create: (_) => provider,
         child: MaterialApp(
           home: Scaffold(
             body: ActiveTasksPane(

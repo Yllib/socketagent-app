@@ -55,8 +55,10 @@ void main() {
         expect(live.attachments.last.isImage, isFalse);
 
         // A new cache instance reads persisted bytes, not the provider's objects.
+        // The cache writes in the background, which is slow under a full run.
         Map<String, dynamic>? cache;
-        for (var attempt = 0; attempt < 40; attempt++) {
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (DateTime.now().isBefore(deadline)) {
           cache = await SessionTranscriptCache().load(
             'multi-client-server',
             'shared-session',
@@ -64,7 +66,7 @@ void main() {
           if ((cache?['messages'] as List?)?.length == 2) break;
           await Future<void>.delayed(const Duration(milliseconds: 25));
         }
-        expect(cache, isNotNull);
+        expect(cache?['messages'], hasLength(2));
         final entry = (cache!['messages'] as List).last as Map;
         expect(entry['content'], content);
         expect(

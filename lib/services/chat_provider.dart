@@ -3412,13 +3412,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         await _outgoingQueue.remove(id);
         return false;
       }
+      // Staged on disk, so the next launch replays it even if we closed meanwhile.
+      if (_outgoingDisposed) return true;
       _pendingPromptDispatches[id] = request;
       notifyListeners();
       unawaited(_drainOutgoingQueue());
       return true;
     } catch (error) {
       outgoingQueueError = 'Could not save request: $error';
-      notifyListeners();
+      if (!_outgoingDisposed) notifyListeners();
       return false;
     }
   }

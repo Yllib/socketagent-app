@@ -48,7 +48,6 @@ void main() {
         running: false,
       ),
     );
-    addTearDown(provider.dispose);
     final message = ChatMessage.backendAuth(
       serverId: 'computer-1',
       backend: 'codex',
@@ -58,8 +57,8 @@ void main() {
     );
 
     await tester.pumpWidget(
-      ChangeNotifierProvider<ChatProvider>.value(
-        value: provider,
+      ChangeNotifierProvider<ChatProvider>(
+        create: (_) => provider,
         child: MaterialApp(
           home: Scaffold(body: BackendAuthCard(message: message)),
         ),

@@ -23,11 +23,10 @@ void main() {
         .setMockMethodCallHandler(const MethodChannel('flutter_tts'), null);
   });
 
-  Future<ChatProvider> pumpBrowser(WidgetTester tester) async {
-    final provider = ChatProvider();
+  Future<void> pumpBrowser(WidgetTester tester) async {
     await tester.pumpWidget(
-      ChangeNotifierProvider<ChatProvider>.value(
-        value: provider,
+      ChangeNotifierProvider<ChatProvider>(
+        create: (_) => ChatProvider(),
         child: const MaterialApp(
           home: BrowserSessionScreen(
             profile: 'browser-test',
@@ -40,14 +39,12 @@ void main() {
       ),
     );
     await tester.pump();
-    return provider;
   }
 
   testWidgets('normal browser input is multiline and not obscured', (
     tester,
   ) async {
-    final provider = await pumpBrowser(tester);
-    addTearDown(provider.dispose);
+    await pumpBrowser(tester);
 
     await tester.tap(find.byTooltip('Enter text'));
     await tester.pump(const Duration(milliseconds: 500));
@@ -60,8 +57,7 @@ void main() {
   });
 
   testWidgets('private browser input remains obscured', (tester) async {
-    final provider = await pumpBrowser(tester);
-    addTearDown(provider.dispose);
+    await pumpBrowser(tester);
 
     await tester.tap(find.byTooltip('Enter privately'));
     await tester.pump(const Duration(milliseconds: 500));
@@ -72,8 +68,7 @@ void main() {
   });
 
   testWidgets('browser toolbar exposes clipboard directions', (tester) async {
-    final provider = await pumpBrowser(tester);
-    addTearDown(provider.dispose);
+    await pumpBrowser(tester);
 
     await tester.tap(find.byTooltip('Clipboard'));
     await tester.pump(const Duration(milliseconds: 500));
@@ -84,8 +79,7 @@ void main() {
   });
 
   testWidgets('editing keys stay directly available', (tester) async {
-    final provider = await pumpBrowser(tester);
-    addTearDown(provider.dispose);
+    await pumpBrowser(tester);
 
     expect(find.byTooltip('Backspace. Hold to repeat'), findsOneWidget);
     expect(find.byTooltip('Enter'), findsOneWidget);
