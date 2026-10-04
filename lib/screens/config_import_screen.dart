@@ -1,5 +1,6 @@
 import 'dart:io';
 import '../widgets/desktop_qr_import_button.dart';
+import '../widgets/phone_handoff_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -65,31 +66,14 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       }
 
       final payload = ConfigTransfer.decode(rawData, passphrase: passphrase);
-      if (payload.servers.isEmpty) {
-        setState(() {
-          _error = 'No computers found in that transfer code.';
-          _processing = false;
-        });
-        if (scannerPaused) {
-          await _controller.start();
-        }
-        return;
-      }
-
       if (!mounted) return;
       // Pause the scanner while showing confirmation
-      if (!_showManualInput) {
+      if (!_showManualInput && !scannerPaused) {
         scannerPaused = true;
         await _controller.stop();
       }
-      final confirmed = await _showConfirmDialog(payload);
-      if (confirmed == true && mounted) {
-        final imported = await context
-            .read<ChatProvider>()
-            .importTransferredConfigs(payload);
-        if (mounted) Navigator.of(context).pop(imported);
-      } else if (mounted) {
-        // User cancelled, resume scanning
+      if (!await _importPayload(payload) && mounted) {
+        // Nothing imported, resume scanning
         setState(() => _processing = false);
         if (scannerPaused) {
           await _controller.start();
@@ -112,6 +96,22 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
         await _controller.start();
       }
     }
+  }
+
+  /// Confirms and imports a decoded transfer, closing the screen on success.
+  /// Returns false when there was nothing to import or the user cancelled.
+  Future<bool> _importPayload(ExportPayload payload) async {
+    if (payload.servers.isEmpty && payload.subscriberToken.isEmpty) {
+      setState(() => _error = 'No computers found in that transfer.');
+      return false;
+    }
+    final confirmed = await _showConfirmDialog(payload);
+    if (confirmed != true || !mounted) return false;
+    final imported = await context
+        .read<ChatProvider>()
+        .importTransferredConfigs(payload);
+    if (mounted) Navigator.of(context).pop(imported);
+    return true;
   }
 
   Future<String?> _showPassphraseDialog() {
@@ -168,7 +168,9 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
       builder: (ctx) {
         return AlertDialog(
           title: Text(
-            'Import ${configs.length} Computer${configs.length == 1 ? '' : 's'}?',
+            configs.isEmpty
+                ? 'Import Relay Access?'
+                : 'Import ${configs.length} Computer${configs.length == 1 ? '' : 's'}?',
           ),
           content: SizedBox(
             width: double.maxFinite,
@@ -234,11 +236,91 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
     }
   }
 
+  Future<void> _receiveFromPhone(ExportPayload payload) async {
+    if (_processing) return;
+    setState(() {
+      _processing = true;
+      _error = null;
+    });
+    if (!await _importPayload(payload) && mounted) {
+      setState(() => _processing = false);
+    }
+  }
+
+  Widget _pasteField() => TextField(
+    controller: _pasteController,
+    maxLines: Platform.isWindows ? 6 : null,
+    minLines: Platform.isWindows ? 4 : null,
+    expands: !Platform.isWindows,
+    textAlignVertical: TextAlignVertical.top,
+    decoration: InputDecoration(
+      hintText: 'SAXE|2|...',
+      border: const OutlineInputBorder(),
+      suffixIcon: IconButton(
+        icon: const Icon(Icons.paste),
+        tooltip: 'Paste from clipboard',
+        onPressed: _pasteFromClipboard,
+      ),
+    ),
+    style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+  );
+
+  Widget _importButton() => FilledButton(
+    onPressed: _processing
+        ? null
+        : () => _processQrData(_pasteController.text.trim()),
+    child: _processing
+        ? const SizedBox(
+            width: 20,
+            height: 20,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          )
+        : const Text('Import'),
+  );
+
+  /// Desktops rarely have a camera, so the phone sends through the relay.
+  Widget _desktopBody() => ListView(
+    padding: const EdgeInsets.all(24),
+    children: [
+      Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              PhoneHandoffPanel(
+                relayUrl: context.read<ChatProvider>().relayHttpUrl,
+                onReceived: _receiveFromPhone,
+              ),
+              const Divider(height: 48),
+              const Text('Or open a QR image or paste an export'),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: DesktopQrImportButton(onDecoded: _processQrData),
+              ),
+              const SizedBox(height: 12),
+              _pasteField(),
+              const SizedBox(height: 12),
+              _importButton(),
+            ],
+          ),
+        ),
+      ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(_showManualInput ? 'Paste Config Data' : 'Scan Config QR'),
+        title: Text(
+          Platform.isWindows
+              ? 'Import Computers'
+              : _showManualInput
+              ? 'Paste Config Data'
+              : 'Scan Config QR',
+        ),
         actions: [
           if (!Platform.isWindows)
             IconButton(
@@ -258,7 +340,9 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
                 onDetect: _handleBarcode,
               ),
             ),
-          if (_showManualInput)
+          if (Platform.isWindows)
+            Expanded(child: _desktopBody())
+          else if (_showManualInput)
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -269,45 +353,10 @@ class _ConfigImportScreenState extends State<ConfigImportScreen> {
                       'Paste the config export data:',
                       style: TextStyle(color: Colors.grey),
                     ),
-                    if (Platform.isWindows) ...[
-                      const SizedBox(height: 12),
-                      DesktopQrImportButton(onDecoded: _processQrData),
-                    ],
                     const SizedBox(height: 12),
-                    Expanded(
-                      child: TextField(
-                        controller: _pasteController,
-                        maxLines: null,
-                        expands: true,
-                        textAlignVertical: TextAlignVertical.top,
-                        decoration: InputDecoration(
-                          hintText: 'SAXE|2|...',
-                          border: const OutlineInputBorder(),
-                          suffixIcon: IconButton(
-                            icon: const Icon(Icons.paste),
-                            tooltip: 'Paste from clipboard',
-                            onPressed: _pasteFromClipboard,
-                          ),
-                        ),
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 13,
-                        ),
-                      ),
-                    ),
+                    Expanded(child: _pasteField()),
                     const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: _processing
-                          ? null
-                          : () => _processQrData(_pasteController.text.trim()),
-                      child: _processing
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Text('Import'),
-                    ),
+                    _importButton(),
                   ],
                 ),
               ),

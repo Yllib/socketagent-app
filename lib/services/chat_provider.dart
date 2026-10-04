@@ -3754,6 +3754,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.connectAll();
   }
 
+  /// The relay's HTTPS base URL, preferring the active computer's relay.
+  String get relayHttpUrl => _relayHttpUrlCandidates().first;
+
   List<String> _relayHttpUrlCandidates() {
     final candidates = <String>[
       if (_connMgr.activeConfig?.relayUrl.isNotEmpty == true)
@@ -11763,7 +11766,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'status': mergedStatus,
           if (nativeSnapshot)
             'terminalStatus': previous?['terminalStatus']
-          else 'terminalStatus': ?restoredStatus,
+          else
+            'terminalStatus': ?restoredStatus,
           'toolUseId': m.toolUseId!,
           'isBackgrounded': m.isBackgrounded,
           if (m.backgroundTaskId != null) 'taskId': m.backgroundTaskId,
@@ -13456,10 +13460,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    final enriched = <String, dynamic>{
-      ...msg,
-      '_serverId': ?serverId,
-    };
+    final enriched = <String, dynamic>{...msg, '_serverId': ?serverId};
     _terminalServerId ??= serverId;
 
     switch (msg['type']) {
