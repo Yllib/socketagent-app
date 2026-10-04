@@ -4006,9 +4006,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return 'Could not reach the relay to verify this purchase.';
   }
 
-  /// Exchange the private owner code for a signed relay access token.
-  Future<String?> requestOwnerAccess(String ownerCode) async {
-    if (ownerCode.trim().isEmpty) return 'Enter the owner code.';
+  /// Exchange an owner or comp access code for a signed relay access token.
+  Future<String?> requestAccessCode(String code) async {
+    if (code.trim().isEmpty) return 'Enter your access code.';
     final prefs = await SharedPreferences.getInstance();
     _cachedPrefs = prefs;
     final httpUrls = _relayHttpUrlCandidates();
@@ -4018,9 +4018,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       try {
         final response = await http
             .post(
-              Uri.parse('$httpUrl/api/owner-access'),
+              Uri.parse('$httpUrl/api/access-code'),
               headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'ownerCode': ownerCode.trim()}),
+              body: jsonEncode({'code': code.trim()}),
             )
             .timeout(const Duration(seconds: 15));
         if (response.statusCode == 200) {
@@ -4034,9 +4034,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           return null;
         }
-        if (response.statusCode == 403) return 'The owner code is not valid.';
+        if (response.statusCode == 403) return 'That access code is not valid.';
       } catch (e) {
-        debugPrint('[Subscription] Owner access failed: $e');
+        debugPrint('[Subscription] Access code failed: $e');
       }
     }
     return 'Could not reach the relay.';

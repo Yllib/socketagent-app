@@ -172,6 +172,7 @@ class _SignedInCardState extends State<_SignedInCard> {
   String _statusLine(ChatProvider p) {
     if (_loading) return 'Checking subscription...';
     if (p.subscriptionStatus == 'owner') return 'Owner account';
+    if (p.subscriptionStatus == 'comp') return 'Comped access';
     if (p.subscriptionProvider == 'stripe' && p.subscriptionActive) {
       return 'Legacy Stripe subscription active';
     }

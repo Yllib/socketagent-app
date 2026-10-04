@@ -21,6 +21,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
   final TextEditingController _emailController = TextEditingController();
   StreamSubscription<PlayBillingEvent>? _eventSubscription;
   bool _reviewLoading = false;
+  bool _accessCodeLoading = false;
   bool _directLoading = false;
   bool _showDirectCheckout = false;
   String? _directCheckoutSessionId;
@@ -174,17 +175,18 @@ class _PaywallScreenState extends State<PaywallScreen> {
     });
   }
 
-  Future<void> _showReviewAccess() async {
+  /// Asks for a code. Returns null when the dialog is cancelled or left empty.
+  Future<String?> _promptForCode(String title, String label) async {
     final controller = TextEditingController();
-    final reviewCode = await showDialog<String>(
+    final code = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Play review access'),
+        title: Text(title),
         content: TextField(
           controller: controller,
           obscureText: true,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'Review code'),
+          decoration: InputDecoration(labelText: label),
           onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
         ),
         actions: [
@@ -201,7 +203,35 @@ class _PaywallScreenState extends State<PaywallScreen> {
       ),
     );
     controller.dispose();
-    if (reviewCode == null || reviewCode.isEmpty || !mounted) return;
+    return code == null || code.isEmpty ? null : code;
+  }
+
+  Future<void> _showAccessCode() async {
+    final code = await _promptForCode('Access code', 'Access code');
+    if (code == null || !mounted) return;
+
+    setState(() {
+      _accessCodeLoading = true;
+      _message = null;
+    });
+    final error = await context.read<ChatProvider>().requestAccessCode(code);
+    if (!mounted) return;
+    if (error == null) {
+      Navigator.of(context).pop(true);
+      return;
+    }
+    setState(() {
+      _accessCodeLoading = false;
+      _message = error;
+    });
+  }
+
+  Future<void> _showReviewAccess() async {
+    final reviewCode = await _promptForCode(
+      'Play review access',
+      'Review code',
+    );
+    if (reviewCode == null || !mounted) return;
 
     setState(() {
       _reviewLoading = true;
@@ -284,10 +314,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
                   ),
                   const SizedBox(height: 36),
                   if (isPlay) _buildPlayActions() else _buildDirectActions(),
-                  if (isPlay) ...[
-                    const SizedBox(height: 12),
-                    _buildReviewAccessAction(),
-                  ],
+                  const SizedBox(height: 12),
+                  _buildAccessCodeAction(),
+                  if (isPlay) _buildReviewAccessAction(),
                   if (_message != null) ...[
                     const SizedBox(height: 18),
                     Text(
@@ -371,6 +400,19 @@ class _PaywallScreenState extends State<PaywallScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildAccessCodeAction() {
+    return TextButton(
+      onPressed: _accessCodeLoading ? null : _showAccessCode,
+      child: _accessCodeLoading
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Text('Have an access code?'),
     );
   }
 

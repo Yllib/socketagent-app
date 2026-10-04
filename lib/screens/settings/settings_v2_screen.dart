@@ -275,7 +275,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                 loading = true;
                 errorMessage = null;
               });
-              final error = await provider.requestOwnerAccess(ownerCode);
+              final error = await provider.requestAccessCode(ownerCode);
               if (!dialogContext.mounted) return;
               if (error == null) {
                 Navigator.pop(dialogContext, true);
@@ -336,9 +336,14 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     );
     controller.dispose();
     if (granted == true && mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Owner access enabled')));
+      final comped = provider.subscriptionStatus == 'comp';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            comped ? 'Comped access enabled' : 'Owner access enabled',
+          ),
+        ),
+      );
     }
   }
 
