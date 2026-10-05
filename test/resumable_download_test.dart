@@ -182,30 +182,29 @@ void main() {
         ),
       ).download(uri: Uri.parse('https://local.test/empty'), part: saved);
       expect(await saved.length, 0);
-      late ResumableHttpDownload download;
-      download = ResumableHttpDownload(
+      final chunks = StreamController<List<int>>();
+      final download = ResumableHttpDownload(
         clientFactory: () => MockClient.streaming(
           (request, _) async => http.StreamedResponse(
-            Stream.fromIterable([
-              [1, 2],
-              [3, 4],
-            ]),
+            chunks.stream,
             200,
             contentLength: 4,
             headers: {'etag': '"four"'},
           ),
         ),
       );
-      await expectLater(
-        download.download(
-          uri: Uri.parse('https://local.test/file'),
-          part: saved,
-          onProgress: (received, _) {
-            if (received == 2) download.cancel();
-          },
-        ),
-        throwsA(isA<DownloadCancelled>()),
+      final result = download.download(
+        uri: Uri.parse('https://local.test/file'),
+        part: saved,
       );
+      chunks.add([1, 2]);
+      while (await saved.length < 2) {
+        await Future<void>.delayed(const Duration(milliseconds: 5));
+      }
+      download.cancel();
+      chunks.add([3, 4]);
+      await expectLater(result, throwsA(isA<DownloadCancelled>()));
+      await chunks.close();
       expect(await saved.file.readAsBytes(), [1, 2]);
     },
   );

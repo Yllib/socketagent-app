@@ -94,6 +94,45 @@ class DownloadPart {
     return saved + data.length;
   }
 
+  /// Streams [chunks] onto the end of the saved prefix through one open file.
+  /// Network chunks are a few KB, and opening, syncing and closing the file for
+  /// each one made a 27 MB download take three minutes on Windows. Syncing every
+  /// [syncEvery] bytes instead means a crash can lose at most that unsynced
+  /// tail, which a resume fetches again because it starts from the file length.
+  /// [onWritten] sees each new length and may throw to stop the transfer.
+  Future<int> appendStream(
+    int offset,
+    Stream<List<int>> chunks, {
+    void Function(int length)? onWritten,
+    int syncEvery = 4 * 1024 * 1024,
+  }) async {
+    if (offset != await length) {
+      throw const FormatException('Gap in download');
+    }
+    var written = offset;
+    var unsynced = 0;
+    final handle = await file.open(mode: FileMode.append);
+    try {
+      await for (final chunk in chunks) {
+        if (total != null && written + chunk.length > total!) {
+          throw const FormatException('Download exceeds expected size');
+        }
+        await handle.writeFrom(chunk);
+        written += chunk.length;
+        unsynced += chunk.length;
+        if (unsynced >= syncEvery) {
+          await handle.flush();
+          unsynced = 0;
+        }
+        onWritten?.call(written);
+      }
+      await handle.flush();
+    } finally {
+      await handle.close();
+    }
+    return written;
+  }
+
   Future<void> verifyComplete([int? expected]) async {
     final size = expected ?? total;
     if (size != null && await length != size) {

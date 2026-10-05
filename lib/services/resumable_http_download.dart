@@ -127,14 +127,25 @@ class ResumableHttpDownload {
           part.metadata['version'] = expected;
         }
         await part.begin(offset: offset, size: total, identity: identity);
-        var received = offset;
-        onProgress?.call(received, total);
-        await for (final chunk in response.stream.timeout(timeout)) {
-          if (_cancelled) throw DownloadCancelled();
-          received = await part.append(received, chunk);
-          onProgress?.call(received, total);
-        }
+        onProgress?.call(offset, total);
+        // Progress redraws the UI, so report at most every 100 ms.
+        final sinceReport = Stopwatch()..start();
+        final received = await part.appendStream(
+          offset,
+          // Check before each chunk so nothing is written after a cancel.
+          response.stream.timeout(timeout).map((chunk) {
+            if (_cancelled) throw DownloadCancelled();
+            return chunk;
+          }),
+          onWritten: (length) {
+            if (sinceReport.elapsedMilliseconds >= 100) {
+              sinceReport.reset();
+              onProgress?.call(length, total);
+            }
+          },
+        );
         if (_cancelled) throw DownloadCancelled();
+        onProgress?.call(received, total);
         await part.verifyComplete();
         return;
       } catch (error) {
