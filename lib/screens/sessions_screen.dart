@@ -1012,10 +1012,7 @@ class _SessionsTabState extends State<SessionsTab> {
                         child: Wrap(
                           spacing: 8,
                           runSpacing: 8,
-                          children: [
-                            ?serverChipWidget,
-                            ?backendChipWidget,
-                          ],
+                          children: [?serverChipWidget, ?backendChipWidget],
                         ),
                       ),
                     // Path field + browse icon button.
@@ -2225,10 +2222,26 @@ class _SessionsTabState extends State<SessionsTab> {
 
   Widget _buildUpdateBanner(BuildContext context) {
     final shell = context.findAncestorStateOfType<MainShellScreenState>();
-    if (shell == null ||
-        !shell.supportsSelfUpdates ||
-        !shell.updateService.updateAvailable ||
-        shell.updateBannerDismissed) {
+    if (shell == null || !shell.supportsSelfUpdates) {
+      return const SizedBox.shrink();
+    }
+    // This tab is a const child of the shell, so the shell rebuilding on update
+    // progress never reaches it. Listen here so a click shows progress at once.
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        shell.updateService,
+        shell.updateBannerDismissed,
+      ]),
+      builder: (context, _) => _updateBannerContent(context, shell),
+    );
+  }
+
+  Widget _updateBannerContent(
+    BuildContext context,
+    MainShellScreenState shell,
+  ) {
+    if (!shell.updateService.updateAvailable ||
+        shell.updateBannerDismissed.value) {
       return const SizedBox.shrink();
     }
     final info = shell.updateService.updateInfo!;

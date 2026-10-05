@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../config/app_distribution.dart';
@@ -43,7 +44,7 @@ class MainShellScreenState extends State<MainShellScreen>
   String? _backendAuthSnackBarBackend;
   Future<bool>? _paywallFuture;
   final UpdateService _updateService = UpdateService();
-  bool _updateBannerDismissed = false;
+  final ValueNotifier<bool> _updateBannerDismissed = ValueNotifier(false);
   String? _dismissedUpdateVersion;
   DateTime? _lastUpdateCheckAt;
   Future<void>? _updateCheckInFlight;
@@ -159,7 +160,7 @@ class MainShellScreenState extends State<MainShellScreen>
     final result = await _updateService.checkForUpdate();
     if (!mounted || result?.updateAvailable != true) return;
     if (result!.latestVersion != _dismissedUpdateVersion) {
-      setState(() => _updateBannerDismissed = false);
+      _updateBannerDismissed.value = false;
     }
   }
 
@@ -191,6 +192,7 @@ class MainShellScreenState extends State<MainShellScreen>
     if (AppBuild.supportsSelfUpdates) {
       _updateService.removeListener(_onUpdateChange);
     }
+    _updateBannerDismissed.dispose();
     routeObserver.unsubscribe(this);
     super.dispose();
   }
@@ -259,11 +261,14 @@ class MainShellScreenState extends State<MainShellScreen>
   /// Expose update service to child widgets
   UpdateService get updateService => _updateService;
   bool get supportsSelfUpdates => AppBuild.supportsSelfUpdates;
-  bool get updateBannerDismissed => _updateBannerDismissed;
-  void dismissUpdateBanner() => setState(() {
-    _updateBannerDismissed = true;
+
+  /// Listenable because the tabs showing the banner are const children that
+  /// this state's rebuilds never reach.
+  ValueListenable<bool> get updateBannerDismissed => _updateBannerDismissed;
+  void dismissUpdateBanner() {
     _dismissedUpdateVersion = _updateService.updateInfo?.latestVersion;
-  });
+    _updateBannerDismissed.value = true;
+  }
 
   /// Check subscription — callable from child tabs via context.findAncestorStateOfType
   Future<bool> requireSubscription({String? serverId}) async {
