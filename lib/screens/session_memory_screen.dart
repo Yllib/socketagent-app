@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../models/session_memory.dart';
 import '../services/chat_provider.dart';
+import '../util/format.dart';
 
 class SessionMemoryScreen extends StatefulWidget {
   const SessionMemoryScreen({super.key});
@@ -22,12 +23,6 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
         () => context.read<ChatProvider>().refreshSessionMemory(),
       ),
     );
-  }
-
-  String _count(int value) {
-    if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(1)}m';
-    if (value >= 1000) return '${(value / 1000).round()}k';
-    return '$value';
   }
 
   String _time(DateTime value) {
@@ -118,7 +113,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
               child: Text('Working context', style: theme.textTheme.titleSmall),
             ),
             Text(
-              '${_count(state.currentTokens)} / ${_count(state.contextWindow)}',
+              '${formatCompactCount(state.currentTokens)} / ${formatCompactCount(state.contextWindow)}',
               style: theme.textTheme.labelMedium,
             ),
           ],
@@ -280,7 +275,7 @@ class _SessionMemoryScreenState extends State<SessionMemoryScreen> {
               ),
               if (epoch.endingTokens != null)
                 Text(
-                  'Ended at ${_count(epoch.endingTokens!)} context tokens',
+                  'Ended at ${formatCompactCount(epoch.endingTokens!)} context tokens',
                   style: theme.textTheme.bodySmall,
                 ),
               if (epoch.rolloverReason?.isNotEmpty == true) ...[

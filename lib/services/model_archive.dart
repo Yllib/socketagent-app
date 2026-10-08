@@ -5,12 +5,17 @@ import 'download_part.dart';
 import 'resumable_http_download.dart';
 
 /// Keep interrupted downloads and mark extracted models unavailable until verified.
+/// [stripComponents] leading path parts are dropped while unpacking into
+/// [directory]; archives with `./name/` entries need 2. Pass a null
+/// [sha256Hex] only for assets with no published digest; tar and the
+/// [requiredFiles] check still reject a broken download.
 Future<void> installModelArchive({
   required Uri uri,
   required Directory directory,
-  required String sha256Hex,
+  required String? sha256Hex,
   required List<String> requiredFiles,
   required void Function(double) onProgress,
+  int stripComponents = 1,
 }) async {
   await directory.create(recursive: true);
   final marker = File('${directory.path}/.installing');
@@ -26,8 +31,10 @@ Future<void> installModelArchive({
       }
     },
   );
-  final digest = await sha256.bind(part.file.openRead()).first;
-  if (digest.toString() != sha256Hex) {
+  final digest = sha256Hex == null
+      ? null
+      : await sha256.bind(part.file.openRead()).first;
+  if (digest != null && digest.toString() != sha256Hex) {
     await part.file.delete();
     if (await part.manifest.exists()) await part.manifest.delete();
     throw StateError(
@@ -38,7 +45,7 @@ Future<void> installModelArchive({
   final result = await Process.run('tar', [
     'xjf',
     part.file.path,
-    '--strip-components=1',
+    '--strip-components=$stripComponents',
     '-C',
     directory.path,
   ]);

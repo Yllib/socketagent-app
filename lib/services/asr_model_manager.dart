@@ -151,27 +151,33 @@ class AsrModelManager {
 
       // Download ASR model (~180MB) — 0% to 90%
       final asrInstalled = await isModelInstalled(model);
+      // These older release assets have no published SHA-256.
       if (!asrInstalled) {
-        await _downloadAndExtract(
-          url: _asrDownloadUrl,
-          dirName: _modelDirName,
-          basePath: base,
-          verifyFile: encoderFor(model),
-          progressStart: 0.0,
-          progressEnd: 0.90,
+        await installModelArchive(
+          uri: Uri.parse(_asrDownloadUrl),
+          directory: Directory('$base/$_modelDirName'),
+          sha256Hex: null,
+          requiredFiles: [
+            encoderFor(model),
+            decoderFor(model),
+            joinerFor(model),
+            tokensFile,
+          ],
+          onProgress: (value) => downloadProgress.value = value * 0.90,
         );
       }
 
       // Download punctuation model (~7MB) — 90% to 98%
       final punctInstalled = await isPunctInstalled();
       if (!punctInstalled) {
-        await _downloadAndExtract(
-          url: _punctDownloadUrl,
-          dirName: _punctDirName,
-          basePath: base,
-          verifyFile: punctModelFile,
-          progressStart: 0.90,
-          progressEnd: 0.98,
+        await installModelArchive(
+          uri: Uri.parse(_punctDownloadUrl),
+          directory: Directory('$base/$_punctDirName'),
+          sha256Hex: null,
+          requiredFiles: [punctModelFile, punctVocabFile],
+          onProgress: (value) => downloadProgress.value = 0.90 + value * 0.08,
+          // Entries are stored as ./sherpa-onnx-online-punct-en-2024-08-06/...
+          stripComponents: 2,
         );
       }
 
@@ -186,66 +192,6 @@ class AsrModelManager {
       downloadingModel = null;
       downloadProgress.value = null;
     }
-  }
-
-  Future<void> _downloadAndExtract({
-    required String url,
-    required String dirName,
-    required String basePath,
-    required String verifyFile,
-    required double progressStart,
-    required double progressEnd,
-  }) async {
-    final targetDir = Directory('$basePath/$dirName');
-    if (targetDir.existsSync()) {
-      targetDir.deleteSync(recursive: true);
-    }
-
-    final archivePath = '$basePath/$dirName.tar.bz2';
-    debugPrint('[AsrModel] Downloading $dirName from $url');
-
-    final part = DownloadPart(File('$archivePath.part'));
-    if (!File(archivePath).existsSync()) {
-      await ResumableHttpDownload().download(
-        uri: Uri.parse(url),
-        part: part,
-        onProgress: (received, total) {
-          if (total != null && total > 0) {
-            downloadProgress.value =
-                progressStart +
-                (received / total).clamp(0.0, 1.0) *
-                    (progressEnd - progressStart);
-          }
-        },
-      );
-      await part.file.rename(archivePath);
-      if (await part.manifest.exists()) await part.manifest.delete();
-    }
-
-    // Extract
-    await targetDir.create(recursive: true);
-    await File(
-      '${targetDir.path}/.installing',
-    ).writeAsString('Installing', flush: true);
-    final result = await Process.run('tar', [
-      'xjf',
-      archivePath,
-      '-C',
-      basePath,
-    ]);
-    if (result.exitCode != 0) {
-      throw Exception('tar extraction failed for $dirName: ${result.stderr}');
-    }
-    File(archivePath).deleteSync();
-
-    // Verify
-    if (!File('$basePath/$dirName/$verifyFile').existsSync()) {
-      throw Exception(
-        'Extraction succeeded but $verifyFile not found in $dirName',
-      );
-    }
-    await File('${targetDir.path}/.installing').delete();
-    debugPrint('[AsrModel] $dirName installed');
   }
 
   Future<void> _downloadMoonshine(AsrModel model) async {

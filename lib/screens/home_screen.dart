@@ -12,8 +12,10 @@ import '../widgets/context_window_breakdown.dart';
 import '../widgets/codex_account_usage.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../util/format.dart';
 import '../services/session_panel_preferences.dart';
 import '../services/pending_panel_hides.dart';
 import '../widgets/panel_hide_notice.dart';
@@ -2455,12 +2457,6 @@ class _ChatScreenState extends State<_ChatScreen> {
     );
   }
 
-  String _formatTokenCount(int tokens) {
-    if (tokens >= 1000000) return '${(tokens / 1000000).toStringAsFixed(1)}M';
-    if (tokens >= 1000) return '${(tokens / 1000).toStringAsFixed(1)}k';
-    return tokens.toString();
-  }
-
   Widget _buildUsageIndicator(Map<String, dynamic> usage) {
     final inputTokens = (usage['inputTokens'] as num?)?.toInt() ?? 0;
     final outputTokens = (usage['outputTokens'] as num?)?.toInt() ?? 0;
@@ -2488,12 +2484,12 @@ class _ChatScreenState extends State<_ChatScreen> {
             Icon(Icons.token, size: 14, color: fillColor),
             const SizedBox(width: 3),
             Text(
-              _formatTokenCount(totalContext),
+              formatCompactCount(totalContext),
               style: TextStyle(fontSize: 11, color: fillColor),
             ),
             if (contextWindow > 0) ...[
               Text(
-                ' / ${_formatTokenCount(contextWindow)}',
+                ' / ${formatCompactCount(contextWindow)}',
                 style: TextStyle(
                   fontSize: 11,
                   color: Theme.of(context).colorScheme.onSurface.withAlpha(102),
@@ -2508,7 +2504,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 color: const Color(0xFFCBA6F7),
               ),
               Text(
-                _formatTokenCount(outputTokens),
+                formatCompactCount(outputTokens),
                 style: const TextStyle(fontSize: 11, color: Color(0xFFCBA6F7)),
               ),
             ],
@@ -2736,7 +2732,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 if (maxTokens > 0) ...[
                   const SizedBox(height: 4),
                   Text(
-                    '${_formatTokenCount(usedTokens)} / ${_formatTokenCount(maxTokens)} tokens',
+                    '${formatCompactCount(usedTokens)} / ${formatCompactCount(maxTokens)} tokens',
                     style: TextStyle(
                       fontSize: 13,
                       color: theme.colorScheme.onSurface.withAlpha(178),
@@ -2772,7 +2768,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 ...breakdown.used.map(
                   (category) => _ContextRow(
                     label: category.name,
-                    value: _formatTokenCount(category.tokens),
+                    value: formatCompactCount(category.tokens),
                     color: category.color,
                     share: usedTokens > 0
                         ? category.tokens / usedTokens * 100
@@ -2829,7 +2825,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 if (outputTokens > 0)
                   _contextDetailRow(
                     'Last output',
-                    _formatTokenCount(outputTokens),
+                    formatCompactCount(outputTokens),
                     theme,
                   ),
                 if (stopReason != null)
@@ -2876,7 +2872,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     return [
       _ContextSection(
         title: "Not in the ${(usedRatio * 100).toStringAsFixed(0)}%",
-        total: _formatTokenCount(rows.fold(0, (sum, row) => sum + row.$2)),
+        total: formatCompactCount(rows.fold(0, (sum, row) => sum + row.$2)),
         hint:
             'Window space nothing is using, the amount held back to run a '
             'compaction, and tool definitions kept outside the window until '
@@ -2885,7 +2881,7 @@ class _ChatScreenState extends State<_ChatScreen> {
           for (final row in rows)
             _ContextRow(
               label: row.$1,
-              value: _formatTokenCount(row.$2),
+              value: formatCompactCount(row.$2),
               children: row.$3,
             ),
         ],
@@ -2955,7 +2951,7 @@ class _ChatScreenState extends State<_ChatScreen> {
           ..sort((a, b) => b.$2.compareTo(a.$2));
     return [
       for (final row in rows)
-        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+        _contextDetailRow(row.$1, formatCompactCount(row.$2), theme),
     ];
   }
 
@@ -2980,7 +2976,7 @@ class _ChatScreenState extends State<_ChatScreen> {
           ..sort((a, b) => b.$2.compareTo(a.$2));
     return [
       for (final row in rows)
-        _contextDetailRow(row.$1, _formatTokenCount(row.$2), theme),
+        _contextDetailRow(row.$1, formatCompactCount(row.$2), theme),
     ];
   }
 
@@ -3393,24 +3389,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     } else if (DateUtils.isSameDay(date, tomorrow)) {
       day = 'tomorrow';
     } else {
-      const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-      const months = [
-        'Jan',
-        'Feb',
-        'Mar',
-        'Apr',
-        'May',
-        'Jun',
-        'Jul',
-        'Aug',
-        'Sep',
-        'Oct',
-        'Nov',
-        'Dec',
-      ];
-      day =
-          '${weekdays[local.weekday - 1]}, '
-          '${months[local.month - 1]} ${local.day}';
+      day = DateFormat.MMMEd().format(local);
     }
     return 'resets $day at ${TimeOfDay.fromDateTime(local).format(context)}';
   }

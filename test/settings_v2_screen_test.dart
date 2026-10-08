@@ -108,74 +108,37 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets(
-    'settings header exposes version and direct update check',
-    (tester) async {
-      final provider = ChatProvider();
-      final updateService = _FakeUpdateService();
-      addTearDown(updateService.dispose);
+  testWidgets('settings header exposes version and direct update check', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService();
+    addTearDown(updateService.dispose);
 
-      await pumpSettings(tester, provider, updateService);
+    await pumpSettings(tester, provider, updateService);
 
-      expect(find.text('Settings'), findsOneWidget);
-      expect(find.text('Settings V2'), findsNothing);
-      expect(find.text('v1.2.3'), findsOneWidget);
-      expect(find.text('About SocketAgent'), findsNothing);
-      expect(
-        find.ancestor(
-          of: find.text('v1.2.3'),
-          matching: find.byType(TextButton),
-        ),
-        findsNothing,
-      );
-      await tester.tap(find.byTooltip('Check for app updates'));
-      await tester.pumpAndSettle();
+    expect(find.text('Settings'), findsOneWidget);
+    expect(find.text('Settings V2'), findsNothing);
+    expect(find.text('v1.2.3'), findsOneWidget);
+    expect(find.text('About SocketAgent'), findsNothing);
+    expect(
+      find.ancestor(of: find.text('v1.2.3'), matching: find.byType(TextButton)),
+      findsNothing,
+    );
+    await tester.tap(find.byTooltip('Check for app updates'));
+    await tester.pumpAndSettle();
 
-      expect(updateService.checkCount, 1);
-      expect(find.text('SocketAgent is up to date'), findsOneWidget);
+    expect(updateService.checkCount, 1);
+    expect(find.text('SocketAgent is up to date'), findsOneWidget);
 
-      await tester.scrollUntilVisible(
-        find.text('Export Computers'),
-        500,
-        scrollable: find.byType(Scrollable).first,
-      );
-      expect(find.text('Export Computers'), findsOneWidget);
-      expect(find.text('Import Computers'), findsOneWidget);
-    },
-    skip: !AppBuild.supportsSelfUpdates,
-  );
-
-  testWidgets(
-    'store builds hide the direct updater in every update state',
-    (tester) async {
-      for (final updateService in [
-        _FakeUpdateService(),
-        _FakeUpdateService(available: true),
-        _FakeUpdateService(available: true, downloading: true, progress: .42),
-        _FakeUpdateService(available: true, downloaded: true),
-        _FakeUpdateService(available: true, downloaded: true, opening: true),
-      ]) {
-        final provider = ChatProvider();
-        addTearDown(updateService.dispose);
-        await pumpSettings(tester, provider, updateService);
-        expect(find.text('v1.2.3'), findsOneWidget);
-        for (final label in [
-          'Check for app updates',
-          'Download app update',
-          'Downloading app update 42%',
-          'Install downloaded app update',
-          'Opening installer',
-        ]) {
-          expect(find.byTooltip(label), findsNothing);
-        }
-        expect(updateService.checkCount, 0);
-        expect(updateService.downloadCount, 0);
-        expect(updateService.installCount, 0);
-        await tester.pumpWidget(const SizedBox.shrink());
-      }
-    },
-    skip: AppBuild.supportsSelfUpdates,
-  );
+    await tester.scrollUntilVisible(
+      find.text('Export Computers'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    );
+    expect(find.text('Export Computers'), findsOneWidget);
+    expect(find.text('Import Computers'), findsOneWidget);
+  });
 
   testWidgets('seven version taps reveal owner access', (tester) async {
     final provider = ChatProvider();
@@ -202,113 +165,100 @@ void main() {
     expect(find.text('Owner code'), findsOneWidget);
   });
 
-  testWidgets(
-    'settings header downloads an available update directly',
-    (tester) async {
-      final provider = ChatProvider();
-      final updateService = _FakeUpdateService(available: true);
-      addTearDown(updateService.dispose);
+  testWidgets('settings header downloads an available update directly', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService(available: true);
+    addTearDown(updateService.dispose);
 
-      await pumpSettings(tester, provider, updateService);
+    await pumpSettings(tester, provider, updateService);
 
-      expect(find.byTooltip('Download app update'), findsOneWidget);
-      expect(find.byIcon(Icons.download), findsWidgets);
-      await tester.tap(find.byTooltip('Download app update'));
-      await tester.pump();
-      expect(updateService.downloadCount, 1);
-    },
-    skip: !AppBuild.supportsSelfUpdates,
-  );
+    expect(find.byTooltip('Download app update'), findsOneWidget);
+    expect(find.byIcon(Icons.download), findsWidgets);
+    await tester.tap(find.byTooltip('Download app update'));
+    await tester.pump();
+    expect(updateService.downloadCount, 1);
+  });
 
-  testWidgets(
-    'settings header draws circular download progress',
-    (tester) async {
-      final provider = ChatProvider();
-      final updateService = _FakeUpdateService(
-        available: true,
-        downloading: true,
-        progress: 0.42,
-      );
-      addTearDown(updateService.dispose);
+  testWidgets('settings header draws circular download progress', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService(
+      available: true,
+      downloading: true,
+      progress: 0.42,
+    );
+    addTearDown(updateService.dispose);
 
-      await pumpSettings(tester, provider, updateService);
+    await pumpSettings(tester, provider, updateService);
 
-      expect(find.byTooltip('Downloading app update 42%'), findsOneWidget);
-      final indicators = tester.widgetList<CircularProgressIndicator>(
-        find.byType(CircularProgressIndicator),
-      );
-      expect(indicators.any((indicator) => indicator.value == 0.42), isTrue);
-    },
-    skip: !AppBuild.supportsSelfUpdates,
-  );
+    expect(find.byTooltip('Downloading app update 42%'), findsOneWidget);
+    final indicators = tester.widgetList<CircularProgressIndicator>(
+      find.byType(CircularProgressIndicator),
+    );
+    expect(indicators.any((indicator) => indicator.value == 0.42), isTrue);
+  });
 
-  testWidgets(
-    'settings header installs an already downloaded update',
-    (tester) async {
-      final provider = ChatProvider();
-      final updateService = _FakeUpdateService(
-        available: true,
-        downloaded: true,
-      );
-      addTearDown(updateService.dispose);
+  testWidgets('settings header installs an already downloaded update', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService(available: true, downloaded: true);
+    addTearDown(updateService.dispose);
 
-      await pumpSettings(tester, provider, updateService);
+    await pumpSettings(tester, provider, updateService);
 
-      final label = AppBuild.distribution == AppDistribution.windows
-          ? 'Install update and restart SocketAgent'
-          : 'Install downloaded app update';
-      expect(find.byTooltip(label), findsOneWidget);
-      expect(find.byIcon(Icons.install_mobile), findsWidgets);
-      await tester.tap(find.byTooltip(label));
-      await tester.pump();
-      expect(updateService.installCount, 1);
-    },
-    skip: !AppBuild.supportsSelfUpdates,
-  );
+    final label = AppBuild.distribution == AppDistribution.windows
+        ? 'Install update and restart SocketAgent'
+        : 'Install downloaded app update';
+    expect(find.byTooltip(label), findsOneWidget);
+    expect(find.byIcon(Icons.install_mobile), findsWidgets);
+    await tester.tap(find.byTooltip(label));
+    await tester.pump();
+    expect(updateService.installCount, 1);
+  });
 
-  testWidgets(
-    'settings header shows and disables installer launch progress',
-    (tester) async {
-      final provider = ChatProvider();
-      final updateService = _FakeUpdateService(
-        available: true,
-        downloaded: true,
-        opening: true,
-      );
-      addTearDown(updateService.dispose);
+  testWidgets('settings header shows and disables installer launch progress', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService(
+      available: true,
+      downloaded: true,
+      opening: true,
+    );
+    addTearDown(updateService.dispose);
 
-      await pumpSettings(tester, provider, updateService);
+    await pumpSettings(tester, provider, updateService);
 
-      expect(find.byTooltip('Opening installer'), findsOneWidget);
-      expect(find.byType(CircularProgressIndicator), findsWidgets);
-      await tester.tap(find.byTooltip('Opening installer'));
-      await tester.pump();
-      expect(updateService.installCount, 0);
-    },
-    skip: !AppBuild.supportsSelfUpdates,
-  );
+    expect(find.byTooltip('Opening installer'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    await tester.tap(find.byTooltip('Opening installer'));
+    await tester.pump();
+    expect(updateService.installCount, 0);
+  });
 
-  testWidgets(
-    'installed current-version APK is not offered again',
-    (tester) async {
-      final provider = ChatProvider();
-      final updateService = _FakeUpdateService(
-        available: false,
-        downloaded: true,
-      );
-      addTearDown(updateService.dispose);
+  testWidgets('installed current-version APK is not offered again', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService(
+      available: false,
+      downloaded: true,
+    );
+    addTearDown(updateService.dispose);
 
-      await pumpSettings(tester, provider, updateService);
+    await pumpSettings(tester, provider, updateService);
 
-      expect(find.byTooltip('Install downloaded app update'), findsNothing);
-      expect(find.byTooltip('Check for app updates'), findsOneWidget);
-      await tester.tap(find.byTooltip('Check for app updates'));
-      await tester.pumpAndSettle();
-      expect(updateService.installCount, 0);
-      expect(updateService.checkCount, 1);
-    },
-    skip: !AppBuild.supportsSelfUpdates,
-  );
+    expect(find.byTooltip('Install downloaded app update'), findsNothing);
+    expect(find.byTooltip('Check for app updates'), findsOneWidget);
+    await tester.tap(find.byTooltip('Check for app updates'));
+    await tester.pumpAndSettle();
+    expect(updateService.installCount, 0);
+    expect(updateService.checkCount, 1);
+  });
 
   testWidgets('Condensed Tool Usage is persisted from Chat & Display', (
     tester,

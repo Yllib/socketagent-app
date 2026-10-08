@@ -54,6 +54,10 @@ dependencies:
   markdown: ^7.3.1
   bonsoir: ^7.1.4
   connectivity_plus: ^7.3.1
+  flex_color_picker: ^3.8.0
+  share_plus: ^13.3.1
+  intl: ^0.20.3
+  in_app_update: ^5.0.0
 
 dev_dependencies:
   flutter_test:

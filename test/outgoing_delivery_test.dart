@@ -1,3 +1,4 @@
+import 'package:app/models/message.dart';
 import 'package:app/services/outgoing_queue.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
@@ -55,6 +56,54 @@ void main() {
       await provider.discardOutgoing(request.id);
       expect(await OutgoingQueue().load(), isEmpty);
     });
+  });
+  test('a sent prompt moves from queued to received to read', () async {
+    await withSession((provider, send) async {
+      await provider.sendPrompt('track me');
+      final request = provider.pendingOutgoing.single;
+      ChatMessage bubble() =>
+          provider.messages.singleWhere((m) => m.id == request.id);
+      expect(bubble().delivery, MessageDelivery.queued);
+      expect(bubble().isPending, isTrue);
+
+      await send({
+        'type': 'command_receipt',
+        'commandId': request.id,
+        'status': 'pending',
+      });
+      expect(bubble().delivery, MessageDelivery.received);
+      expect(bubble().isPending, isFalse);
+
+      await send({
+        'type': 'user_message_uuid',
+        'uuid': 'native-uuid',
+        'clientMessageId': request.id,
+      });
+      expect(bubble().uuid, 'native-uuid');
+      expect(provider.pendingOutgoing, isEmpty);
+    });
+  });
+
+  test('a failed prompt does not hold later prompts behind it', () async {
+    final received = <Map<String, dynamic>>[];
+    await withSession((provider, send) async {
+      await provider.sendPrompt('rejected');
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      final failed = provider.pendingOutgoing.single;
+      await send({
+        'type': 'prompt_failed',
+        'messageId': failed.id,
+        'sessionId': 'shared-session',
+        'message': 'Claude session aborted',
+      });
+      await provider.sendPrompt('still goes out');
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      final prompts = received.where((m) => m['type'] == 'prompt').toList();
+      expect(prompts, hasLength(2));
+      expect(prompts.last['messageId'], isNot(failed.id));
+      // The failed one stays for the user to copy or remove.
+      expect(provider.activeDeliveryProblems.map((r) => r.id), [failed.id]);
+    }, onClientMessage: received.add);
   });
   test(
     'native resume choice is queued with the exact originating session',

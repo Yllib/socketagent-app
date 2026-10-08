@@ -79,7 +79,10 @@ class _TerminalScreenState extends State<TerminalScreen> {
 
   void _sendRaw(String data, {bool consumeModifiers = true}) {
     if (data.isEmpty) return;
-    context.read<ChatProvider>().sendTerminalInput(data, serverId: widget.serverId);
+    context.read<ChatProvider>().sendTerminalInput(
+      data,
+      serverId: widget.serverId,
+    );
     if (consumeModifiers) _consumeOneShotModifiers();
     _terminalFocusNode.requestFocus();
   }
@@ -144,25 +147,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
     return value;
   }
 
-  String _csiKey(String plain, String modifiedSuffix) {
-    final modifier = _terminalModifierValue();
-    if (modifier == 1) return plain;
-    return '\x1b[$modifiedSuffix$modifier';
-  }
-
-  void _sendArrow(String finalByte) {
-    final sequence = _terminalModifierValue() == 1
-        ? '\x1b[$finalByte'
-        : '\x1b[1;${_terminalModifierValue()}$finalByte';
-    _sendRaw(sequence);
-  }
-
-  void _sendHome() {
-    _sendRaw(_csiKey('\x1b[H', '1;') + (_terminalModifierValue() == 1 ? '' : 'H'));
-  }
-
-  void _sendEnd() {
-    _sendRaw(_csiKey('\x1b[F', '1;') + (_terminalModifierValue() == 1 ? '' : 'F'));
+  /// Arrow, Home and End soft keys. [finalByte] is A-D, H or F.
+  void _sendCursorKey(String finalByte) {
+    _sendRaw(cursorKeySequence(_terminal, finalByte, _terminalModifierValue()));
   }
 
   void _sendTildeKey(String number) {
@@ -288,7 +275,9 @@ class _TerminalScreenState extends State<TerminalScreen> {
                         style: TextStyle(
                           color: fg,
                           fontSize: 13,
-                          fontWeight: active ? FontWeight.w700 : FontWeight.w600,
+                          fontWeight: active
+                              ? FontWeight.w700
+                              : FontWeight.w600,
                           fontFamily: 'monospace',
                         ),
                       ),
@@ -352,22 +341,22 @@ class _TerminalScreenState extends State<TerminalScreen> {
                 _terminalKey(
                   label: '←',
                   tooltip: 'Left arrow',
-                  onPressed: () => _sendArrow('D'),
+                  onPressed: () => _sendCursorKey('D'),
                 ),
                 _terminalKey(
                   label: '↓',
                   tooltip: 'Down arrow',
-                  onPressed: () => _sendArrow('B'),
+                  onPressed: () => _sendCursorKey('B'),
                 ),
                 _terminalKey(
                   label: '↑',
                   tooltip: 'Up arrow',
-                  onPressed: () => _sendArrow('A'),
+                  onPressed: () => _sendCursorKey('A'),
                 ),
                 _terminalKey(
                   label: '→',
                   tooltip: 'Right arrow',
-                  onPressed: () => _sendArrow('C'),
+                  onPressed: () => _sendCursorKey('C'),
                 ),
                 if (_ctrlActive || _altActive || _shiftActive)
                   _terminalKey(
@@ -383,27 +372,30 @@ class _TerminalScreenState extends State<TerminalScreen> {
             scrollDirection: Axis.horizontal,
             child: Row(
               children: [
-                _terminalKey(label: 'Home', onPressed: _sendHome),
-                _terminalKey(label: 'End', onPressed: _sendEnd),
-                _terminalKey(label: 'PgUp', onPressed: () => _sendTildeKey('5')),
-                _terminalKey(label: 'PgDn', onPressed: () => _sendTildeKey('6')),
+                _terminalKey(
+                  label: 'Home',
+                  onPressed: () => _sendCursorKey('H'),
+                ),
+                _terminalKey(
+                  label: 'End',
+                  onPressed: () => _sendCursorKey('F'),
+                ),
+                _terminalKey(
+                  label: 'PgUp',
+                  onPressed: () => _sendTildeKey('5'),
+                ),
+                _terminalKey(
+                  label: 'PgDn',
+                  onPressed: () => _sendTildeKey('6'),
+                ),
                 _terminalKey(label: 'Del', onPressed: () => _sendTildeKey('3')),
-                _terminalKey(
-                  label: '|',
-                  onPressed: () => _sendTextKey('|'),
-                ),
-                _terminalKey(
-                  label: '~',
-                  onPressed: () => _sendTextKey('~'),
-                ),
+                _terminalKey(label: '|', onPressed: () => _sendTextKey('|')),
+                _terminalKey(label: '~', onPressed: () => _sendTextKey('~')),
                 _terminalKey(
                   label: '/',
                   onPressed: () => _sendTextKey('/', ctrl: '\x1f'),
                 ),
-                _terminalKey(
-                  label: '-',
-                  onPressed: () => _sendTextKey('-'),
-                ),
+                _terminalKey(label: '-', onPressed: () => _sendTextKey('-')),
                 _terminalKey(label: '^C', onPressed: () => _sendRaw('\x03')),
                 _terminalKey(label: '^D', onPressed: () => _sendRaw('\x04')),
                 _terminalKey(label: '^Z', onPressed: () => _sendRaw('\x1a')),
@@ -572,4 +564,15 @@ class _TerminalScreenState extends State<TerminalScreen> {
       ),
     );
   }
+}
+
+/// Escape sequence for an arrow, Home or End key ([finalByte] A-D, H or F).
+/// [modifier] is the xterm modifier code, 1 for none. Unmodified keys follow
+/// application cursor mode (ESC [ ? 1 h), which vim, less and htop turn on.
+/// xterm 4.0.0's keyInput checks the keypad flag (ESC =) for this instead and
+/// leaks keytab shortcut names like "scrollLineUp" for Shift+Up, so the soft
+/// keys build the sequence here.
+String cursorKeySequence(Terminal terminal, String finalByte, int modifier) {
+  if (modifier != 1) return '\x1b[1;$modifier$finalByte';
+  return terminal.cursorKeysMode ? '\x1bO$finalByte' : '\x1b[$finalByte';
 }

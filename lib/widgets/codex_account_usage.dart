@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
+import '../util/format.dart';
 
 /// Account quotas are independent of the model selected for a conversation.
 class CodexAccountUsage extends StatefulWidget {
@@ -45,13 +46,10 @@ String codexWindowLabel(Map window) {
   return duration.isEmpty ? 'Usage' : duration;
 }
 
-String compactAccountNumber(dynamic value) {
+String compactAccountNumber(Object? value) {
   final n = value is num ? value.toDouble() : double.tryParse('$value');
   if (n == null || !n.isFinite) return '??';
-  if (n >= 1e9) return '${(n / 1e9).toStringAsFixed(1)}B';
-  if (n >= 1e6) return '${(n / 1e6).toStringAsFixed(1)}M';
-  if (n >= 1e3) return '${(n / 1e3).toStringAsFixed(1)}K';
-  return n.round().toString();
+  return formatCompactCount(n.round());
 }
 
 class _CodexAccountUsageState extends State<CodexAccountUsage> {

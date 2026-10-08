@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../models/codex_goal.dart';
 import '../services/chat_provider.dart';
+import '../util/format.dart';
 
 Future<void> showCodexGoalManagerSheet(
   BuildContext context,
@@ -361,11 +362,11 @@ class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
           spacing: 24,
           runSpacing: 12,
           children: [
-            _stat('Tokens used', _formatNumber(goal.tokensUsed)),
+            _stat('Tokens used', formatThousands(goal.tokensUsed)),
             _stat('Time used', _formatDuration(goal.timeUsedSeconds)),
             _stat(
               'Token budget',
-              goal.tokenBudget == null ? 'No limit' : _formatNumber(goal.tokenBudget!),
+              goal.tokenBudget == null ? 'No limit' : formatThousands(goal.tokenBudget!),
             ),
           ],
         ),
@@ -434,16 +435,6 @@ String _statusLabel(CodexGoalStatus status) => switch (status) {
   CodexGoalStatus.budgetLimited => 'Budget reached',
   CodexGoalStatus.complete => 'Complete',
 };
-
-String _formatNumber(int value) {
-  final digits = value.toString();
-  final output = StringBuffer();
-  for (var index = 0; index < digits.length; index++) {
-    if (index > 0 && (digits.length - index) % 3 == 0) output.write(',');
-    output.write(digits[index]);
-  }
-  return output.toString();
-}
 
 String _formatDuration(int totalSeconds) {
   final duration = Duration(seconds: totalSeconds);

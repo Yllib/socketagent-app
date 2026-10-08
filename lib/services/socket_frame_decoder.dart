@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:isolate';
 import 'package:pinenacl/x25519.dart';
+import '../models/browser_frame_wire.dart';
 import '../models/file_download_frame.dart';
 
 typedef DecodedSocketFrame = ({Map<String, dynamic> message, bool encrypted});
@@ -52,12 +53,13 @@ DecodedSocketFrame? _decode(Object? frame, Box? box, bool encryptedBinary) {
     );
   }
   if (bytes.isEmpty) return null;
-  final message =
-      bytes[0] ==
-          0x4A // 'J', the JSON wire marker
-      ? jsonDecode(utf8.decode(Uint8List.sublistView(bytes, 1)))
-            as Map<String, dynamic>
-      : decodeBinaryFileDownloadFrame(bytes);
+  final message = switch (bytes[0]) {
+    0x4A => // 'J', the JSON wire marker
+      jsonDecode(utf8.decode(Uint8List.sublistView(bytes, 1)))
+          as Map<String, dynamic>,
+    binaryBrowserFrameMarker => decodeBinaryBrowserFrame(bytes),
+    _ => decodeBinaryFileDownloadFrame(bytes),
+  };
   return message == null
       ? null
       : (message: message, encrypted: encryptedBinary);

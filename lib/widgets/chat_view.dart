@@ -8,6 +8,7 @@ import '../models/condensed_chat_rows.dart';
 import '../models/message_reconciliation.dart';
 import '../models/raw_event.dart';
 import '../services/socketagent_link_router.dart';
+import '../util/format.dart';
 import 'message_bubble.dart';
 import 'message_timestamp.dart';
 import 'tool_output_block.dart';
@@ -1455,7 +1456,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
     if (metrics.thinkingTokens > 0) {
       parts.add(
-        '${_formatCompactCount(metrics.thinkingTokens)} thought tokens',
+        '${formatCompactCount(metrics.thinkingTokens)} thought tokens',
       );
     } else if (metrics.thinkingBlocks > 0) {
       parts.add(
@@ -1492,18 +1493,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       );
     }
     return parts.join(' · ');
-  }
-
-  String _formatCompactCount(int value) {
-    if (value >= 1000000) {
-      final millions = value / 1000000;
-      return '${millions.toStringAsFixed(millions >= 10 ? 0 : 1)}m';
-    }
-    if (value >= 1000) {
-      final thousands = value / 1000;
-      return '${thousands.toStringAsFixed(thousands >= 10 ? 0 : 1)}k';
-    }
-    return value.toString();
   }
 
   Key _messageSliverKey(String rowKey) =>
@@ -2219,10 +2208,13 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       if (m.start > last) {
         spans.add(TextSpan(text: text.substring(last, m.start)));
       }
-      final url = m.group(0)!;
+      // A URL wrapped in parentheses or ending a sentence keeps its closing
+      // punctuation outside the link.
+      final url = m.group(0)!.replaceFirst(RegExp(r'[).,;:]+$'), '');
+      final end = m.start + url.length;
       spans.add(
         TextSpan(
-          text: 'Open login page',
+          text: url,
           style: linkStyle,
           recognizer: TapGestureRecognizer()
             ..onTap = () => SocketAgentLinkRouter.open(
@@ -2232,7 +2224,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             ),
         ),
       );
-      last = m.end;
+      last = end;
     }
     if (last < text.length) spans.add(TextSpan(text: text.substring(last)));
     return RichText(

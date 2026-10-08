@@ -6,6 +6,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/file_download_frame.dart';
 import 'crypto_service.dart';
 import 'socket_frame_decoder.dart';
+import '../models/browser_frame_wire.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, error }
 
@@ -371,6 +372,7 @@ class WebSocketService {
             'lane': _lane.name,
             'binaryEnvelope': true,
             'binaryFileDownloadVersion': binaryFileDownloadVersion,
+            'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
             'transportLaneVersion': transportLaneVersion,
             'uploadAckVersion': uploadAckVersion,
             'sessionEventAckVersion': _sessionEventAckVersion,
@@ -511,6 +513,7 @@ class WebSocketService {
         'lane': _lane.name,
         'binaryEnvelope': true,
         'binaryFileDownloadVersion': binaryFileDownloadVersion,
+        'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
         'transportLaneVersion': transportLaneVersion,
         'uploadAckVersion': uploadAckVersion,
         'sessionEventAckVersion': _sessionEventAckVersion,
@@ -524,6 +527,7 @@ class WebSocketService {
       'lane': _lane.name,
       'binaryEnvelope': true,
       'binaryFileDownloadVersion': binaryFileDownloadVersion,
+      'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
       'transportLaneVersion': transportLaneVersion,
       'uploadAckVersion': uploadAckVersion,
       'sessionEventAckVersion': _sessionEventAckVersion,

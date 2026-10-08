@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'inline_chat_images.dart';
+import 'markdown_blocks.dart';
 import '../models/message.dart';
 import '../services/socketagent_link_router.dart';
 import 'scroll_passthrough.dart';
@@ -174,10 +175,15 @@ class _QuestionCardState extends State<QuestionCard> {
                       'socketagent-compare': ChatCompareBuilder(
                         widget.sourceServerId,
                       ),
+                      'pre': CodeBlockBuilder(
+                        style: const TextStyle(fontSize: 12),
+                        background: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
+                      ),
                     },
-                    data: SocketAgentLinkRouter.prepareMarkdown(
-                      question.question,
-                    ),
+                    data: question.question,
+                    inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
                     onTapLink: (text, href, title) {
                       SocketAgentLinkRouter.open(
                         context,
@@ -211,6 +217,12 @@ class _QuestionCardState extends State<QuestionCard> {
                         backgroundColor: Theme.of(
                           context,
                         ).colorScheme.surfaceContainerHighest,
+                      ),
+                      codeblockDecoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest,
+                        borderRadius: BorderRadius.circular(6),
                       ),
                       listBullet: TextStyle(
                         fontSize: 13,
@@ -432,8 +444,14 @@ class _QuestionCardState extends State<QuestionCard> {
                   'socketagent-compare': ChatCompareBuilder(
                     widget.sourceServerId,
                   ),
+                  'pre': CodeBlockBuilder(
+                    style: const TextStyle(fontSize: 11),
+                    padding: const EdgeInsets.all(8),
+                    background: theme.colorScheme.surfaceContainerHighest,
+                  ),
                 },
-                data: SocketAgentLinkRouter.prepareMarkdown(option.preview!),
+                data: option.preview!,
+                inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
                 onTapLink: (text, href, title) {
                   SocketAgentLinkRouter.open(
                     context,
@@ -450,6 +468,10 @@ class _QuestionCardState extends State<QuestionCard> {
                     fontSize: 11,
                     color: theme.colorScheme.primary,
                     backgroundColor: theme.colorScheme.surfaceContainerHighest,
+                  ),
+                  codeblockDecoration: BoxDecoration(
+                    color: theme.colorScheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(6),
                   ),
                 ),
               ),

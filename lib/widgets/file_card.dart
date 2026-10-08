@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/message.dart';
 import '../services/chat_provider.dart';
 import '../services/file_open_service.dart';
+import '../util/format.dart';
 
 class FileCard extends StatelessWidget {
   final ChatMessage message;
@@ -20,19 +21,6 @@ class FileCard extends StatelessWidget {
 
   String get _displayName {
     return _filePath.split('/').last;
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes >= 1024 * 1024 * 1024) {
-      return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
-    }
-    if (bytes >= 1024 * 1024) {
-      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-    }
-    if (bytes >= 1024) {
-      return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    }
-    return '$bytes B';
   }
 
   IconData _fileIcon(String name) {
@@ -138,7 +126,7 @@ class FileCard extends StatelessWidget {
       subtitle = 'Downloading...';
     } else if (hasServerFile) {
       subtitle = serverFileSize != null
-          ? 'Ready to download - ${_formatBytes(serverFileSize)}'
+          ? 'Ready to download - ${formatBytes(serverFileSize)}'
           : 'Ready to download';
     } else if (toolOutput.isNotEmpty) {
       subtitle = toolOutput;

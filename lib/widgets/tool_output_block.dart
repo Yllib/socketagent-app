@@ -3,9 +3,12 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
+import '../util/line_diff.dart';
 import 'bash_command_view.dart';
+import 'copy_button.dart';
 import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
+import 'zoomable_image.dart';
 
 bool _isStructuredToolContent(dynamic value) {
   if (value is List) {
@@ -291,11 +294,13 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       buf.writeln('--- $filePath');
       buf.writeln('+++ $filePath');
     }
-    for (final line in oldStr.split('\n')) {
-      buf.writeln('- $line');
-    }
-    for (final line in newStr.split('\n')) {
-      buf.writeln('+ $line');
+    for (final line in lineDiff(oldStr, newStr)) {
+      final prefix = switch (line.op) {
+        DiffOp.same => ' ',
+        DiffOp.removed => '-',
+        DiffOp.added => '+',
+      };
+      buf.writeln('$prefix ${line.text}');
     }
     return buf.toString().trimRight();
   }
@@ -320,7 +325,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final elapsed = widget.message.toolElapsedSeconds;
     final editDiff = _editDiff;
     final patchDiff = _isApplyPatchTool && hasOutput ? output : null;
-    final patchStats = patchDiff == null ? null : _diffStats(patchDiff);
+    final diffSource = patchDiff ?? editDiff;
+    final diffStats = diffSource == null ? null : _diffStats(diffSource);
 
     final accentColor = widget.greenTheme
         ? const Color(0xFFA6E3A1)
@@ -430,10 +436,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     const Icon(Icons.image, size: 14, color: Color(0xFFA6E3A1)),
                     const SizedBox(width: 4),
                   ],
-                  if (_isApplyPatchTool &&
-                      patchStats != null &&
-                      !_expanded) ...[
-                    _buildDiffStatBadges(patchStats),
+                  if (diffStats != null && !_expanded) ...[
+                    _buildDiffStatBadges(diffStats),
                     const SizedBox(width: 6),
                   ],
                   if (hasExpandableContent && gotResult && !isStreaming)
@@ -508,17 +512,20 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           ],
           // Diff view for Edit tool
           if (_isEditTool && editDiff != null && _expanded)
-            Container(
-              constraints: const BoxConstraints(maxHeight: 300),
-              decoration: const BoxDecoration(
-                border: Border(
-                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+            _withCopyButton(
+              widget.message.toolInput?['new_string'] as String? ?? '',
+              Container(
+                constraints: const BoxConstraints(maxHeight: 300),
+                decoration: const BoxDecoration(
+                  border: Border(
+                    top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                  ),
                 ),
-              ),
-              child: ScrollPassthrough(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(12),
-                  child: _buildDiffView(editDiff),
+                child: ScrollPassthrough(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
+                    child: _buildDiffView(editDiff),
+                  ),
                 ),
               ),
             ),
@@ -626,7 +633,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       return _buildOutputContainer(widget.message.toolOutput);
     }
 
-    return Container(
+    final pane = Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
@@ -664,6 +671,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         ),
       ),
     );
+    return _withCopyButton(taskOutput ?? '', pane);
   }
 
   Widget _buildInlineImage() {
@@ -700,14 +708,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         insetPadding: EdgeInsets.zero,
         child: Stack(
           children: [
-            InteractiveViewer(
-              minScale: 0.5,
-              maxScale: 5.0,
-              child: Center(
-                child: Image.memory(
-                  bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
-                  fit: BoxFit.contain,
-                ),
+            ZoomableImage(
+              child: Image.memory(
+                bytes is Uint8List ? bytes : Uint8List.fromList(bytes),
+                fit: BoxFit.contain,
               ),
             ),
             Positioned(
@@ -729,7 +733,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
 
   Widget _buildWriteContent(String content) {
     final lines = content.split('\n');
-    return Container(
+    final pane = Container(
       constraints: const BoxConstraints(maxHeight: 400),
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
@@ -787,11 +791,23 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         ),
       ),
     );
+    return _withCopyButton(content, pane);
+  }
+
+  /// Overlays a copy button on the top-right corner of a text pane.
+  Widget _withCopyButton(String text, Widget pane) {
+    if (text.isEmpty) return pane;
+    return Stack(
+      children: [
+        pane,
+        Positioned(top: 4, right: 4, child: CopyButton(text: text)),
+      ],
+    );
   }
 
   Widget _buildOutputContainer(String? text, {bool muted = false}) {
     final structured = text == null ? null : decodeJsonDocument(text);
-    return Container(
+    final pane = Container(
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
@@ -815,6 +831,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         ),
       ),
     );
+    return muted ? pane : _withCopyButton(text ?? '', pane);
   }
 
   Widget _buildStructuredInputContainer(Map<String, dynamic> input) {

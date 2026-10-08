@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/inline_chat_media.dart';
 import '../services/chat_image_loader.dart';
 import '../services/chat_provider.dart';
+import 'zoomable_image.dart';
 
 typedef ChatImageFetch =
     Future<Uint8List> Function(ChatImageSource image, String? serverId);
@@ -316,12 +317,7 @@ class _InlineChatImagesState extends State<InlineChatImages> {
             children: [
               if (compare) _selectors(),
               Expanded(
-                child: InteractiveViewer(
-                  transformationController: _transform,
-                  minScale: 1,
-                  maxScale: 8,
-                  child: _image(),
-                ),
+                child: ZoomableImage(controller: _transform, child: _image()),
               ),
             ],
           ),

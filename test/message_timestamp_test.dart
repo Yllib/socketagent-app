@@ -29,6 +29,33 @@ void main() {
     }
   });
 
+  testWidgets('sent messages show how far delivery has got', (tester) async {
+    Future<void> show(ChatMessage message) => tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: MessageBubble(message: message)),
+      ),
+    );
+    ChatMessage sent({MessageDelivery? delivery, String? uuid}) => ChatMessage(
+      id: 'sent',
+      sender: MessageSender.user,
+      type: MessageType.text,
+      timestamp: DateTime(2026, 10, 6, 19, 0),
+      textContent: 'Hello',
+      delivery: delivery,
+      uuid: uuid,
+    );
+
+    await show(sent(delivery: MessageDelivery.queued));
+    expect(find.byType(Tooltip), findsNothing);
+    await show(sent(delivery: MessageDelivery.received));
+    expect(find.byTooltip('Received by the computer'), findsOneWidget);
+    await show(sent(delivery: MessageDelivery.failed));
+    expect(find.byTooltip('Not delivered'), findsOneWidget);
+    // Once the agent has it, an earlier failure no longer matters.
+    await show(sent(delivery: MessageDelivery.failed, uuid: 'saved'));
+    expect(find.byTooltip('Read by the agent'), findsOneWidget);
+  });
+
   testWidgets('text timestamps sit outside selectable message content', (
     tester,
   ) async {

@@ -4,12 +4,15 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
+import 'package:in_app_update/in_app_update.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart' as crypto;
 import '../config/app_distribution.dart';
+import '../util/format.dart';
 
 class UpdateInfo {
   final String latestVersion;
@@ -20,6 +23,10 @@ class UpdateInfo {
   final String currentVersion;
   final bool updateAvailable;
 
+  /// Google Play delivers this update. Play reports only a version code, so
+  /// [latestVersion] holds that code and should not be shown as a version.
+  final bool fromPlay;
+
   UpdateInfo({
     required this.latestVersion,
     required this.downloadUrl,
@@ -28,7 +35,19 @@ class UpdateInfo {
     this.signingCertSha256 = '',
     required this.currentVersion,
     required this.updateAvailable,
+    this.fromPlay = false,
   });
+}
+
+/// Google Play's in-app update calls, kept apart so tests can stand in for
+/// the Play Store.
+class PlayUpdateApi {
+  const PlayUpdateApi();
+
+  Future<AppUpdateInfo> check() => InAppUpdate.checkForUpdate();
+  Future<AppUpdateResult> download() => InAppUpdate.startFlexibleUpdate();
+  Future<AppUpdateResult> updateNow() => InAppUpdate.performImmediateUpdate();
+  Future<void> install() => InAppUpdate.completeFlexibleUpdate();
 }
 
 class UpdateService extends ChangeNotifier {
@@ -37,6 +56,7 @@ class UpdateService extends ChangeNotifier {
     http.Client? metadataClient,
     Future<Directory> Function()? updatesDirectory,
     Future<void> Function(String, List<String>)? launchWindowsInstaller,
+    this.play = const PlayUpdateApi(),
   }) : _metadataClient = metadataClient ?? http.Client(),
        _directory = updatesDirectory,
        _launchWindowsInstaller =
@@ -46,7 +66,14 @@ class UpdateService extends ChangeNotifier {
   final http.Client _metadataClient;
   final Future<Directory> Function()? _directory;
   final Future<void> Function(String, List<String>) _launchWindowsInstaller;
-  bool get _supported => distribution != AppDistribution.play;
+  final PlayUpdateApi play;
+
+  /// A Play release uploaded with this in-app update priority or higher is
+  /// urgent: the app hands the screen to Play's full-screen update instead
+  /// of offering the banner. `upload-play.mjs --urgent` sets it.
+  static const urgentPlayPriority = 4;
+
+  bool get _fromPlay => distribution == AppDistribution.play;
   bool get isDesktopUpdate => distribution == AppDistribution.windows;
 
   UpdateInfo? _updateInfo;
@@ -70,11 +97,11 @@ class UpdateService extends ChangeNotifier {
   String? get error => _error;
   bool get updateAvailable => _updateInfo?.updateAvailable ?? false;
 
-  /// Direct app update check against the public release metadata on GitHub.
+  /// Checks Google Play on Play builds and the public release metadata on
+  /// GitHub everywhere else.
   Future<UpdateInfo?> checkForUpdate() async {
-    if (!_supported || _isDownloading || _isOpeningInstaller) {
-      return _updateInfo;
-    }
+    if (_isDownloading || _isOpeningInstaller) return _updateInfo;
+    if (_fromPlay) return _checkPlay();
     _finishInstallerLaunchState();
     _error = null;
     try {
@@ -130,6 +157,63 @@ class UpdateService extends ChangeNotifier {
       notifyListeners();
       return null;
     }
+  }
+
+  Future<UpdateInfo?> _checkPlay() async {
+    _error = null;
+    try {
+      final current = (await PackageInfo.fromPlatform()).version;
+      final status = await play.check();
+      final ready = status.installStatus == InstallStatus.downloaded;
+      _isDownloading = status.installStatus == InstallStatus.downloading;
+      _hasDownloadedUpdate = ready;
+      _updateInfo = UpdateInfo(
+        latestVersion: '${status.availableVersionCode ?? ''}',
+        downloadUrl: '',
+        sha256: '',
+        currentVersion: current,
+        updateAvailable:
+            ready ||
+            _isDownloading ||
+            status.updateAvailability == UpdateAvailability.updateAvailable,
+        fromPlay: true,
+      );
+      notifyListeners();
+      if (status.updateAvailability == UpdateAvailability.updateAvailable &&
+          status.updatePriority >= urgentPlayPriority &&
+          status.immediateUpdateAllowed) {
+        // Play takes over the screen and restarts the app once installed. A
+        // declined update comes back at the next check.
+        await play.updateNow();
+      }
+      return _updateInfo;
+    } on PlatformException catch (e) {
+      // Builds not installed from Play, such as test APKs, land here.
+      _error =
+          'Google Play could not check for updates: ${e.message ?? e.code}';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  /// Play downloads in the background while the app stays usable; the
+  /// returned future completes once the update is ready to install.
+  Future<void> _downloadFromPlay() async {
+    _isDownloading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final result = await play.download();
+      _hasDownloadedUpdate = result == AppUpdateResult.success;
+      if (result == AppUpdateResult.inAppUpdateFailed) {
+        _error = 'Google Play could not download the update';
+      }
+    } on PlatformException catch (e) {
+      _error =
+          'Google Play could not download the update: ${e.message ?? e.code}';
+    }
+    _isDownloading = false;
+    notifyListeners();
   }
 
   Future<Map<String, dynamic>?> _fetchReleaseMetadata() async {
@@ -241,7 +325,11 @@ class UpdateService extends ChangeNotifier {
   /// Download and verify the update without starting installation. Download state
   /// lives on this service, so it continues while callers navigate elsewhere.
   Future<void> downloadUpdate() async {
-    if (!_supported || !updateAvailable) return;
+    if (!updateAvailable) return;
+    if (_fromPlay) {
+      if (!_isDownloading && !_hasDownloadedUpdate) await _downloadFromPlay();
+      return;
+    }
     if (_updateInfo == null || _updateInfo!.downloadUrl.isEmpty) return;
     if (_isDownloading) return;
     if (_updateInfo!.sha256.isEmpty) {
@@ -306,7 +394,12 @@ class UpdateService extends ChangeNotifier {
   /// both steps. New compact controls should use downloadUpdate followed by
   /// installDownloaded so the ready-to-install state remains explicit.
   Future<void> downloadAndInstall() async {
-    if (!_supported || !updateAvailable) return;
+    if (!updateAvailable) return;
+    if (_fromPlay) {
+      await downloadUpdate();
+      if (_hasDownloadedUpdate) await installDownloaded();
+      return;
+    }
     await _refreshDownloadedUpdateState();
     if (!_hasDownloadedUpdate) {
       await downloadUpdate();
@@ -317,7 +410,19 @@ class UpdateService extends ChangeNotifier {
   }
 
   Future<void> installDownloaded() async {
-    if (!_supported || !updateAvailable) return;
+    if (!updateAvailable) return;
+    if (_fromPlay) {
+      // Play installs the update and restarts the app.
+      if (!_hasDownloadedUpdate) return;
+      try {
+        await play.install();
+      } on PlatformException catch (e) {
+        _error =
+            'Google Play could not install the update: ${e.message ?? e.code}';
+        notifyListeners();
+      }
+      return;
+    }
     if (_isOpeningInstaller) return;
     _isOpeningInstaller = true;
     _error = null;
@@ -422,7 +527,7 @@ class UpdateService extends ChangeNotifier {
       },
       onRetry: (attempt, received) {
         _error =
-            'Connection interrupted. Retrying from ${_formatBytes(received)}...';
+            'Connection interrupted. Retrying from ${formatBytes(received)}...';
         notifyListeners();
       },
     );
@@ -431,16 +536,6 @@ class UpdateService extends ChangeNotifier {
     final manifest = File('${partFile.path}.json');
     if (await manifest.exists()) await manifest.delete();
     return true;
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    final kb = bytes / 1024;
-    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
-    final mb = kb / 1024;
-    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
-    final gb = mb / 1024;
-    return '${gb.toStringAsFixed(1)} GB';
   }
 
   Future<void> _deleteIfExists(File file) async {

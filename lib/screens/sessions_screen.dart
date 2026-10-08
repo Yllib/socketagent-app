@@ -8,6 +8,7 @@ import '../services/websocket_service.dart';
 import '../models/message.dart';
 import '../models/session_grouping.dart';
 import '../models/session_list_filter.dart';
+import '../util/format.dart';
 import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/transfer_history_dialog.dart';
 import '../widgets/computer_filter_dialog.dart';
@@ -1245,19 +1246,7 @@ class _SessionsTabState extends State<SessionsTab> {
                                       session['lastActive'] as String? ?? '',
                                     ) ??
                                     DateTime.now();
-                                final timeDiff = DateTime.now().difference(
-                                  lastActive,
-                                );
-                                String timeAgo;
-                                if (timeDiff.inMinutes < 1) {
-                                  timeAgo = 'just now';
-                                } else if (timeDiff.inHours < 1) {
-                                  timeAgo = '${timeDiff.inMinutes}m ago';
-                                } else if (timeDiff.inDays < 1) {
-                                  timeAgo = '${timeDiff.inHours}h ago';
-                                } else {
-                                  timeAgo = '${timeDiff.inDays}d ago';
-                                }
+                                final timeAgo = formatTimeAgo(lastActive);
                                 return ListTile(
                                   dense: true,
                                   leading: Icon(
@@ -2014,7 +2003,11 @@ class _SessionsTabState extends State<SessionsTab> {
                     serverName,
                     _backendLabel(backend),
                     if (cwd.isNotEmpty) _projectLabelForCwd(cwd),
-                    _formatSessionTime(session['lastActive']?.toString()),
+                    if (DateTime.tryParse(
+                          session['lastActive']?.toString() ?? '',
+                        )
+                        case final lastActive?)
+                      formatTimeAgo(lastActive),
                   ].where((part) => part.isNotEmpty).join(' · '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -2034,17 +2027,6 @@ class _SessionsTabState extends State<SessionsTab> {
         ),
       ],
     );
-  }
-
-  String _formatSessionTime(String? raw) {
-    final value = DateTime.tryParse(raw ?? '');
-    if (value == null) return '';
-    final age = DateTime.now().difference(value);
-    if (age.inMinutes < 1) return 'just now';
-    if (age.inHours < 1) return '${age.inMinutes}m ago';
-    if (age.inDays < 1) return '${age.inHours}h ago';
-    if (age.inDays < 30) return '${age.inDays}d ago';
-    return '${value.month}/${value.day}/${value.year}';
   }
 
   Widget _buildSessionSectionHeader(
@@ -2222,7 +2204,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
   Widget _buildUpdateBanner(BuildContext context) {
     final shell = context.findAncestorStateOfType<MainShellScreenState>();
-    if (shell == null || !shell.supportsSelfUpdates) {
+    if (shell == null) {
       return const SizedBox.shrink();
     }
     // This tab is a const child of the shell, so the shell rebuilding on update
@@ -2276,7 +2258,9 @@ class _SessionsTabState extends State<SessionsTab> {
             const SizedBox(width: 10),
             Expanded(
               child: Text(
-                'Update available: v${info.currentVersion} \u2192 v${info.latestVersion}',
+                info.fromPlay
+                    ? 'Update available on Google Play'
+                    : 'Update available: v${info.currentVersion} \u2192 v${info.latestVersion}',
                 style: const TextStyle(fontSize: 13),
               ),
             ),
@@ -2644,16 +2628,13 @@ class _SessionsTabState extends State<SessionsTab> {
     required int fullBytes,
     required int truncatedBytes,
   }) {
-    String size(int bytes) => bytes >= 1024 * 1024 * 1024
-        ? '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB'
-        : '${(bytes / (1024 * 1024)).round()} MB';
     return showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Large transcript'),
         content: Text(
-          'Full: ${size(fullBytes)}\n'
-          'Truncated: ${size(truncatedBytes)}\n\n'
+          'Full: ${formatBytes(fullBytes)}\n'
+          'Truncated: ${formatBytes(truncatedBytes)}\n\n'
           'Truncating keeps the first 1 KB of each large tool output. '
           'Remember search finds the same results, but those outputs '
           'can no longer be read in full.',
@@ -3648,17 +3629,7 @@ class _SessionsTabState extends State<SessionsTab> {
         session.id == provider.activeSessionId &&
         session.serverId == provider.activeSessionServerId;
     compact = compact || widget.sidebar;
-    final timeDiff = DateTime.now().difference(session.lastActive);
-    String timeAgo;
-    if (timeDiff.inMinutes < 1) {
-      timeAgo = 'just now';
-    } else if (timeDiff.inHours < 1) {
-      timeAgo = '${timeDiff.inMinutes}m ago';
-    } else if (timeDiff.inDays < 1) {
-      timeAgo = '${timeDiff.inHours}h ago';
-    } else {
-      timeAgo = '${timeDiff.inDays}d ago';
-    }
+    final timeAgo = formatTimeAgo(session.lastActive);
 
     String displayCwd = session.cwd;
     final homePattern = RegExp(r'^/home/[^/]+/');

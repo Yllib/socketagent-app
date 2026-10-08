@@ -20,6 +20,7 @@ import '../../services/push_notification_service.dart';
 import '../../services/private_integration_auth_flow.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
+import '../../util/format.dart';
 import '../../widgets/adaptive_action_sheet.dart';
 import '../file_manager_screen.dart';
 import '../../services/codex_sign_in_callback.dart';
@@ -58,28 +59,21 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
   @override
   void initState() {
     super.initState();
-    if (AppBuild.supportsSelfUpdates) {
-      updateService.addListener(_onUpdateChanged);
-    }
+    updateService.addListener(_onUpdateChanged);
     unawaited(_loadCurrentVersion());
   }
 
   @override
   void didUpdateWidget(covariant SettingsV2Screen oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!AppBuild.supportsSelfUpdates ||
-        oldWidget.updateService == updateService) {
-      return;
-    }
+    if (oldWidget.updateService == updateService) return;
     oldWidget.updateService.removeListener(_onUpdateChanged);
     updateService.addListener(_onUpdateChanged);
   }
 
   @override
   void dispose() {
-    if (AppBuild.supportsSelfUpdates) {
-      updateService.removeListener(_onUpdateChanged);
-    }
+    updateService.removeListener(_onUpdateChanged);
     super.dispose();
   }
 
@@ -110,7 +104,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'SocketAgent v${result!.latestVersion} is available. Tap the download icon.',
+            result!.fromPlay
+                ? 'An update is available on Google Play. Tap the download icon.'
+                : 'SocketAgent v${result.latestVersion} is available. Tap the download icon.',
           ),
         ),
       );
@@ -375,7 +371,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           appBar: AppBar(
             title: const Text('Settings'),
             actions: [
-              if (AppBuild.supportsSelfUpdates) _buildUpdateAction(context),
+              _buildUpdateAction(context),
               Padding(
                 padding: const EdgeInsets.only(left: 2, right: 12),
                 child: Center(
@@ -693,7 +689,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
         ),
       );
     }
-    if (AppBuild.supportsSelfUpdates && updateService.updateAvailable) {
+    if (updateService.updateAvailable) {
       final downloading = updateService.isDownloading;
       final downloaded = updateService.hasDownloadedUpdate;
       final openingInstaller = updateService.isOpeningInstaller;
@@ -717,6 +713,8 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
               : 'App update available',
           subtitle: downloading && updateService.downloadProgress != null
               ? '${(updateService.downloadProgress! * 100).round()}% downloaded'
+              : updateService.updateInfo?.fromPlay == true
+              ? 'From Google Play'
               : 'Version ${updateService.updateInfo?.latestVersion ?? ''}',
           severity: _AttentionSeverity.info,
           onTap: _handleUpdateAction,
@@ -1657,19 +1655,17 @@ class _Overview extends StatelessWidget {
                   tone: warnings == 0 ? _ChipTone.good : _ChipTone.warning,
                 ),
               ),
-              if (AppBuild.supportsSelfUpdates) ...[
-                const SizedBox(width: 6),
-                Expanded(
-                  child: _MetricChip(
-                    icon: Icons.system_update,
-                    label: 'App',
-                    value: updateService.updateAvailable ? 'update' : 'current',
-                    tone: updateService.updateAvailable
-                        ? _ChipTone.info
-                        : _ChipTone.good,
-                  ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: _MetricChip(
+                  icon: Icons.system_update,
+                  label: 'App',
+                  value: updateService.updateAvailable ? 'update' : 'current',
+                  tone: updateService.updateAvailable
+                      ? _ChipTone.info
+                      : _ChipTone.good,
                 ),
-              ],
+              ),
             ],
           ),
         ],
@@ -4110,11 +4106,11 @@ List<String> _subscriptionLines(ChatProvider provider) {
     parts.add('Legacy Stripe subscription active');
   } else if (provider.subscriptionStatus == 'trialing' &&
       provider.trialEnd != null) {
-    parts.add('Trial ends ${_formatDate(provider.trialEnd!)}');
+    parts.add('Trial ends ${formatDate(provider.trialEnd!)}');
   } else if (provider.cancelAtPeriodEnd && provider.periodEnd != null) {
-    parts.add('Cancels ${_formatDate(provider.periodEnd!)}');
+    parts.add('Cancels ${formatDate(provider.periodEnd!)}');
   } else if (provider.subscriptionActive && provider.periodEnd != null) {
-    parts.add('Renews ${_formatDate(provider.periodEnd!)}');
+    parts.add('Renews ${formatDate(provider.periodEnd!)}');
   } else if (provider.subscriptionActive) {
     parts.add('Active');
   } else {
@@ -4142,23 +4138,4 @@ String _mcpSubtitle(ChatProvider provider) {
   }).length;
   if (failed > 0) return '$connected connected, $failed failed';
   return '$connected of ${servers.length} connected';
-}
-
-String _formatDate(DateTime date) {
-  const months = [
-    'Jan',
-    'Feb',
-    'Mar',
-    'Apr',
-    'May',
-    'Jun',
-    'Jul',
-    'Aug',
-    'Sep',
-    'Oct',
-    'Nov',
-    'Dec',
-  ];
-  final local = date.toLocal();
-  return '${months[local.month - 1]} ${local.day}, ${local.year}';
 }

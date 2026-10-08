@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/html_plan.dart';
 import '../services/chat_provider.dart';
 import '../services/html_plan_export_service.dart';
+import '../util/format.dart';
 import 'html_plan_viewer_screen.dart';
 
 class HtmlPlanRevisionScreen extends StatefulWidget {
@@ -98,7 +99,7 @@ class _HtmlPlanRevisionScreenState extends State<HtmlPlanRevisionScreen> {
                 subtitle: Text(
                   [
                     _formatDate(revision.createdAt),
-                    _formatBytes(revision.byteSize),
+                    formatBytes(revision.byteSize),
                     if (revision.restoredFromRevision != null)
                       revision.restoredFromRevision == 0
                           ? 'Restored from original'
@@ -406,9 +407,4 @@ String _formatDate(DateTime value) {
   final hour = local.hour.toString().padLeft(2, '0');
   final minute = local.minute.toString().padLeft(2, '0');
   return '${local.month}/${local.day}/${local.year} $hour:$minute';
-}
-
-String _formatBytes(int bytes) {
-  if (bytes < 1024) return '$bytes B';
-  return '${(bytes / 1024).toStringAsFixed(1)} KB';
 }

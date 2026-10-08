@@ -4,10 +4,9 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 class HtmlPlanExportService {
-  static const _channel = MethodChannel('com.socketagent.app/intent');
-
   /// The HTML plan tool is a pass-through. Isolation is enforced by the
   /// WebView configuration, never by silently rewriting the agent's document.
   static String buildViewerDocument(String source) => source;
@@ -62,9 +61,12 @@ class HtmlPlanExportService {
       encoding: utf8,
       flush: true,
     );
-    await _channel.invokeMethod<void>('shareHtmlFile', {
-      'path': file.path,
-      'title': title,
-    });
+    await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(file.path, mimeType: 'text/html')],
+        subject: title,
+        title: 'Share HTML plan',
+      ),
+    );
   }
 }

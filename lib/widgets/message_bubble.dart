@@ -2,16 +2,23 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:share_plus/share_plus.dart';
 import '../models/message.dart';
 import '../models/ai_response_report.dart';
 import '../services/socketagent_link_router.dart';
+import '../util/markdown_plain_text.dart';
 import 'adaptive_action_sheet.dart';
 import 'inline_chat_images.dart';
+import 'markdown_blocks.dart';
 import 'message_timestamp.dart';
 import 'message_attachments.dart';
 
 class MessageBubble extends StatelessWidget {
-  static const _nativeChannel = MethodChannel('com.socketagent.app/intent');
+  static final _codeStyle = GoogleFonts.jetBrainsMono(
+    color: const Color(0xFFE6E6E6),
+    backgroundColor: const Color(0xFF181818),
+    fontSize: 13,
+  );
 
   final ChatMessage message;
   final bool codexRewind;
@@ -77,13 +84,48 @@ class MessageBubble extends StatelessWidget {
           ),
           Padding(
             padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
-            child: MessageTimestamp(timestamp: message.timestamp),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                MessageTimestamp(timestamp: message.timestamp),
+                if (isUser) ..._deliveryMark(theme),
+              ],
+            ),
           ),
           if (isUploading)
             _buildUploadIndicator(context, theme, isUser, uploadProgress),
         ],
       ),
     );
+  }
+
+  /// An empty circle once the computer has the message, a check in it once
+  /// the agent has it. A queued message shows only as a faded bubble.
+  List<Widget> _deliveryMark(ThemeData theme) {
+    final muted = theme.colorScheme.onSurfaceVariant;
+    final (icon, color, label) = message.uuid != null
+        ? (Icons.check_circle, muted, 'Read by the agent')
+        : switch (message.delivery) {
+            MessageDelivery.received => (
+              Icons.radio_button_unchecked,
+              muted,
+              'Received by the computer',
+            ),
+            MessageDelivery.failed => (
+              Icons.error_outline,
+              theme.colorScheme.error,
+              'Not delivered',
+            ),
+            MessageDelivery.queued || null => (null, muted, ''),
+          };
+    if (icon == null) return const [];
+    return [
+      const SizedBox(width: 4),
+      Tooltip(
+        message: label,
+        child: Icon(icon, size: 12, color: color, semanticLabel: label),
+      ),
+    ];
   }
 
   Widget _buildBubbleStack(
@@ -157,16 +199,15 @@ class MessageBubble extends StatelessWidget {
                           ),
                       ],
                     )
-                  : SelectionArea(
+                  : MarkdownSelectionArea(
                       // MarkdownBody's selectable mode creates one independent
-                      // SelectableText per block. A single SelectionArea around
+                      // SelectableText per block. One selection area around
                       // ordinary rich text lets selection span paragraphs,
                       // lists, headings, and code blocks as one message.
                       child: MarkdownBody(
-                        data: SocketAgentLinkRouter.prepareMarkdown(
-                          message.textContent,
-                        ),
+                        data: message.textContent,
                         selectable: false,
+                        inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
                         imageBuilder: (uri, title, alt) =>
                             buildChatMarkdownImage(
                               uri,
@@ -179,6 +220,7 @@ class MessageBubble extends StatelessWidget {
                           'socketagent-compare': ChatCompareBuilder(
                             sourceServerId,
                           ),
+                          'pre': CodeBlockBuilder(style: _codeStyle),
                         },
                         onTapLink: (text, href, title) {
                           SocketAgentLinkRouter.open(
@@ -219,11 +261,7 @@ class MessageBubble extends StatelessWidget {
                             color: textColor,
                             fontStyle: FontStyle.italic,
                           ),
-                          code: GoogleFonts.jetBrainsMono(
-                            color: const Color(0xFFE6E6E6),
-                            backgroundColor: const Color(0xFF181818),
-                            fontSize: 13,
-                          ),
+                          code: _codeStyle,
                           codeblockDecoration: BoxDecoration(
                             color: const Color(0xFF181818),
                             borderRadius: BorderRadius.circular(8),
@@ -348,7 +386,7 @@ class MessageBubble extends StatelessWidget {
             onTap: () async {
               Navigator.pop(sheetContext);
               await Clipboard.setData(
-                ClipboardData(text: _plainText(message.textContent)),
+                ClipboardData(text: markdownToPlainText(message.textContent)),
               );
               if (!context.mounted) return;
               ScaffoldMessenger.of(
@@ -378,19 +416,17 @@ class MessageBubble extends StatelessWidget {
             onTap: () async {
               Navigator.pop(sheetContext);
               try {
-                await _nativeChannel.invokeMethod<void>('shareText', {
-                  'text': _plainText(message.textContent),
-                  'subject': 'SocketAgent message',
-                  'chooserTitle': 'Share message',
-                });
-              } on PlatformException catch (error) {
+                await SharePlus.instance.share(
+                  ShareParams(
+                    text: markdownToPlainText(message.textContent),
+                    subject: 'SocketAgent message',
+                    title: 'Share message',
+                  ),
+                );
+              } catch (_) {
                 if (!context.mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text(
-                      error.message ?? 'Unable to share this message',
-                    ),
-                  ),
+                  const SnackBar(content: Text('Unable to share this message')),
                 );
               }
             },
@@ -403,7 +439,7 @@ class MessageBubble extends StatelessWidget {
               subtitle: const Text('Use your selected text-to-speech voice'),
               onTap: () {
                 Navigator.pop(sheetContext);
-                onReadAloud!(_plainText(message.textContent));
+                onReadAloud!(markdownToPlainText(message.textContent));
               },
             ),
           if (onReport != null)
@@ -465,50 +501,6 @@ class MessageBubble extends StatelessWidget {
           Icons.fact_check_outlined,
         AiResponseReportCategory.other => Icons.more_horiz,
       };
-
-  static String _plainText(String markdown) {
-    return markdown
-        .replaceAllMapped(
-          RegExp(r'!\[([^\]]*)\]\([^)]*\)'),
-          (match) => match.group(1) ?? '',
-        )
-        .replaceAllMapped(
-          RegExp(r'\[([^\]]+)\]\([^)]*\)'),
-          (match) => match.group(1) ?? '',
-        )
-        .replaceAll(RegExp(r'^\s*```[^\n]*', multiLine: true), '')
-        .replaceAll(RegExp(r'^\s*```\s*$', multiLine: true), '')
-        .replaceAll(
-          RegExp(r'^\s{0,3}(?:#{1,6}|>|[-+*]|\d+[.)])\s+', multiLine: true),
-          '',
-        )
-        .replaceAllMapped(
-          RegExp(r'\*\*([\s\S]+?)\*\*'),
-          (match) => match.group(1) ?? '',
-        )
-        .replaceAllMapped(
-          RegExp(r'__([\s\S]+?)__'),
-          (match) => match.group(1) ?? '',
-        )
-        .replaceAllMapped(
-          RegExp(r'~~([\s\S]+?)~~'),
-          (match) => match.group(1) ?? '',
-        )
-        .replaceAllMapped(
-          RegExp(r'`([^`\n]+)`'),
-          (match) => match.group(1) ?? '',
-        )
-        .replaceAllMapped(
-          RegExp(r'(^|\s)\*([^*\n]+)\*(?=\s|[.,!?;:]|$)', multiLine: true),
-          (match) => '${match.group(1) ?? ''}${match.group(2) ?? ''}',
-        )
-        .replaceAllMapped(
-          RegExp(r'(^|\s)_([^_\n]+)_(?=\s|[.,!?;:]|$)', multiLine: true),
-          (match) => '${match.group(1) ?? ''}${match.group(2) ?? ''}',
-        )
-        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-        .trim();
-  }
 
   Widget _buildUploadIndicator(
     BuildContext context,

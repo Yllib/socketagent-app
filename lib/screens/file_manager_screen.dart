@@ -5,7 +5,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
-import 'package:flutter_highlight/themes/github.dart';
+import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../services/file_open_service.dart';
 import 'package:pdfx/pdfx.dart';
@@ -16,7 +16,10 @@ import '../models/file_manager_entry.dart';
 import '../models/server_config.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
+import '../util/format.dart';
+import '../widgets/markdown_blocks.dart';
 import '../widgets/adaptive_action_sheet.dart';
+import '../widgets/zoomable_image.dart';
 
 enum _FilePreviewKind { text, markdown, html, code, image, pdf }
 
@@ -518,7 +521,10 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
           }
           final entryIndex = rowIndex;
           final entry = rows[entryIndex];
-          final fileId = provider.getFileId(entry.path, serverId: _effectiveServerId(provider));
+          final fileId = provider.getFileId(
+            entry.path,
+            serverId: _effectiveServerId(provider),
+          );
           return _FileEntryTile(
             entry: entry,
             highlighted: entry.path == widget.highlightPath,
@@ -611,7 +617,10 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
 
   Future<void> _showFileActions(FileManagerEntry entry) async {
     final provider = context.read<ChatProvider>();
-    final fileId = provider.getFileId(entry.path, serverId: _effectiveServerId(provider));
+    final fileId = provider.getFileId(
+      entry.path,
+      serverId: _effectiveServerId(provider),
+    );
     final localPath = fileId == null
         ? null
         : provider.getReceivedFilePath(fileId);
@@ -1052,18 +1061,26 @@ class _FileTextPreviewScreenState extends State<_FileTextPreviewScreen> {
     final theme = Theme.of(context);
     switch (widget.kind) {
       case _FilePreviewKind.markdown:
-        return Markdown(
-          data: _displayContent,
-          selectable: true,
-          padding: const EdgeInsets.all(16),
-          styleSheet: MarkdownStyleSheet.fromTheme(theme).copyWith(
-            codeblockDecoration: BoxDecoration(
-              color: theme.colorScheme.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            blockquoteDecoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: theme.colorScheme.primary, width: 4),
+        final styleSheet = MarkdownStyleSheet.fromTheme(theme);
+        return MarkdownSelectionArea(
+          child: Markdown(
+            data: _displayContent,
+            padding: const EdgeInsets.all(16),
+            builders: {
+              'pre': CodeBlockBuilder(
+                style: styleSheet.code ?? const TextStyle(),
+                background: theme.colorScheme.surfaceContainerHighest,
+              ),
+            },
+            styleSheet: styleSheet.copyWith(
+              codeblockDecoration: BoxDecoration(
+                color: theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              blockquoteDecoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(color: theme.colorScheme.primary, width: 4),
+                ),
               ),
             ),
           ),
@@ -1091,8 +1108,7 @@ class _FileTextPreviewScreenState extends State<_FileTextPreviewScreen> {
         );
       case _FilePreviewKind.code:
         return Container(
-          color:
-              githubTheme['root']?.backgroundColor ?? theme.colorScheme.surface,
+          color: Colors.black,
           child: Scrollbar(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -1100,7 +1116,7 @@ class _FileTextPreviewScreenState extends State<_FileTextPreviewScreen> {
                 child: HighlightView(
                   _displayContent,
                   language: _languageForExtension(widget.entry.extension),
-                  theme: githubTheme,
+                  theme: _codePreviewTheme,
                   padding: const EdgeInsets.all(16),
                   textStyle: const TextStyle(
                     fontFamily: 'monospace',
@@ -1314,6 +1330,15 @@ class _FilePdfPreviewScreenState extends State<_FilePdfPreviewScreen> {
   }
 }
 
+/// Atom One Dark tokens on the app's true black background.
+final _codePreviewTheme = {
+  ...atomOneDarkTheme,
+  'root': atomOneDarkTheme['root']!.copyWith(
+    backgroundColor: Colors.black,
+    color: const Color(0xFFE6E6E6),
+  ),
+};
+
 class _FileImagePreviewScreen extends StatelessWidget {
   final FileManagerEntry entry;
   final Uint8List bytes;
@@ -1328,19 +1353,15 @@ class _FileImagePreviewScreen extends StatelessWidget {
         title: Text(entry.name, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
       backgroundColor: theme.colorScheme.surface,
-      body: Center(
-        child: InteractiveViewer(
-          minScale: 0.25,
-          maxScale: 5,
-          child: Image.memory(
-            bytes,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) => Padding(
-              padding: const EdgeInsets.all(24),
-              child: Text(
-                'Image preview failed: $error',
-                textAlign: TextAlign.center,
-              ),
+      body: ZoomableImage(
+        child: Image.memory(
+          bytes,
+          fit: BoxFit.contain,
+          errorBuilder: (context, error, stackTrace) => Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(
+              'Image preview failed: $error',
+              textAlign: TextAlign.center,
             ),
           ),
         ),
@@ -1694,21 +1715,12 @@ class _FileEntryTile extends StatelessWidget {
     final pieces = <String>[];
     pieces.add(entry.kind.name);
     if (entry.size != null && !entry.isDirectory) {
-      pieces.add(_formatBytes(entry.size!));
+      pieces.add(formatBytes(entry.size!));
     }
     if (entry.modifiedAt != null) {
       pieces.add(_formatDate(entry.modifiedAt!));
     }
     return pieces.join(' · ');
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    final kb = bytes / 1024;
-    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
-    final mb = kb / 1024;
-    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
-    return '${(mb / 1024).toStringAsFixed(1)} GB';
   }
 
   String _formatDate(DateTime dt) {

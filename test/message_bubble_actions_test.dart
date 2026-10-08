@@ -110,6 +110,69 @@ void main() {
     expect(find.byType(SelectableText), findsNothing);
   });
 
+  /// Captures what the app puts on the clipboard for the rest of the test.
+  String? Function() captureClipboard() {
+    String? copied;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        });
+    addTearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+    return () => copied;
+  }
+
+  testWidgets('copying a selection keeps the line breaks between blocks', (
+    tester,
+  ) async {
+    final copied = captureClipboard();
+    await pumpBubble(
+      tester,
+      assistantMessage(
+        'First paragraph.\n\n- Second block\n- Third block\n\n```\nline one\nline two\n```',
+      ),
+    );
+
+    // Text registers with the selection a frame after it is laid out.
+    await tester.pump();
+    final region = tester.state<SelectableRegionState>(
+      find.byType(SelectableRegion),
+    );
+    region.selectAll(SelectionChangedCause.keyboard);
+    await tester.pump();
+    Actions.invoke(
+      tester.element(find.byType(MarkdownBody)),
+      CopySelectionTextIntent.copy,
+    );
+    await tester.pump();
+
+    expect(
+      copied(),
+      'First paragraph.\n• Second block\n• Third block\nline one\nline two',
+    );
+  });
+
+  testWidgets('code blocks have a copy button for their code', (tester) async {
+    final copied = captureClipboard();
+    await pumpBubble(
+      tester,
+      assistantMessage('Run this:\n\n```bash\n# install\nnpm ci\n```'),
+    );
+
+    await tester.tap(find.byTooltip('Copy'));
+    await tester.pump();
+
+    expect(copied(), '# install\nnpm ci');
+    expect(find.byTooltip('Copied'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.byTooltip('Copy'), findsOneWidget);
+  });
+
   testWidgets('assistant card menu copies the complete message as plain text', (
     tester,
   ) async {
@@ -182,19 +245,18 @@ void main() {
     expect(find.text('Markdown copied'), findsOneWidget);
   });
 
-  testWidgets('assistant card shares readable plain text through Android', (
-    tester,
-  ) async {
-    const nativeChannel = MethodChannel('com.socketagent.app/intent');
+  testWidgets('assistant card shares readable plain text', (tester) async {
+    // share_plus's channel, which the Android plugin answers.
+    const shareChannel = MethodChannel('dev.fluttercommunity.plus/share');
     MethodCall? shareCall;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(nativeChannel, (call) async {
+        .setMockMethodCallHandler(shareChannel, (call) async {
           shareCall = call;
-          return true;
+          return 'dev.fluttercommunity.plus/share/unavailable';
         });
     addTearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(nativeChannel, null);
+          .setMockMethodCallHandler(shareChannel, null);
     });
 
     await pumpBubble(
@@ -213,7 +275,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('share-message')));
     await tester.pumpAndSettle();
 
-    expect(shareCall?.method, 'shareText');
+    expect(shareCall?.method, 'share');
     expect(
       (shareCall?.arguments as Map)['text'],
       'Share this answer with snake_case.',

@@ -1,6 +1,11 @@
+import '../util/format.dart';
 import 'message_attachment.dart';
 
 enum MessageSender { user, assistant, system }
+
+/// How far a message this device sent has got. Read by the agent is not a
+/// state here: a transcript [ChatMessage.uuid] already says the agent has it.
+enum MessageDelivery { queued, received, failed }
 
 String normalizeSocketAgentToolName(String rawName) {
   for (final prefix in const [
@@ -92,6 +97,9 @@ class ChatMessage {
 
   // Pending injection state (queued but not yet processed by SDK)
   bool isPending;
+
+  /// Null for messages loaded from history and for other devices' messages.
+  MessageDelivery? delivery;
   String? injectionPriority;
 
   // For attachment messages: 0.0..1.0 while uploading, null when not uploading.
@@ -162,6 +170,7 @@ class ChatMessage {
     this.toolImageMimeType,
     this.toolImageFilePath,
     this.isPending = false,
+    this.delivery,
     this.injectionPriority,
     this.uploadProgress,
     this.uploadFileName,
@@ -447,11 +456,7 @@ class ChatMessage {
         textContent: 'Context compacted ($trigger)',
       );
     }
-    final tokenStr = preTokens >= 1000000
-        ? '${(preTokens / 1000000).toStringAsFixed(1)}M'
-        : preTokens >= 1000
-        ? '${(preTokens / 1000).toStringAsFixed(1)}k'
-        : preTokens.toString();
+    final tokenStr = formatCompactCount(preTokens);
     return ChatMessage(
       id: 'compact_${DateTime.now().microsecondsSinceEpoch}',
       sender: MessageSender.system,

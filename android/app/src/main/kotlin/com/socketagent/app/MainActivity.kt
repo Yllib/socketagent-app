@@ -196,50 +196,6 @@ class MainActivity : FlutterActivity() {
                         result.error("INVALID_ARG", "url is required", null)
                     }
                 }
-                "shareHtmlFile" -> {
-                    val requestedPath = call.argument<String>("path") ?: ""
-                    val title = call.argument<String>("title") ?: "HTML plan"
-                    try {
-                        val file = File(requestedPath).canonicalFile
-                        val cacheRoot = cacheDir.canonicalFile
-                        if (!file.exists() || !file.isFile || !file.path.startsWith(cacheRoot.path + File.separator)) {
-                            result.error("SHARE_HTML_INVALID_FILE", "The exported plan is not in the app cache", null)
-                        } else {
-                            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/html"
-                                putExtra(Intent.EXTRA_SUBJECT, title)
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                clipData = ClipData.newRawUri(file.name, uri)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            startActivity(Intent.createChooser(sendIntent, "Share HTML plan"))
-                            result.success(true)
-                        }
-                    } catch (e: Exception) {
-                        result.error("SHARE_HTML_ERROR", e.message, null)
-                    }
-                }
-                "shareText" -> {
-                    val text = call.argument<String>("text") ?: ""
-                    val subject = call.argument<String>("subject") ?: "SocketAgent message"
-                    val chooserTitle = call.argument<String>("chooserTitle") ?: "Share message"
-                    if (text.isBlank()) {
-                        result.error("SHARE_TEXT_INVALID", "The message is empty", null)
-                    } else {
-                        try {
-                            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                type = "text/plain"
-                                putExtra(Intent.EXTRA_SUBJECT, subject)
-                                putExtra(Intent.EXTRA_TEXT, text)
-                            }
-                            startActivity(Intent.createChooser(sendIntent, chooserTitle))
-                            result.success(true)
-                        } catch (e: Exception) {
-                            result.error("SHARE_TEXT_ERROR", e.message, null)
-                        }
-                    }
-                }
                 else -> result.notImplemented()
             }
         }

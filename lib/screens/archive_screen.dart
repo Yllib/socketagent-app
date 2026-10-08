@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/archive_entry.dart';
 import '../models/message.dart';
 import '../services/chat_provider.dart';
+import '../util/format.dart';
 import '../widgets/codex_command_card.dart';
 import '../widgets/codex_plan_card.dart';
 import '../widgets/file_card.dart';
@@ -24,49 +25,17 @@ class ArchiveScreen extends StatefulWidget {
 
 enum _ArchiveSort { newestFirst, oldestFirst, titleAZ, mostMessages }
 
-const List<String> _monthNames = [
-  'Jan',
-  'Feb',
-  'Mar',
-  'Apr',
-  'May',
-  'Jun',
-  'Jul',
-  'Aug',
-  'Sep',
-  'Oct',
-  'Nov',
-  'Dec',
-];
-
 String _formatRelative(String iso) {
-  try {
-    final dt = DateTime.parse(iso).toLocal();
-    final now = DateTime.now();
-    final diff = now.difference(dt);
-    if (diff.inSeconds < 45) return 'just now';
-    if (diff.inMinutes < 1) return '${diff.inSeconds}s ago';
-    if (diff.inHours < 1) return '${diff.inMinutes}m ago';
-    if (diff.inDays < 1) return '${diff.inHours}h ago';
-    if (diff.inDays < 7) return '${diff.inDays}d ago';
-    if (dt.year == now.year) {
-      return '${_monthNames[dt.month - 1]} ${dt.day}';
-    }
-    return '${_monthNames[dt.month - 1]} ${dt.day}, ${dt.year}';
-  } catch (_) {
-    return iso;
-  }
+  final dt = DateTime.tryParse(iso);
+  return dt == null ? iso : formatTimeAgo(dt);
 }
 
 String _formatAbsolute(String iso) {
-  try {
-    final dt = DateTime.parse(iso).toLocal();
-    final hh = dt.hour.toString().padLeft(2, '0');
-    final mm = dt.minute.toString().padLeft(2, '0');
-    return '${_monthNames[dt.month - 1]} ${dt.day}, ${dt.year} at $hh:$mm';
-  } catch (_) {
-    return iso;
-  }
+  final dt = DateTime.tryParse(iso)?.toLocal();
+  if (dt == null) return iso;
+  final hh = dt.hour.toString().padLeft(2, '0');
+  final mm = dt.minute.toString().padLeft(2, '0');
+  return '${formatDate(dt)} at $hh:$mm';
 }
 
 class _ArchiveScreenState extends State<ArchiveScreen>

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -13,114 +14,22 @@ import 'chat_provider.dart';
 class SocketAgentLinkRouter {
   const SocketAgentLinkRouter._();
 
-  /// Makes bare app links tappable without rewriting links that are already
-  /// valid Markdown. Code spans and fenced examples stay literal.
-  static String prepareMarkdown(String source) {
-    var inFence = false;
-    final lines = source.split('\n');
-    for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
-      var line = lines[lineIndex];
-      final trimmed = line.trimLeft();
-      if (trimmed.startsWith('```') || trimmed.startsWith('~~~')) {
-        inFence = !inFence;
-        continue;
-      }
-      if (inFence) continue;
+  /// Markdown rules that make bare app links, backticked file paths, and
+  /// whole-line file paths tappable. They run inside the markdown parser, so
+  /// code blocks and code examples stay literal. Pass them to MarkdownBody's
+  /// inlineSyntaxes; [open] resolves the links they produce.
+  static final List<md.InlineSyntax> inlineSyntaxes = [
+    _CodePathSyntax(),
+    _AppLinkSyntax(),
+    _PlainPathSyntax(),
+  ];
 
-      line = _convertInlineCodeWorkspacePaths(line);
-      line = _convertWorkspaceMarkdownLinks(line);
-      line = _convertPlainWorkspacePathLine(line);
-
-      final matches = RegExp(
-        r'socketagent://[^\s<>()\[\]]+',
-      ).allMatches(line).toList(growable: false);
-      for (final match in matches.reversed) {
-        final prefix = line.substring(0, match.start);
-        if (prefix.endsWith('](') || prefix.endsWith('<')) continue;
-        if (_insideInlineCode(prefix)) continue;
-
-        var url = match.group(0)!;
-        while (url.isNotEmpty && '.,;:'.contains(url[url.length - 1])) {
-          url = url.substring(0, url.length - 1);
-        }
-        if (url.isEmpty) continue;
-        final end = match.start + url.length;
-        line = line.replaceRange(
-          match.start,
-          end,
-          '[${_linkLabel(url)}]($url)',
-        );
-      }
-      lines[lineIndex] = line;
-    }
-    return lines.join('\n');
-  }
-
-  static String _convertInlineCodeWorkspacePaths(String line) {
-    final matches = RegExp(
-      r'`([^`\n]+)`',
-    ).allMatches(line).toList(growable: false);
-    for (final match in matches.reversed) {
-      if ((match.start > 0 && line[match.start - 1] == '`') ||
-          (match.end < line.length && line[match.end] == '`')) {
-        continue;
-      }
-      final rawPath = match.group(1)!.trim();
-      final workspacePath = _parseWorkspaceTarget(rawPath);
-      if (workspacePath == null) continue;
-      line = line.replaceRange(
-        match.start,
-        match.end,
-        '[`${match.group(1)!}`](${_workspaceAppTarget(workspacePath)})',
-      );
-    }
-    return line;
-  }
-
-  static String _convertPlainWorkspacePathLine(String line) {
-    // Plain paths are deliberately restricted to a whole line, optionally
-    // introduced by the labels agents commonly use for deliverables. This
-    // avoids turning commands, JSON, logs, and ordinary prose into link soup.
-    final match = RegExp(
-      r'^(\s*(?:[-*•]\s+)?(?:(?:file|path|folder|directory|output|artifact|apk|report|open|created|updated|saved|result)\s*:\s*)?)'
-      r'((?:/[^\s`<>()\[\]\x22\x27]+|[A-Za-z]:[\\/][^\s`<>()\[\]\x22\x27]+|(?:file|workspace|sandbox):[^\s`<>()\[\]\x22\x27]+))'
-      r'(\s*)$',
-      caseSensitive: false,
-    ).firstMatch(line);
-    if (match == null) return line;
-
-    var rawPath = match.group(2)!;
-    var punctuation = '';
-    while (rawPath.isNotEmpty && '.,;'.contains(rawPath[rawPath.length - 1])) {
-      punctuation = rawPath[rawPath.length - 1] + punctuation;
-      rawPath = rawPath.substring(0, rawPath.length - 1);
-    }
-    final workspacePath = _parseWorkspaceTarget(rawPath);
-    if (workspacePath == null) return line;
-    return '${match.group(1)!}[$rawPath](${_workspaceAppTarget(workspacePath)})'
-        '$punctuation${match.group(3)!}';
-  }
-
-  static String _convertWorkspaceMarkdownLinks(String line) {
-    final matches = RegExp(
-      r'(?<!!)\[([^\]\n]+)\]\((<[^>\n]+>|[^)\s\n]+)\)',
-    ).allMatches(line).toList(growable: false);
-    for (final match in matches.reversed) {
-      if (_insideInlineCode(line.substring(0, match.start))) continue;
-      final rawTarget = match.group(2)!;
-      final target = rawTarget.startsWith('<') && rawTarget.endsWith('>')
-          ? rawTarget.substring(1, rawTarget.length - 1)
-          : rawTarget;
-      final workspacePath = _parseWorkspaceTarget(target);
-      if (workspacePath == null) continue;
-
-      line = line.replaceRange(
-        match.start,
-        match.end,
-        '[${match.group(1)!}](${_workspaceAppTarget(workspacePath)})',
-      );
-    }
-    return line;
+  /// The app link that opens [href] when it names a file on the computer, as
+  /// in `[router.dart](/home/me/router.dart:42)`. Null for web links,
+  /// app links, and anything else that is not a file path.
+  static String? fileLinkFor(String href) {
+    final workspacePath = _parseWorkspaceTarget(href);
+    return workspacePath == null ? null : _workspaceAppTarget(workspacePath);
   }
 
   static _WorkspacePath? _parseWorkspaceTarget(String rawTarget) {
@@ -212,7 +121,7 @@ class SocketAgentLinkRouter {
     String? sourceServerId,
   }) async {
     if (href == null || href.trim().isEmpty) return;
-    final uri = Uri.tryParse(href.trim());
+    final uri = Uri.tryParse(fileLinkFor(href) ?? href.trim());
     if (uri == null) {
       _showError(context, 'This link is not valid');
       return;
@@ -325,15 +234,6 @@ class SocketAgentLinkRouter {
     return null;
   }
 
-  static bool _insideInlineCode(String prefix) {
-    var unescapedTicks = 0;
-    for (var index = 0; index < prefix.length; index++) {
-      if (prefix[index] != '`') continue;
-      if (index == 0 || prefix[index - 1] != '\\') unescapedTicks++;
-    }
-    return unescapedTicks.isOdd;
-  }
-
   static String _linkLabel(String href) {
     final uri = Uri.tryParse(href);
     final action = uri != null && uri.pathSegments.isNotEmpty
@@ -376,4 +276,79 @@ class _WorkspacePath {
   final String path;
   final int? line;
   final int? column;
+}
+
+/// A markdown rule that only claims text when [build] makes a node of it.
+/// The parser treats any pattern match as handled, so a rule that declines
+/// after matching would stall it.
+abstract class _LinkSyntax extends md.InlineSyntax {
+  _LinkSyntax(super.pattern, {super.caseSensitive});
+
+  md.Node? build(Match match);
+
+  @override
+  bool tryMatch(md.InlineParser parser, [int? startMatchPos]) {
+    final match = pattern.matchAsPrefix(
+      parser.source,
+      startMatchPos ?? parser.pos,
+    );
+    return match != null &&
+        build(match) != null &&
+        super.tryMatch(parser, startMatchPos);
+  }
+
+  @override
+  bool onMatch(md.InlineParser parser, Match match) {
+    parser.addNode(build(match)!);
+    return true;
+  }
+}
+
+/// `/home/me/report.md:17` in backticks becomes a code span that opens the file.
+class _CodePathSyntax extends _LinkSyntax {
+  _CodePathSyntax() : super(r'(?<!`)`([^`\n]+)`(?!`)');
+
+  @override
+  md.Node? build(Match match) {
+    final target = SocketAgentLinkRouter.fileLinkFor(match[1]!.trim());
+    if (target == null) return null;
+    return md.Element('a', [md.Element.text('code', match[1]!)])
+      ..attributes['href'] = target;
+  }
+}
+
+/// A bare socketagent:// link becomes a link named for what it does. Trailing
+/// sentence punctuation stays outside it.
+class _AppLinkSyntax extends _LinkSyntax {
+  _AppLinkSyntax() : super(r'socketagent://[^\s<>()\[\]]*[^\s<>()\[\].,;:]');
+
+  @override
+  md.Node? build(Match match) {
+    final url = match[0]!;
+    return md.Element('a', [md.Text(SocketAgentLinkRouter._linkLabel(url))])
+      ..attributes['href'] = url;
+  }
+}
+
+/// A path that fills its whole line, optionally after a label agents use
+/// for deliverables ("Output: /tmp/app.apk"), becomes a link. Paths inside
+/// prose, commands, and JSON stay plain text.
+class _PlainPathSyntax extends _LinkSyntax {
+  _PlainPathSyntax()
+    : super(
+        r'(?<=(?:^|\n)[ \t]*(?:•[ \t]+)?'
+        r'(?:(?:file|path|folder|directory|output|artifact|apk|report|open|created|updated|saved|result)[ \t]*:[ \t]*)?)'
+        r'(?:/|[A-Za-z]:[\\/]|(?:file|workspace|sandbox):)'
+        r'[^\s`<>()\[\]\x22\x27]*[^\s`<>()\[\]\x22\x27.,;]'
+        r'(?=[.,;]*[ \t]*(?:\n|$))',
+        caseSensitive: false,
+      );
+
+  @override
+  md.Node? build(Match match) {
+    final path = match[0]!;
+    final target = SocketAgentLinkRouter.fileLinkFor(path);
+    if (target == null) return null;
+    return md.Element('a', [md.Text(path)])..attributes['href'] = target;
+  }
 }

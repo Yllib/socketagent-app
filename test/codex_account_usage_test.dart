@@ -119,7 +119,7 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       expect(find.text('Sep 5'), findsOneWidget);
-      expect(find.text('191.7M'), findsOneWidget);
+      expect(find.text('192M'), findsOneWidget);
       expect(find.text('Today'), findsNothing);
       expect(find.textContaining('Token activity'), findsNothing);
       expect(find.text('Use a reset'), findsOneWidget);
@@ -131,7 +131,7 @@ void main() {
         ),
       );
       expect(find.text('Today'), findsOneWidget);
-      expect(find.text('12.3K'), findsOneWidget);
+      expect(find.text('12k'), findsOneWidget);
     },
   );
 

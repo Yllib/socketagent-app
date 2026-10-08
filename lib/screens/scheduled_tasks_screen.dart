@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../models/scheduled_task_unread.dart';
 import '../models/session_scheduled_tasks.dart';
+import '../util/format.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'home_screen.dart';
 
@@ -56,46 +58,16 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
 
   String _formatTime(String? isoString) {
     if (isoString == null) return '';
-    final dt = DateTime.tryParse(isoString)?.toLocal();
+    final dt = DateTime.tryParse(isoString);
     if (dt == null) return isoString;
-    final now = DateTime.now();
-    final diff = dt.difference(now);
-
-    if (diff.isNegative) {
-      if (diff.inMinutes.abs() < 1) return 'just now';
-      if (diff.inHours.abs() < 1) return '${diff.inMinutes.abs()}m ago';
-      if (diff.inDays.abs() < 1) return '${diff.inHours.abs()}h ago';
-      return '${diff.inDays.abs()}d ago';
-    } else {
-      if (diff.inMinutes < 1) return 'in < 1m';
-      if (diff.inHours < 1) return 'in ${diff.inMinutes}m';
-      if (diff.inDays < 1) return 'in ${diff.inHours}h';
-      return 'in ${diff.inDays}d';
-    }
+    return formatTimeAgo(dt, dateAfter: null);
   }
 
   String _formatDateTime(String? isoString) {
     if (isoString == null) return '';
     final dt = DateTime.tryParse(isoString)?.toLocal();
     if (dt == null) return isoString;
-    final months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    final h = dt.hour > 12 ? dt.hour - 12 : (dt.hour == 0 ? 12 : dt.hour);
-    final ampm = dt.hour >= 12 ? 'PM' : 'AM';
-    final min = dt.minute.toString().padLeft(2, '0');
-    return '${months[dt.month - 1]} ${dt.day}, $h:$min $ampm';
+    return DateFormat('MMM d, h:mm a').format(dt);
   }
 
   String _recurrenceLabel(Map<String, dynamic>? recurrence) {

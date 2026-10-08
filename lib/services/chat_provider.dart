@@ -83,6 +83,7 @@ import 'session_identity_remap.dart';
 import '../models/session_message_routing.dart';
 import 'ai_response_report_service.dart';
 import '../config/app_distribution.dart';
+import '../util/format.dart';
 
 const _codexAgentControlTypes = {
   'wait',
@@ -826,6 +827,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, int> _serverSessionTransferVersions = {};
   final Map<String, int> _serverCodexGoalVersions = {};
   final Map<String, int> _serverSessionMemoryVersions = {};
+  // Servers whose browser sessions take streamed pointer and key events.
+  final Set<String> _serversWithBrowserNativeInput = {};
   final Map<String, CodexGoal?> _codexGoals = {};
   final Set<String> _loadedCodexGoals = {};
   final Set<String> _loadingCodexGoals = {};
@@ -3443,6 +3446,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           textContent: request.displayText,
           attachments: _outgoingAttachments(request),
           isPending: true,
+          delivery: request.error == null
+              ? MessageDelivery.queued
+              : MessageDelivery.failed,
         ),
       );
       _pendingLocalUserMessageIds.add(request.id);
@@ -3497,7 +3503,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// The server has this device's message [id]: mark it received and stop
+  /// showing it as queued, unless it still waits on an injection or upload.
+  void _markReceived(String id) {
+    for (final message in _messages) {
+      if (message.id != id || message.sender != MessageSender.user) continue;
+      message.delivery = MessageDelivery.received;
+      if (message.injectionPriority == null && message.uploadProgress == null) {
+        message.isPending = false;
+      }
+    }
+  }
+
   void _failOutgoing(String id, String reason) {
+    for (final message in _messages) {
+      if (message.id == id && message.sender == MessageSender.user) {
+        message.delivery = MessageDelivery.failed;
+      }
+    }
     final request = _pendingPromptDispatches[id];
     if (request == null) return;
     if (request.error == reason) return;
@@ -3553,6 +3576,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       final destinations = <String>{};
       for (final request in _pendingPromptDispatches.values.toList()) {
+        // A failed request waits for the user and is never resent, so it must
+        // not hold later messages to the same conversation behind it.
+        if (request.error != null) continue;
         final destination =
             '${request.serverId}:${request.payload['sessionId'] ?? request.payload['clientConversationId'] ?? request.payload['cwd']}';
         if (!destinations.add(destination)) continue;
@@ -3586,9 +3612,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
         }
         final ws = _connMgr.getConnection(request.serverId);
-        if (request.error != null || ws?.status != ConnectionStatus.connected) {
-          continue;
-        }
+        if (ws?.status != ConnectionStatus.connected) continue;
         final last = _outgoingSentAt[request.id];
         if (last != null &&
             DateTime.now().difference(last) < const Duration(seconds: 15)) {
@@ -4717,6 +4741,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'browser_session_state',
       'browser_frame',
       'browser_clipboard',
+      'browser_focus',
+      'browser_prompt',
+      'browser_prompt_closed',
+      'browser_tabs',
       'browser_session_error',
       'browser_runtime_install_progress',
       'command_receipt',
@@ -4971,6 +4999,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _serverSessionMemoryVersions[serverId] = sessionMemory is Map
                   ? (sessionMemory['version'] as num?)?.toInt() ?? 0
                   : 0;
+              final browserSessions = msg['browserSessions'];
+              if (browserSessions is Map &&
+                  browserSessions['nativeInput'] == true) {
+                _serversWithBrowserNativeInput.add(serverId);
+              } else {
+                _serversWithBrowserNativeInput.remove(serverId);
+              }
               _captureCodexDriverSettings(msg, serverId);
               unawaited(
                 (() async {
@@ -5690,6 +5725,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               }
               _messages[idx].isPending = false;
               _messages[idx].injectionPriority = null;
+              _messages[idx].delivery = MessageDelivery.received;
               notifyListeners();
             }
           } else {
@@ -5709,6 +5745,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final commandId = msg['commandId']?.toString() ?? '';
           final pending = _pendingPromptDispatches[commandId];
           if (pending != null && pending.serverId == serverId) {
+            if (msg['status'] == 'accepted' || msg['status'] == 'pending') {
+              _markReceived(commandId);
+            }
             if (msg['status'] == 'accepted' && pending.error == null) {
               _forgetOutgoing(commandId);
             } else if (msg['status'] == 'uncertain' ||
@@ -5729,14 +5768,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 serverId) {
               _forgetOutgoing(receivedMessageId);
             }
-            final idx = _messages.indexWhere(
-              (message) => message.id == receivedMessageId,
-            );
-            if (idx >= 0 &&
-                _messages[idx].injectionPriority == null &&
-                _messages[idx].uploadProgress == null) {
-              _messages[idx].isPending = false;
-            }
+            _markReceived(receivedMessageId);
             notifyListeners();
           }
           break;
@@ -6128,7 +6160,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _initialHistoryTimeout?.cancel();
             _initialHistoryTimeout = null;
           }
-          _messages.add(ChatMessage.error(msg['message'] ?? 'Unknown error'));
+          final errorMessage = ChatMessage.error(
+            msg['message'] ?? 'Unknown error',
+          );
+          applyTranscriptPosition(errorMessage, msg);
+          _messages.add(errorMessage);
           final errorSessionId = msg['sessionId']?.toString() ?? '';
           // Unscoped errors are frequently produced by file, settings, auth,
           // or history operations. They are not evidence that the visible
@@ -6464,6 +6500,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'browser_frame':
         case 'browser_clipboard':
+        case 'browser_focus':
+        case 'browser_prompt':
+        case 'browser_prompt_closed':
+        case 'browser_tabs':
         case 'browser_session_error':
         case 'browser_runtime_install_progress':
           _browserFrameController.add({...msg, '_serverId': serverId});
@@ -6860,6 +6900,52 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _sendToActiveSessionServer(message);
   }
 
+  /// Answer a dropdown, picker, dialog, file chooser, or sign-in the page
+  /// asked for. The computer ignores an answer to a prompt it has closed.
+  bool respondBrowserPrompt({
+    required String profile,
+    required String id,
+    required bool accept,
+    String? value,
+    List<String>? files,
+    String? username,
+    String? password,
+    String? serverId,
+  }) {
+    final message = {
+      'type': 'browser_prompt_response',
+      'profile': profile,
+      'id': id,
+      'accept': accept,
+      'value': ?value,
+      'files': ?files,
+      'username': ?username,
+      'password': ?password,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
+  }
+
+  /// Tell the computer a streamed frame is on screen. It keeps only a couple
+  /// of frames in transit, so a slow link drops frames instead of lagging.
+  bool ackBrowserFrame({
+    required String profile,
+    required int seq,
+    String? serverId,
+  }) {
+    final message = {
+      'type': 'browser_frame_ack',
+      'profile': profile,
+      'seq': seq,
+    };
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
+  }
+
   bool installBrowserRuntime({
     required String profile,
     required String url,
@@ -6878,6 +6964,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _sendToActiveSessionServer(message);
   }
 
+  /// Whether a browser session on [serverId] (or the active session's
+  /// server) takes `pointer` and `keyboard` input.
+  bool serverSupportsBrowserNativeInput(String? serverId) {
+    final id = serverId ?? activeSessionServerId;
+    return id != null && _serversWithBrowserNativeInput.contains(id);
+  }
+
   bool sendBrowserSessionInput({
     required String profile,
     required String action,
@@ -6889,6 +6982,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     double? deltaX,
     double? deltaY,
     String? url,
+    String? phase,
+    String? button,
+    int? buttons,
+    int? clickCount,
+    int? modifiers,
+    String? code,
+    bool? repeat,
+    String? tabId,
   }) {
     final message = <String, dynamic>{
       'type': 'browser_session_input',
@@ -6901,6 +7002,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'deltaX': ?deltaX,
       'deltaY': ?deltaY,
       'url': ?url,
+      'phase': ?phase,
+      'button': ?button,
+      'buttons': ?buttons,
+      'clickCount': ?clickCount,
+      'modifiers': ?modifiers,
+      'code': ?code,
+      'repeat': ?repeat,
+      'tabId': ?tabId,
     };
     if (serverId != null && serverId.isNotEmpty) {
       return _connMgr.sendToServer(serverId, message);
@@ -10040,9 +10149,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (uuid == null || uuid.isEmpty) return;
     final clientMessageId = msg['clientMessageId'] as String?;
     if (clientMessageId != null && clientMessageId.isNotEmpty) {
+      // Saved in the transcript, so delivered, even when this conversation is
+      // not the one on screen.
+      if (_pendingPromptDispatches.containsKey(clientMessageId)) {
+        _forgetOutgoing(clientMessageId);
+      }
       final idx = _messages.indexWhere((m) => m.id == clientMessageId);
       if (idx >= 0) {
-        _forgetOutgoing(clientMessageId);
         _messages[idx].uuid = uuid;
         final content = msg['content'];
         if (content is String) {
@@ -10488,6 +10601,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final content = entry['content'] as String? ?? '';
 
       switch (role) {
+        case 'error':
+          if (content.isNotEmpty) loaded.add(ChatMessage.error(content));
+          break;
         case 'user':
           final prompt = _parseUserPrompt(content);
           for (var i = 0; i < prompt.notices.length; i++) {
@@ -12065,13 +12181,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final displayText = text.trim().isEmpty && fileAttachments.isEmpty
         ? 'Attached secrets'
         : text;
-    final userMsg = _buildUserDisplayMessage(
-      displayText,
-      attachments: [
-        for (final file in fileAttachments)
-          MessageAttachment(path: file.path, name: file.name, isLocal: true),
-      ],
-    )..isPending = true;
+    final userMsg =
+        _buildUserDisplayMessage(
+            displayText,
+            attachments: [
+              for (final file in fileAttachments)
+                MessageAttachment(
+                  path: file.path,
+                  name: file.name,
+                  isLocal: true,
+                ),
+            ],
+          )
+          ..isPending = true
+          ..delivery = MessageDelivery.queued;
     final useCodexFastMode = _activeSessionBackend == 'codex' && _codexFastMode;
     final promptPayload = <String, dynamic>{
       'type': 'prompt',
@@ -16837,16 +16960,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  String _formatDownloadBytes(int bytes) {
-    if (bytes < 1024) return '$bytes B';
-    final kb = bytes / 1024;
-    if (kb < 1024) return '${kb.toStringAsFixed(1)} KB';
-    final mb = kb / 1024;
-    if (mb < 1024) return '${mb.toStringAsFixed(1)} MB';
-    final gb = mb / 1024;
-    return '${gb.toStringAsFixed(1)} GB';
-  }
-
   Future<File> _moveHttpDownloadToUniqueTarget({
     required File tempFile,
     required Directory downloadsDir,
@@ -17164,7 +17277,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _downloadProgress[id] = bytes / part.total!;
             }
             _downloadErrors[id] =
-                'Download paused. Saved ${_formatDownloadBytes(bytes)}.';
+                'Download paused. Saved ${formatBytes(bytes)}.';
             _resumeDownloadIds.add(id);
           }
         } catch (error) {
@@ -17371,7 +17484,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         onRetry: (attempt, received) {
           if (_downloadGenerations[fileId] == generation) {
             _downloadErrors[fileId] =
-                'Connection interrupted. Retrying from ${_formatDownloadBytes(received)}...';
+                'Connection interrupted. Retrying from ${formatBytes(received)}...';
             notifyListeners();
           }
         },

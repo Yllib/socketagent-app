@@ -11,6 +11,7 @@ import 'reminder_card.dart';
 import 'scroll_passthrough.dart';
 import 'thinking_card.dart';
 import 'inline_chat_images.dart';
+import 'markdown_blocks.dart';
 import 'message_timestamp.dart';
 
 class SubAgentCard extends StatefulWidget {
@@ -343,32 +344,52 @@ class _SubAgentCardState extends State<SubAgentCard> {
             ),
           ),
           const SizedBox(height: 4),
-          MarkdownBody(
-            data: SocketAgentLinkRouter.prepareMarkdown(content),
-            imageBuilder: (uri, title, alt) =>
-                buildChatMarkdownImage(uri, title, alt, widget.sourceServerId),
-            blockSyntaxes: const [ChatCompareSyntax()],
-            builders: {
-              'socketagent-compare': ChatCompareBuilder(widget.sourceServerId),
-            },
-            selectable: true,
-            onTapLink: (text, href, title) {
-              SocketAgentLinkRouter.open(
-                context,
-                href,
-                sourceServerId: widget.sourceServerId,
-              );
-            },
-            styleSheet: MarkdownStyleSheet(
-              p: GoogleFonts.jetBrainsMono(
-                fontSize: 10,
-                color: const Color(0xFFE6E6E6),
-                height: 1.4,
+          MarkdownSelectionArea(
+            child: MarkdownBody(
+              data: content,
+              inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
+              imageBuilder: (uri, title, alt) => buildChatMarkdownImage(
+                uri,
+                title,
+                alt,
+                widget.sourceServerId,
               ),
-              code: GoogleFonts.jetBrainsMono(
-                fontSize: 10,
-                color: const Color(0xFFF5C2E7),
-                backgroundColor: const Color(0xFF121212),
+              blockSyntaxes: const [ChatCompareSyntax()],
+              builders: {
+                'socketagent-compare': ChatCompareBuilder(
+                  widget.sourceServerId,
+                ),
+                'pre': CodeBlockBuilder(
+                  style: GoogleFonts.jetBrainsMono(
+                    fontSize: 10,
+                    color: const Color(0xFFE6E6E6),
+                  ),
+                  padding: const EdgeInsets.all(8),
+                  background: const Color(0xFF121212),
+                ),
+              },
+              onTapLink: (text, href, title) {
+                SocketAgentLinkRouter.open(
+                  context,
+                  href,
+                  sourceServerId: widget.sourceServerId,
+                );
+              },
+              styleSheet: MarkdownStyleSheet(
+                p: GoogleFonts.jetBrainsMono(
+                  fontSize: 10,
+                  color: const Color(0xFFE6E6E6),
+                  height: 1.4,
+                ),
+                code: GoogleFonts.jetBrainsMono(
+                  fontSize: 10,
+                  color: const Color(0xFFF5C2E7),
+                  backgroundColor: const Color(0xFF121212),
+                ),
+                codeblockDecoration: BoxDecoration(
+                  color: const Color(0xFF121212),
+                  borderRadius: BorderRadius.circular(6),
+                ),
               ),
             ),
           ),

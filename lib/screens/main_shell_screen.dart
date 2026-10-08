@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../config/app_distribution.dart';
 import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
 import '../services/desktop_workspace_controller.dart';
@@ -56,9 +55,7 @@ class MainShellScreenState extends State<MainShellScreen>
     super.initState();
     _currentIndex = widget.initialIndex.clamp(0, 2).toInt();
     WidgetsBinding.instance.addObserver(this);
-    if (AppBuild.supportsSelfUpdates) {
-      _updateService.addListener(_onUpdateChange);
-    }
+    _updateService.addListener(_onUpdateChange);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
       _backendAuthRequiredSub = provider.backendAuthRequiredEvents.listen((
@@ -123,19 +120,16 @@ class MainShellScreenState extends State<MainShellScreen>
       await provider.connectToServer();
       provider.refreshSubscriptionStatusIfStale();
       provider.requestSessionList();
-      if (AppBuild.supportsSelfUpdates) {
-        // Direct builds update from public GitHub release metadata.
-        unawaited(_checkForAppUpdate(force: true));
-        _updateCheckTimer = Timer.periodic(
-          _updateCheckInterval,
-          (_) => unawaited(_checkForAppUpdate()),
-        );
-      }
+      // Play builds ask Google Play; the rest read GitHub release metadata.
+      unawaited(_checkForAppUpdate(force: true));
+      _updateCheckTimer = Timer.periodic(
+        _updateCheckInterval,
+        (_) => unawaited(_checkForAppUpdate()),
+      );
     });
   }
 
   Future<void> _checkForAppUpdate({bool force = false}) {
-    if (!AppBuild.supportsSelfUpdates) return Future.value();
     final active = _updateCheckInFlight;
     if (active != null) return active;
     final lastCheck = _lastUpdateCheckAt;
@@ -189,9 +183,7 @@ class MainShellScreenState extends State<MainShellScreen>
     _scheduledTaskRefreshTimer?.cancel();
     _backendAuthRequiredSub?.cancel();
     _backendAuthResolvedSub?.cancel();
-    if (AppBuild.supportsSelfUpdates) {
-      _updateService.removeListener(_onUpdateChange);
-    }
+    _updateService.removeListener(_onUpdateChange);
     _updateBannerDismissed.dispose();
     routeObserver.unsubscribe(this);
     super.dispose();
@@ -200,13 +192,9 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      if (AppBuild.supportsSelfUpdates) {
-        // Returning from Android's package installer must re-read the running
-        // version immediately so a completed install is not shown as pending.
-        unawaited(
-          _checkForAppUpdate(force: _updateService.hasDownloadedUpdate),
-        );
-      }
+      // Returning from Android's package installer must re-read the running
+      // version immediately so a completed install is not shown as pending.
+      unawaited(_checkForAppUpdate(force: _updateService.hasDownloadedUpdate));
       if (_currentIndex == 1) _startScheduledTaskRefresh();
     } else {
       _scheduledTaskRefreshTimer?.cancel();
@@ -260,7 +248,6 @@ class MainShellScreenState extends State<MainShellScreen>
 
   /// Expose update service to child widgets
   UpdateService get updateService => _updateService;
-  bool get supportsSelfUpdates => AppBuild.supportsSelfUpdates;
 
   /// Listenable because the tabs showing the banner are const children that
   /// this state's rebuilds never reach.
