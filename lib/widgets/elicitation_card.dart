@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
+import '../config/app_palette.dart';
 
 class ElicitationCard extends StatelessWidget {
   final ChatMessage message;
@@ -56,7 +57,7 @@ class ElicitationCard extends StatelessWidget {
                     Icon(
                       Icons.check_circle,
                       size: 18,
-                      color: Colors.green.shade400,
+                      color: context.palette.shade(Colors.green, 400),
                     ),
                   ],
                 ],

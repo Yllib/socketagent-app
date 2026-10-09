@@ -1,4 +1,6 @@
 import '../widgets/extra_folders_dialog.dart';
+import '../widgets/light_backdrop.dart';
+import '../widgets/offline_watermark.dart';
 import '../widgets/linked_scheduled_tasks_panel.dart';
 import '../models/session_scheduled_tasks.dart';
 import 'scheduled_tasks_screen.dart';
@@ -48,6 +50,7 @@ import 'work_reviews_screen.dart';
 import 'session_analytics_screen.dart';
 import 'session_memory_screen.dart';
 import '../widgets/session_backend_watermark.dart';
+import '../config/app_palette.dart';
 
 /// One row of the context dialog, optionally opening onto its own rows.
 ///
@@ -312,7 +315,9 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) => Selector<ChatProvider, String?>(
     selector: (_, provider) => provider.activeSessionBackend,
     builder: (context, backend, child) => Theme(
-      data: backend == null ? Theme.of(context) : backendTheme(backend),
+      data: backend == null
+          ? Theme.of(context)
+          : backendTheme(context, backend),
       child: child!,
     ),
     child: _ChatScreen(
@@ -439,7 +444,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     }
     final selected = await showModalBottomSheet<ActiveBrowserSession>(
       context: context,
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (sheetContext) => SafeArea(
         child: ListView.builder(
           shrinkWrap: true,
@@ -947,7 +952,8 @@ class _ChatScreenState extends State<_ChatScreen> {
     if (provider.isListening) unawaited(provider.toggleListening());
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => CodexRealtimeScreen(sessionId: provider.activeSessionId),
+        builder: (_) =>
+            CodexRealtimeScreen(sessionId: provider.activeSessionId),
       ),
     );
   }
@@ -1079,7 +1085,7 @@ class _ChatScreenState extends State<_ChatScreen> {
               : baseTheme.copyWith(
                   appBarTheme: AppBarTheme(
                     backgroundColor: Color.alphaBlend(
-                      backendColor(backend).withAlpha(40),
+                      backendColor(baseTheme.palette, backend).withAlpha(40),
                       chatSurfaceColor,
                     ),
                   ),
@@ -1243,8 +1249,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 ),
               ),
             ),
-            body: ColoredBox(
-              color: chatSurfaceColor,
+            body: LightBackdrop(
               child: _conversationLayout(
                 Column(
                   children: [
@@ -1328,92 +1333,106 @@ class _ChatScreenState extends State<_ChatScreen> {
                     if (provider.isRefreshingHistory)
                       const LinearProgressIndicator(minHeight: 2),
                     Expanded(
-                      child: ChatView(
-                        key: _chatViewKey,
-                        messages: provider.filteredMessages,
-                        serverId: provider.activeSessionServerId,
-                        sessionStorageKey:
-                            '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
-                        isProcessing: provider.isProcessing,
-                        followLatest: _followLatest,
-                        condensedToolUsage: provider.condensedToolUsage,
-                        onFollowLatestChanged: (follow) {
-                          if (_followLatest != follow) {
-                            setState(() => _followLatest = follow);
-                          }
-                        },
-                        processingElapsed: provider.currentPromptElapsed,
-                        isCompacting: provider.isCompacting,
-                        isLoadingHistory: provider.isLoadingHistory,
-                        isLoadingMore: provider.isLoadingMore,
-                        hasMoreHistory: provider.hasMoreHistory,
-                        historyWindowRevision: provider.historyWindowRevision,
-                        targetEntryId: notificationFocus?.entryId,
-                        targetSessionSeq: notificationFocus?.sessionSeq,
-                        onTranscriptTargetReached: notificationFocus == null
-                            ? null
-                            : () => provider.clearNotificationTranscriptFocus(
-                                notificationFocus,
-                              ),
-                        todos: provider.todos,
-                        onAnswer: provider.answerQuestion,
-                        onSecureInputSubmit: provider.submitSecureInput,
-                        onSecureInputUseStored:
-                            provider.submitStoredSecureInput,
-                        onSecureInputCancel: provider.cancelSecureInput,
-                        availableSecrets: provider.secretInventory,
-                        onLoadMore: provider.loadMoreHistory,
-                        onStopTask: provider.stopTask,
-                        onBackgroundTask: provider.canBackgroundClaudeTasks
-                            ? provider.backgroundTask
-                            : null,
-                        onDismissTodos: () =>
-                            _setPanelHidden(provider, SessionPanel.tasks, true),
-                        showTodos:
-                            _panelPreferences != null &&
-                            !_panelHidden(provider, SessionPanel.tasks),
-                        tasksHidingNotice: _panelHideNotice(
-                          provider,
-                          SessionPanel.tasks,
-                          'tasks',
+                      child: OfflineWatermark(
+                        offline: provider.activeSessionOffline,
+                        child: ChatView(
+                          key: _chatViewKey,
+                          messages: provider.filteredMessages,
+                          serverId: provider.activeSessionServerId,
+                          sessionStorageKey:
+                              '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
+                          isProcessing: provider.isProcessing,
+                          isWaitingOnAgent:
+                              provider.activeSessionWaitingOnAgent,
+                          followLatest: _followLatest,
+                          condensedToolUsage: provider.condensedToolUsage,
+                          onFollowLatestChanged: (follow) {
+                            if (_followLatest != follow) {
+                              setState(() => _followLatest = follow);
+                            }
+                          },
+                          processingElapsed: provider.currentPromptElapsed,
+                          isCompacting: provider.isCompacting,
+                          // Offline with nothing cached shows the empty
+                          // transcript instead of a spinner that never ends.
+                          isLoadingHistory:
+                              provider.isLoadingHistory &&
+                              !provider.activeSessionOffline,
+                          isLoadingMore: provider.isLoadingMore,
+                          hasMoreHistory: provider.hasMoreHistory,
+                          historyWindowRevision: provider.historyWindowRevision,
+                          targetEntryId: notificationFocus?.entryId,
+                          targetSessionSeq: notificationFocus?.sessionSeq,
+                          onTranscriptTargetReached: notificationFocus == null
+                              ? null
+                              : () => provider.clearNotificationTranscriptFocus(
+                                  notificationFocus,
+                                ),
+                          todos: provider.todos,
+                          onAnswer: provider.answerQuestion,
+                          onSecureInputSubmit: provider.submitSecureInput,
+                          onSecureInputUseStored:
+                              provider.submitStoredSecureInput,
+                          onSecureInputCancel: provider.cancelSecureInput,
+                          availableSecrets: provider.secretInventory,
+                          onLoadMore: provider.loadMoreHistory,
+                          onStopTask: provider.stopTask,
+                          onBackgroundTask: provider.canBackgroundClaudeTasks
+                              ? provider.backgroundTask
+                              : null,
+                          onDismissTodos: () => _setPanelHidden(
+                            provider,
+                            SessionPanel.tasks,
+                            true,
+                          ),
+                          showTodos:
+                              _panelPreferences != null &&
+                              !_panelHidden(provider, SessionPanel.tasks),
+                          tasksHidingNotice: _panelHideNotice(
+                            provider,
+                            SessionPanel.tasks,
+                            'tasks',
+                          ),
+                          codexPlanHidingNotice: _panelHideNotice(
+                            provider,
+                            SessionPanel.codexPlan,
+                            'plan',
+                          ),
+                          showCodexPlan:
+                              _panelPreferences != null &&
+                              !_panelHidden(provider, SessionPanel.codexPlan),
+                          onDismissCodexPlan: () => _setPanelHidden(
+                            provider,
+                            SessionPanel.codexPlan,
+                            true,
+                          ),
+                          onDismissTodo: provider.dismissTodo,
+                          onRewindConversation: provider.rewindConversation,
+                          codexRewind: provider.activeSessionBackend == 'codex',
+                          onBranch: provider.activeSessionBackend == 'codex'
+                              ? null
+                              : provider.branchFromMessage,
+                          onRetractQueuedMessage: (messageId) {
+                            final text = provider.retractQueuedMessage(
+                              messageId,
+                            );
+                            if (text == null) return;
+                            _textController.text = text;
+                            _textController.selection =
+                                TextSelection.fromPosition(
+                                  TextPosition(offset: text.length),
+                                );
+                            provider.saveDraft(text.trim());
+                            _focusNode.requestFocus();
+                          },
+                          onReadAloud: provider.replaySpeak,
+                          onReportAiResponse: provider.reportAiResponse,
+                          rawMode: provider.rawMode,
+                          rawItems: provider.rawItems,
+                          subagentTasks: provider.subagentTasks,
+                          workflowTasks: provider.workflowTasks,
+                          allMessages: provider.messages,
                         ),
-                        codexPlanHidingNotice: _panelHideNotice(
-                          provider,
-                          SessionPanel.codexPlan,
-                          'plan',
-                        ),
-                        showCodexPlan:
-                            _panelPreferences != null &&
-                            !_panelHidden(provider, SessionPanel.codexPlan),
-                        onDismissCodexPlan: () => _setPanelHidden(
-                          provider,
-                          SessionPanel.codexPlan,
-                          true,
-                        ),
-                        onDismissTodo: provider.dismissTodo,
-                        onRewindConversation: provider.rewindConversation,
-                        codexRewind: provider.activeSessionBackend == 'codex',
-                        onBranch: provider.activeSessionBackend == 'codex'
-                            ? null
-                            : provider.branchFromMessage,
-                        onRetractQueuedMessage: (messageId) {
-                          final text = provider.retractQueuedMessage(messageId);
-                          if (text == null) return;
-                          _textController.text = text;
-                          _textController.selection =
-                              TextSelection.fromPosition(
-                                TextPosition(offset: text.length),
-                              );
-                          provider.saveDraft(text.trim());
-                          _focusNode.requestFocus();
-                        },
-                        onReadAloud: provider.replaySpeak,
-                        onReportAiResponse: provider.reportAiResponse,
-                        rawMode: provider.rawMode,
-                        rawItems: provider.rawItems,
-                        subagentTasks: provider.subagentTasks,
-                        workflowTasks: provider.workflowTasks,
-                        allMessages: provider.messages,
                       ),
                     ),
                     if (provider.isRetrying) _buildRetryingBanner(),
@@ -1536,8 +1555,8 @@ class _ChatScreenState extends State<_ChatScreen> {
               _buildChipBody(
                 Icons.code,
                 'RAW',
-                iconColor: Colors.orange.shade300,
-                labelColor: Colors.orange.shade300,
+                iconColor: context.palette.shade(Colors.orange, 300),
+                labelColor: context.palette.shade(Colors.orange, 300),
               ),
             _buildFollowLatestChip(),
             _buildSessionMoreChip(provider),
@@ -2218,7 +2237,7 @@ class _ChatScreenState extends State<_ChatScreen> {
         break;
       case 'low':
         icon = Icons.bolt;
-        color = Colors.blue.shade300;
+        color = context.palette.shade(Colors.blue, 300);
         break;
       case 'medium':
         icon = Icons.speed;
@@ -2228,7 +2247,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       case 'xhigh':
       case 'ultra':
         icon = Icons.whatshot;
-        color = Colors.orange.shade300;
+        color = context.palette.shade(Colors.orange, 300);
         break;
       default: // high
         icon = Icons.auto_awesome;
@@ -2338,26 +2357,41 @@ class _ChatScreenState extends State<_ChatScreen> {
     return mode;
   }
 
+  bool get _darkMode => Theme.of(context).brightness == Brightness.dark;
+
+  /// Header tint per permission mode: a deep bar with pale text in dark mode,
+  /// a pale bar with deep text in light mode.
   _PermTheme? _permissionModeTheme(String mode) {
+    final dark = _darkMode;
     switch (mode) {
       case 'plan':
-        return const _PermTheme(Color(0xFF1A4D2E), Color(0xFFB8E6C8));
+        return dark
+            ? const _PermTheme(Color(0xFF1A4D2E), Color(0xFFB8E6C8))
+            : const _PermTheme(Color(0xFFD6F0DE), Color(0xFF14532D));
       case 'auto':
-        return const _PermTheme(Color(0xFF1A3D4D), Color(0xFFA0D5E6));
+        return dark
+            ? const _PermTheme(Color(0xFF1A3D4D), Color(0xFFA0D5E6))
+            : const _PermTheme(Color(0xFFD5EBF2), Color(0xFF134E5E));
       case 'acceptEdits':
-        return const _PermTheme(Color(0xFF4D3D1A), Color(0xFFE6D5A0));
+        return dark
+            ? const _PermTheme(Color(0xFF4D3D1A), Color(0xFFE6D5A0))
+            : const _PermTheme(Color(0xFFF3E8C6), Color(0xFF5C4813));
       case 'default':
-        return const _PermTheme(Color(0xFF4D2A1A), Color(0xFFE6C0A0));
+        return dark
+            ? const _PermTheme(Color(0xFF4D2A1A), Color(0xFFE6C0A0))
+            : const _PermTheme(Color(0xFFF3DCCB), Color(0xFF5C2E14));
       case 'superYolo':
-        return const _PermTheme(Color(0xFF4D1A3A), Color(0xFFE6A0C8));
+        return dark
+            ? const _PermTheme(Color(0xFF4D1A3A), Color(0xFFE6A0C8))
+            : const _PermTheme(Color(0xFFF3D2E4), Color(0xFF5C1A42));
       default:
         return null; // bypassPermissions — default theme
     }
   }
 
-  _PermTheme _fastModeTheme() {
-    return const _PermTheme(Color(0xFF641E1E), Color(0xFFFFC9C9));
-  }
+  _PermTheme _fastModeTheme() => _darkMode
+      ? const _PermTheme(Color(0xFF641E1E), Color(0xFFFFC9C9))
+      : const _PermTheme(Color(0xFFF8D7D7), Color(0xFF7A1F1F));
 
   IconData _permissionModeIcon(String mode) {
     for (final m in _permModes) {
@@ -2442,7 +2476,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     switch (thinkingType) {
       case 'enabled':
         icon = Icons.psychology_alt;
-        color = Colors.purple.shade300;
+        color = context.palette.shade(Colors.purple, 300);
         final budget = provider.thinking['budgetTokens'] as int?;
         label = budget != null ? 'Think ${(budget / 1000).round()}k' : 'Think';
         break;
@@ -2516,9 +2550,9 @@ class _ChatScreenState extends State<_ChatScreen> {
     // Context fill ratio
     final fillRatio = contextWindow > 0 ? totalContext / contextWindow : 0.0;
     final fillColor = fillRatio > 0.8
-        ? Colors.red.shade300
+        ? context.palette.shade(Colors.red, 300)
         : fillRatio > 0.5
-        ? Colors.orange.shade300
+        ? context.palette.shade(Colors.orange, 300)
         : Theme.of(context).colorScheme.onSurface.withAlpha(178);
 
     return GestureDetector(
@@ -2545,14 +2579,10 @@ class _ChatScreenState extends State<_ChatScreen> {
             ],
             if (outputTokens > 0) ...[
               const SizedBox(width: 6),
-              Icon(
-                Icons.arrow_upward,
-                size: 10,
-                color: const Color(0xFFCBA6F7),
-              ),
+              Icon(Icons.arrow_upward, size: 10, color: context.palette.mauve),
               Text(
                 formatCompactCount(outputTokens),
-                style: const TextStyle(fontSize: 11, color: Color(0xFFCBA6F7)),
+                style: TextStyle(fontSize: 11, color: context.palette.mauve),
               ),
             ],
           ],
@@ -2700,16 +2730,19 @@ class _ChatScreenState extends State<_ChatScreen> {
 
     // Split the window by what each row is. Only the `used` rows occupy it,
     // and they are the only ones the bar and the headline may count.
-    var breakdown = classifyContextCategories(ctx?['categories']);
+    var breakdown = classifyContextCategories(
+      ctx?['categories'],
+      palette: context.palette,
+    );
     if (breakdown.isEmpty) {
       // Codex and pre-SDK sessions report no categories, only raw counts.
       final fallback = <ContextCategory>[
         if (cacheRead > 0)
-          ContextCategory('Cached', cacheRead, const Color(0xFF89B4FA)),
+          ContextCategory('Cached', cacheRead, context.palette.blue),
         if (cacheCreate > 0)
-          ContextCategory('New cache', cacheCreate, const Color(0xFFA6E3A1)),
+          ContextCategory('New cache', cacheCreate, context.palette.green),
         if (inputTokens > 0)
-          ContextCategory('Uncached', inputTokens, const Color(0xFFF9E2AF)),
+          ContextCategory('Uncached', inputTokens, context.palette.yellow),
       ];
       breakdown = ContextBreakdown(
         used: fallback,
@@ -2770,9 +2803,9 @@ class _ChatScreenState extends State<_ChatScreen> {
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
                     color: usedRatio > 0.8
-                        ? Colors.red.shade300
+                        ? context.palette.shade(Colors.red, 300)
                         : usedRatio > 0.5
-                        ? Colors.orange.shade300
+                        ? context.palette.shade(Colors.orange, 300)
                         : theme.colorScheme.onSurface,
                   ),
                 ),
@@ -3084,11 +3117,11 @@ class _ChatScreenState extends State<_ChatScreen> {
     String tooltip;
     switch (status) {
       case ConnectionStatus.connected:
-        color = Colors.green;
+        color = context.palette.success;
         tooltip = 'Connected';
         break;
       case ConnectionStatus.connecting:
-        color = Colors.orange;
+        color = context.palette.warning;
         tooltip = 'Connecting...';
         break;
       case ConnectionStatus.disconnected:
@@ -3096,7 +3129,7 @@ class _ChatScreenState extends State<_ChatScreen> {
         tooltip = 'Disconnected';
         break;
       case ConnectionStatus.error:
-        color = Colors.red;
+        color = context.palette.danger;
         tooltip = 'Connection error';
         break;
     }
@@ -3604,7 +3637,7 @@ class _ChatScreenState extends State<_ChatScreen> {
           final kind = _slashKind(cmd);
           final isSkill = kind == 'skill';
           final badgeColor = isSkill
-              ? Colors.green
+              ? context.palette.success
               : agent == 'codex'
               ? theme.colorScheme.tertiary
               : theme.colorScheme.primary;
@@ -3722,7 +3755,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: provider.isListening
-                        ? Colors.red
+                        ? context.palette.danger
                         : theme.colorScheme.primaryContainer,
                   ),
                   child: Icon(
@@ -3764,7 +3797,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: provider.isListening
-                              ? Colors.red
+                              ? context.palette.danger
                               : theme.colorScheme.primaryContainer,
                         ),
                         child: Icon(

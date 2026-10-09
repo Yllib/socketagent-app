@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/message.dart';
 import '../services/chat_provider.dart';
+import '../config/app_palette.dart';
 
 class SpeakCard extends StatefulWidget {
   final ChatMessage message;
@@ -30,9 +31,9 @@ class _SpeakCardState extends State<SpeakCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF4A4A4A), width: 1),
+        border: Border.all(color: context.palette.outline, width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -47,10 +48,10 @@ class _SpeakCardState extends State<SpeakCard> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.record_voice_over,
                     size: 16,
-                    color: Color(0xFFA6E3A1),
+                    color: context.palette.green,
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -58,7 +59,7 @@ class _SpeakCardState extends State<SpeakCard> {
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFFA6E3A1),
+                      color: context.palette.green,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -67,7 +68,7 @@ class _SpeakCardState extends State<SpeakCard> {
                       preview,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -88,15 +89,15 @@ class _SpeakCardState extends State<SpeakCard> {
                         isSpeakingThis ? Icons.stop_circle : Icons.volume_up,
                         size: 22,
                         color: isSpeakingThis
-                            ? const Color(0xFFF38BA8)
-                            : const Color(0xFFA6E3A1),
+                            ? context.palette.red
+                            : context.palette.green,
                       ),
                     ),
                   ),
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 18,
-                    color: const Color(0xFF767676),
+                    color: context.palette.textMuted,
                   ),
                 ],
               ),
@@ -104,9 +105,9 @@ class _SpeakCardState extends State<SpeakCard> {
           ),
           if (_expanded)
             Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                  top: BorderSide(color: context.palette.border, width: 1),
                 ),
               ),
               padding: const EdgeInsets.all(12),
@@ -114,7 +115,7 @@ class _SpeakCardState extends State<SpeakCard> {
                 text,
                 style: GoogleFonts.jetBrainsMono(
                   fontSize: 12,
-                  color: const Color(0xFFE6E6E6),
+                  color: context.palette.text,
                   height: 1.5,
                 ),
               ),

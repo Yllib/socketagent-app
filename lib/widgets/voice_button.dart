@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_palette.dart';
 
 class VoiceButton extends StatefulWidget {
   final bool isListening;
@@ -61,11 +62,13 @@ class _VoiceButtonState extends State<VoiceButton>
             icon: Icon(
               widget.isListening ? Icons.mic : Icons.mic_none,
               color: widget.isListening
-                  ? Colors.red
+                  ? context.palette.danger
                   : theme.colorScheme.onSurfaceVariant,
             ),
             onPressed: widget.onPressed,
-            tooltip: widget.isListening ? 'Stop listening' : 'Start voice input',
+            tooltip: widget.isListening
+                ? 'Stop listening'
+                : 'Start voice input',
             padding: const EdgeInsets.all(8),
             constraints: const BoxConstraints(minWidth: 40, minHeight: 40),
           ),

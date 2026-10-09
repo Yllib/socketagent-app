@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
+import '../config/app_palette.dart';
 
 class SocketAgentToolCard extends StatefulWidget {
   final ChatMessage message;
@@ -85,14 +86,14 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF94E2D5);
+    final accent = context.palette.teal;
     final output = widget.message.toolOutput?.trim() ?? '';
     final decodedOutput = decodeJsonDocument(output);
     final hasDetails = _input.isNotEmpty || output.isNotEmpty;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: accent.withAlpha(80)),
       ),
@@ -126,12 +127,12 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 10.5,
-                        color: const Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                     ),
                   ),
                   if (widget.message.toolStreaming)
-                    const SizedBox(
+                    SizedBox(
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
@@ -143,7 +144,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF767676),
+                      color: context.palette.textMuted,
                     ),
                 ],
               ),
@@ -152,8 +153,8 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
           if (_expanded)
             Container(
               constraints: const BoxConstraints(maxHeight: 360),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: context.palette.border)),
               ),
               child: ScrollPassthrough(
                 child: SingleChildScrollView(
@@ -179,7 +180,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
                             style: GoogleFonts.jetBrainsMono(
                               fontSize: 10.5,
                               height: 1.4,
-                              color: const Color(0xFFE6E6E6),
+                              color: context.palette.text,
                             ),
                           ),
                       ],
@@ -205,8 +206,8 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: 7),
       child: Text(
         text,
-        style: const TextStyle(
-          color: Color(0xFF94E2D5),
+        style: TextStyle(
+          color: context.palette.teal,
           fontSize: 9,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.5,

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../config/app_theme.dart';
 import '../services/chat_provider.dart';
 import '../services/codex_realtime_service.dart';
 import '../widgets/realtime_orb.dart';
@@ -14,17 +15,36 @@ const _voicePreferenceKey = 'codex_realtime_voice';
 /// when dismissed. The orb reacts to who is talking; the transcript below it
 /// streams in place; Codex handoffs show as "working" while the backing model
 /// runs a turn in the chat behind this screen.
-class CodexRealtimeScreen extends StatefulWidget {
+/// The voice call screen stays dark in light mode: the orb and transcript are
+/// drawn for a black background, so the route takes the dark Codex theme.
+class CodexRealtimeScreen extends StatelessWidget {
   const CodexRealtimeScreen({super.key, this.sessionId});
 
   /// The Codex session to join. Null starts a new session.
   final String? sessionId;
 
   @override
-  State<CodexRealtimeScreen> createState() => _CodexRealtimeScreenState();
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.brightness == Brightness.dark
+          ? theme
+          : appTheme(accent: AppPalette.dark.codex),
+      child: _CodexRealtimeBody(sessionId: sessionId),
+    );
+  }
 }
 
-class _CodexRealtimeScreenState extends State<CodexRealtimeScreen> {
+class _CodexRealtimeBody extends StatefulWidget {
+  const _CodexRealtimeBody({this.sessionId});
+
+  final String? sessionId;
+
+  @override
+  State<_CodexRealtimeBody> createState() => _CodexRealtimeScreenState();
+}
+
+class _CodexRealtimeScreenState extends State<_CodexRealtimeBody> {
   final _textController = TextEditingController();
   final _textFocus = FocusNode();
   bool _typing = false;

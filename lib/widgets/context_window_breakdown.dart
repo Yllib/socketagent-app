@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_palette.dart';
 
 /// Reads and draws the SDK's context-window breakdown.
 ///
@@ -44,38 +45,42 @@ class ContextBreakdown {
 /// Fixed palette. The SDK's `color` is a terminal theme token ("inactive",
 /// "promptBorder"), not a value this app can render, and several rows share
 /// one token, so the colours are assigned here instead.
-const _palette = <Color>[
-  Color(0xFF89B4FA), // blue
-  Color(0xFFF9E2AF), // yellow
-  Color(0xFF94E2D5), // teal
-  Color(0xFFFAB387), // peach
-  Color(0xFFF5C2E7), // pink
-  Color(0xFFA6E3A1), // green
-  Color(0xFF89DCEB), // sky
-  Color(0xFFB4BEFE), // lavender
-  Color(0xFFCBA6F7), // mauve
-  Color(0xFFEBA0AC), // maroon
+List<Color> _rowPalette(AppPalette p) => [
+  p.blue,
+  p.yellow,
+  p.teal,
+  p.peach,
+  p.pink,
+  p.green,
+  p.sky,
+  p.lavender,
+  p.mauve,
+  p.maroon,
 ];
 
 /// Named rows keep one colour across turns, so a category does not change
 /// colour when another one appears or drops to zero.
-const _fixedColors = <String, Color>{
-  'Messages': Color(0xFF89B4FA),
-  'System prompt': Color(0xFFF9E2AF),
-  'System tools': Color(0xFF94E2D5),
-  'MCP tools': Color(0xFF89DCEB),
-  'Memory files': Color(0xFFF5C2E7),
-  'Skills': Color(0xFFFAB387),
-  'Agents': Color(0xFFA6E3A1),
-  'Commands': Color(0xFFB4BEFE),
+Map<String, Color> _fixedColors(AppPalette p) => {
+  'Messages': p.blue,
+  'System prompt': p.yellow,
+  'System tools': p.teal,
+  'MCP tools': p.sky,
+  'Memory files': p.pink,
+  'Skills': p.peach,
+  'Agents': p.green,
+  'Commands': p.lavender,
 };
 
-/// Splits the SDK's `categories` list by row kind.
+/// Splits the SDK's `categories` list by row kind, colouring rows from
+/// [palette] so the bar matches the current brightness.
 ///
 /// Classifies on `kind`, which the SDK documents as the only reliable signal.
 /// Servers running an older CLI omit it, so the name and `isDeferred` are the
 /// fallback; getting that wrong only misfiles a row, it never inflates the bar.
-ContextBreakdown classifyContextCategories(dynamic categories) {
+ContextBreakdown classifyContextCategories(
+  dynamic categories, {
+  AppPalette palette = AppPalette.dark,
+}) {
   final used = <ContextCategory>[];
   var usedTokens = 0;
   var bufferTokens = 0;
@@ -89,7 +94,9 @@ ContextBreakdown classifyContextCategories(dynamic categories) {
       final tokens = (raw['tokens'] as num?)?.toInt() ?? 0;
       if (tokens <= 0) continue;
 
-      final kind = raw['kind']?.toString() ?? _inferKind(name, raw['isDeferred'] == true);
+      final kind =
+          raw['kind']?.toString() ??
+          _inferKind(name, raw['isDeferred'] == true);
       switch (kind) {
         case 'deferred':
           deferredTokens += tokens;
@@ -98,7 +105,13 @@ ContextBreakdown classifyContextCategories(dynamic categories) {
         case 'free':
           freeTokens += tokens;
         default:
-          used.add(ContextCategory(name, tokens, _colorFor(name, used.length)));
+          used.add(
+            ContextCategory(
+              name,
+              tokens,
+              _colorFor(palette, name, used.length),
+            ),
+          );
           usedTokens += tokens;
       }
     }
@@ -123,8 +136,10 @@ String _inferKind(String name, bool isDeferred) {
   return 'used';
 }
 
-Color _colorFor(String name, int index) =>
-    _fixedColors[name] ?? _palette[index % _palette.length];
+Color _colorFor(AppPalette palette, String name, int index) {
+  final rows = _rowPalette(palette);
+  return _fixedColors(palette)[name] ?? rows[index % rows.length];
+}
 
 /// The window as one bar: filled to the share actually used, and that fill
 /// split into each category's share of it.

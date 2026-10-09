@@ -5,6 +5,7 @@ import '../models/server_config.dart';
 import '../screens/ibs_auth_screen.dart';
 import '../screens/outlook_auth_screen.dart';
 import 'chat_provider.dart';
+import '../config/app_palette.dart';
 
 Future<void> runPrivateIntegrationAuthFlow({
   required BuildContext context,
@@ -14,6 +15,7 @@ Future<void> runPrivateIntegrationAuthFlow({
 }) async {
   final label = integration == 'ibs-auth' ? 'IBS' : 'Outlook';
   final messenger = ScaffoldMessenger.of(context);
+  final palette = context.palette;
   messenger.showSnackBar(SnackBar(content: Text('Opening $label sign-in…')));
 
   late final PrivateIntegrationAuthChallenge challenge;
@@ -79,7 +81,7 @@ Future<void> runPrivateIntegrationAuthFlow({
     messenger.showSnackBar(
       SnackBar(
         content: Text(outcome.message),
-        backgroundColor: outcome.success ? Colors.green : Colors.red,
+        backgroundColor: outcome.success ? palette.success : palette.danger,
       ),
     );
   } catch (error) {

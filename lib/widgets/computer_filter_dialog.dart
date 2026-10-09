@@ -51,7 +51,7 @@ class _ComputerFilterDialogState extends State<ComputerFilterDialog> {
         return name != 0 ? name : a.id.compareTo(b.id);
       });
     return AlertDialog(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       title: const Text('Filter by computer'),
       contentPadding: const EdgeInsets.symmetric(vertical: 12),
       content: SizedBox(

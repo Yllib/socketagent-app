@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
+import '../config/app_palette.dart';
 
 class MonitorCard extends StatefulWidget {
   final ChatMessage message;
@@ -29,9 +30,9 @@ class _MonitorCardState extends State<MonitorCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF4A4A4A), width: 1),
+        border: Border.all(color: context.palette.outline, width: 1),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -46,10 +47,10 @@ class _MonitorCardState extends State<MonitorCard> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.monitor_heart_outlined,
                     size: 16,
-                    color: Color(0xFF89B4FA),
+                    color: context.palette.blue,
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -57,7 +58,7 @@ class _MonitorCardState extends State<MonitorCard> {
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFF89B4FA),
+                      color: context.palette.blue,
                     ),
                   ),
                   const SizedBox(width: 6),
@@ -66,7 +67,7 @@ class _MonitorCardState extends State<MonitorCard> {
                       description,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -78,14 +79,14 @@ class _MonitorCardState extends State<MonitorCard> {
                       '$lineCount line${lineCount == 1 ? '' : 's'}',
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 10,
-                        color: const Color(0xFF767676),
+                        color: context.palette.textMuted,
                       ),
                     ),
                   const SizedBox(width: 4),
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 16,
-                    color: const Color(0xFF767676),
+                    color: context.palette.textMuted,
                   ),
                 ],
               ),
@@ -98,7 +99,7 @@ class _MonitorCardState extends State<MonitorCard> {
                 preview,
                 style: GoogleFonts.jetBrainsMono(
                   fontSize: 10,
-                  color: const Color(0xFF767676),
+                  color: context.palette.textMuted,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
@@ -106,8 +107,8 @@ class _MonitorCardState extends State<MonitorCard> {
             ),
           if (_expanded)
             Container(
-              decoration: const BoxDecoration(
-                color: Color(0xFF121212),
+              decoration: BoxDecoration(
+                color: context.palette.panelLow,
                 borderRadius: BorderRadius.vertical(
                   bottom: Radius.circular(12),
                 ),
@@ -119,7 +120,7 @@ class _MonitorCardState extends State<MonitorCard> {
                   output,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 11,
-                    color: const Color(0xFFE6E6E6),
+                    color: context.palette.text,
                     height: 1.4,
                   ),
                 ),

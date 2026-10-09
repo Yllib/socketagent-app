@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/message.dart';
 import '../services/chat_provider.dart';
+import '../config/app_palette.dart';
 
 class ClaudeAuthCard extends StatefulWidget {
   final ChatMessage message;
@@ -26,7 +27,10 @@ class _ClaudeAuthCardState extends State<ClaudeAuthCard> {
   void _submit() {
     final code = _controller.text.trim();
     if (code.isEmpty) return;
-    context.read<ChatProvider>().submitAuthCode(code, serverId: widget.message.authRequestId);
+    context.read<ChatProvider>().submitAuthCode(
+      code,
+      serverId: widget.message.authRequestId,
+    );
     setState(() => _submitted = true);
   }
 
@@ -72,8 +76,11 @@ class _ClaudeAuthCardState extends State<ClaudeAuthCard> {
                   ),
                   if (isCompleted && !isExpired) ...[
                     const SizedBox(width: 8),
-                    Icon(Icons.check_circle,
-                        size: 18, color: Colors.green.shade400),
+                    Icon(
+                      Icons.check_circle,
+                      size: 18,
+                      color: context.palette.shade(Colors.green, 400),
+                    ),
                   ],
                 ],
               ),
@@ -82,28 +89,38 @@ class _ClaudeAuthCardState extends State<ClaudeAuthCard> {
                 isExpired
                     ? 'Superseded by a newer login request.'
                     : isCompleted
-                        ? 'Auth code submitted. Waiting for confirmation...'
-                        : 'Your Claude token has expired. Sign in to continue.',
-                style: TextStyle(fontSize: 14,
-                    color: isDismissed
-                        ? theme.colorScheme.onSurface.withAlpha(100)
-                        : theme.colorScheme.onSecondaryContainer.withAlpha(200)),
+                    ? 'Auth code submitted. Waiting for confirmation...'
+                    : 'Your Claude token has expired. Sign in to continue.',
+                style: TextStyle(
+                  fontSize: 14,
+                  color: isDismissed
+                      ? theme.colorScheme.onSurface.withAlpha(100)
+                      : theme.colorScheme.onSecondaryContainer.withAlpha(200),
+                ),
               ),
               if (!isDismissed) ...[
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
-                    onPressed: () => launchUrl(Uri.parse(url),
-                        mode: LaunchMode.externalApplication),
+                    onPressed: () => launchUrl(
+                      Uri.parse(url),
+                      mode: LaunchMode.externalApplication,
+                    ),
                     icon: const Icon(Icons.open_in_browser, size: 18),
                     label: const Text('Open Login Page'),
                   ),
                 ),
                 const SizedBox(height: 12),
-                Text('After signing in, use the copy button on the page, then paste here:',
-                    style: TextStyle(fontSize: 13,
-                        color: theme.colorScheme.onSecondaryContainer.withAlpha(180))),
+                Text(
+                  'After signing in, use the copy button on the page, then paste here:',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: theme.colorScheme.onSecondaryContainer.withAlpha(
+                      180,
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 8),
                 Row(
                   children: [
@@ -114,9 +131,12 @@ class _ClaudeAuthCardState extends State<ClaudeAuthCard> {
                           hintText: 'Paste auth code here',
                           isDense: true,
                           contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
                           border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(10)),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
                         ),
                         style: const TextStyle(fontSize: 14),
                         onSubmitted: (_) => _submit(),

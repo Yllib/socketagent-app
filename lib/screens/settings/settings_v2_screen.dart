@@ -18,10 +18,12 @@ import '../../services/notification_service.dart';
 import '../../services/play_billing_service.dart';
 import '../../services/push_notification_service.dart';
 import '../../services/private_integration_auth_flow.dart';
+import '../../services/theme_mode_controller.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../../util/format.dart';
 import '../../widgets/adaptive_action_sheet.dart';
+import '../../widgets/transcript_cache_setting.dart';
 import '../file_manager_screen.dart';
 import '../../services/codex_sign_in_callback.dart';
 import '../credential_manager_screen.dart';
@@ -32,6 +34,8 @@ import '../paywall_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
 import 'voice_speech_screen.dart';
+import '../../config/app_palette.dart';
+import '../../widgets/light_backdrop.dart';
 
 const MethodChannel _settingsNativeChannel = MethodChannel(
   'com.socketagent.app/intent',
@@ -354,174 +358,189 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
               ),
             ],
           ),
-          body: ListView(
-            padding: const EdgeInsets.only(bottom: 28),
-            children: [
-              _Overview(provider: provider, updateService: updateService),
-              if (issues.isNotEmpty)
+          body: LightBackdrop(
+            child: ListView(
+              padding: const EdgeInsets.only(bottom: 28),
+              children: [
+                _Overview(provider: provider, updateService: updateService),
+                if (issues.isNotEmpty)
+                  _SettingsGroup(
+                    title: 'Needs Attention',
+                    children: [
+                      for (final item in issues) _ActionTile(item: item),
+                    ],
+                  ),
                 _SettingsGroup(
-                  title: 'Needs Attention',
+                  title: 'Account & Relay',
                   children: [
-                    for (final item in issues) _ActionTile(item: item),
+                    _RelayTile(provider: provider),
+                    const _SubscriptionTile(),
                   ],
                 ),
-              _SettingsGroup(
-                title: 'Account & Relay',
-                children: [
-                  _RelayTile(provider: provider),
-                  const _SubscriptionTile(),
-                ],
-              ),
-              _SettingsGroup(
-                title: 'Computers',
-                action: IconButton(
-                  tooltip: 'Add computer',
-                  icon: const Icon(Icons.add_circle_outline, size: 22),
-                  onPressed: () => _openConnectComputer(context),
+                _SettingsGroup(
+                  title: 'Computers',
+                  action: IconButton(
+                    tooltip: 'Add computer',
+                    icon: const Icon(Icons.add_circle_outline, size: 22),
+                    onPressed: () => _openConnectComputer(context),
+                  ),
+                  children: configs.isEmpty
+                      ? [
+                          _NavTile(
+                            icon: Icons.add_circle_outline,
+                            title: 'No computers configured',
+                            subtitle: 'Scan a pairing code or connect directly',
+                            trailing: Icons.chevron_right,
+                            onTap: () => _openConnectComputer(context),
+                          ),
+                        ]
+                      : [
+                          for (final config in configs)
+                            _ServerTile(config: config),
+                        ],
                 ),
-                children: configs.isEmpty
-                    ? [
-                        _NavTile(
-                          icon: Icons.add_circle_outline,
-                          title: 'No computers configured',
-                          subtitle: 'Scan a pairing code or connect directly',
-                          trailing: Icons.chevron_right,
-                          onTap: () => _openConnectComputer(context),
+                _SettingsGroup(
+                  title: 'Integrations',
+                  children: [
+                    ...integrationChildren,
+                    if (provider.mcpServers.isNotEmpty)
+                      _NavTile(
+                        icon: Icons.extension_outlined,
+                        title: 'MCP Servers',
+                        subtitle: _mcpSubtitle(provider),
+                        trailing: Icons.chevron_right,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const McpServersScreen(),
+                          ),
                         ),
-                      ]
-                    : [
-                        for (final config in configs)
-                          _ServerTile(config: config),
-                      ],
-              ),
-              _SettingsGroup(
-                title: 'Integrations',
-                children: [
-                  ...integrationChildren,
-                  if (provider.mcpServers.isNotEmpty)
+                      ),
                     _NavTile(
-                      icon: Icons.extension_outlined,
-                      title: 'MCP Servers',
-                      subtitle: _mcpSubtitle(provider),
+                      icon: Icons.auto_fix_high,
+                      title: 'Skills, Plugins & Commands',
+                      subtitle: 'Configured per connected computer',
+                      trailing: Icons.chevron_right,
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const SkillsScreen()),
+                      ),
+                    ),
+                  ],
+                ),
+                _SettingsGroup(
+                  title: 'Voice & Notifications',
+                  children: [
+                    _NavTile(
+                      icon: Icons.mic_outlined,
+                      title: 'Voice & Speech',
+                      subtitle: _voiceSubtitle(provider),
                       trailing: Icons.chevron_right,
                       onTap: () => Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) => const McpServersScreen(),
+                          builder: (_) => const VoiceSpeechScreen(),
                         ),
                       ),
                     ),
-                  _NavTile(
-                    icon: Icons.auto_fix_high,
-                    title: 'Skills, Plugins & Commands',
-                    subtitle: 'Configured per connected computer',
-                    trailing: Icons.chevron_right,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const SkillsScreen()),
+                    if (Platform.isAndroid)
+                      _NotificationSummaryTile()
+                    else
+                      const ListTile(
+                        leading: Icon(Icons.notifications_outlined),
+                        title: Text('Desktop notifications'),
+                        subtitle: Text(
+                          'Keep SocketAgent open to receive session alerts.',
+                        ),
+                      ),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.volume_up_outlined),
+                      title: const Text('Sound when a run finishes'),
+                      subtitle: const Text(
+                        'For the open session, which gets no popup',
+                      ),
+                      value: provider.runFinishedSoundEnabled,
+                      onChanged: provider.setRunFinishedSoundEnabled,
                     ),
-                  ),
-                ],
-              ),
-              _SettingsGroup(
-                title: 'Voice & Notifications',
-                children: [
-                  _NavTile(
-                    icon: Icons.mic_outlined,
-                    title: 'Voice & Speech',
-                    subtitle: _voiceSubtitle(provider),
-                    trailing: Icons.chevron_right,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const VoiceSpeechScreen(),
+                  ],
+                ),
+                _SettingsGroup(
+                  title: 'Chat & Display',
+                  children: [
+                    const _AppearanceTile(),
+                    SwitchListTile(
+                      secondary: const Icon(Icons.view_stream_outlined),
+                      title: const Text('Condensed Tool Usage'),
+                      subtitle: const Text(
+                        'Collapse internal work between conversation messages',
+                      ),
+                      value: provider.condensedToolUsage,
+                      onChanged: provider.setCondensedToolUsage,
+                    ),
+                    TranscriptCacheTile(provider: provider),
+                  ],
+                ),
+                _SettingsGroup(
+                  title: 'Files & Security',
+                  children: [
+                    _NavTile(
+                      icon: Icons.folder_open_outlined,
+                      title: 'Computer Files',
+                      subtitle: 'Browse connected computer file systems',
+                      trailing: Icons.chevron_right,
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const FileManagerScreen(),
+                        ),
                       ),
                     ),
-                  ),
-                  if (Platform.isAndroid)
-                    _NotificationSummaryTile()
-                  else
-                    const ListTile(
-                      leading: Icon(Icons.notifications_outlined),
-                      title: Text('Desktop notifications'),
+                    _NavTile(
+                      icon: Icons.shield_outlined,
+                      title: 'Protected Files',
+                      subtitle: 'Approval rules for sensitive paths',
+                      trailing: Icons.chevron_right,
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const ProtectedFilesScreen(),
+                        ),
+                      ),
+                    ),
+                    _NavTile(
+                      icon: Icons.key_outlined,
+                      title: 'Credential Manager',
+                      subtitle:
+                          'Send computers to another device or receive them',
+                      trailing: Icons.chevron_right,
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const CredentialManagerScreen(),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                _SettingsGroup(
+                  title: 'About',
+                  children: [
+                    ListTile(
+                      key: const Key('app-version-row'),
+                      leading: const Icon(Icons.info_outline),
+                      title: const Text('Version'),
                       subtitle: Text(
-                        'Keep SocketAgent open to receive session alerts.',
+                        _currentVersion.isEmpty
+                            ? 'Loading'
+                            : 'v$_currentVersion',
                       ),
+                      onTap: _handleVersionTap,
                     ),
-                ],
-              ),
-              _SettingsGroup(
-                title: 'Chat & Display',
-                children: [
-                  SwitchListTile(
-                    secondary: const Icon(Icons.view_stream_outlined),
-                    title: const Text('Condensed Tool Usage'),
-                    subtitle: const Text(
-                      'Collapse internal work between conversation messages',
+                    _NavTile(
+                      icon: Icons.privacy_tip_outlined,
+                      title: 'Privacy Policy',
+                      subtitle: 'How SocketAgent handles data',
+                      trailing: Icons.open_in_new,
+                      onTap: _openPrivacyPolicy,
                     ),
-                    value: provider.condensedToolUsage,
-                    onChanged: provider.setCondensedToolUsage,
-                  ),
-                ],
-              ),
-              _SettingsGroup(
-                title: 'Files & Security',
-                children: [
-                  _NavTile(
-                    icon: Icons.folder_open_outlined,
-                    title: 'Computer Files',
-                    subtitle: 'Browse connected computer file systems',
-                    trailing: Icons.chevron_right,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const FileManagerScreen(),
-                      ),
-                    ),
-                  ),
-                  _NavTile(
-                    icon: Icons.shield_outlined,
-                    title: 'Protected Files',
-                    subtitle: 'Approval rules for sensitive paths',
-                    trailing: Icons.chevron_right,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const ProtectedFilesScreen(),
-                      ),
-                    ),
-                  ),
-                  _NavTile(
-                    icon: Icons.key_outlined,
-                    title: 'Credential Manager',
-                    subtitle:
-                        'Send computers to another device or receive them',
-                    trailing: Icons.chevron_right,
-                    onTap: () => Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => const CredentialManagerScreen(),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              _SettingsGroup(
-                title: 'About',
-                children: [
-                  ListTile(
-                    key: const Key('app-version-row'),
-                    leading: const Icon(Icons.info_outline),
-                    title: const Text('Version'),
-                    subtitle: Text(
-                      _currentVersion.isEmpty ? 'Loading' : 'v$_currentVersion',
-                    ),
-                    onTap: _handleVersionTap,
-                  ),
-                  _NavTile(
-                    icon: Icons.privacy_tip_outlined,
-                    title: 'Privacy Policy',
-                    subtitle: 'How SocketAgent handles data',
-                    trailing: Icons.open_in_new,
-                    onTap: _openPrivacyPolicy,
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -1223,7 +1242,7 @@ class _SettingsV2ServerDetailScreenState
               ? 'Notifications registered for ${config.name}'
               : 'Could not register notifications for ${config.name}',
         ),
-        backgroundColor: ok ? Colors.green : Colors.red,
+        backgroundColor: ok ? context.palette.success : context.palette.danger,
       ),
     );
   }
@@ -1524,7 +1543,7 @@ class _SettingsV2ServerDetailScreenState
               ? 'Notifications unenrolled for ${config.name}'
               : 'Could not unenroll notifications for ${config.name}',
         ),
-        backgroundColor: ok ? Colors.green : Colors.red,
+        backgroundColor: ok ? context.palette.success : context.palette.danger,
       ),
     );
   }
@@ -1901,7 +1920,7 @@ class _BackendDetailTile extends StatelessWidget {
                     ? Colors.green.shade600
                     : severity == 'warning'
                     ? Colors.orange.shade700
-                    : Colors.red.shade400,
+                    : context.palette.shade(Colors.red, 400),
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -2904,9 +2923,9 @@ class _NotificationSummaryTileState extends State<_NotificationSummaryTile>
                   ? Icons.warning_amber_outlined
                   : Icons.notifications_none,
               iconColor: permissionKnown && !permissionEnabled
-                  ? Colors.red
+                  ? context.palette.danger
                   : deliverySetupNeeded > 0
-                  ? Colors.orange
+                  ? context.palette.warning
                   : null,
               title: 'Computer notifications',
               subtitle: permissionKnown && !permissionEnabled
@@ -2934,6 +2953,33 @@ class _NotificationSummaryTileState extends State<_NotificationSummaryTile>
           },
         );
       },
+    );
+  }
+}
+
+/// Picks whether the app follows the device's dark mode or forces one.
+class _AppearanceTile extends StatelessWidget {
+  const _AppearanceTile();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<ThemeModeController>();
+    return ListTile(
+      leading: const Icon(Icons.brightness_6_outlined),
+      title: const Text('Appearance'),
+      trailing: SegmentedButton<ThemeMode>(
+        showSelectedIcon: false,
+        style: const ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        selected: {controller.mode},
+        segments: [
+          for (final mode in ThemeMode.values)
+            ButtonSegment(value: mode, label: Text(themeModeLabel(mode))),
+        ],
+        onSelectionChanged: (values) => controller.setMode(values.first),
+      ),
     );
   }
 }
@@ -3791,8 +3837,8 @@ Future<void> _showVersionCheck(
       ? Icons.system_update
       : Icons.check_circle;
   final titleColor = needsRestart || updateAvailable
-      ? Colors.orange
-      : Colors.green;
+      ? context.palette.warning
+      : context.palette.success;
 
   if (!context.mounted) return;
   showDialog(
@@ -3848,9 +3894,9 @@ Future<void> _showVersionCheck(
               ),
             if (runningStale) ...[
               const SizedBox(height: 12),
-              const Text(
+              Text(
                 'The checkout is newer than the running SocketAgent process. Restart or update this computer to load the current code.',
-                style: TextStyle(fontSize: 12, color: Colors.orange),
+                style: TextStyle(fontSize: 12, color: context.palette.warning),
               ),
             ],
             if (remote != null && updateAvailable)
@@ -3870,21 +3916,24 @@ Future<void> _showVersionCheck(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
                   '$commitsBehind commit${commitsBehind == 1 ? '' : 's'} behind',
-                  style: const TextStyle(fontSize: 12, color: Colors.orange),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.palette.warning,
+                  ),
                 ),
               ),
             if (fetchError != null) ...[
               const SizedBox(height: 8),
               Text(
                 'Fetch error: $fetchError',
-                style: const TextStyle(fontSize: 11, color: Colors.red),
+                style: TextStyle(fontSize: 11, color: context.palette.danger),
               ),
             ],
             if (error != null) ...[
               const SizedBox(height: 8),
               Text(
                 error,
-                style: const TextStyle(fontSize: 11, color: Colors.red),
+                style: TextStyle(fontSize: 11, color: context.palette.danger),
               ),
             ],
           ],
@@ -3945,7 +3994,9 @@ Future<void> _forceServerUpdate(
   ScaffoldMessenger.of(context).showSnackBar(
     SnackBar(
       content: Text(success ? message : 'Update failed: $message'),
-      backgroundColor: success ? Colors.green : Colors.red,
+      backgroundColor: success
+          ? context.palette.success
+          : context.palette.danger,
     ),
   );
 }
@@ -3972,7 +4023,10 @@ void _confirmDeleteServer(
             if (dialogContext.mounted) Navigator.pop(dialogContext);
             if (popAfterDelete && context.mounted) Navigator.pop(context);
           },
-          child: const Text('Delete', style: TextStyle(color: Colors.red)),
+          child: Text(
+            'Delete',
+            style: TextStyle(color: context.palette.danger),
+          ),
         ),
       ],
     ),

@@ -7,6 +7,7 @@ import '../../services/connection_manager.dart';
 import '../../services/websocket_service.dart';
 import '../../widgets/adaptive_action_sheet.dart';
 import 'skill_edit_screen.dart';
+import '../../config/app_palette.dart';
 
 /// A skill entry tagged with which server it came from.
 class _ServerSkill {
@@ -248,7 +249,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: Text(
+              'Delete',
+              style: TextStyle(color: context.palette.danger),
+            ),
           ),
         ],
       ),
@@ -453,7 +457,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Text(
             '$name: ${entry.value}',
-            style: TextStyle(fontSize: 11, color: Colors.red.shade300),
+            style: TextStyle(
+              fontSize: 11,
+              color: context.palette.shade(Colors.red, 300),
+            ),
           ),
         ),
       );
@@ -475,7 +482,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Text(
             'No response: $names',
-            style: TextStyle(fontSize: 11, color: Colors.orange.shade300),
+            style: TextStyle(
+              fontSize: 11,
+              color: context.palette.shade(Colors.orange, 300),
+            ),
           ),
         ),
       );
@@ -514,7 +524,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
           key: 'agent_codex_skills',
           title: 'Codex Skills',
           icon: Icons.terminal,
-          color: Colors.green,
+          color: context.palette.success,
           items: codexSkills,
         ),
       );
@@ -697,12 +707,15 @@ class _SkillsScreenState extends State<SkillsScreen> {
                         height: 36,
                         child: Text('Update', style: TextStyle(fontSize: 13)),
                       ),
-                      const PopupMenuItem(
+                      PopupMenuItem(
                         value: 'remove',
                         height: 36,
                         child: Text(
                           'Remove',
-                          style: TextStyle(fontSize: 13, color: Colors.red),
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: context.palette.danger,
+                          ),
                         ),
                       ),
                     ],
@@ -766,7 +779,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
 
   Widget _buildAgentBadge(String agent) {
     final isCodex = agent == 'codex';
-    final color = isCodex ? Colors.green : Colors.deepPurple;
+    final color = isCodex ? context.palette.success : Colors.deepPurple;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
       decoration: BoxDecoration(
@@ -917,7 +930,10 @@ class _SkillsScreenState extends State<SkillsScreen> {
                   });
                 }
               },
-              child: const Text('Remove', style: TextStyle(color: Colors.red)),
+              child: Text(
+                'Remove',
+                style: TextStyle(color: context.palette.danger),
+              ),
             ),
           ],
         ),
@@ -1085,12 +1101,15 @@ class _SkillsScreenState extends State<SkillsScreen> {
                     child: Text('Duplicate', style: TextStyle(fontSize: 13)),
                   ),
                   if (!ss.isPlugin)
-                    const PopupMenuItem(
+                    PopupMenuItem(
                       value: 'delete',
                       height: 36,
                       child: Text(
                         'Delete',
-                        style: TextStyle(fontSize: 13, color: Colors.red),
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: context.palette.danger,
+                        ),
                       ),
                     ),
                 ],
@@ -1288,12 +1307,12 @@ class _SkillsScreenState extends State<SkillsScreen> {
               if (action == 'uninstall') act('uninstall');
             },
             itemBuilder: (ctx) => [
-              const PopupMenuItem(
+              PopupMenuItem(
                 value: 'uninstall',
                 height: 36,
                 child: Text(
                   'Uninstall',
-                  style: TextStyle(fontSize: 13, color: Colors.red),
+                  style: TextStyle(fontSize: 13, color: context.palette.danger),
                 ),
               ),
             ],

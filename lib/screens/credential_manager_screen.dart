@@ -7,6 +7,7 @@ import '../services/websocket_service.dart';
 import '../util/format.dart';
 import '../widgets/share_credentials_sheet.dart';
 import 'receive_credentials_screen.dart';
+import '../config/app_palette.dart';
 
 /// The credentials this device holds: one row per computer, plus relay access
 /// when this device has a subscription. Each row shares itself; long-press or
@@ -236,8 +237,8 @@ class _ComputerRow extends StatelessWidget {
               Icons.computer,
               size: 22,
               color: switch (status) {
-                ConnectionStatus.connected => Colors.green,
-                ConnectionStatus.connecting => Colors.orange,
+                ConnectionStatus.connected => context.palette.success,
+                ConnectionStatus.connecting => context.palette.warning,
                 _ => Colors.grey,
               },
             ),

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/raw_event.dart';
 import 'scroll_passthrough.dart';
+import '../config/app_palette.dart';
 
 /// Card for a single SdkItem — either a message group or standalone event
 class RawEventCard extends StatefulWidget {
@@ -35,7 +36,9 @@ class _RawEventCardState extends State<RawEventCard> {
   // ─── Message Group Card ───────────────────────────────────────────
 
   Widget _buildMessageCard(MessageGroup g) {
-    final color = g.hasToolUse ? Colors.orange.shade300 : Colors.green.shade300;
+    final color = g.hasToolUse
+        ? context.palette.shade(Colors.orange, 300)
+        : context.palette.shade(Colors.green, 300);
     final inputTokens = g.inputUsage?['input_tokens'];
     final cacheRead = g.inputUsage?['cache_read_input_tokens'];
 
@@ -64,31 +67,35 @@ class _RawEventCardState extends State<RawEventCard> {
                             ? (b.toolName ?? 'tool')
                             : b.blockType,
                         b.blockType == 'tool_use'
-                            ? Colors.orange.shade200
-                            : Colors.green.shade200,
+                            ? context.palette.shade(Colors.orange, 200)
+                            : context.palette.shade(Colors.green, 200),
                       ),
                     ),
                   ),
                   const Spacer(),
                   // Token badges
                   if (inputTokens != null)
-                    _tokenBadge('in', '$inputTokens', Colors.blue.shade200),
+                    _tokenBadge(
+                      'in',
+                      '$inputTokens',
+                      context.palette.shade(Colors.blue, 200),
+                    ),
                   if (g.outputTokens != null)
                     _tokenBadge(
                       'out',
                       '${g.outputTokens}',
-                      Colors.purple.shade200,
+                      context.palette.shade(Colors.purple, 200),
                     ),
                   // Streaming indicator
                   if (!g.complete)
-                    const Padding(
+                    Padding(
                       padding: EdgeInsets.only(left: 6),
                       child: SizedBox(
                         width: 10,
                         height: 10,
                         child: CircularProgressIndicator(
                           strokeWidth: 1.5,
-                          color: Color(0xFF5E5E5E),
+                          color: context.palette.textFaint,
                         ),
                       ),
                     ),
@@ -96,7 +103,7 @@ class _RawEventCardState extends State<RawEventCard> {
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 16,
-                    color: const Color(0xFF5E5E5E),
+                    color: context.palette.textFaint,
                   ),
                 ],
               ),
@@ -104,7 +111,7 @@ class _RawEventCardState extends State<RawEventCard> {
           ),
           // Expanded: show each content block as a section
           if (_expanded) ...[
-            const Divider(height: 1, color: Color(0xFF2E2E2E)),
+            Divider(height: 1, color: context.palette.border),
             // Metadata row
             Padding(
               padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
@@ -140,7 +147,9 @@ class _RawEventCardState extends State<RawEventCard> {
 
   Widget _buildContentBlockSection(ContentBlock b) {
     final isToolUse = b.blockType == 'tool_use';
-    final color = isToolUse ? Colors.orange.shade300 : Colors.green.shade300;
+    final color = isToolUse
+        ? context.palette.shade(Colors.orange, 300)
+        : context.palette.shade(Colors.green, 300);
     final label = isToolUse ? (b.toolName ?? 'tool_use') : b.blockType;
 
     return Column(
@@ -155,20 +164,20 @@ class _RawEventCardState extends State<RawEventCard> {
               const SizedBox(width: 6),
               Text(
                 '${b.deltaCount} deltas · ${b.accumulatedText.length} chars',
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 9,
-                  color: Color(0xFF767676),
+                  color: context.palette.textMuted,
                 ),
               ),
               if (!b.complete) ...[
                 const SizedBox(width: 6),
-                const SizedBox(
+                SizedBox(
                   width: 8,
                   height: 8,
                   child: CircularProgressIndicator(
                     strokeWidth: 1.5,
-                    color: Color(0xFF5E5E5E),
+                    color: context.palette.textFaint,
                   ),
                 ),
               ],
@@ -181,7 +190,7 @@ class _RawEventCardState extends State<RawEventCard> {
             margin: const EdgeInsets.fromLTRB(10, 2, 10, 6),
             constraints: const BoxConstraints(maxHeight: 200),
             decoration: BoxDecoration(
-              color: const Color(0xFF0C0C0C),
+              color: context.palette.panelLow,
               borderRadius: BorderRadius.circular(4),
             ),
             child: ScrollPassthrough(
@@ -193,8 +202,8 @@ class _RawEventCardState extends State<RawEventCard> {
                     fontFamily: 'monospace',
                     fontSize: 11,
                     color: isToolUse
-                        ? Colors.orange.shade100
-                        : const Color(0xFFB0B0B0),
+                        ? context.palette.shade(Colors.orange, 100)
+                        : context.palette.textSecondary,
                   ),
                 ),
               ),
@@ -220,7 +229,7 @@ class _RawEventCardState extends State<RawEventCard> {
             children: [
               _chip(
                 type == 'tool_result' ? 'result' : type,
-                Colors.amber.shade300,
+                context.palette.shade(Colors.amber, 300),
               ),
               if (result['tool_use_id'] != null) ...[
                 const SizedBox(width: 6),
@@ -229,10 +238,10 @@ class _RawEventCardState extends State<RawEventCard> {
                     result['tool_use_id'] as String,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
+                    style: TextStyle(
                       fontFamily: 'monospace',
                       fontSize: 9,
-                      color: Color(0xFF767676),
+                      color: context.palette.textMuted,
                     ),
                   ),
                 ),
@@ -245,7 +254,7 @@ class _RawEventCardState extends State<RawEventCard> {
             margin: const EdgeInsets.fromLTRB(10, 2, 10, 6),
             constraints: const BoxConstraints(maxHeight: 150),
             decoration: BoxDecoration(
-              color: const Color(0xFF0C0C0C),
+              color: context.palette.panelLow,
               borderRadius: BorderRadius.circular(4),
             ),
             child: ScrollPassthrough(
@@ -256,7 +265,7 @@ class _RawEventCardState extends State<RawEventCard> {
                   style: TextStyle(
                     fontFamily: 'monospace',
                     fontSize: 11,
-                    color: Colors.amber.shade100,
+                    color: context.palette.shade(Colors.amber, 100),
                   ),
                 ),
               ),
@@ -271,8 +280,8 @@ class _RawEventCardState extends State<RawEventCard> {
   Widget _buildSystemCard(SdkItem item) {
     final subtype = item.systemSubtype ?? '?';
     final color = subtype == 'status'
-        ? Colors.yellow.shade300
-        : Colors.cyan.shade300;
+        ? context.palette.shade(Colors.yellow, 300)
+        : context.palette.shade(Colors.cyan, 300);
 
     // Build detail string from available fields
     final parts = <String>[];
@@ -306,7 +315,7 @@ class _RawEventCardState extends State<RawEventCard> {
 
   Widget _buildProgressCard(SdkItem item) {
     return _compactCard(
-      color: Colors.orange.shade200,
+      color: context.palette.shade(Colors.orange, 200),
       label: 'progress',
       detail:
           '${item.progressToolName ?? '?'} · ${item.elapsed?.toStringAsFixed(1) ?? '?'}s',
@@ -324,7 +333,7 @@ class _RawEventCardState extends State<RawEventCard> {
         : '';
 
     return _card(
-      color: Colors.blue.shade300,
+      color: context.palette.shade(Colors.blue, 300),
       child: InkWell(
         onTap: () => setState(() => _expanded = !_expanded),
         child: Column(
@@ -336,25 +345,41 @@ class _RawEventCardState extends State<RawEventCard> {
                 children: [
                   Text(_time(item.timestamp), style: _tsStyle),
                   const SizedBox(width: 6),
-                  _chip('result', Colors.blue.shade300),
+                  _chip('result', context.palette.shade(Colors.blue, 300)),
                   const SizedBox(width: 8),
-                  _tokenBadge('cost', cost, Colors.blue.shade200),
-                  _tokenBadge('turns', '$turns', Colors.purple.shade200),
+                  _tokenBadge(
+                    'cost',
+                    cost,
+                    context.palette.shade(Colors.blue, 200),
+                  ),
+                  _tokenBadge(
+                    'turns',
+                    '$turns',
+                    context.palette.shade(Colors.purple, 200),
+                  ),
                   if (dur.isNotEmpty)
-                    _tokenBadge('time', dur, Colors.green.shade200),
+                    _tokenBadge(
+                      'time',
+                      dur,
+                      context.palette.shade(Colors.green, 200),
+                    ),
                   if (item.isError == true)
-                    _tokenBadge('ERROR', '', Colors.red.shade300),
+                    _tokenBadge(
+                      'ERROR',
+                      '',
+                      context.palette.shade(Colors.red, 300),
+                    ),
                   const Spacer(),
                   Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 16,
-                    color: const Color(0xFF5E5E5E),
+                    color: context.palette.textFaint,
                   ),
                 ],
               ),
             ),
             if (_expanded && item.modelUsage != null) ...[
-              const Divider(height: 1, color: Color(0xFF2E2E2E)),
+              Divider(height: 1, color: context.palette.border),
               Padding(
                 padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
                 child: Wrap(
@@ -377,8 +402,8 @@ class _RawEventCardState extends State<RawEventCard> {
   Widget _buildStandaloneCard(SdkItem item) {
     final role = item.standaloneRole ?? '?';
     final color = role == 'assistant'
-        ? Colors.purple.shade300
-        : Colors.teal.shade300;
+        ? context.palette.shade(Colors.purple, 300)
+        : context.palette.shade(Colors.teal, 300);
     final blocks = item.standaloneBlocks ?? [];
     final summary = blocks
         .map((b) {
@@ -416,9 +441,9 @@ class _RawEventCardState extends State<RawEventCard> {
                       summary.isEmpty ? '(empty)' : summary,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 11,
-                        color: Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                     ),
                   ),
@@ -426,13 +451,13 @@ class _RawEventCardState extends State<RawEventCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 16,
-                      color: const Color(0xFF5E5E5E),
+                      color: context.palette.textFaint,
                     ),
                 ],
               ),
             ),
             if (_expanded && rawJson.isNotEmpty) ...[
-              const Divider(height: 1, color: Color(0xFF2E2E2E)),
+              Divider(height: 1, color: context.palette.border),
               Container(
                 constraints: const BoxConstraints(maxHeight: 240),
                 padding: const EdgeInsets.all(10),
@@ -440,10 +465,10 @@ class _RawEventCardState extends State<RawEventCard> {
                   child: SingleChildScrollView(
                     child: SelectableText(
                       rawJson,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontFamily: 'monospace',
                         fontSize: 10,
-                        color: Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                     ),
                   ),
@@ -462,7 +487,7 @@ class _RawEventCardState extends State<RawEventCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(8),
         border: Border(left: BorderSide(color: color, width: 3)),
       ),
@@ -491,10 +516,10 @@ class _RawEventCardState extends State<RawEventCard> {
                 detail,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 10,
-                  color: Color(0xFF9A9A9A),
+                  color: context.palette.textMuted,
                 ),
               ),
             ),
@@ -558,28 +583,28 @@ class _RawEventCardState extends State<RawEventCard> {
       children: [
         Text(
           '$key ',
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'monospace',
             fontSize: 9,
-            color: Color(0xFF767676),
+            color: context.palette.textMuted,
           ),
         ),
         Text(
           value,
-          style: const TextStyle(
+          style: TextStyle(
             fontFamily: 'monospace',
             fontSize: 9,
-            color: Color(0xFFB0B0B0),
+            color: context.palette.textSecondary,
           ),
         ),
       ],
     );
   }
 
-  static const _tsStyle = TextStyle(
+  TextStyle get _tsStyle => TextStyle(
     fontFamily: 'monospace',
     fontSize: 9,
-    color: Color(0xFF5E5E5E),
+    color: context.palette.textFaint,
   );
 
   static String _time(DateTime dt) {

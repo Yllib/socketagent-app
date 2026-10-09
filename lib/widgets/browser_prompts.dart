@@ -57,7 +57,7 @@ Future<BrowserPromptAnswer> _select(
   final value = await showModalBottomSheet<String>(
     context: context,
     routeSettings: _promptRoute,
-    backgroundColor: Colors.black,
+    backgroundColor: Theme.of(context).colorScheme.surface,
     isScrollControlled: true,
     builder: (sheetContext) {
       String? lastGroup;
@@ -70,8 +70,8 @@ Future<BrowserPromptAnswer> _select(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
               child: Text(
                 group,
-                style: const TextStyle(
-                  color: Colors.white,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -188,7 +188,7 @@ Future<BrowserPromptAnswer> _color(BuildContext context, String value) async {
         colorCodeHasColor: true,
       ).showPickerDialog(
         context,
-        backgroundColor: Colors.black,
+        backgroundColor: Theme.of(context).colorScheme.surface,
         routeSettings: _promptRoute,
         constraints: const BoxConstraints(maxWidth: 360),
       );
@@ -210,7 +210,7 @@ Future<BrowserPromptAnswer> _dialog(
     routeSettings: _promptRoute,
     barrierDismissible: false,
     builder: (dialogContext) => AlertDialog(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       title: leaving ? const Text('Leave this page?') : null,
       content: Column(
         mainAxisSize: MainAxisSize.min,
@@ -271,7 +271,7 @@ Future<BrowserPromptAnswer> _auth(
       ));
       return StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: Colors.black,
+          backgroundColor: Theme.of(context).colorScheme.surface,
           title: Text(proxy ? 'Proxy sign-in' : 'Sign in'),
           content: Column(
             mainAxisSize: MainAxisSize.min,

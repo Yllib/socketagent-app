@@ -2,13 +2,21 @@ import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart';
 
-/// Brand color for a session's backend. Anything other than Codex is Claude.
-Color backendColor(String? backend) =>
-    backend == 'codex' ? const Color(0xFF4D9FFF) : const Color(0xFFD97757);
+/// Brand color for a session's backend, readable on [palette]'s background.
+/// Anything other than Codex is Claude.
+Color backendColor(AppPalette palette, String? backend) =>
+    backend == 'codex' ? palette.codex : palette.claude;
 
 /// The app theme around the backend's brand color, so a session's row and
-/// chat window read as Claude or Codex at a glance.
-ThemeData backendTheme(String? backend) => appTheme(backendColor(backend));
+/// chat window read as Claude or Codex at a glance. Light mode uses the darker
+/// brand variants from the palette so the accent stays readable on white.
+ThemeData backendTheme(BuildContext context, String? backend) {
+  final brightness = Theme.of(context).brightness;
+  return appTheme(
+    brightness: brightness,
+    accent: backendColor(AppPalette.of(brightness), backend),
+  );
+}
 
 /// A bundled brand mark stays behind the row without changing its hit targets.
 class SessionBackendWatermark extends StatelessWidget {
@@ -36,7 +44,7 @@ class SessionBackendWatermark extends StatelessWidget {
             opacity: .22,
             child: Image.asset(
               'assets/backend_logos/${backend == 'codex' ? 'codex' : 'claude'}.png',
-              color: backendColor(backend),
+              color: backendColor(context.palette, backend),
               colorBlendMode: BlendMode.srcIn,
               fit: BoxFit.contain,
               excludeFromSemantics: true,

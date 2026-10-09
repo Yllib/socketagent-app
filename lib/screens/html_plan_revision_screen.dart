@@ -6,6 +6,7 @@ import '../services/chat_provider.dart';
 import '../services/html_plan_export_service.dart';
 import '../util/format.dart';
 import 'html_plan_viewer_screen.dart';
+import '../config/app_palette.dart';
 
 class HtmlPlanRevisionScreen extends StatefulWidget {
   const HtmlPlanRevisionScreen({super.key, required this.plan});
@@ -34,10 +35,8 @@ class _HtmlPlanRevisionScreenState extends State<HtmlPlanRevisionScreen> {
   Future<void> _open(HtmlPlanRevisionSummary summary) async {
     final updated = await Navigator.of(context).push<HtmlPlan>(
       MaterialPageRoute(
-        builder: (_) => HtmlPlanRevisionDetailScreen(
-          plan: widget.plan,
-          summary: summary,
-        ),
+        builder: (_) =>
+            HtmlPlanRevisionDetailScreen(plan: widget.plan, summary: summary),
       ),
     );
     if (updated != null && mounted) Navigator.of(context).pop(updated);
@@ -277,7 +276,9 @@ class _HtmlPlanRevisionDetailScreenState
             return Center(
               child: FilledButton(
                 onPressed: () => setState(_load),
-                child: Text('Retry: ${snapshot.error ?? 'revision unavailable'}'),
+                child: Text(
+                  'Retry: ${snapshot.error ?? 'revision unavailable'}',
+                ),
               ),
             );
           }
@@ -321,7 +322,9 @@ class _HtmlPlanRevisionDetailScreenState
                         icon: _rollingBack
                             ? const SizedBox.square(
                                 dimension: 18,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.restore),
                         label: Text(
@@ -385,9 +388,9 @@ class _DiffView extends StatelessWidget {
                           ? Colors.red.withValues(alpha: 0.28)
                           : Colors.transparent,
                       color: added
-                          ? Colors.greenAccent.shade100
+                          ? context.palette.shade(Colors.green, 100)
                           : removed
-                          ? Colors.redAccent.shade100
+                          ? context.palette.shade(Colors.red, 100)
                           : scheme.onSurfaceVariant,
                       decoration: removed ? TextDecoration.lineThrough : null,
                     ),

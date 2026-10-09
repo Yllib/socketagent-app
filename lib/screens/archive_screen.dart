@@ -15,6 +15,7 @@ import '../widgets/reminder_card.dart';
 import '../widgets/socketagent_tool_card.dart';
 import '../widgets/speak_card.dart';
 import '../widgets/tool_output_block.dart';
+import '../config/app_palette.dart';
 
 class ArchiveScreen extends StatefulWidget {
   const ArchiveScreen({super.key});
@@ -532,7 +533,7 @@ class _ArchiveScreenState extends State<ArchiveScreen>
           ? Container(
               alignment: Alignment.centerRight,
               padding: const EdgeInsets.only(right: 20),
-              color: Colors.red,
+              color: context.palette.danger,
               child: const Icon(Icons.delete, color: Colors.white),
             )
           : null,

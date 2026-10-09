@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/codex_goal.dart';
 import '../services/chat_provider.dart';
 import '../util/format.dart';
+import '../config/app_palette.dart';
 
 Future<void> showCodexGoalManagerSheet(
   BuildContext context,
@@ -14,7 +15,7 @@ Future<void> showCodexGoalManagerSheet(
     context: context,
     useSafeArea: true,
     isScrollControlled: true,
-    backgroundColor: Colors.black,
+    backgroundColor: Theme.of(context).colorScheme.surface,
     builder: (_) => CodexGoalManagerSheet(provider: provider),
   );
 }
@@ -25,8 +26,7 @@ class CodexGoalManagerSheet extends StatefulWidget {
   final ChatProvider provider;
 
   @override
-  State<CodexGoalManagerSheet> createState() =>
-      _CodexGoalManagerSheetState();
+  State<CodexGoalManagerSheet> createState() => _CodexGoalManagerSheetState();
 }
 
 class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
@@ -70,7 +70,9 @@ class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
     if (text.isEmpty) return null;
     final value = int.tryParse(text);
     if (value == null || value <= 0) {
-      throw const FormatException('Token budget must be a positive whole number');
+      throw const FormatException(
+        'Token budget must be a positive whole number',
+      );
     }
     return value;
   }
@@ -258,7 +260,9 @@ class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
           starting
               ? 'Codex will keep returning to this objective until it is stopped, blocked, or completed.'
               : 'Editing keeps the current goal status and accumulated usage.',
-          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
         const SizedBox(height: 18),
         TextField(
@@ -305,7 +309,11 @@ class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
               child: FilledButton(
                 onPressed: _busy ? null : () => _save(starting: starting),
                 child: Text(
-                  _busy ? 'Saving…' : starting ? 'Start goal' : 'Save',
+                  _busy
+                      ? 'Saving…'
+                      : starting
+                      ? 'Start goal'
+                      : 'Save',
                 ),
               ),
             ),
@@ -316,11 +324,24 @@ class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
   }
 
   Widget _buildGoal(CodexGoal goal) {
+    final palette = context.palette;
     final statusColor = switch (goal.status) {
-      CodexGoalStatus.active => Colors.greenAccent,
-      CodexGoalStatus.paused => Colors.amberAccent,
-      CodexGoalStatus.complete => Colors.lightBlueAccent,
-      _ => Colors.orangeAccent,
+      CodexGoalStatus.active => palette.pick(
+        dark: Colors.greenAccent,
+        light: Colors.green.shade800,
+      ),
+      CodexGoalStatus.paused => palette.pick(
+        dark: Colors.amberAccent,
+        light: Colors.amber.shade900,
+      ),
+      CodexGoalStatus.complete => palette.pick(
+        dark: Colors.lightBlueAccent,
+        light: Colors.lightBlue.shade800,
+      ),
+      _ => palette.pick(
+        dark: Colors.orangeAccent,
+        light: Colors.orange.shade800,
+      ),
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -329,10 +350,7 @@ class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
           children: [
             Text(
               _statusLabel(goal.status),
-              style: TextStyle(
-                color: statusColor,
-                fontWeight: FontWeight.w600,
-              ),
+              style: TextStyle(color: statusColor, fontWeight: FontWeight.w600),
             ),
             const Spacer(),
             IconButton(
@@ -366,7 +384,9 @@ class _CodexGoalManagerSheetState extends State<CodexGoalManagerSheet> {
             _stat('Time used', _formatDuration(goal.timeUsedSeconds)),
             _stat(
               'Token budget',
-              goal.tokenBudget == null ? 'No limit' : formatThousands(goal.tokenBudget!),
+              goal.tokenBudget == null
+                  ? 'No limit'
+                  : formatThousands(goal.tokenBudget!),
             ),
           ],
         ),

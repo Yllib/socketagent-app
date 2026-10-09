@@ -7,6 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../services/desktop_web_user_agent.dart';
 import '../services/outlook_auth_session_state.dart';
 import '../services/window_security_service.dart';
+import '../config/app_palette.dart';
 
 /// Protected WebView that captures only the exact approved OWA service
 /// requests needed to reproduce FindFolder and FindItem. Passwords, MFA,
@@ -326,10 +327,15 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
           if (_ready)
             TextButton.icon(
               onPressed: _saveAndClose,
-              icon: Icon(Icons.check, color: Colors.green.shade400),
+              icon: Icon(
+                Icons.check,
+                color: context.palette.shade(Colors.green, 400),
+              ),
               label: Text(
                 'Save & Close',
-                style: TextStyle(color: Colors.green.shade400),
+                style: TextStyle(
+                  color: context.palette.shade(Colors.green, 400),
+                ),
               ),
             ),
         ],

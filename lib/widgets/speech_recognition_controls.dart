@@ -95,12 +95,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => Scaffold(
-          backgroundColor: Colors.black,
-          appBar: AppBar(
-            title: Text(title),
-            backgroundColor: Colors.black,
-            foregroundColor: Colors.white,
-          ),
+          appBar: AppBar(title: Text(title)),
           body: AnimatedBuilder(
             animation: provider,
             builder: (_, _) => ListView(

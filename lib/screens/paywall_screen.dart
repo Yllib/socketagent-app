@@ -125,7 +125,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
     _directCheckoutSessionId = sessionId;
     _directCheckoutController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.black)
+      ..setBackgroundColor(Theme.of(context).colorScheme.surface)
       ..setNavigationDelegate(
         NavigationDelegate(
           onNavigationRequest: (request) {
@@ -256,9 +256,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
     final isPlay = AppBuild.supportsPlayBilling;
     if (_showDirectCheckout && _directCheckoutController != null) {
       return Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: Theme.of(context).colorScheme.surface,
         appBar: AppBar(
-          backgroundColor: Colors.black,
+          backgroundColor: Theme.of(context).colorScheme.surface,
           title: const Text('Subscribe'),
           leading: IconButton(
             icon: const Icon(Icons.close),
@@ -274,9 +274,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
       );
     }
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.black,
+        backgroundColor: Theme.of(context).colorScheme.surface,
         title: const Text('Relay access'),
       ),
       body: SafeArea(
@@ -299,7 +299,7 @@ class _PaywallScreenState extends State<PaywallScreen> {
                         ? 'Use SocketAgent away from home'
                         : 'Subscribe to relay access',
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: Colors.white,
+                      color: Theme.of(context).colorScheme.onSurface,
                       fontWeight: FontWeight.w700,
                     ),
                     textAlign: TextAlign.center,
@@ -309,7 +309,11 @@ class _PaywallScreenState extends State<PaywallScreen> {
                     isPlay
                         ? 'Connect to your computers through the encrypted relay.'
                         : 'Direct subscriptions are handled securely by Stripe.',
-                    style: TextStyle(color: Colors.white.withAlpha(175)),
+                    style: TextStyle(
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.onSurface.withAlpha(175),
+                    ),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 36),
@@ -346,7 +350,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
         children: [
           Text(
             _billing.error ?? 'The subscription is not available.',
-            style: const TextStyle(color: Colors.white70),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface.withAlpha(0xB3),
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 16),
@@ -385,7 +391,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
         const SizedBox(height: 12),
         Text(
           terms,
-          style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(145)),
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurface.withAlpha(145),
+          ),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 10),
@@ -433,10 +442,12 @@ class _PaywallScreenState extends State<PaywallScreen> {
     return Column(
       children: [
         if (AppBuild.distribution == AppDistribution.windows) ...[
-          const Text(
+          Text(
             'Already subscribed on Android? Export computers from your phone '
             'and import them here to use the same relay subscription.',
-            style: TextStyle(color: Colors.white70),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurface.withAlpha(0xB3),
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: 10),
@@ -478,7 +489,10 @@ class _PaywallScreenState extends State<PaywallScreen> {
         const SizedBox(height: 12),
         Text(
           'Stripe shows the renewal price before you confirm. Cancel anytime.',
-          style: TextStyle(fontSize: 12, color: Colors.white.withAlpha(145)),
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).colorScheme.onSurface.withAlpha(145),
+          ),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 10),

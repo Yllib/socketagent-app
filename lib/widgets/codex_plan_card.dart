@@ -3,6 +3,7 @@ import '../models/message.dart';
 import 'progress_panel.dart';
 import 'message_timestamp.dart';
 import 'dismissible_panel_items.dart';
+import '../config/app_palette.dart';
 
 class CodexPlanCard extends StatelessWidget {
   final ChatMessage msg;
@@ -62,12 +63,12 @@ class CodexPlanCard extends StatelessWidget {
                         ),
                         child: Row(
                           children: [
-                            const Expanded(
+                            Expanded(
                               child: Text(
                                 'Step dismissed…',
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: Color(0xFFB0B0B0),
+                                  color: context.palette.textSecondary,
                                 ),
                               ),
                             ),
@@ -92,7 +93,7 @@ class CodexPlanCard extends StatelessWidget {
                 .where((step) => step['status'] == 'completed')
                 .length,
             icon: Icons.route_outlined,
-            accent: const Color(0xFFCBA6F7),
+            accent: context.palette.mauve,
             explanation:
                 (msg.toolInput?['explanation'] as String? ?? msg.textContent)
                     .trim(),

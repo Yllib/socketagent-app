@@ -12,6 +12,7 @@ import '../services/browser_keyboard.dart';
 import '../services/chat_provider.dart';
 import '../services/window_security_service.dart';
 import '../widgets/browser_prompts.dart';
+import '../config/app_palette.dart';
 
 enum _BrowserClipboardAction { pasteIntoPage, sendToBrowser, copyToPhone }
 
@@ -391,7 +392,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
   Future<void> _showTabs() async {
     final selected = await showModalBottomSheet<String>(
       context: context,
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (sheetContext) => SafeArea(
         child: ListView(
           shrinkWrap: true,
@@ -512,29 +513,36 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.public_off, color: Colors.white, size: 40),
+              Icon(
+                Icons.public_off,
+                color: Theme.of(context).colorScheme.onSurface,
+                size: 40,
+              ),
               const SizedBox(height: 18),
-              const Text(
+              Text(
                 'Browser component required',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.onSurface,
                   fontSize: 20,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               const SizedBox(height: 10),
-              const Text(
+              Text(
                 'Install it on this computer to use remote sign-in. The normal SocketAgent install stays small.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFFBBBBBB), height: 1.4),
+                style: TextStyle(
+                  color: context.palette.textSecondary,
+                  height: 1.4,
+                ),
               ),
               if (_installMessage != null) ...[
                 const SizedBox(height: 18),
                 Text(
                   _installMessage!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFBBBBBB)),
+                  style: TextStyle(color: context.palette.textSecondary),
                 ),
               ],
               if (_error != null) ...[
@@ -542,7 +550,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
                 Text(
                   _error!,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFFF8A80)),
+                  style: TextStyle(color: context.palette.red),
                 ),
               ],
               const SizedBox(height: 22),
@@ -961,7 +969,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
     final value = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: Colors.black,
+        backgroundColor: Theme.of(context).colorScheme.surface,
         title: const Text('Enter text'),
         content: SizedBox(
           width: double.maxFinite,
@@ -1016,7 +1024,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          backgroundColor: Colors.black,
+          backgroundColor: Theme.of(context).colorScheme.surface,
           title: const Text('Enter privately'),
           content: TextField(
             controller: controller,
@@ -1187,7 +1195,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
     final value = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        backgroundColor: Colors.black,
+        backgroundColor: Theme.of(context).colorScheme.surface,
         title: const Text('Open address'),
         content: TextField(
           controller: controller,
@@ -1216,10 +1224,10 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
         titleSpacing: 0,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1229,7 +1237,10 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
               _title.isNotEmpty ? _title : _url,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Color(0xFFAAAAAA)),
+              style: TextStyle(
+                fontSize: 11,
+                color: context.palette.textSecondary,
+              ),
             ),
           ],
         ),
@@ -1272,11 +1283,15 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
                   if (_error != null)
                     Container(
                       width: double.infinity,
-                      color: const Color(0xFF3B0000),
+                      color: Theme.of(context).brightness == Brightness.dark
+                          ? const Color(0xFF3B0000)
+                          : context.palette.red.withAlpha(30),
                       padding: const EdgeInsets.all(10),
                       child: Text(
                         _error!,
-                        style: const TextStyle(color: Colors.white),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface,
+                        ),
                       ),
                     ),
                   Expanded(
@@ -1388,7 +1403,9 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
                   SafeArea(
                     top: false,
                     child: Container(
-                      color: const Color(0xFF080808),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerLowest,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 4,
                         vertical: 4,

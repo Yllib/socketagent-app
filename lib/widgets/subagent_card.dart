@@ -14,6 +14,7 @@ import 'thinking_card.dart';
 import 'inline_chat_images.dart';
 import 'markdown_blocks.dart';
 import 'message_timestamp.dart';
+import '../config/app_palette.dart';
 
 class SubAgentCard extends StatefulWidget {
   final ChatMessage message;
@@ -123,12 +124,12 @@ class _SubAgentCardState extends State<SubAgentCard> {
     final failed = _taskStatus == 'failed' || _taskStatus == 'errored';
     final stopped = _taskStatus == 'stopped' || _taskStatus == 'interrupted';
     final accentColor = failed
-        ? const Color(0xFFF38BA8)
+        ? context.palette.red
         : stopped
-        ? const Color(0xFFF9E2AF)
+        ? context.palette.yellow
         : green || isDone
-        ? const Color(0xFFA6E3A1)
-        : const Color(0xFF89B4FA);
+        ? context.palette.green
+        : context.palette.blue;
     final statusLabel = widget.isRunning
         ? 'Sub Agent'
         : failed
@@ -147,14 +148,14 @@ class _SubAgentCardState extends State<SubAgentCard> {
       key: widget.scrollKey,
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: widget.isRunning
               ? accentColor.withAlpha(100)
               : green
-              ? const Color(0xFFA6E3A1).withAlpha(60)
-              : const Color(0xFF2E2E2E),
+              ? context.palette.green.withAlpha(60)
+              : context.palette.border,
           width: 1,
         ),
       ),
@@ -199,7 +200,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
                         vertical: 1,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFA6E3A1).withAlpha(25),
+                        color: context.palette.green.withAlpha(25),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
@@ -207,7 +208,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
-                          color: const Color(0xFFA6E3A1),
+                          color: context.palette.green,
                         ),
                       ),
                     ),
@@ -218,7 +219,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
                       _description,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -239,26 +240,30 @@ class _SubAgentCardState extends State<SubAgentCard> {
                           '${widget.message.toolElapsedSeconds.toStringAsFixed(0)}s',
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 10,
-                            color: const Color(0xFF767676),
+                            color: context.palette.textMuted,
                           ),
                         ),
                       ),
-                    const SizedBox(
+                    SizedBox(
                       width: 14,
                       height: 14,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Color(0xFF89B4FA),
+                        color: context.palette.blue,
                       ),
                     ),
                   ] else if (hasExpandableContent)
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF767676),
+                      color: context.palette.textMuted,
                     )
                   else
-                    const Icon(Icons.check, size: 16, color: Color(0xFF767676)),
+                    Icon(
+                      Icons.check,
+                      size: 16,
+                      color: context.palette.textMuted,
+                    ),
                 ],
               ),
             ),
@@ -270,7 +275,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
                 _activityDetail,
                 style: GoogleFonts.jetBrainsMono(
                   fontSize: 10,
-                  color: const Color(0xFFB0B0B0),
+                  color: context.palette.textSecondary,
                   height: 1.35,
                 ),
                 maxLines: widget.isRunning ? 2 : 1,
@@ -285,7 +290,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
                 _resultOutput,
                 style: GoogleFonts.jetBrainsMono(
                   fontSize: 10,
-                  color: const Color(0xFFE6E6E6),
+                  color: context.palette.text,
                   height: 1.4,
                 ),
                 maxLines: 6,
@@ -295,9 +300,9 @@ class _SubAgentCardState extends State<SubAgentCard> {
           // Expanded content (prompt + child messages)
           if (_expanded && hasExpandableContent) ...[
             Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                  top: BorderSide(color: context.palette.border, width: 1),
                 ),
               ),
               constraints: const BoxConstraints(maxHeight: 400),
@@ -310,7 +315,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
                       if (hasPrompt)
                         _buildSection(
                           label: 'PROMPT',
-                          labelColor: const Color(0xFF89B4FA),
+                          labelColor: context.palette.blue,
                           content: _prompt,
                         ),
                       if (hasResult)
@@ -341,8 +346,10 @@ class _SubAgentCardState extends State<SubAgentCard> {
   }) {
     return Container(
       padding: const EdgeInsets.all(10),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: context.palette.border, width: 1),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -375,10 +382,10 @@ class _SubAgentCardState extends State<SubAgentCard> {
                 'pre': CodeBlockBuilder(
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
-                    color: const Color(0xFFE6E6E6),
+                    color: context.palette.text,
                   ),
                   padding: const EdgeInsets.all(8),
-                  background: const Color(0xFF121212),
+                  background: context.palette.panelLow,
                 ),
               },
               onTapLink: (text, href, title) {
@@ -391,16 +398,16 @@ class _SubAgentCardState extends State<SubAgentCard> {
               styleSheet: MarkdownStyleSheet(
                 p: GoogleFonts.jetBrainsMono(
                   fontSize: 10,
-                  color: const Color(0xFFE6E6E6),
+                  color: context.palette.text,
                   height: 1.4,
                 ),
                 code: GoogleFonts.jetBrainsMono(
                   fontSize: 10,
-                  color: const Color(0xFFF5C2E7),
-                  backgroundColor: const Color(0xFF121212),
+                  color: context.palette.pink,
+                  backgroundColor: context.palette.panelLow,
                 ),
                 codeblockDecoration: BoxDecoration(
-                  color: const Color(0xFF121212),
+                  color: context.palette.panelLow,
                   borderRadius: BorderRadius.circular(6),
                 ),
               ),
@@ -442,7 +449,10 @@ class _SubAgentCardState extends State<SubAgentCard> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Text(
               msg.textContent,
-              style: const TextStyle(fontSize: 12, color: Color(0xFFB0B0B0)),
+              style: TextStyle(
+                fontSize: 12,
+                color: context.palette.textSecondary,
+              ),
             ),
           );
         }

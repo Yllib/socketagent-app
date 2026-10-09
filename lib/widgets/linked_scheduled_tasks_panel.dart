@@ -30,8 +30,9 @@ class _LinkedScheduledTasksPanelState extends State<LinkedScheduledTasksPanel> {
   @override
   Widget build(BuildContext context) {
     if (widget.tasks.isEmpty) return const SizedBox.shrink();
+    final scheme = Theme.of(context).colorScheme;
     return Material(
-      color: Colors.black,
+      color: scheme.surface,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -47,23 +48,19 @@ class _LinkedScheduledTasksPanelState extends State<LinkedScheduledTasksPanel> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(
-                          Icons.schedule,
-                          size: 16,
-                          color: Colors.white,
-                        ),
+                        Icon(Icons.schedule, size: 16, color: scheme.onSurface),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             'Scheduled tasks (${widget.tasks.length})',
-                            style: const TextStyle(color: Colors.white),
+                            style: TextStyle(color: scheme.onSurface),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Icon(
                           _expanded ? Icons.expand_less : Icons.expand_more,
                           size: 18,
-                          color: Colors.white,
+                          color: scheme.onSurface,
                         ),
                       ],
                     ),
@@ -91,8 +88,8 @@ class _LinkedScheduledTasksPanelState extends State<LinkedScheduledTasksPanel> {
                               : task['prompt'] as String? ?? 'Scheduled task',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: scheme.onSurface,
                             fontSize: 13,
                           ),
                         ),
@@ -103,8 +100,8 @@ class _LinkedScheduledTasksPanelState extends State<LinkedScheduledTasksPanel> {
                           _when(context, task),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: Colors.white,
+                          style: TextStyle(
+                            color: scheme.onSurface,
                             fontSize: 12,
                           ),
                         ),

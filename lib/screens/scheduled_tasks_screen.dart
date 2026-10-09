@@ -8,6 +8,8 @@ import '../models/session_scheduled_tasks.dart';
 import '../util/format.dart';
 import '../widgets/folder_browser_screen.dart';
 import 'home_screen.dart';
+import '../config/app_palette.dart';
+import '../widgets/light_backdrop.dart';
 
 class ScheduledTasksScreen extends StatefulWidget {
   const ScheduledTasksScreen({super.key, this.sessionId, this.serverId});
@@ -25,13 +27,13 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
   Color _statusColor(String status) {
     switch (status) {
       case 'pending':
-        return Colors.orange;
+        return context.palette.warning;
       case 'running':
-        return Colors.blue;
+        return context.palette.info;
       case 'completed':
-        return Colors.green;
+        return context.palette.success;
       case 'failed':
-        return Colors.red;
+        return context.palette.danger;
       case 'cancelled':
         return Colors.grey;
       default:
@@ -529,7 +531,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                       : Icons.cloud_off,
                                   size: 14,
                                   color: isConnected
-                                      ? Colors.green
+                                      ? context.palette.success
                                       : Colors.grey,
                                 ),
                               );
@@ -852,7 +854,10 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                               Icon(
                                 Icons.warning_amber_rounded,
                                 size: 14,
-                                color: Colors.orange.shade300,
+                                color: context.palette.shade(
+                                  Colors.orange,
+                                  300,
+                                ),
                               ),
                               const SizedBox(width: 6),
                               Expanded(
@@ -860,7 +865,10 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                   'Intervals under 30 minutes may incur high API usage and costs.',
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: Colors.orange.shade300,
+                                    color: context.palette.shade(
+                                      Colors.orange,
+                                      300,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1038,10 +1046,15 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                 ),
               if (status == 'pending')
                 ListTile(
-                  leading: Icon(Icons.cancel, color: Colors.orange.shade300),
+                  leading: Icon(
+                    Icons.cancel,
+                    color: context.palette.shade(Colors.orange, 300),
+                  ),
                   title: Text(
                     isRecurring ? 'Stop Recurring Task' : 'Cancel Task',
-                    style: TextStyle(color: Colors.orange.shade300),
+                    style: TextStyle(
+                      color: context.palette.shade(Colors.orange, 300),
+                    ),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -1050,10 +1063,15 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                 ),
               if (status != 'running')
                 ListTile(
-                  leading: Icon(Icons.delete, color: Colors.red.shade300),
+                  leading: Icon(
+                    Icons.delete,
+                    color: context.palette.shade(Colors.red, 300),
+                  ),
                   title: Text(
                     'Delete Task',
-                    style: TextStyle(color: Colors.red.shade300),
+                    style: TextStyle(
+                      color: context.palette.shade(Colors.red, 300),
+                    ),
                   ),
                   onTap: () {
                     Navigator.pop(ctx);
@@ -1473,7 +1491,10 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                               Icon(
                                 Icons.warning_amber_rounded,
                                 size: 14,
-                                color: Colors.orange.shade300,
+                                color: context.palette.shade(
+                                  Colors.orange,
+                                  300,
+                                ),
                               ),
                               const SizedBox(width: 6),
                               Expanded(
@@ -1481,7 +1502,10 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                                   'Intervals under 30 minutes may incur high API usage and costs.',
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: Colors.orange.shade300,
+                                    color: context.palette.shade(
+                                      Colors.orange,
+                                      300,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1604,7 +1628,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                 openConversation(context);
               },
         style: TextButton.styleFrom(
-          foregroundColor: Colors.white,
+          foregroundColor: Theme.of(context).colorScheme.onSurface,
           padding: const EdgeInsets.symmetric(vertical: 6),
           minimumSize: const Size(0, 36),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -1695,7 +1719,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
-                              color: Colors.green.shade300,
+                              color: context.palette.shade(Colors.green, 300),
                             ),
                           ),
                         if (runError != null && runError.isNotEmpty)
@@ -1705,7 +1729,7 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
-                              color: Colors.red.shade300,
+                              color: context.palette.shade(Colors.red, 300),
                             ),
                           ),
                       ],
@@ -1808,463 +1832,476 @@ class _ScheduledTasksScreenState extends State<ScheduledTasksScreen> {
                   : 'Session scheduled tasks',
             ),
           ),
-          backgroundColor: Colors.black,
+          backgroundColor: Theme.of(context).colorScheme.surface,
           floatingActionButton: widget.sessionId != null
               ? null
               : FloatingActionButton(
                   onPressed: _showCreateDialog,
                   child: const Icon(Icons.add),
                 ),
-          body: tasks.isEmpty
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.schedule,
-                        size: 64,
-                        color: Theme.of(context).colorScheme.outline,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'No scheduled tasks',
-                        style: TextStyle(
-                          fontSize: 18,
+          body: LightBackdrop(
+            child: tasks.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.schedule,
+                          size: 64,
                           color: Theme.of(context).colorScheme.outline,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        widget.sessionId == null
-                            ? 'Tap + to schedule a task, or ask your agent\nto schedule one for you'
-                            : 'Ask your agent to schedule a task linked to this session.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outline.withAlpha(178),
+                        const SizedBox(height: 16),
+                        Text(
+                          'No scheduled tasks',
+                          style: TextStyle(
+                            fontSize: 18,
+                            color: Theme.of(context).colorScheme.outline,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                )
-              : ListView.builder(
-                  padding: const EdgeInsets.only(
-                    top: 8,
-                    bottom: 80,
-                    left: 8,
-                    right: 8,
-                  ),
-                  itemCount:
-                      activeTasks.length + (archivedTasks.isNotEmpty ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index == activeTasks.length) {
-                      return _buildArchivedTasks(archivedTasks, provider);
-                    }
-                    final task = activeTasks[index];
-                    final taskId = task['id'] as String? ?? '';
-                    final status = task['status'] as String? ?? 'pending';
-                    final prompt = task['prompt'] as String? ?? '';
-                    final name = (task['name'] as String? ?? '').trim();
-                    final displayName = name.isNotEmpty ? name : prompt;
-                    final cwd = task['cwd'] as String? ?? '';
-                    final scheduledTime = task['scheduledTime'] as String?;
-                    final resultSummary = task['resultSummary'] as String?;
-                    final error = task['error'] as String?;
-                    final recurrence =
-                        task['recurrence'] as Map<String, dynamic>?;
-                    final runCount = task['runCount'] as int? ?? 0;
-                    final runs = (task['runs'] as List?) ?? [];
-                    final backend = task['backend'] as String? ?? 'claude';
-                    final model = task['model'] as String?;
-                    final effort = task['effort'] as String?;
-                    final permissionMode = task['permissionMode'] as String?;
-                    final isRecurring = recurrence != null;
-                    final isQuiet = task['notificationMode'] == 'quiet';
-                    final isExpanded = _expandedTasks.contains(taskId);
-                    final isUnread = scheduledTaskHasUnreadResult(task);
+                        const SizedBox(height: 8),
+                        Text(
+                          widget.sessionId == null
+                              ? 'Tap + to schedule a task, or ask your agent\nto schedule one for you'
+                              : 'Ask your agent to schedule a task linked to this session.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.outline.withAlpha(178),
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.only(
+                      top: 8,
+                      bottom: 80,
+                      left: 8,
+                      right: 8,
+                    ),
+                    itemCount:
+                        activeTasks.length + (archivedTasks.isNotEmpty ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (index == activeTasks.length) {
+                        return _buildArchivedTasks(archivedTasks, provider);
+                      }
+                      final task = activeTasks[index];
+                      final taskId = task['id'] as String? ?? '';
+                      final status = task['status'] as String? ?? 'pending';
+                      final prompt = task['prompt'] as String? ?? '';
+                      final name = (task['name'] as String? ?? '').trim();
+                      final displayName = name.isNotEmpty ? name : prompt;
+                      final cwd = task['cwd'] as String? ?? '';
+                      final scheduledTime = task['scheduledTime'] as String?;
+                      final resultSummary = task['resultSummary'] as String?;
+                      final error = task['error'] as String?;
+                      final recurrence =
+                          task['recurrence'] as Map<String, dynamic>?;
+                      final runCount = task['runCount'] as int? ?? 0;
+                      final runs = (task['runs'] as List?) ?? [];
+                      final backend = task['backend'] as String? ?? 'claude';
+                      final model = task['model'] as String?;
+                      final effort = task['effort'] as String?;
+                      final permissionMode = task['permissionMode'] as String?;
+                      final isRecurring = recurrence != null;
+                      final isQuiet = task['notificationMode'] == 'quiet';
+                      final isExpanded = _expandedTasks.contains(taskId);
+                      final isUnread = scheduledTaskHasUnreadResult(task);
 
-                    final taskCard = Card(
-                      child: Column(
-                        children: [
-                          InkWell(
-                            onTap: runs.isNotEmpty
-                                ? () {
-                                    if (isUnread) {
-                                      provider.markScheduledTaskRead(taskId);
-                                    }
-                                    setState(() {
-                                      if (isExpanded) {
-                                        _expandedTasks.remove(taskId);
-                                      } else {
-                                        _expandedTasks.add(taskId);
+                      final taskCard = Card(
+                        child: Column(
+                          children: [
+                            InkWell(
+                              onTap: runs.isNotEmpty
+                                  ? () {
+                                      if (isUnread) {
+                                        provider.markScheduledTaskRead(taskId);
                                       }
-                                    });
-                                  }
-                                : null,
-                            onLongPress: () => _showTaskActions(task),
-                            borderRadius: BorderRadius.circular(12),
-                            child: Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  // Status icon
-                                  Padding(
-                                    padding: const EdgeInsets.only(
-                                      top: 2,
-                                      right: 12,
-                                    ),
-                                    child: status == 'running'
-                                        ? SizedBox(
-                                            width: 24,
-                                            height: 24,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: _statusColor(status),
-                                            ),
-                                          )
-                                        : Icon(
-                                            _statusIcon(status),
-                                            color: _statusColor(status),
-                                            size: 24,
-                                          ),
-                                  ),
-                                  // Content
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        // Human-readable task label
-                                        Text(
-                                          displayName,
-                                          maxLines: name.isNotEmpty ? 1 : 2,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w600,
-                                          ),
-                                        ),
-                                        _buildLinkedSession(task, provider),
-                                        if (name.isNotEmpty &&
-                                            prompt.isNotEmpty) ...[
-                                          const SizedBox(height: 2),
-                                          Text(
-                                            prompt,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onSurfaceVariant,
-                                            ),
-                                          ),
-                                        ],
-                                        const SizedBox(height: 4),
-                                        // Recurrence + run count badge
-                                        if (isRecurring) ...[
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                Icons.repeat,
-                                                size: 12,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .primary
-                                                    .withAlpha(180),
+                                      setState(() {
+                                        if (isExpanded) {
+                                          _expandedTasks.remove(taskId);
+                                        } else {
+                                          _expandedTasks.add(taskId);
+                                        }
+                                      });
+                                    }
+                                  : null,
+                              onLongPress: () => _showTaskActions(task),
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    // Status icon
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                        top: 2,
+                                        right: 12,
+                                      ),
+                                      child: status == 'running'
+                                          ? SizedBox(
+                                              width: 24,
+                                              height: 24,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                color: _statusColor(status),
                                               ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                _recurrenceLabel(recurrence),
-                                                style: TextStyle(
-                                                  fontSize: 11,
+                                            )
+                                          : Icon(
+                                              _statusIcon(status),
+                                              color: _statusColor(status),
+                                              size: 24,
+                                            ),
+                                    ),
+                                    // Content
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          // Human-readable task label
+                                          Text(
+                                            displayName,
+                                            maxLines: name.isNotEmpty ? 1 : 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                          _buildLinkedSession(task, provider),
+                                          if (name.isNotEmpty &&
+                                              prompt.isNotEmpty) ...[
+                                            const SizedBox(height: 2),
+                                            Text(
+                                              prompt,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurfaceVariant,
+                                              ),
+                                            ),
+                                          ],
+                                          const SizedBox(height: 4),
+                                          // Recurrence + run count badge
+                                          if (isRecurring) ...[
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.repeat,
+                                                  size: 12,
                                                   color: Theme.of(context)
                                                       .colorScheme
                                                       .primary
                                                       .withAlpha(180),
-                                                  fontWeight: FontWeight.w500,
                                                 ),
-                                              ),
-                                              if (runCount > 0) ...[
-                                                const SizedBox(width: 8),
-                                                Container(
-                                                  padding:
-                                                      const EdgeInsets.symmetric(
-                                                        horizontal: 6,
-                                                        vertical: 1,
-                                                      ),
-                                                  decoration: BoxDecoration(
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  _recurrenceLabel(recurrence),
+                                                  style: TextStyle(
+                                                    fontSize: 11,
                                                     color: Theme.of(context)
                                                         .colorScheme
                                                         .primary
-                                                        .withAlpha(30),
-                                                    borderRadius:
-                                                        BorderRadius.circular(
-                                                          8,
-                                                        ),
+                                                        .withAlpha(180),
+                                                    fontWeight: FontWeight.w500,
                                                   ),
-                                                  child: Text(
-                                                    '$runCount run${runCount == 1 ? '' : 's'}',
-                                                    style: TextStyle(
-                                                      fontSize: 10,
+                                                ),
+                                                if (runCount > 0) ...[
+                                                  const SizedBox(width: 8),
+                                                  Container(
+                                                    padding:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 6,
+                                                          vertical: 1,
+                                                        ),
+                                                    decoration: BoxDecoration(
                                                       color: Theme.of(context)
                                                           .colorScheme
                                                           .primary
-                                                          .withAlpha(200),
+                                                          .withAlpha(30),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            8,
+                                                          ),
+                                                    ),
+                                                    child: Text(
+                                                      '$runCount run${runCount == 1 ? '' : 's'}',
+                                                      style: TextStyle(
+                                                        fontSize: 10,
+                                                        color: Theme.of(context)
+                                                            .colorScheme
+                                                            .primary
+                                                            .withAlpha(200),
+                                                      ),
                                                     ),
                                                   ),
-                                                ),
+                                                ],
+                                                if (task['reuseSession'] ==
+                                                    true) ...[
+                                                  const SizedBox(width: 6),
+                                                  Icon(
+                                                    Icons.link,
+                                                    size: 11,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withAlpha(100),
+                                                  ),
+                                                ],
                                               ],
-                                              if (task['reuseSession'] ==
-                                                  true) ...[
-                                                const SizedBox(width: 6),
-                                                Icon(
-                                                  Icons.link,
-                                                  size: 11,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
-                                                      .withAlpha(100),
+                                            ),
+                                            const SizedBox(height: 2),
+                                          ],
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                _backendIcon(backend),
+                                                size: 12,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withAlpha(128),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  [
+                                                    _backendLabel(backend),
+                                                    model == null ||
+                                                            model.isEmpty
+                                                        ? 'Default model'
+                                                        : model,
+                                                    effort == null
+                                                        ? 'Default effort'
+                                                        : _effortLabel(effort),
+                                                    permissionMode == null
+                                                        ? 'Inherited access'
+                                                        : _permissionLabel(
+                                                            permissionMode,
+                                                          ),
+                                                    if (isQuiet) 'Quiet',
+                                                  ].join(' · '),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withAlpha(128),
+                                                  ),
                                                 ),
-                                              ],
+                                              ),
                                             ],
                                           ),
                                           const SizedBox(height: 2),
-                                        ],
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              _backendIcon(backend),
-                                              size: 12,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withAlpha(128),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                [
-                                                  _backendLabel(backend),
-                                                  model == null || model.isEmpty
-                                                      ? 'Default model'
-                                                      : model,
-                                                  effort == null
-                                                      ? 'Default effort'
-                                                      : _effortLabel(effort),
-                                                  permissionMode == null
-                                                      ? 'Inherited access'
-                                                      : _permissionLabel(
-                                                          permissionMode,
-                                                        ),
-                                                  if (isQuiet) 'Quiet',
-                                                ].join(' · '),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
-                                                      .withAlpha(128),
+                                          // CWD
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.folder_outlined,
+                                                size: 12,
+                                                color: Theme.of(context)
+                                                    .colorScheme
+                                                    .onSurface
+                                                    .withAlpha(128),
+                                              ),
+                                              const SizedBox(width: 4),
+                                              Expanded(
+                                                child: Text(
+                                                  _shortenCwd(cwd),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    fontSize: 11,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withAlpha(128),
+                                                  ),
                                                 ),
                                               ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 2),
-                                        // CWD
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.folder_outlined,
-                                              size: 12,
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .onSurface
-                                                  .withAlpha(128),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                _shortenCwd(cwd),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: TextStyle(
-                                                  fontSize: 11,
-                                                  color: Theme.of(context)
-                                                      .colorScheme
-                                                      .onSurface
-                                                      .withAlpha(128),
-                                                ),
-                                              ),
-                                            ),
-                                          ],
-                                        ),
-                                        const SizedBox(height: 2),
-                                        // Scheduled time
-                                        Row(
-                                          children: [
-                                            Icon(
-                                              Icons.schedule,
-                                              size: 12,
-                                              color: _statusColor(
-                                                status,
-                                              ).withAlpha(180),
-                                            ),
-                                            const SizedBox(width: 4),
-                                            Text(
-                                              isRecurring && status == 'pending'
-                                                  ? 'Next: ${_formatDateTime(scheduledTime)} (${_formatTime(scheduledTime)})'
-                                                  : '${_formatDateTime(scheduledTime)} (${_formatTime(scheduledTime)})',
-                                              style: TextStyle(
-                                                fontSize: 11,
+                                            ],
+                                          ),
+                                          const SizedBox(height: 2),
+                                          // Scheduled time
+                                          Row(
+                                            children: [
+                                              Icon(
+                                                Icons.schedule,
+                                                size: 12,
                                                 color: _statusColor(
                                                   status,
                                                 ).withAlpha(180),
                                               ),
+                                              const SizedBox(width: 4),
+                                              Text(
+                                                isRecurring &&
+                                                        status == 'pending'
+                                                    ? 'Next: ${_formatDateTime(scheduledTime)} (${_formatTime(scheduledTime)})'
+                                                    : '${_formatDateTime(scheduledTime)} (${_formatTime(scheduledTime)})',
+                                                style: TextStyle(
+                                                  fontSize: 11,
+                                                  color: _statusColor(
+                                                    status,
+                                                  ).withAlpha(180),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                          // Result or error
+                                          if (resultSummary != null &&
+                                              resultSummary.isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              resultSummary,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: context.palette.shade(
+                                                  Colors.green,
+                                                  300,
+                                                ),
+                                              ),
                                             ),
                                           ],
-                                        ),
-                                        // Result or error
-                                        if (resultSummary != null &&
-                                            resultSummary.isNotEmpty) ...[
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            resultSummary,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.green.shade300,
-                                            ),
-                                          ),
-                                        ],
-                                        if (error != null &&
-                                            error.isNotEmpty) ...[
-                                          const SizedBox(height: 4),
-                                          Text(
-                                            error,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: Colors.red.shade300,
-                                            ),
-                                          ),
-                                        ],
-                                        // Expand hint for runs
-                                        if (runs.isNotEmpty && !isExpanded) ...[
-                                          const SizedBox(height: 4),
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                Icons.expand_more,
-                                                size: 14,
-                                                color: Theme.of(context)
-                                                    .colorScheme
-                                                    .onSurface
-                                                    .withAlpha(80),
+                                          if (error != null &&
+                                              error.isNotEmpty) ...[
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              error,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: TextStyle(
+                                                fontSize: 12,
+                                                color: context.palette.shade(
+                                                  Colors.red,
+                                                  300,
+                                                ),
                                               ),
-                                              const SizedBox(width: 2),
-                                              Text(
-                                                'Long-press to show ${runs.length} run${runs.length == 1 ? '' : 's'}',
-                                                style: TextStyle(
-                                                  fontSize: 10,
+                                            ),
+                                          ],
+                                          // Expand hint for runs
+                                          if (runs.isNotEmpty &&
+                                              !isExpanded) ...[
+                                            const SizedBox(height: 4),
+                                            Row(
+                                              children: [
+                                                Icon(
+                                                  Icons.expand_more,
+                                                  size: 14,
                                                   color: Theme.of(context)
                                                       .colorScheme
                                                       .onSurface
                                                       .withAlpha(80),
                                                 ),
-                                              ),
-                                            ],
-                                          ),
+                                                const SizedBox(width: 2),
+                                                Text(
+                                                  'Long-press to show ${runs.length} run${runs.length == 1 ? '' : 's'}',
+                                                  style: TextStyle(
+                                                    fontSize: 10,
+                                                    color: Theme.of(context)
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withAlpha(80),
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ],
                                         ],
-                                      ],
-                                    ),
-                                  ),
-                                  if (isUnread)
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                        top: 7,
-                                        left: 8,
                                       ),
-                                      child: Container(
-                                        width: 9,
-                                        height: 9,
-                                        decoration: BoxDecoration(
-                                          color: Theme.of(
-                                            context,
-                                          ).colorScheme.primary,
-                                          shape: BoxShape.circle,
+                                    ),
+                                    if (isUnread)
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          top: 7,
+                                          left: 8,
+                                        ),
+                                        child: Container(
+                                          width: 9,
+                                          height: 9,
+                                          decoration: BoxDecoration(
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.primary,
+                                            shape: BoxShape.circle,
+                                          ),
                                         ),
                                       ),
-                                    ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                          // Expanded run history
-                          if (isExpanded) _buildRunHistory(task),
-                        ],
-                      ),
-                    );
-                    if (!scheduledTaskCanArchive(task)) return taskCard;
-                    return Dismissible(
-                      key: ValueKey('scheduled-task-$taskId'),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        margin: const EdgeInsets.symmetric(vertical: 4),
-                        padding: const EdgeInsets.only(right: 24),
-                        alignment: Alignment.centerRight,
-                        decoration: BoxDecoration(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.secondaryContainer,
-                          borderRadius: BorderRadius.circular(12),
+                            // Expanded run history
+                            if (isExpanded) _buildRunHistory(task),
+                          ],
                         ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.archive_outlined,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSecondaryContainer,
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              'Archive',
-                              style: TextStyle(
+                      );
+                      if (!scheduledTaskCanArchive(task)) return taskCard;
+                      return Dismissible(
+                        key: ValueKey('scheduled-task-$taskId'),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          margin: const EdgeInsets.symmetric(vertical: 4),
+                          padding: const EdgeInsets.only(right: 24),
+                          alignment: Alignment.centerRight,
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.secondaryContainer,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                Icons.archive_outlined,
                                 color: Theme.of(
                                   context,
                                 ).colorScheme.onSecondaryContainer,
-                                fontSize: 11,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Archive',
+                                style: TextStyle(
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSecondaryContainer,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        onDismissed: (_) {
+                          provider.archiveScheduledTask(taskId);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: const Text('Task archived'),
+                              action: SnackBarAction(
+                                label: 'Undo',
+                                onPressed: () =>
+                                    provider.restoreScheduledTask(taskId),
                               ),
                             ),
-                          ],
-                        ),
-                      ),
-                      onDismissed: (_) {
-                        provider.archiveScheduledTask(taskId);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: const Text('Task archived'),
-                            action: SnackBarAction(
-                              label: 'Undo',
-                              onPressed: () =>
-                                  provider.restoreScheduledTask(taskId),
-                            ),
-                          ),
-                        );
-                      },
-                      child: taskCard,
-                    );
-                  },
-                ),
+                          );
+                        },
+                        child: taskCard,
+                      );
+                    },
+                  ),
+          ),
         );
       },
     );

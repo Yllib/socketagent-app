@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../screens/ibs_auth_screen.dart';
+import '../config/app_palette.dart';
 
 class IBSAuthCard extends StatelessWidget {
   final ChatMessage message;
@@ -53,7 +54,7 @@ class IBSAuthCard extends StatelessWidget {
                     Icon(
                       Icons.check_circle,
                       size: 18,
-                      color: Colors.green.shade400,
+                      color: context.palette.shade(Colors.green, 400),
                     ),
                   ],
                   if (failed) ...[

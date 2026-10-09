@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_palette.dart';
 
 /// The three-dot menu on a running Bash or subagent card. Moving the task to
 /// the background lets the agent carry on while it keeps running, like
@@ -14,7 +15,7 @@ class RunningTaskMenu extends StatelessWidget {
       tooltip: 'More',
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints(minWidth: 180),
-      icon: const Icon(Icons.more_vert, size: 18, color: Color(0xFF767676)),
+      icon: Icon(Icons.more_vert, size: 18, color: context.palette.textMuted),
       style: IconButton.styleFrom(
         minimumSize: const Size(28, 28),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,

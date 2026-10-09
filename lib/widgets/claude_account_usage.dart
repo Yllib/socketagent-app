@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_palette.dart';
 
 /// Plan rate-limit windows for the Claude account, shown where the Codex
 /// panel sits so both harnesses report usage from the same place.
@@ -61,9 +62,9 @@ class ClaudeAccountUsage extends StatelessWidget {
     final color = percent == null
         ? theme.colorScheme.onSurface.withAlpha(120)
         : percent >= 100
-        ? Colors.red.shade300
+        ? context.palette.shade(Colors.red, 300)
         : percent >= 85
-        ? Colors.orange.shade300
+        ? context.palette.shade(Colors.orange, 300)
         : theme.colorScheme.onSurface.withAlpha(178);
 
     return Padding(
@@ -179,11 +180,11 @@ List<ClaudeUsageWindow> claudeUsageWindows(dynamic rateLimits) {
   }
 
   return [
-    ('5-hour', rateLimits['five_hour']),
-    ('Weekly', rateLimits['seven_day']),
-    ('Weekly · Opus', rateLimits['seven_day_opus']),
-    ('Weekly · Sonnet', rateLimits['seven_day_sonnet']),
-  ]
+        ('5-hour', rateLimits['five_hour']),
+        ('Weekly', rateLimits['seven_day']),
+        ('Weekly · Opus', rateLimits['seven_day_opus']),
+        ('Weekly · Sonnet', rateLimits['seven_day_sonnet']),
+      ]
       .where((entry) => entry.$2 is Map)
       .map(
         (entry) => ClaudeUsageWindow(

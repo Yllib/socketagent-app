@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_theme.dart';
 import 'desktop_window_frame.dart';
 
 /// Paint the native window controls before starting disk, plugin or network work.
@@ -37,10 +38,8 @@ class _DesktopStartupState extends State<DesktopStartup> {
       _app ??
       MaterialApp(
         debugShowCheckedModeBanner: false,
-        theme: ThemeData.dark(useMaterial3: true).copyWith(
-          scaffoldBackgroundColor: Colors.black,
-          colorScheme: const ColorScheme.dark(surface: Colors.black),
-        ),
+        theme: appTheme(brightness: Brightness.light),
+        darkTheme: appTheme(),
         builder: (context, child) => Overlay.wrap(
           child: DesktopWindowFrame(child: child ?? const SizedBox.shrink()),
         ),

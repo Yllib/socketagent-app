@@ -6,8 +6,12 @@ import 'package:provider/provider.dart';
 import 'package:xterm/xterm.dart';
 
 import '../services/chat_provider.dart';
+import '../config/app_theme.dart';
 
-class TerminalScreen extends StatefulWidget {
+/// The terminal stays dark in light mode: xterm draws a black screen and the
+/// key bar around it is tuned for that, so the whole route takes the dark
+/// theme with the current accent.
+class TerminalScreen extends StatelessWidget {
   const TerminalScreen({
     super.key,
     this.serverId,
@@ -20,10 +24,42 @@ class TerminalScreen extends StatefulWidget {
   final String? initialCwd;
 
   @override
-  State<TerminalScreen> createState() => _TerminalScreenState();
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Theme(
+      data: theme.brightness == Brightness.dark
+          ? theme
+          : appTheme(accent: _darkAccent(theme.colorScheme.primary)),
+      child: _TerminalBody(
+        serverId: serverId,
+        serverName: serverName,
+        initialCwd: initialCwd,
+      ),
+    );
+  }
+
+  /// A light-mode accent is dark gray or a dark brand shade; on black it needs
+  /// the dark palette's counterpart.
+  Color _darkAccent(Color lightAccent) {
+    final light = AppPalette.light;
+    if (lightAccent == light.claude) return AppPalette.dark.claude;
+    if (lightAccent == light.codex) return AppPalette.dark.codex;
+    return appAccent;
+  }
 }
 
-class _TerminalScreenState extends State<TerminalScreen> {
+class _TerminalBody extends StatefulWidget {
+  const _TerminalBody({this.serverId, this.serverName, this.initialCwd});
+
+  final String? serverId;
+  final String? serverName;
+  final String? initialCwd;
+
+  @override
+  State<_TerminalBody> createState() => _TerminalScreenState();
+}
+
+class _TerminalScreenState extends State<_TerminalBody> {
   final Terminal _terminal = Terminal(maxLines: 10000);
   final TerminalController _controller = TerminalController();
   final FocusNode _terminalFocusNode = FocusNode();
@@ -552,8 +588,8 @@ class _TerminalScreenState extends State<TerminalScreen> {
                   statusText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFBDBDBD),
+                  style: TextStyle(
+                    color: context.palette.textSecondary,
                     fontSize: 11,
                     fontFamily: 'monospace',
                   ),

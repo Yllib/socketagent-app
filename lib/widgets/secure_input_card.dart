@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/composer_attachment.dart';
 import '../models/message.dart';
+import '../config/app_palette.dart';
 
 class SecureInputCard extends StatefulWidget {
   final ChatMessage message;
@@ -147,7 +148,7 @@ class _SecureInputCardState extends State<SecureInputCard> {
                     Icon(
                       Icons.check_circle,
                       size: 18,
-                      color: Colors.green.shade400,
+                      color: context.palette.shade(Colors.green, 400),
                     ),
                 ],
               ),

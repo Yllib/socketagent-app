@@ -4,6 +4,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../services/chat_provider.dart';
 import '../../services/play_billing_service.dart';
 import '../paywall_screen.dart';
+import '../../config/app_palette.dart';
 
 class AccountCard extends StatelessWidget {
   const AccountCard({super.key});
@@ -62,7 +63,7 @@ class AccountCard extends StatelessWidget {
           return _buildCard(
             context,
             icon: Icons.warning_amber_rounded,
-            iconColor: Colors.orange.shade400,
+            iconColor: context.palette.shade(Colors.orange, 400),
             title: staleToken ? 'Subscription inactive' : 'Not signed in',
             subtitle: staleToken
                 ? 'Sign in again to use relay access'
@@ -196,9 +197,12 @@ class _SignedInCardState extends State<_SignedInCard> {
   }
 
   Color _statusColor(ChatProvider p) {
-    if (p.subscriptionStatus == 'trialing') return Colors.blue.shade400;
-    if (p.cancelAtPeriodEnd) return Colors.orange.shade400;
-    return Colors.green.shade400;
+    final palette = context.palette;
+    if (p.subscriptionStatus == 'trialing') {
+      return palette.shade(Colors.blue, 400);
+    }
+    if (p.cancelAtPeriodEnd) return palette.shade(Colors.orange, 400);
+    return palette.shade(Colors.green, 400);
   }
 
   Future<void> _openBillingPortal() async {
@@ -206,7 +210,8 @@ class _SignedInCardState extends State<_SignedInCard> {
     final bool opened;
     if (provider.subscriptionProvider == 'stripe') {
       final url = await provider.getDirectBillingPortalUrl();
-      opened = url != null &&
+      opened =
+          url != null &&
           await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     } else {
       opened = await PlayBillingService.openSubscriptionManagement();

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/message.dart';
+import '../config/app_palette.dart';
 
 class WorkflowCard extends StatefulWidget {
   final ChatMessage message;
@@ -28,15 +29,15 @@ class _WorkflowCardState extends State<WorkflowCard> {
   Color get _statusColor {
     switch (_text('status', 'running')) {
       case 'completed':
-        return const Color(0xFFA6E3A1);
+        return context.palette.green;
       case 'failed':
-        return const Color(0xFFF38BA8);
+        return context.palette.red;
       case 'stopped':
-        return const Color(0xFFFAB387);
+        return context.palette.peach;
       case 'paused':
-        return const Color(0xFFF9E2AF);
+        return context.palette.yellow;
       default:
-        return const Color(0xFF89B4FA);
+        return context.palette.blue;
     }
   }
 
@@ -72,10 +73,10 @@ class _WorkflowCardState extends State<WorkflowCard> {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
       child: Material(
-        color: const Color(0xFF121212),
+        color: context.palette.panelLow,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
-          side: const BorderSide(color: Color(0xFF4A4A4A)),
+          side: BorderSide(color: context.palette.outline),
         ),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -111,8 +112,8 @@ class _WorkflowCardState extends State<WorkflowCard> {
                         children: [
                           Text(
                             title,
-                            style: const TextStyle(
-                              color: Color(0xFFE6E6E6),
+                            style: TextStyle(
+                              color: context.palette.text,
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
                             ),
@@ -122,8 +123,8 @@ class _WorkflowCardState extends State<WorkflowCard> {
                               summary,
                               maxLines: 2,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Color(0xFFB0B0B0),
+                              style: TextStyle(
+                                color: context.palette.textSecondary,
                                 fontSize: 11,
                               ),
                             ),
@@ -151,7 +152,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
                     const SizedBox(width: 5),
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
-                      color: const Color(0xFF888888),
+                      color: context.palette.textMuted,
                       size: 18,
                     ),
                   ],
@@ -169,8 +170,8 @@ class _WorkflowCardState extends State<WorkflowCard> {
                         .map(
                           (metric) => Text(
                             metric,
-                            style: const TextStyle(
-                              color: Color(0xFF89B4FA),
+                            style: TextStyle(
+                              color: context.palette.blue,
                               fontSize: 10,
                             ),
                           ),
@@ -178,13 +179,16 @@ class _WorkflowCardState extends State<WorkflowCard> {
                         .toList(),
                   ),
                 ),
-              const Divider(height: 1, color: Color(0xFF2E2E2E)),
+              Divider(height: 1, color: context.palette.border),
               if (phases.isEmpty && progress.isEmpty)
-                const Padding(
+                Padding(
                   padding: EdgeInsets.all(12),
                   child: Text(
                     'Waiting for workflow progress…',
-                    style: TextStyle(color: Color(0xFF888888), fontSize: 11),
+                    style: TextStyle(
+                      color: context.palette.textMuted,
+                      fontSize: 11,
+                    ),
                   ),
                 )
               else
@@ -210,13 +214,15 @@ class _WorkflowCardState extends State<WorkflowCard> {
               if (_text('resultPreview').isNotEmpty)
                 Container(
                   padding: const EdgeInsets.all(12),
-                  decoration: const BoxDecoration(
-                    border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      top: BorderSide(color: context.palette.border),
+                    ),
                   ),
                   child: Text(
                     _text('resultPreview'),
-                    style: const TextStyle(
-                      color: Color(0xFFE6E6E6),
+                    style: TextStyle(
+                      color: context.palette.text,
                       fontSize: 11,
                       height: 1.35,
                     ),
@@ -241,8 +247,8 @@ class _WorkflowCardState extends State<WorkflowCard> {
         children: [
           Text(
             title,
-            style: const TextStyle(
-              color: Color(0xFFCBA6F7),
+            style: TextStyle(
+              color: context.palette.mauve,
               fontSize: 11,
               fontWeight: FontWeight.w600,
             ),
@@ -250,7 +256,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
           if (detail != null && detail.isNotEmpty)
             Text(
               detail,
-              style: const TextStyle(color: Color(0xFF888888), fontSize: 10),
+              style: TextStyle(color: context.palette.textMuted, fontSize: 10),
             ),
           const SizedBox(height: 4),
           ...agents.map(_agent),
@@ -263,10 +269,10 @@ class _WorkflowCardState extends State<WorkflowCard> {
     final status = agent['state']?.toString() ?? 'queued';
     final active = status == 'running' || status == 'queued';
     final color = status == 'completed'
-        ? const Color(0xFFA6E3A1)
+        ? context.palette.green
         : status == 'failed'
-        ? const Color(0xFFF38BA8)
-        : const Color(0xFF89B4FA);
+        ? context.palette.red
+        : context.palette.blue;
     final details = <String>[
       if (agent['model']?.toString().isNotEmpty == true)
         agent['model'].toString(),
@@ -297,13 +303,13 @@ class _WorkflowCardState extends State<WorkflowCard> {
             ),
       title: Text(
         agent['label']?.toString() ?? agent['agentId']?.toString() ?? 'Agent',
-        style: const TextStyle(color: Color(0xFFE6E6E6), fontSize: 11),
+        style: TextStyle(color: context.palette.text, fontSize: 11),
       ),
       subtitle: details.isEmpty
           ? null
           : Text(
               details.join(' · '),
-              style: const TextStyle(color: Color(0xFF888888), fontSize: 9),
+              style: TextStyle(color: context.palette.textMuted, fontSize: 9),
             ),
       children: [
         if (agent['promptPreview']?.toString().isNotEmpty == true)
@@ -323,16 +329,16 @@ class _WorkflowCardState extends State<WorkflowCard> {
       children: [
         Text(
           label,
-          style: const TextStyle(
-            color: Color(0xFF888888),
+          style: TextStyle(
+            color: context.palette.textMuted,
             fontSize: 8,
             fontWeight: FontWeight.w600,
           ),
         ),
         Text(
           text,
-          style: const TextStyle(
-            color: Color(0xFFB0B0B0),
+          style: TextStyle(
+            color: context.palette.textSecondary,
             fontSize: 10,
             height: 1.3,
           ),

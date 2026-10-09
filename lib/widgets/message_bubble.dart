@@ -12,11 +12,12 @@ import 'inline_chat_images.dart';
 import 'markdown_blocks.dart';
 import 'message_timestamp.dart';
 import 'message_attachments.dart';
+import '../config/app_palette.dart';
 
 class MessageBubble extends StatelessWidget {
-  static final _codeStyle = GoogleFonts.jetBrainsMono(
-    color: const Color(0xFFE6E6E6),
-    backgroundColor: const Color(0xFF181818),
+  static TextStyle _codeStyle(AppPalette palette) => GoogleFonts.jetBrainsMono(
+    color: palette.text,
+    backgroundColor: palette.panel,
     fontSize: 13,
   );
 
@@ -220,7 +221,9 @@ class MessageBubble extends StatelessWidget {
                           'socketagent-compare': ChatCompareBuilder(
                             sourceServerId,
                           ),
-                          'pre': CodeBlockBuilder(style: _codeStyle),
+                          'pre': CodeBlockBuilder(
+                            style: _codeStyle(theme.palette),
+                          ),
                         },
                         onTapLink: (text, href, title) {
                           SocketAgentLinkRouter.open(
@@ -261,12 +264,12 @@ class MessageBubble extends StatelessWidget {
                             color: textColor,
                             fontStyle: FontStyle.italic,
                           ),
-                          code: _codeStyle,
+                          code: _codeStyle(theme.palette),
                           codeblockDecoration: BoxDecoration(
-                            color: const Color(0xFF181818),
+                            color: context.palette.panel,
                             borderRadius: BorderRadius.circular(8),
                             border: Border.all(
-                              color: const Color(0xFF2E2E2E),
+                              color: context.palette.border,
                               width: 1,
                             ),
                           ),
@@ -282,7 +285,7 @@ class MessageBubble extends StatelessWidget {
                           ),
                           blockquotePadding: const EdgeInsets.only(left: 12),
                           a: TextStyle(
-                            color: const Color(0xFF89B4FA),
+                            color: context.palette.blue,
                             decoration: TextDecoration.underline,
                           ),
                           listBullet: TextStyle(color: textColor, fontSize: 15),
@@ -567,7 +570,10 @@ class MessageBubble extends StatelessWidget {
         children: [
           if (onRewindConversation != null)
             ListTile(
-              leading: Icon(Icons.history, color: Colors.orange.shade400),
+              leading: Icon(
+                Icons.history,
+                color: context.palette.shade(Colors.orange, 400),
+              ),
               title: Text(
                 codexRewind ? 'Rewind to here' : 'Rewind Conversation',
               ),
@@ -592,7 +598,7 @@ class MessageBubble extends StatelessWidget {
                             'File changes will be kept as-is. '
                             'You can then send a new message to take a different path.',
                   actionLabel: 'Rewind',
-                  color: Colors.orange,
+                  color: context.palette.warning,
                   onConfirmed: () =>
                       onRewindConversation!(uuid, rewindFiles: false),
                 );
@@ -600,7 +606,10 @@ class MessageBubble extends StatelessWidget {
             ),
           if (onRewindConversation != null && !codexRewind)
             ListTile(
-              leading: Icon(Icons.restore, color: Colors.deepOrange.shade400),
+              leading: Icon(
+                Icons.restore,
+                color: context.palette.shade(Colors.deepOrange, 400),
+              ),
               title: const Text('Rewind Everything'),
               subtitle: const Text('Revert files and remove messages'),
               onTap: () {
@@ -621,7 +630,10 @@ class MessageBubble extends StatelessWidget {
             ),
           if (onBranch != null)
             ListTile(
-              leading: Icon(Icons.fork_right, color: Colors.blue.shade400),
+              leading: Icon(
+                Icons.fork_right,
+                color: context.palette.shade(Colors.blue, 400),
+              ),
               title: const Text('Branch From Here'),
               subtitle: const Text('Fork into a new session at this point'),
               onTap: () {
@@ -634,7 +646,7 @@ class MessageBubble extends StatelessWidget {
                       'The original conversation stays untouched. '
                       'You\'ll be switched to the new branch.',
                   actionLabel: 'Branch',
-                  color: Colors.blue,
+                  color: context.palette.info,
                   onConfirmed: () => onBranch!(uuid),
                 );
               },

@@ -5,6 +5,7 @@ import 'markdown_blocks.dart';
 import '../models/message.dart';
 import '../services/socketagent_link_router.dart';
 import 'scroll_passthrough.dart';
+import '../config/app_palette.dart';
 
 class QuestionCard extends StatefulWidget {
   final ChatMessage message;
@@ -98,7 +99,7 @@ class _QuestionCardState extends State<QuestionCard> {
                     Icon(
                       Icons.check_circle,
                       size: 18,
-                      color: Colors.green.shade400,
+                      color: context.palette.shade(Colors.green, 400),
                     ),
                   ],
                 ],

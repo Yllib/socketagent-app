@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/message.dart';
 import '../screens/browser_session_screen.dart';
+import '../config/app_palette.dart';
 
 class BrowserSessionCard extends StatelessWidget {
   const BrowserSessionCard({super.key, required this.message, this.serverId});
@@ -22,16 +23,20 @@ class BrowserSessionCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: const BoxDecoration(
-        color: Colors.black,
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
         border: Border(
-          top: BorderSide(color: Color(0xFF333333)),
-          bottom: BorderSide(color: Color(0xFF333333)),
+          top: BorderSide(color: context.palette.border),
+          bottom: BorderSide(color: context.palette.border),
         ),
       ),
       child: Row(
         children: [
-          const Icon(Icons.public, color: Colors.white, size: 20),
+          Icon(
+            Icons.public,
+            color: Theme.of(context).colorScheme.onSurface,
+            size: 20,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
@@ -39,8 +44,8 @@ class BrowserSessionCard extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  style: const TextStyle(
-                    color: Colors.white,
+                  style: TextStyle(
+                    color: Theme.of(context).colorScheme.onSurface,
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -49,8 +54,8 @@ class BrowserSessionCard extends StatelessWidget {
                   runtimeRequired
                       ? 'Browser component required on this computer.'
                       : 'Remote browser. Passwords and MFA stay out of chat.',
-                  style: const TextStyle(
-                    color: Color(0xFFAAAAAA),
+                  style: TextStyle(
+                    color: context.palette.textSecondary,
                     fontSize: 12,
                   ),
                 ),

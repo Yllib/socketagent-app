@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/connection_manager.dart';
+import '../../config/app_palette.dart';
 
 class SkillEditScreen extends StatefulWidget {
   final String baseUrl;
@@ -401,7 +402,7 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                     Icon(
                       Icons.info_outline,
                       size: 18,
-                      color: Colors.orange.shade300,
+                      color: context.palette.shade(Colors.orange, 300),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
@@ -409,7 +410,7 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                         'Plugin skills are read-only. Duplicate to create an editable copy.',
                         style: TextStyle(
                           fontSize: 12,
-                          color: Colors.orange.shade300,
+                          color: context.palette.shade(Colors.orange, 300),
                         ),
                       ),
                     ),

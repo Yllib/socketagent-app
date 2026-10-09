@@ -38,11 +38,11 @@ class VoiceSpeechScreen extends StatelessWidget {
   Widget build(BuildContext context) => DefaultTabController(
     length: 2,
     child: Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       appBar: AppBar(
         title: const Text('Voice & Speech'),
-        backgroundColor: Colors.black,
-        foregroundColor: Colors.white,
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        foregroundColor: Theme.of(context).colorScheme.onSurface,
         actions: [
           if (Platform.isAndroid)
             PopupMenuButton<String>(
@@ -96,7 +96,7 @@ Future<T?> _choose<T>(
   var query = '';
   return showModalBottomSheet<T>(
     context: context,
-    backgroundColor: Colors.black,
+    backgroundColor: Theme.of(context).colorScheme.surface,
     isScrollControlled: true,
     useSafeArea: true,
     builder: (context) => StatefulBuilder(
@@ -727,11 +727,11 @@ class _ElevenLabsAccountState extends State<_ElevenLabsAccount> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    backgroundColor: Colors.black,
+    backgroundColor: Theme.of(context).colorScheme.surface,
     appBar: AppBar(
       title: const Text('ElevenLabs account'),
-      backgroundColor: Colors.black,
-      foregroundColor: Colors.white,
+      backgroundColor: Theme.of(context).colorScheme.surface,
+      foregroundColor: Theme.of(context).colorScheme.onSurface,
     ),
     body: ListView(
       padding: const EdgeInsets.all(20),

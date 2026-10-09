@@ -9,6 +9,7 @@ import 'speak_card.dart';
 import 'file_card.dart';
 import 'reminder_card.dart';
 import 'dismissible_panel_items.dart';
+import '../config/app_palette.dart';
 
 class ActiveTasksPane extends StatefulWidget {
   final Map<String, Map<String, dynamic>> backgroundTasks;
@@ -325,14 +326,14 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                           height: 10,
                           child: CircularProgressIndicator(
                             strokeWidth: 1.5,
-                            color: Colors.blue.shade300,
+                            color: context.palette.shade(Colors.blue, 300),
                           ),
                         )
                       else
                         Icon(
                           Icons.check_circle,
                           size: 12,
-                          color: Colors.green.shade400,
+                          color: context.palette.shade(Colors.green, 400),
                         ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -364,14 +365,14 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.w500,
-                            color: Colors.blue.shade200,
+                            color: context.palette.shade(Colors.blue, 200),
                           ),
                         ),
                       ),
                       Icon(
                         paneCollapsed ? Icons.expand_less : Icons.expand_more,
                         size: 16,
-                        color: Colors.blue.shade300,
+                        color: context.palette.shade(Colors.blue, 300),
                       ),
                       if (widget.onHide != null)
                         IconButton(
@@ -387,10 +388,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                             width: 24,
                             height: 24,
                           ),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.visibility_off_outlined,
                             size: 16,
-                            color: Color(0xFF767676),
+                            color: context.palette.textMuted,
                           ),
                         ),
                     ],
@@ -418,10 +419,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
     final isExpanded = _expandedIds.contains(entry.id);
     final isCompleted = isFinishedPanelItem(entry.status);
     final terminalColor = entry.status == 'failed'
-        ? const Color(0xFFF38BA8)
+        ? context.palette.red
         : entry.status == 'stopped'
-        ? const Color(0xFFFAB387)
-        : const Color(0xFFA6E3A1);
+        ? context.palette.peach
+        : context.palette.green;
     final hasContent = entry.kind == 'subagent' || entry.kind == 'workflow'
         ? true // subagents always expandable (prompt + children + result)
         : (entry.bashOutput?.isNotEmpty ?? false) || entry.kind == 'monitor';
@@ -465,7 +466,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                     child: Icon(
                       isExpanded ? Icons.expand_less : Icons.expand_more,
                       size: 16,
-                      color: Colors.blue.shade300,
+                      color: context.palette.shade(Colors.blue, 300),
                     ),
                   )
                 else
@@ -493,8 +494,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                         : Icons.terminal,
                     size: 13,
                     color: entry.kind == 'monitor'
-                        ? const Color(0xFF89B4FA)
-                        : Colors.blue.shade300,
+                        ? context.palette.blue
+                        : context.palette.shade(Colors.blue, 300),
                   ),
                 const SizedBox(width: 6),
                 // Subagent type badge
@@ -513,7 +514,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                       entry.subagentType!,
                       style: TextStyle(
                         fontSize: 9,
-                        color: Colors.blue.shade200,
+                        color: context.palette.shade(Colors.blue, 200),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -533,7 +534,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                         fontSize: 11,
                         color: isCompleted
                             ? terminalColor
-                            : Colors.blue.shade100,
+                            : context.palette.shade(Colors.blue, 100),
                       ),
                     ),
                   ),
@@ -565,8 +566,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                       isCompleted ? Icons.close : Icons.stop_circle_outlined,
                       size: isCompleted ? 14 : 16,
                       color: isCompleted
-                          ? const Color(0xFF767676)
-                          : Colors.red.shade300,
+                          ? context.palette.textMuted
+                          : context.palette.shade(Colors.red, 300),
                     ),
                   ),
               ],
@@ -578,9 +579,9 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
               child: Container(
                 margin: const EdgeInsets.only(left: 24, right: 8, bottom: 4),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF181818),
+                  color: context.palette.panel,
                   borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: const Color(0xFF2E2E2E)),
+                  border: Border.all(color: context.palette.border),
                 ),
                 child: SingleChildScrollView(
                   child: entry.kind == 'subagent'
@@ -593,7 +594,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                             entry.bashOutput ?? '',
                             style: GoogleFonts.jetBrainsMono(
                               fontSize: 10,
-                              color: const Color(0xFFE6E6E6),
+                              color: context.palette.text,
                               height: 1.3,
                             ),
                             maxLines: 50,
@@ -616,8 +617,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
         if (entry.resultOutput != null && entry.resultOutput!.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFF2E2E2E))),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: context.palette.border)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -627,7 +628,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   style: TextStyle(
                     fontSize: 9,
                     fontWeight: FontWeight.w600,
-                    color: Colors.green.shade400,
+                    color: context.palette.shade(Colors.green, 400),
                     letterSpacing: 0.5,
                   ),
                 ),
@@ -636,7 +637,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   entry.resultOutput!,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
-                    color: const Color(0xFFE6E6E6),
+                    color: context.palette.text,
                     height: 1.4,
                   ),
                 ),
@@ -647,8 +648,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
         if (entry.prompt != null && entry.prompt!.isNotEmpty)
           Container(
             padding: const EdgeInsets.all(8),
-            decoration: const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFF2E2E2E))),
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: context.palette.border)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -658,7 +659,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   style: TextStyle(
                     fontSize: 9,
                     fontWeight: FontWeight.w600,
-                    color: Colors.blue.shade400,
+                    color: context.palette.shade(Colors.blue, 400),
                     letterSpacing: 0.5,
                   ),
                 ),
@@ -667,7 +668,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                   entry.prompt!,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
-                    color: const Color(0xFFB0B0B0),
+                    color: context.palette.textSecondary,
                     height: 1.4,
                   ),
                 ),
@@ -706,13 +707,16 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           if (state['summary']?.toString().isNotEmpty == true)
             Text(
               state['summary'].toString(),
-              style: const TextStyle(fontSize: 10, color: Color(0xFFB0B0B0)),
+              style: TextStyle(
+                fontSize: 10,
+                color: context.palette.textSecondary,
+              ),
             ),
           if (metrics.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
               metrics.join(' · '),
-              style: const TextStyle(fontSize: 9, color: Color(0xFF89B4FA)),
+              style: TextStyle(fontSize: 9, color: context.palette.blue),
             ),
           ],
           ...List.generate(phases.length, (index) {
@@ -729,8 +733,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                 children: [
                   Text(
                     phase['title']?.toString() ?? 'Phase ${index + 1}',
-                    style: const TextStyle(
-                      color: Color(0xFFCBA6F7),
+                    style: TextStyle(
+                      color: context.palette.mauve,
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
                     ),
@@ -749,10 +753,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                                 : Icons.circle_outlined,
                             size: 10,
                             color: status == 'completed'
-                                ? const Color(0xFFA6E3A1)
+                                ? context.palette.green
                                 : status == 'failed'
-                                ? const Color(0xFFF38BA8)
-                                : const Color(0xFF89B4FA),
+                                ? context.palette.red
+                                : context.palette.blue,
                           ),
                           const SizedBox(width: 4),
                           Expanded(
@@ -762,8 +766,8 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                                   'Agent',
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Color(0xFFE6E6E6),
+                              style: TextStyle(
+                                color: context.palette.text,
                                 fontSize: 9,
                               ),
                             ),
@@ -804,7 +808,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             child: Text(
               msg.textContent,
-              style: const TextStyle(fontSize: 12, color: Color(0xFFB0B0B0)),
+              style: TextStyle(
+                fontSize: 12,
+                color: context.palette.textSecondary,
+              ),
             ),
           );
         }

@@ -5,6 +5,7 @@ import '../models/server_config.dart';
 import '../services/chat_provider.dart';
 import '../services/connection_manager.dart';
 import '../services/websocket_service.dart';
+import '../config/app_palette.dart';
 
 class ProtectedFilesScreen extends StatefulWidget {
   const ProtectedFilesScreen({super.key});
@@ -221,7 +222,10 @@ class _ProtectedFilesScreenState extends State<ProtectedFilesScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+            child: Text(
+              'Remove',
+              style: TextStyle(color: context.palette.danger),
+            ),
           ),
         ],
       ),

@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../config/app_palette.dart';
 
 dynamic decodeJsonDocument(String raw) {
   final trimmed = raw.trim();
@@ -18,21 +19,24 @@ dynamic decodeJsonDocument(String raw) {
 
 class StructuredDataView extends StatelessWidget {
   final dynamic value;
-  final Color accent;
+
+  /// Key and index colour. Defaults to the palette's blue.
+  final Color? accent;
   final int depth;
 
   const StructuredDataView({
     super.key,
     required this.value,
-    this.accent = const Color(0xFF89B4FA),
+    this.accent,
     this.depth = 0,
   });
 
   @override
   Widget build(BuildContext context) {
+    final accent = this.accent ?? context.palette.blue;
     if (value is Map) {
       final entries = (value as Map).entries.toList();
-      if (entries.isEmpty) return _scalar('Empty object', muted: true);
+      if (entries.isEmpty) return _scalar(context, 'Empty object', muted: true);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: entries.map((entry) {
@@ -51,7 +55,7 @@ class StructuredDataView extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 3),
-                _nested(entry.value),
+                _nested(context, accent, entry.value),
               ],
             ),
           );
@@ -60,7 +64,7 @@ class StructuredDataView extends StatelessWidget {
     }
     if (value is List) {
       final items = value as List;
-      if (items.isEmpty) return _scalar('Empty list', muted: true);
+      if (items.isEmpty) return _scalar(context, 'Empty list', muted: true);
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -90,25 +94,25 @@ class StructuredDataView extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 7),
-                  Expanded(child: _nested(items[index])),
+                  Expanded(child: _nested(context, accent, items[index])),
                 ],
               ),
             ),
         ],
       );
     }
-    return _scalar(_scalarText(value), muted: value == null);
+    return _scalar(context, _scalarText(value), muted: value == null);
   }
 
-  Widget _nested(dynamic nested) {
+  Widget _nested(BuildContext context, Color accent, dynamic nested) {
     if ((nested is Map || nested is List) && depth < 5) {
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.fromLTRB(9, 8, 9, 1),
         decoration: BoxDecoration(
-          color: const Color(0xFF121212),
+          color: context.palette.panelLow,
           borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: const Color(0xFF2E2E2E)),
+          border: Border.all(color: context.palette.border),
         ),
         child: StructuredDataView(
           value: nested,
@@ -117,16 +121,16 @@ class StructuredDataView extends StatelessWidget {
         ),
       );
     }
-    return _scalar(_scalarText(nested), muted: nested == null);
+    return _scalar(context, _scalarText(nested), muted: nested == null);
   }
 
-  Widget _scalar(String text, {bool muted = false}) {
+  Widget _scalar(BuildContext context, String text, {bool muted = false}) {
     return SelectableText(
       text,
       style: GoogleFonts.jetBrainsMono(
         fontSize: 10.5,
         height: 1.35,
-        color: muted ? const Color(0xFF767676) : const Color(0xFFE6E6E6),
+        color: muted ? context.palette.textMuted : context.palette.text,
         fontStyle: muted ? FontStyle.italic : FontStyle.normal,
       ),
     );

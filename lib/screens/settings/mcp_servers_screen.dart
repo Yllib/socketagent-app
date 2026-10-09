@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/chat_provider.dart';
+import '../../config/app_palette.dart';
 
 class McpServersScreen extends StatelessWidget {
   const McpServersScreen({super.key});
@@ -30,8 +31,11 @@ class McpServersScreen extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(Icons.extension_outlined, size: 64,
-                      color: Theme.of(context).colorScheme.outline),
+                  Icon(
+                    Icons.extension_outlined,
+                    size: 64,
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
                   const SizedBox(height: 16),
                   Text(
                     'No MCP servers',
@@ -45,7 +49,9 @@ class McpServersScreen extends StatelessWidget {
                     'Tap refresh after connecting to a session',
                     style: TextStyle(
                       fontSize: 14,
-                      color: Theme.of(context).colorScheme.outline.withAlpha(178),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.outline.withAlpha(178),
                     ),
                   ),
                 ],
@@ -65,13 +71,13 @@ class McpServersScreen extends StatelessWidget {
                   isConnected
                       ? Icons.check_circle
                       : isFailed
-                          ? Icons.error
-                          : Icons.circle_outlined,
+                      ? Icons.error
+                      : Icons.circle_outlined,
                   color: isConnected
-                      ? Colors.green
+                      ? context.palette.success
                       : isFailed
-                          ? Colors.red
-                          : Colors.grey,
+                      ? context.palette.danger
+                      : Colors.grey,
                   size: 20,
                 ),
                 title: Text(name, style: const TextStyle(fontSize: 14)),
@@ -80,10 +86,10 @@ class McpServersScreen extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     color: isConnected
-                        ? Colors.green.shade300
+                        ? context.palette.shade(Colors.green, 300)
                         : isFailed
-                            ? Colors.red.shade300
-                            : Colors.grey,
+                        ? context.palette.shade(Colors.red, 300)
+                        : Colors.grey,
                   ),
                 ),
                 trailing: Row(
@@ -91,7 +97,11 @@ class McpServersScreen extends StatelessWidget {
                   children: [
                     if (isFailed)
                       IconButton(
-                        icon: Icon(Icons.refresh, size: 20, color: Colors.orange.shade300),
+                        icon: Icon(
+                          Icons.refresh,
+                          size: 20,
+                          color: context.palette.shade(Colors.orange, 300),
+                        ),
                         onPressed: () => provider.reconnectMcpServer(name),
                         tooltip: 'Reconnect',
                       ),

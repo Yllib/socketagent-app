@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../util/format.dart';
+import '../config/app_palette.dart';
 
 enum SessionBrowserMode { create, resume }
 
@@ -648,7 +649,7 @@ class _ComputerPickerSheetState extends State<_ComputerPickerSheet> {
                     enabled: online,
                     leading: Icon(
                       online ? Icons.computer : Icons.computer_outlined,
-                      color: online ? Colors.green : Colors.grey,
+                      color: online ? context.palette.success : Colors.grey,
                     ),
                     title: Text(server.name),
                     subtitle: Text(online ? 'Online' : 'Offline'),

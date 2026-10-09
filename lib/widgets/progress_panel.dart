@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_palette.dart';
 
 class ProgressPanelEntry {
   const ProgressPanelEntry({
@@ -76,7 +77,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
     return Container(
       margin: EdgeInsets.symmetric(horizontal: 8, vertical: _expanded ? 4 : 2),
       child: Material(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         shape: RoundedRectangleBorder(
           borderRadius: radius,
           side: BorderSide(color: widget.accent.withAlpha(65)),
@@ -115,10 +116,10 @@ class _ProgressPanelState extends State<ProgressPanel> {
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 11,
                             height: 1.4,
-                            color: Color(0xFFB0B0B0),
+                            color: context.palette.textSecondary,
                           ),
                         ),
                       ),
@@ -128,7 +129,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
                         child: Icon(
                           _expanded ? Icons.expand_less : Icons.expand_more,
                           size: 18,
-                          color: const Color(0xFF767676),
+                          color: context.palette.textMuted,
                         ),
                       ),
                       if (widget.onDismiss != null)
@@ -147,10 +148,10 @@ class _ProgressPanelState extends State<ProgressPanel> {
                             width: 24,
                             height: 24,
                           ),
-                          icon: const Icon(
+                          icon: Icon(
                             Icons.visibility_off_outlined,
                             size: 16,
-                            color: Color(0xFF767676),
+                            color: context.palette.textMuted,
                           ),
                         ),
                     ],
@@ -167,7 +168,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
                     child: LinearProgressIndicator(
                       value: progress,
                       minHeight: 3,
-                      backgroundColor: const Color(0xFF2E2E2E),
+                      backgroundColor: context.palette.border,
                       color: widget.accent,
                     ),
                   ),
@@ -194,10 +195,10 @@ class _ProgressPanelState extends State<ProgressPanel> {
                           padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
                           child: Text(
                             widget.explanation,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 12,
                               height: 1.4,
-                              color: Color(0xFFB0B0B0),
+                              color: context.palette.textSecondary,
                             ),
                           ),
                         ),
@@ -279,10 +280,10 @@ class _ProgressPanelRowState extends State<ProgressPanelRow> {
         ? Icons.play_circle_fill
         : Icons.radio_button_unchecked;
     final color = completed
-        ? const Color(0xFFA6E3A1)
+        ? context.palette.green
         : active
-        ? const Color(0xFFF9E2AF)
-        : const Color(0xFF767676);
+        ? context.palette.yellow
+        : context.palette.textMuted;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: ConstrainedBox(
@@ -302,8 +303,8 @@ class _ProgressPanelRowState extends State<ProgressPanelRow> {
                   fontSize: 12,
                   height: 1.4,
                   color: completed
-                      ? const Color(0xFFB0B0B0)
-                      : const Color(0xFFE6E6E6),
+                      ? context.palette.textSecondary
+                      : context.palette.text,
                   fontWeight: active ? FontWeight.w600 : FontWeight.normal,
                   decoration: completed && entry.strikeCompleted
                       ? TextDecoration.lineThrough
@@ -327,10 +328,10 @@ class _ProgressPanelRowState extends State<ProgressPanelRow> {
                         width: 24,
                         height: 24,
                       ),
-                      icon: const Icon(
+                      icon: Icon(
                         Icons.close,
                         size: 14,
-                        color: Color(0xFF767676),
+                        color: context.palette.textMuted,
                       ),
                     ),
             ),

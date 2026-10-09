@@ -10,6 +10,7 @@ import 'copy_button.dart';
 import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
 import 'zoomable_image.dart';
+import '../config/app_palette.dart';
 
 bool _isStructuredToolContent(dynamic value) {
   if (value is List) {
@@ -334,9 +335,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final diffSource = patchDiff ?? editDiff;
     final diffStats = diffSource == null ? null : _diffStats(diffSource);
 
-    final accentColor = widget.greenTheme
-        ? const Color(0xFFA6E3A1)
-        : _toolAccent;
+    final accentColor = widget.greenTheme ? context.palette.green : _toolAccent;
 
     // Always expandable if there's content to show
     final writeContent = _isWriteTool
@@ -364,10 +363,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: isBg ? const Color(0xFF1C1C1C) : const Color(0xFF181818),
+        color: isBg ? context.palette.panelHigh : context.palette.panel,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isBg ? accentColor.withAlpha(120) : const Color(0xFF2E2E2E),
+          color: isBg ? accentColor.withAlpha(120) : context.palette.border,
           width: 1,
         ),
       ),
@@ -400,7 +399,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                         vertical: 1,
                       ),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF9E2AF).withValues(alpha: 0.15),
+                        color: context.palette.yellow.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
@@ -408,7 +407,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 9,
                           fontWeight: FontWeight.bold,
-                          color: const Color(0xFFF9E2AF),
+                          color: context.palette.yellow,
                         ),
                       ),
                     ),
@@ -419,7 +418,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                       _isBash ? _bashSummary : _toolDescription,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -448,7 +447,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     const SizedBox(width: 4),
                   ],
                   if (_isImageCard && !_expanded) ...[
-                    const Icon(Icons.image, size: 14, color: Color(0xFFA6E3A1)),
+                    Icon(Icons.image, size: 14, color: context.palette.green),
                     const SizedBox(width: 4),
                   ],
                   if (diffStats != null && !_expanded) ...[
@@ -459,10 +458,14 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF767676),
+                      color: context.palette.textMuted,
                     )
                   else if (gotResult && !isStreaming)
-                    const Icon(Icons.check, size: 16, color: Color(0xFF767676))
+                    Icon(
+                      Icons.check,
+                      size: 16,
+                      color: context.palette.textMuted,
+                    )
                   else ...[
                     if (canBackground)
                       RunningTaskMenu(
@@ -475,7 +478,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                           '${elapsed.toStringAsFixed(0)}s',
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 10,
-                            color: const Color(0xFF767676),
+                            color: context.palette.textMuted,
                           ),
                         ),
                       ),
@@ -495,9 +498,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           // Bash: show formatted command + output when expanded
           if (_isBash && _expanded) ...[
             Container(
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                  top: BorderSide(color: context.palette.border, width: 1),
                 ),
               ),
               padding: const EdgeInsets.all(12),
@@ -515,7 +518,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 9.5,
-                        color: const Color(0xFF767676),
+                        color: context.palette.textMuted,
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -535,9 +538,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               widget.message.toolInput?['new_string'] as String? ?? '',
               Container(
                 constraints: const BoxConstraints(maxHeight: 300),
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   border: Border(
-                    top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                    top: BorderSide(color: context.palette.border, width: 1),
                   ),
                 ),
                 child: ScrollPassthrough(
@@ -552,9 +555,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           if (_isApplyPatchTool && patchDiff != null && _expanded)
             Container(
               constraints: const BoxConstraints(maxHeight: 300),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                  top: BorderSide(color: context.palette.border, width: 1),
                 ),
               ),
               child: ScrollPassthrough(
@@ -590,20 +593,20 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               !_hasImage)
             Container(
               padding: const EdgeInsets.all(12),
-              decoration: const BoxDecoration(
+              decoration: BoxDecoration(
                 border: Border(
-                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                  top: BorderSide(color: context.palette.border, width: 1),
                 ),
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const SizedBox(
+                  SizedBox(
                     width: 14,
                     height: 14,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: Color(0xFF767676),
+                      color: context.palette.textMuted,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -611,7 +614,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     'Loading image...',
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 11,
-                      color: const Color(0xFF767676),
+                      color: context.palette.textMuted,
                     ),
                   ),
                 ],
@@ -625,17 +628,17 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   Color _taskStatusColor(String status) {
     switch (status) {
       case 'success':
-        return const Color(0xFFA6E3A1); // green
+        return context.palette.green; // green
       case 'completed':
-        return const Color(0xFFA6E3A1);
+        return context.palette.green;
       case 'timeout':
-        return const Color(0xFFF9E2AF); // yellow
+        return context.palette.yellow; // yellow
       case 'running':
-        return const Color(0xFF89B4FA); // blue
+        return context.palette.blue; // blue
       case 'error':
-        return const Color(0xFFF38BA8); // red
+        return context.palette.red; // red
       default:
-        return const Color(0xFFB0B0B0); // grey
+        return context.palette.textSecondary; // grey
     }
   }
 
@@ -654,8 +657,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
 
     final pane = Container(
       constraints: const BoxConstraints(maxHeight: 300),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: context.palette.border, width: 1),
+        ),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -671,8 +676,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 10,
                       color: exitCode == '0'
-                          ? const Color(0xFFA6E3A1)
-                          : const Color(0xFFF38BA8),
+                          ? context.palette.green
+                          : context.palette.red,
                     ),
                   ),
                 ),
@@ -681,7 +686,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   taskOutput,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 11,
-                    color: const Color(0xFFE6E6E6),
+                    color: context.palette.text,
                     height: 1.4,
                   ),
                 ),
@@ -701,8 +706,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       onTap: () => _showFullscreenImage(bytes),
       child: Container(
         constraints: const BoxConstraints(maxHeight: 300),
-        decoration: const BoxDecoration(
-          border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: context.palette.border, width: 1),
+          ),
         ),
         padding: const EdgeInsets.all(8),
         child: ClipRRect(
@@ -754,8 +761,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final lines = content.split('\n');
     final pane = Container(
       constraints: const BoxConstraints(maxHeight: 400),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: context.palette.border, width: 1),
+        ),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -770,7 +779,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   '${lines.length} lines',
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10,
-                    color: const Color(0xFF767676),
+                    color: context.palette.textMuted,
                   ),
                 ),
               ),
@@ -785,7 +794,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                         '${i + 1}',
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 11,
-                          color: const Color(0xFF767676),
+                          color: context.palette.textMuted,
                           height: 1.4,
                         ),
                         textAlign: TextAlign.right,
@@ -797,7 +806,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                         lines[i],
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 11,
-                          color: const Color(0xFFA6E3A1),
+                          color: context.palette.green,
                           height: 1.4,
                         ),
                       ),
@@ -828,8 +837,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final structured = text == null ? null : decodeJsonDocument(text);
     final pane = Container(
       constraints: const BoxConstraints(maxHeight: 300),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: context.palette.border, width: 1),
+        ),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -841,8 +852,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 11,
                     color: muted
-                        ? const Color(0xFF767676)
-                        : const Color(0xFFE6E6E6),
+                        ? context.palette.textMuted
+                        : context.palette.text,
                     height: 1.4,
                     fontStyle: muted ? FontStyle.italic : FontStyle.normal,
                   ),
@@ -856,8 +867,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   Widget _buildStructuredInputContainer(Map<String, dynamic> input) {
     return Container(
       constraints: const BoxConstraints(maxHeight: 300),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2E2E2E), width: 1)),
+      decoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: context.palette.border, width: 1),
+        ),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -893,16 +906,16 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         if (line.startsWith('---') ||
             line.startsWith('+++') ||
             line.startsWith('@@')) {
-          textColor = const Color(0xFFB0B0B0);
+          textColor = context.palette.textSecondary;
           bgColor = null;
         } else if (line.startsWith('-')) {
-          textColor = const Color(0xFFF38BA8); // red
-          bgColor = const Color(0xFFF38BA8).withAlpha(20);
+          textColor = context.palette.red; // red
+          bgColor = context.palette.red.withAlpha(20);
         } else if (line.startsWith('+')) {
-          textColor = const Color(0xFFA6E3A1); // green
-          bgColor = const Color(0xFFA6E3A1).withAlpha(20);
+          textColor = context.palette.green; // green
+          bgColor = context.palette.green.withAlpha(20);
         } else {
-          textColor = const Color(0xFFE6E6E6);
+          textColor = context.palette.text;
           bgColor = null;
         }
         return Container(
@@ -944,7 +957,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
             style: GoogleFonts.jetBrainsMono(
               fontSize: 10,
               fontWeight: FontWeight.bold,
-              color: const Color(0xFFA6E3A1),
+              color: context.palette.green,
             ),
           ),
         if (stats.added > 0 && stats.removed > 0) const SizedBox(width: 5),
@@ -954,7 +967,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
             style: GoogleFonts.jetBrainsMono(
               fontSize: 10,
               fontWeight: FontWeight.bold,
-              color: const Color(0xFFF38BA8),
+              color: context.palette.red,
             ),
           ),
       ],

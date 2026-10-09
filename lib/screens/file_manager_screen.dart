@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
+import 'package:flutter_highlight/themes/atom-one-light.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import '../services/file_open_service.dart';
 import 'package:pdfx/pdfx.dart';
@@ -20,6 +21,7 @@ import '../util/format.dart';
 import '../widgets/markdown_blocks.dart';
 import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/zoomable_image.dart';
+import '../config/app_palette.dart';
 
 enum _FilePreviewKind { text, markdown, html, code, image, pdf }
 
@@ -1108,7 +1110,7 @@ class _FileTextPreviewScreenState extends State<_FileTextPreviewScreen> {
         );
       case _FilePreviewKind.code:
         return Container(
-          color: Colors.black,
+          color: Theme.of(context).colorScheme.surface,
           child: Scrollbar(
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
@@ -1116,7 +1118,7 @@ class _FileTextPreviewScreenState extends State<_FileTextPreviewScreen> {
                 child: HighlightView(
                   _displayContent,
                   language: _languageForExtension(widget.entry.extension),
-                  theme: _codePreviewTheme,
+                  theme: _codePreviewTheme(theme),
                   padding: const EdgeInsets.all(16),
                   textStyle: const TextStyle(
                     fontFamily: 'monospace',
@@ -1330,14 +1332,19 @@ class _FilePdfPreviewScreenState extends State<_FilePdfPreviewScreen> {
   }
 }
 
-/// Atom One Dark tokens on the app's true black background.
-final _codePreviewTheme = {
-  ...atomOneDarkTheme,
-  'root': atomOneDarkTheme['root']!.copyWith(
-    backgroundColor: Colors.black,
-    color: const Color(0xFFE6E6E6),
-  ),
-};
+/// Atom One tokens for the theme's brightness on the app's plain background.
+Map<String, TextStyle> _codePreviewTheme(ThemeData theme) {
+  final base = theme.brightness == Brightness.dark
+      ? atomOneDarkTheme
+      : atomOneLightTheme;
+  return {
+    ...base,
+    'root': base['root']!.copyWith(
+      backgroundColor: theme.colorScheme.surface,
+      color: theme.palette.text,
+    ),
+  };
+}
 
 class _FileImagePreviewScreen extends StatelessWidget {
   final FileManagerEntry entry;

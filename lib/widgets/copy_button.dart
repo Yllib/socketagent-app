@@ -11,12 +11,16 @@ class CopyButton extends StatefulWidget {
     super.key,
     required this.text,
     this.color,
-    this.background = const Color(0xCC000000),
+    this.background,
   });
 
   final String text;
+
+  /// Icon colour. Defaults to a softened onSurface.
   final Color? color;
-  final Color background;
+
+  /// Fill behind the icon. Defaults to a translucent surface colour.
+  final Color? background;
 
   @override
   State<CopyButton> createState() => _CopyButtonState();
@@ -46,6 +50,7 @@ class _CopyButtonState extends State<CopyButton> {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return IconButton(
       tooltip: _copied ? 'Copied' : 'Copy',
       onPressed: _copy,
@@ -53,9 +58,9 @@ class _CopyButtonState extends State<CopyButton> {
       padding: EdgeInsets.zero,
       constraints: const BoxConstraints.tightFor(width: 32, height: 32),
       iconSize: 16,
-      color: widget.color ?? Colors.white70,
+      color: widget.color ?? scheme.onSurface.withAlpha(0xB3),
       style: IconButton.styleFrom(
-        backgroundColor: widget.background,
+        backgroundColor: widget.background ?? scheme.surface.withAlpha(0xCC),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
       ),
       icon: Icon(_copied ? Icons.check : Icons.content_copy_outlined),

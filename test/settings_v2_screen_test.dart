@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:app/screens/settings/settings_v2_screen.dart';
 import 'package:app/services/chat_provider.dart';
+import 'package:app/services/theme_mode_controller.dart';
 import 'package:app/services/update_service.dart';
 
 class _FakeUpdateService extends UpdateService {
@@ -95,11 +96,17 @@ void main() {
   Future<void> pumpSettings(
     WidgetTester tester,
     ChatProvider provider,
-    UpdateService updateService,
-  ) async {
+    UpdateService updateService, {
+    ThemeModeController? themeMode,
+  }) async {
     await tester.pumpWidget(
-      ChangeNotifierProvider<ChatProvider>(
-        create: (_) => provider,
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<ChatProvider>(create: (_) => provider),
+          ChangeNotifierProvider<ThemeModeController>(
+            create: (_) => themeMode ?? ThemeModeController(),
+          ),
+        ],
         child: MaterialApp(
           home: SettingsV2Screen(updateService: updateService),
         ),
@@ -151,6 +158,8 @@ void main() {
       500,
       scrollable: find.byType(Scrollable).first,
     );
+    await tester.ensureVisible(versionRow);
+    await tester.pumpAndSettle();
 
     for (var tap = 0; tap < 6; tap += 1) {
       await tester.tap(versionRow);
@@ -273,6 +282,9 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
 
+    await tester.ensureVisible(find.text('Condensed Tool Usage'));
+    await tester.pumpAndSettle();
+
     expect(provider.condensedToolUsage, isFalse);
     await tester.tap(find.text('Condensed Tool Usage'));
     await tester.pump();
@@ -280,5 +292,30 @@ void main() {
     expect(provider.condensedToolUsage, isTrue);
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool('condensed_tool_usage'), isTrue);
+  });
+
+  testWidgets('Appearance picker persists the theme mode', (tester) async {
+    final provider = ChatProvider();
+    final updateService = _FakeUpdateService();
+    addTearDown(updateService.dispose);
+    final themeMode = ThemeModeController();
+
+    await pumpSettings(tester, provider, updateService, themeMode: themeMode);
+    await tester.scrollUntilVisible(
+      find.text('Appearance'),
+      400,
+      scrollable: find.byType(Scrollable).first,
+    );
+
+    await tester.ensureVisible(find.text('Appearance'));
+    await tester.pumpAndSettle();
+
+    expect(themeMode.mode, ThemeMode.system);
+    await tester.tap(find.text('Light'));
+    await tester.pump();
+
+    expect(themeMode.mode, ThemeMode.light);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('theme_mode'), 'light');
   });
 }

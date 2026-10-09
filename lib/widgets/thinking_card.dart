@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
+import '../config/app_palette.dart';
 
 class ThinkingCard extends StatefulWidget {
   final ChatMessage message;
@@ -42,10 +43,10 @@ class _ThinkingCardState extends State<ThinkingCard> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       child: CustomPaint(
         painter: _CloudBorderPainter(
-          fillColor: const Color(0xFF181818),
+          fillColor: context.palette.panel,
           borderColor: isStreaming
-              ? const Color(0xFFCBA6F7).withAlpha(120)
-              : const Color(0xFF4A4A4A),
+              ? context.palette.mauve.withAlpha(120)
+              : context.palette.outline,
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -65,10 +66,10 @@ class _ThinkingCardState extends State<ThinkingCard> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(
+                      Icon(
                         Icons.psychology,
                         size: 16,
-                        color: Color(0xFFCBA6F7),
+                        color: context.palette.mauve,
                       ),
                       const SizedBox(width: 8),
                       Text(
@@ -76,19 +77,19 @@ class _ThinkingCardState extends State<ThinkingCard> {
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
-                          color: const Color(0xFFCBA6F7),
+                          color: context.palette.mauve,
                         ),
                       ),
                       const SizedBox(width: 8),
                       if (isStreaming)
-                        const Padding(
+                        Padding(
                           padding: EdgeInsets.only(right: 8),
                           child: SizedBox(
                             width: 12,
                             height: 12,
                             child: CircularProgressIndicator(
                               strokeWidth: 1.5,
-                              color: Color(0xFFCBA6F7),
+                              color: context.palette.mauve,
                             ),
                           ),
                         ),
@@ -99,7 +100,7 @@ class _ThinkingCardState extends State<ThinkingCard> {
                             details,
                             style: GoogleFonts.jetBrainsMono(
                               fontSize: 10,
-                              color: const Color(0xFF888888),
+                              color: context.palette.textMuted,
                             ),
                           ),
                         ),
@@ -108,7 +109,7 @@ class _ThinkingCardState extends State<ThinkingCard> {
                           preview,
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 11,
-                            color: const Color(0xFFB0B0B0),
+                            color: context.palette.textSecondary,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -118,7 +119,7 @@ class _ThinkingCardState extends State<ThinkingCard> {
                         Icon(
                           _expanded ? Icons.expand_less : Icons.expand_more,
                           size: 18,
-                          color: const Color(0xFF767676),
+                          color: context.palette.textMuted,
                         ),
                     ],
                   ),
@@ -128,9 +129,9 @@ class _ThinkingCardState extends State<ThinkingCard> {
               if (_expanded && hasText)
                 Container(
                   constraints: const BoxConstraints(maxHeight: 400),
-                  decoration: const BoxDecoration(
+                  decoration: BoxDecoration(
                     border: Border(
-                      top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                      top: BorderSide(color: context.palette.border, width: 1),
                     ),
                   ),
                   child: ScrollPassthrough(
@@ -140,7 +141,7 @@ class _ThinkingCardState extends State<ThinkingCard> {
                         text,
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 12,
-                          color: const Color(0xFFE6E6E6),
+                          color: context.palette.text,
                           height: 1.5,
                         ),
                       ),

@@ -6,6 +6,7 @@ import '../models/message.dart';
 import '../services/chat_provider.dart';
 import '../services/file_open_service.dart';
 import '../util/format.dart';
+import '../config/app_palette.dart';
 
 class FileCard extends StatelessWidget {
   final ChatMessage message;
@@ -145,13 +146,13 @@ class FileCard extends StatelessWidget {
                   details.globalPosition.dx,
                   details.globalPosition.dy,
                 ),
-                color: const Color(0xFF2E2E2E),
+                color: context.palette.border,
                 items: [
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'redownload',
                     child: Text(
                       'Re-download',
-                      style: TextStyle(color: Color(0xFFE6E6E6)),
+                      style: TextStyle(color: context.palette.text),
                     ),
                   ),
                 ],
@@ -166,15 +167,15 @@ class FileCard extends StatelessWidget {
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          color: const Color(0xFF181818),
+          color: context.palette.panel,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF4A4A4A), width: 1),
+          border: Border.all(color: context.palette.outline, width: 1),
         ),
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           child: Row(
             children: [
-              Icon(_fileIcon(name), size: 24, color: const Color(0xFF89B4FA)),
+              Icon(_fileIcon(name), size: 24, color: context.palette.blue),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -185,7 +186,7 @@ class FileCard extends StatelessWidget {
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
-                        color: const Color(0xFFE6E6E6),
+                        color: context.palette.text,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -195,7 +196,7 @@ class FileCard extends StatelessWidget {
                       subtitle,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 10,
-                        color: const Color(0xFF767676),
+                        color: context.palette.textMuted,
                       ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -206,10 +207,10 @@ class FileCard extends StatelessWidget {
               if (hasFile) ...[
                 const SizedBox(width: 4),
                 IconButton(
-                  icon: const Icon(
+                  icon: Icon(
                     Icons.open_in_new,
                     size: 20,
-                    color: Color(0xFFA6E3A1),
+                    color: context.palette.green,
                   ),
                   onPressed: () => _openFile(context, localPath),
                   tooltip: 'Open',
@@ -225,7 +226,7 @@ class FileCard extends StatelessWidget {
                   height: 20,
                   child: CircularProgressIndicator(
                     strokeWidth: 2,
-                    color: const Color(0xFFF9E2AF),
+                    color: context.palette.yellow,
                     value: progress,
                   ),
                 )
@@ -234,7 +235,7 @@ class FileCard extends StatelessWidget {
                   icon: Icon(
                     error == null ? Icons.download : Icons.refresh,
                     size: 20,
-                    color: const Color(0xFF89B4FA),
+                    color: context.palette.blue,
                   ),
                   onPressed: () => provider.requestFile(fileId),
                   tooltip: error == null ? 'Download' : 'Retry download',
@@ -245,10 +246,10 @@ class FileCard extends StatelessWidget {
                   ),
                 )
               else
-                const Icon(
+                Icon(
                   Icons.insert_drive_file,
                   size: 20,
-                  color: Color(0xFF5E5E5E),
+                  color: context.palette.textFaint,
                 ),
             ],
           ),

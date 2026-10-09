@@ -74,7 +74,7 @@ class _SessionCompactionNoticeState extends State<SessionCompactionNotice> {
   void _showInfo() => showDialog<void>(
     context: context,
     builder: (context) => AlertDialog(
-      backgroundColor: Colors.black,
+      backgroundColor: Theme.of(context).colorScheme.surface,
       title: const Text('Why start a new thread?'),
       content: const Text(
         'Compaction summarizes a long conversation to make room. '
@@ -116,17 +116,19 @@ class _SessionCompactionNoticeState extends State<SessionCompactionNotice> {
                       text: 'Start a new thread',
                       style: TextStyle(
                         color: widget.onStartFresh == null
-                            ? Colors.white54
+                            ? Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withAlpha(138)
                             : Theme.of(context).colorScheme.primary,
                         decoration: TextDecoration.underline,
                       ),
                     ),
                   ],
                 ),
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 11,
                   height: 1.25,
-                  color: Colors.white,
+                  color: Theme.of(context).colorScheme.onSurface,
                 ),
               ),
             ),

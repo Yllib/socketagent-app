@@ -1,4 +1,5 @@
 import 'outgoing_queue.dart';
+import 'run_finished_sound.dart';
 import 'background_json_store.dart';
 import 'session_list_loader.dart';
 import 'session_teleport.dart';
@@ -645,6 +646,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, _RunningSessionInfo> _runningSessionNotifications = {};
   final SessionLiveState _sessionLiveState = SessionLiveState();
   final SessionTranscriptCache _transcriptCache = SessionTranscriptCache();
+  static const _transcriptCacheLimitKey = 'transcript_cache_limit';
   final Map<String, Timer> _scheduledTaskRefreshRetries = {};
   final Map<String, String> _scheduledTaskLoadedRevisions = {};
   // Backend driving the currently active session ('claude' | 'codex' | null).
@@ -658,6 +660,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, String> _sessionDrafts = {};
   final _draftStore = BackgroundJsonStore('session-drafts-v1');
   final _sessionListStore = BackgroundJsonStore('session-lists-v1');
+  final _sessionSettingsStore = BackgroundJsonStore('session-settings-v1');
+  // Server and session keys for supervisors whose own agent is idle while
+  // delegated agents work, from each server's status_sync.
+  final Set<String> _waitingSessionKeys = {};
+  static const _maxCachedSessionSettings = 200;
+  // Server and session key to its last session_settings, oldest first.
+  final Map<String, Map<String, Object?>> _cachedSessionSettings = {};
   Timer? _sessionCacheSaveTimer;
   ConnectionStatus _connectionStatus = ConnectionStatus.disconnected;
   bool _isListening = false;
@@ -830,6 +839,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String _defaultCwd = '';
   bool _autoVoiceOnAssist = true;
   bool _condensedToolUsage = false;
+  bool _runFinishedSoundEnabled = true;
+  final _runFinishedSound = RunFinishedSound();
 
   // Multi-server
   List<ServerConfig> _serverConfigs = [];
@@ -2009,6 +2020,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String get defaultCwd => _defaultCwd;
   bool get autoVoiceOnAssist => _autoVoiceOnAssist;
   bool get condensedToolUsage => _condensedToolUsage;
+
+  /// Whether a run finishing in the session on screen plays a short sound.
+  /// That session gets no popup notification, so this is the cue instead.
+  bool get runFinishedSoundEnabled => _runFinishedSoundEnabled;
   WebSocketService get ws => _ws;
   ConnectionManager get connMgr => _connMgr;
   List<ServerConfig> get serverConfigs => _serverConfigs;
@@ -2022,8 +2037,44 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return _connectionStatus;
   }
 
+  /// How many sessions keep their transcript on this device for offline use.
+  int get transcriptCacheLimit => _transcriptCache.limit;
+
+  Future<void> setTranscriptCacheLimit(int value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_transcriptCacheLimitKey, value);
+    await _transcriptCache.setLimit(value);
+    notifyListeners();
+  }
+
+  Future<({int count, int bytes})> transcriptCacheUsage() =>
+      _transcriptCache.usage();
+
+  /// Whether [session]'s own agent is idle while agents it delegated to
+  /// are still working. A prompt sent now starts a fresh turn.
+  bool isSessionWaitingOnAgent(Session session) =>
+      _waitingSessionKeys.contains('${session.serverId}\u0001${session.id}');
+
+  bool get activeSessionWaitingOnAgent =>
+      !_isProcessing &&
+      _waitingSessionKeys.contains(
+        '${_activeSessionServerId ?? _connMgr.activeServerId ?? ''}'
+        '\u0001$_activeSessionId',
+      );
+
   bool isSessionAvailable(Session session) =>
       sessionServerStatus(session) == ConnectionStatus.connected;
+
+  /// Whether the open session's computer is unreachable, so the transcript is
+  /// the phone's cached copy. Reconnecting resumes it and refreshes history.
+  bool get activeSessionOffline {
+    if (_activeSessionId == null) return false;
+    final serverId = _activeSessionServerId ?? '';
+    final status = serverId.isEmpty
+        ? _connectionStatus
+        : _connMgr.statusOf(serverId);
+    return status != ConnectionStatus.connected;
+  }
 
   Future<String?> fetchServerFileBase64(
     String filePath, {
@@ -2241,6 +2292,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _defaultCwd = prefs.getString('default_cwd') ?? '';
     _autoVoiceOnAssist = prefs.getBool('auto_voice_on_assist') ?? true;
     _condensedToolUsage = prefs.getBool('condensed_tool_usage') ?? false;
+    _runFinishedSoundEnabled = prefs.getBool('run_finished_sound') ?? true;
     _pushToTalk = prefs.getBool('push_to_talk') ?? false;
 
     // Load sensitive credentials from SecureStorage
@@ -2388,6 +2440,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
         .toSet();
     _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
+    _transcriptCache.limit =
+        prefs.getInt(_transcriptCacheLimitKey) ??
+        SessionTranscriptCache.defaultLimit;
     await _loadDrafts();
     if (_outgoingDisposed) return;
     if (!_settingsLoaded.isCompleted) _settingsLoaded.complete();
@@ -2396,6 +2451,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // These services do not gate the first usable screen. Transcript files and
     // native speech engines load on demand instead of competing with startup.
     unawaited(_loadSessionCache(prefs));
+    unawaited(_loadCachedSessionSettings());
     unawaited(_discoverLocalServer(prefs));
     unawaited(_registerPushNotifications());
   }
@@ -2476,6 +2532,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('condensed_tool_usage', value);
+  }
+
+  Future<void> setRunFinishedSoundEnabled(bool value) async {
+    if (_runFinishedSoundEnabled == value) return;
+    _runFinishedSoundEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('run_finished_sound', value);
   }
 
   // ── Multi-server CRUD ──
@@ -3342,11 +3406,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _retryPendingPromptsForServer(update.serverId);
         _syncStateToServer(serverId: update.serverId);
         unawaited(_syncPushRegistrationForServer(update.serverId));
-      } else if (update.serverId == _activeSessionServerId) {
-        // A request written to a socket that subsequently disconnected is no
-        // longer in flight. Reuse its correlation ID after reconnect instead
-        // of creating a second competing resume request.
-        _initialHistoryRequestDispatched = false;
+      } else {
+        _pauseSocketDownloadsForServer(update.serverId);
+        if (update.serverId == _activeSessionServerId) {
+          // A request written to a socket that subsequently disconnected is
+          // no longer in flight. Reuse its correlation ID after reconnect
+          // instead of creating a second competing resume request.
+          _initialHistoryRequestDispatched = false;
+        }
       }
     });
 
@@ -5662,7 +5729,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           break;
         case 'session_settings':
-          _handleSessionSettings(msg);
+          _handleSessionSettings(msg, serverId: serverId);
           break;
         case 'task_completed_hook':
           // Compatibility with servers that predate durable native-task
@@ -6097,6 +6164,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               (msg['notificationSuppressedSessions'] as List?)
                   ?.map((e) => e.toString())
                   .toSet();
+          final waitingSessions = (msg['waitingSessions'] as List?)
+              ?.map((e) => e.toString())
+              .toSet();
+          if (serverId != null) {
+            _waitingSessionKeys.removeWhere(
+              (key) => key.startsWith('$serverId\u0001'),
+            );
+            for (final sessionId in waitingSessions ?? const <String>{}) {
+              _waitingSessionKeys.add('$serverId\u0001$sessionId');
+            }
+          }
           if (serverId != null && runningSessions != null) {
             _sessionLiveState.replaceServer(serverId, runningSessions);
             final rawStartedAt = msg['sessionActiveStartedAt'];
@@ -6155,9 +6233,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             // be in the list, so we are NOT running — falling back to the
             // global msg['running'] would wrongly inherit another session's
             // running state and trip the "queued:next" UI on the first send.
+            // A supervisor waiting on delegated agents is listed too, but
+            // its own agent is idle, so a prompt now is not queued.
             serverSaysRunning =
                 _activeSessionId != null &&
-                runningSessions.contains(_activeSessionId);
+                runningSessions.contains(_activeSessionId) &&
+                !(waitingSessions?.contains(_activeSessionId) ?? false);
           } else {
             // Pre-runningSessions servers: best effort with the global flag.
             serverSaysRunning = msg['running'] == true;
@@ -8715,6 +8796,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
     if (!awaitingAbort && !continuationPending) {
       _markSessionIdle(_activeSessionId, serverId: _connMgr.activeServerId);
+      if (_runFinishedSoundEnabled && _appInForeground && _chatScreenVisible) {
+        unawaited(_runFinishedSound.play());
+      }
     }
     _closeLiveStreamsForParent(null);
     _isProcessing = awaitingAbort || continuationPending;
@@ -9773,13 +9857,59 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _handleSessionSettings(Map<String, dynamic> msg) {
+  void _handleSessionSettings(Map<String, dynamic> msg, {String? serverId}) {
     final sessionId = msg['sessionId']?.toString() ?? '';
     if (sessionId.isEmpty || sessionId != _activeSessionId) return;
     final raw = msg['settings'];
     if (raw is! Map) return;
     final settings = Map<String, dynamic>.from(raw);
+    final cacheServerId = serverId ?? _activeSessionServerId ?? '';
+    if (cacheServerId.isNotEmpty) {
+      _cacheSessionSettings(cacheServerId, sessionId, settings);
+    }
+    _applySessionSettings(sessionId, settings);
+    notifyListeners();
+  }
 
+  /// Remembers the last settings a server reported for a session, so opening
+  /// it while that computer is offline still shows its model and effort.
+  void _cacheSessionSettings(
+    String serverId,
+    String sessionId,
+    Map<String, Object?> settings,
+  ) {
+    final key = '$serverId\u0001$sessionId';
+    _cachedSessionSettings
+      ..remove(key)
+      ..[key] = settings;
+    while (_cachedSessionSettings.length > _maxCachedSessionSettings) {
+      _cachedSessionSettings.remove(_cachedSessionSettings.keys.first);
+    }
+    unawaited(
+      _sessionSettingsStore.save(_cachedSessionSettings).catchError((
+        Object error,
+      ) {
+        debugPrint('[SessionSettings] Failed to save: $error');
+      }),
+    );
+  }
+
+  Future<void> _loadCachedSessionSettings() async {
+    try {
+      final data = await _sessionSettingsStore.load();
+      if (data == null) return;
+      for (final MapEntry(:key, :value) in data.entries) {
+        if (value is Map<String, Object?>) {
+          _cachedSessionSettings.putIfAbsent(key, () => value);
+        }
+      }
+    } catch (error) {
+      debugPrint('[SessionSettings] Failed to load: $error');
+    }
+  }
+
+  /// Applies a session_settings payload to the active session's state.
+  void _applySessionSettings(String sessionId, Map<String, dynamic> settings) {
     final model = settings['model']?.toString();
     if (model != null && model.isNotEmpty) _sessionModel = model;
     final effort = settings['effort']?.toString();
@@ -9828,7 +9958,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _sessionSystemPrompts.remove(sessionId);
     }
-    notifyListeners();
   }
 
   List<Map<String, dynamic>> get codexReasoningEfforts {
@@ -14537,6 +14666,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         : serverId;
     final resolvedServerId = targetServerId ?? _connMgr.activeServerId ?? '';
     _loadDismissedTasks();
+    final cachedSettings =
+        _cachedSessionSettings['$resolvedServerId\u0001$sessionId'];
+    if (cachedSettings != null) {
+      _applySessionSettings(sessionId, cachedSettings);
+    }
     final cachedSnapshot = resolvedServerId.isEmpty
         ? null
         : _transcriptCache.peek(resolvedServerId, sessionId);
@@ -17410,6 +17544,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Chunks for a socket download stop the moment its socket does, so pause
+  /// it now rather than after the stall watchdog. Reconnecting resumes it
+  /// from the saved bytes. HTTP downloads have their own connection.
+  void _pauseSocketDownloadsForServer(String serverId) {
+    for (final id in _downloadingFiles.toList()) {
+      if (_downloadServerIds[id] != serverId ||
+          _httpDownloads.containsKey(id)) {
+        continue;
+      }
+      _failDownload(id, 'Reconnecting...', reconnect: true, notify: false);
+    }
+  }
+
   void _resumeDownloadsForServer(String serverId) {
     for (final id in _resumeDownloadIds.toList()) {
       if (_downloadServerIds[id] != serverId ||
@@ -17888,7 +18035,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
-  void _failDownload(String id, String error, {bool reconnect = false}) {
+  void _failDownload(
+    String id,
+    String error, {
+    bool reconnect = false,
+    bool notify = true,
+  }) {
     if (_downloadsDisposed) return;
     _cancelDownloadWatchdog(id);
     _downloadRetryTimers.remove(id)?.cancel();
@@ -17904,7 +18056,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final preview = _fileBytesCompleters.remove(id);
     if (preview != null) {
       if (!preview.isCompleted) preview.completeError(Exception(error));
-    } else {
+    } else if (notify) {
       _showDownloadFailedNotification(id, error);
     }
     notifyListeners();
@@ -17970,6 +18122,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _conversationRewindTimers.clear();
     PushNotificationService.onTokenRefresh = null;
     PushNotificationService.shouldDisplayForegroundNotification = null;
+    unawaited(_runFinishedSound.dispose());
     _promptRuntimeTimer?.cancel();
     for (final pending in _pendingHardStops.values) {
       pending.retryTimer?.cancel();

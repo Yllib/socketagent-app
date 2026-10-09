@@ -12,6 +12,7 @@ import '../paywall_screen.dart';
 import '../credential_manager_screen.dart';
 import 'settings_v2_screen.dart'
     show showBackendSignIn, showBackendOperationDialog;
+import '../../config/app_palette.dart';
 
 class ServersScreen extends StatefulWidget {
   const ServersScreen({super.key});
@@ -160,9 +161,9 @@ class _ServersScreenState extends State<ServersScreen> {
                       leading: Icon(
                         transportIcon,
                         color: isConnected
-                            ? Colors.green
+                            ? context.palette.success
                             : isConnecting
-                            ? Colors.orange
+                            ? context.palette.warning
                             : Colors.grey,
                         size: 22,
                       ),
@@ -214,7 +215,7 @@ class _ServersScreenState extends State<ServersScreen> {
                                     : Icons.qr_code_scanner,
                                 size: 20,
                                 color: config.isRelayPaired
-                                    ? Colors.green
+                                    ? context.palette.success
                                     : null,
                               ),
                               tooltip: config.isRelayPaired
@@ -469,7 +470,7 @@ class _ServersScreenState extends State<ServersScreen> {
                             : Icons.qr_code_scanner,
                         size: 20,
                         color: existing?.isRelayPaired == true
-                            ? Colors.green
+                            ? context.palette.success
                             : null,
                       ),
                       const SizedBox(width: 12),
@@ -762,7 +763,7 @@ class _ServersScreenState extends State<ServersScreen> {
               ? 'Notifications registered for ${config.name}'
               : 'Could not register notifications for ${config.name}',
         ),
-        backgroundColor: ok ? Colors.green : Colors.red,
+        backgroundColor: ok ? context.palette.success : context.palette.danger,
       ),
     );
   }
@@ -1006,7 +1007,7 @@ class _ServersScreenState extends State<ServersScreen> {
                     : pushDisabled
                     ? Icons.notifications_off_outlined
                     : Icons.notification_add_outlined,
-                color: pushRegistered ? Colors.green : null,
+                color: pushRegistered ? context.palette.success : null,
               ),
               title: Text(
                 pushRegistered
@@ -1184,8 +1185,11 @@ class _ServersScreenState extends State<ServersScreen> {
             },
           ),
           ListTile(
-            leading: const Icon(Icons.delete_outline, color: Colors.red),
-            title: const Text('Delete', style: TextStyle(color: Colors.red)),
+            leading: Icon(Icons.delete_outline, color: context.palette.danger),
+            title: Text(
+              'Delete',
+              style: TextStyle(color: context.palette.danger),
+            ),
             onTap: () {
               Navigator.pop(ctx);
               _confirmDeleteServer(context, provider, config);
@@ -1270,8 +1274,8 @@ class _ServersScreenState extends State<ServersScreen> {
         ? Icons.system_update
         : Icons.check_circle;
     final titleColor = needsRestart || updateAvailable
-        ? Colors.orange
-        : Colors.green;
+        ? context.palette.warning
+        : context.palette.success;
 
     if (!context.mounted) return;
     showDialog(
@@ -1346,7 +1350,10 @@ class _ServersScreenState extends State<ServersScreen> {
                 const SizedBox(height: 12),
                 Text(
                   'The checkout is newer than the running SocketAgent process. Restart or update SocketAgent on this computer to load the current code.',
-                  style: const TextStyle(fontSize: 12, color: Colors.orange),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.palette.warning,
+                  ),
                 ),
               ],
               if (remote != null && updateAvailable) ...[
@@ -1374,7 +1381,10 @@ class _ServersScreenState extends State<ServersScreen> {
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
                       '$commitsBehind commit${commitsBehind == 1 ? '' : 's'} behind',
-                      style: TextStyle(fontSize: 12, color: Colors.orange),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: context.palette.warning,
+                      ),
                     ),
                   ),
               ],
@@ -1382,14 +1392,14 @@ class _ServersScreenState extends State<ServersScreen> {
                 const SizedBox(height: 8),
                 Text(
                   'Fetch error: $fetchError',
-                  style: const TextStyle(fontSize: 11, color: Colors.red),
+                  style: TextStyle(fontSize: 11, color: context.palette.danger),
                 ),
               ],
               if (error != null) ...[
                 const SizedBox(height: 8),
                 Text(
                   error,
-                  style: const TextStyle(fontSize: 11, color: Colors.red),
+                  style: TextStyle(fontSize: 11, color: context.palette.danger),
                 ),
               ],
             ],
@@ -1450,7 +1460,9 @@ class _ServersScreenState extends State<ServersScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(success ? message : 'Update failed: $message'),
-        backgroundColor: success ? Colors.green : Colors.red,
+        backgroundColor: success
+            ? context.palette.success
+            : context.palette.danger,
       ),
     );
   }
@@ -1477,7 +1489,10 @@ class _ServersScreenState extends State<ServersScreen> {
               provider.removeServer(config.id);
               Navigator.pop(ctx);
             },
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: Text(
+              'Delete',
+              style: TextStyle(color: context.palette.danger),
+            ),
           ),
         ],
       ),

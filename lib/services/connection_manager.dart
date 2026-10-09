@@ -76,6 +76,10 @@ class ConnectionManager {
   // Computers whose relay turned this phone away. Cleared with a new token.
   final Set<String> _relayRefused = {};
   StreamSubscription<List<ConnectivityResult>>? _networkChanges;
+  Set<ConnectivityResult>? _lastNetwork;
+  // Auto-routed computers whose socket belongs to a network the phone left.
+  // Their route search reconnects them even when the route stays the same.
+  final Set<String> _staleSockets = {};
 
   final _messageController = StreamController<ServerMessage>.broadcast();
   final _statusController = StreamController<ServerStatusUpdate>.broadcast();
@@ -203,10 +207,45 @@ class ConnectionManager {
   /// main(), so host tests, which have no connectivity plugin, never start it.
   void watchNetworkChanges() {
     if (!Platform.isAndroid && !Platform.isWindows) return;
-    _networkChanges ??= Connectivity().onConnectivityChanged.listen(
-      (_) => refreshRoutes(),
+    if (_networkChanges != null) return;
+    unawaited(
+      checkNetwork().then(
+        (network) => _lastNetwork ??= network.toSet(),
+        onError: (Object _) => null,
+      ),
+    );
+    _networkChanges = Connectivity().onConnectivityChanged.listen(
+      onNetworkChanged,
       onError: (Object _) {},
     );
+  }
+
+  /// A socket opened on the network the phone just left is dead, but it only
+  /// finds out when a ping goes unanswered, up to 40 seconds later. Reconnect
+  /// every live socket now instead. Repeated reports of the same networks
+  /// change nothing.
+  void onNetworkChanged(List<ConnectivityResult> network) {
+    final current = network.toSet();
+    final previous = _lastNetwork;
+    _lastNetwork = current;
+    if (previous != null &&
+        previous.length == current.length &&
+        previous.containsAll(current)) {
+      return;
+    }
+    for (final config in _configs.values) {
+      final ws = _connections[config.id];
+      if (ws == null) continue;
+      final live =
+          ws.status != ConnectionStatus.disconnected || ws.reconnecting;
+      if (!live) continue;
+      if (config.autoRoute) {
+        _staleSockets.add(config.id);
+        unawaited(routeServer(config.id, force: true));
+      } else {
+        ws.connect(force: true);
+      }
+    }
   }
 
   /// Picks direct or relay for an auto-routed computer and switches its
@@ -260,6 +299,7 @@ class ConnectionManager {
         : connectionModeForServerConfig(config);
 
     // The config may have changed while the search ran.
+    final stale = _staleSockets.remove(config.id);
     final latest = _configs[config.id];
     final ws = _connections[config.id];
     if (latest == null || !latest.autoRoute || ws == null) return;
@@ -270,8 +310,11 @@ class ConnectionManager {
     final moved =
         next.useRelay != latest.useRelay ||
         (!next.useRelay && next.host != latest.host);
-    if (!moved) return;
     final live = ws.status != ConnectionStatus.disconnected || ws.reconnecting;
+    if (!moved) {
+      if (stale && live) ws.connect(force: true);
+      return;
+    }
     _configs[config.id] = next;
     await _configureTransport(next);
     if (live) ws.connect(force: true);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/task_display.dart';
 import 'progress_panel.dart';
+import '../config/app_palette.dart';
 
 class TodoListCard extends StatelessWidget {
   final List<Map<String, dynamic>> todos;
@@ -22,7 +23,7 @@ class TodoListCard extends StatelessWidget {
     return ProgressPanel(
       label: 'Tasks',
       icon: Icons.checklist,
-      accent: const Color(0xFF89B4FA),
+      accent: context.palette.blue,
       onDismiss: onDismiss,
       hidingNotice: hidingNotice,
       entries: [

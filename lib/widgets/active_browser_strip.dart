@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/active_browser_session.dart';
+import '../config/app_palette.dart';
 
 /// Compact browser access beside the session's task and plan summaries.
 class ActiveBrowserStrip extends StatelessWidget {
@@ -27,10 +28,10 @@ class ActiveBrowserStrip extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       child: Material(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
-          side: const BorderSide(color: Color(0xFF2E2E2E)),
+          side: BorderSide(color: context.palette.border),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
@@ -41,7 +42,7 @@ class ActiveBrowserStrip extends StatelessWidget {
               constraints: const BoxConstraints(minHeight: 24),
               child: Row(
                 children: [
-                  const Icon(Icons.public, size: 14, color: Color(0xFF89B4FA)),
+                  Icon(Icons.public, size: 14, color: context.palette.blue),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Row(
@@ -51,9 +52,9 @@ class ActiveBrowserStrip extends StatelessWidget {
                             title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontSize: 11,
-                              color: Color(0xFFB0B0B0),
+                              color: context.palette.textSecondary,
                             ),
                           ),
                         ),
@@ -64,9 +65,9 @@ class ActiveBrowserStrip extends StatelessWidget {
                               host,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 fontSize: 10,
-                                color: Color(0xFFF9E2AF),
+                                color: context.palette.yellow,
                               ),
                             ),
                           ),
@@ -75,10 +76,10 @@ class ActiveBrowserStrip extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 4),
-                  const Icon(
+                  Icon(
                     Icons.chevron_right,
                     size: 16,
-                    color: Color(0xFF767676),
+                    color: context.palette.textMuted,
                   ),
                   if (onHide != null)
                     IconButton(
@@ -95,7 +96,7 @@ class ActiveBrowserStrip extends StatelessWidget {
                         height: 24,
                       ),
                       iconSize: 16,
-                      color: const Color(0xFF767676),
+                      color: context.palette.textMuted,
                       icon: const Icon(Icons.visibility_off_outlined),
                     ),
                 ],

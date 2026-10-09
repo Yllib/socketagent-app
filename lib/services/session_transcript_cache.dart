@@ -286,8 +286,12 @@ class SessionTranscriptCache {
   // empty delta for an incomplete phone transcript. Force one authoritative
   // resume after upgrades that tighten these invariants.
   static const int schemaVersion = 4;
-  static const int maxSnapshots = 10;
+  static const int defaultLimit = 30;
   static const int maxSnapshotBytes = 2 * 1024 * 1024;
+
+  /// How many sessions keep a transcript on disk. The user sets this in
+  /// settings; the least recently opened ones are deleted past it.
+  int limit = defaultLimit;
 
   final Map<String, Map<String, dynamic>> _memory = {};
   final Expando<int> _entryByteLengths = Expando<int>();
@@ -423,14 +427,22 @@ class SessionTranscriptCache {
     }
   }
 
-  Future<void> prewarm(
-    Iterable<({String serverId, String sessionId})> sessions,
-  ) async {
-    await Future.wait(
-      sessions
-          .take(maxSnapshots)
-          .map((session) => load(session.serverId, session.sessionId)),
-    );
+  /// Changes [limit], deleting the oldest transcripts past a lower one.
+  Future<void> setLimit(int value) async {
+    limit = value;
+    await _prune(await _cacheDirectory());
+  }
+
+  /// How many transcripts are on disk and their total size.
+  Future<({int count, int bytes})> usage() async {
+    var count = 0;
+    var bytes = 0;
+    await for (final entity in (await _cacheDirectory()).list()) {
+      if (entity is! File || !entity.path.endsWith('.json')) continue;
+      count++;
+      bytes += await entity.length();
+    }
+    return (count: count, bytes: bytes);
   }
 
   Future<void> save(
@@ -495,9 +507,12 @@ class SessionTranscriptCache {
     final directory = await _cacheDirectory();
     final file = File('${directory.path}/${_fileName(key)}');
     final temp = File('${file.path}.tmp');
+    final added = !await file.exists();
     await temp.writeAsString(encoded, flush: true);
     await replaceFile(temp, file.path);
-    await _prune(directory);
+    // Only a new transcript can push the count past the limit, so rewrites
+    // during streaming skip listing a directory that may hold hundreds.
+    if (added) await _prune(directory);
   }
 
   Future<void> mergeDelta(
@@ -614,13 +629,13 @@ class SessionTranscriptCache {
         .where((entity) => entity is File && entity.path.endsWith('.json'))
         .cast<File>()
         .toList();
-    if (files.length <= maxSnapshots) return;
+    if (files.length <= limit) return;
     final dated = <({File file, DateTime modified})>[];
     for (final file in files) {
       dated.add((file: file, modified: await file.lastModified()));
     }
     dated.sort((a, b) => b.modified.compareTo(a.modified));
-    for (final stale in dated.skip(maxSnapshots)) {
+    for (final stale in dated.skip(limit)) {
       await stale.file.delete().catchError((_) => stale.file);
     }
   }

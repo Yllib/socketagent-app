@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../models/session_memory.dart';
 import '../services/chat_provider.dart';
 import '../util/format.dart';
+import '../config/app_palette.dart';
 
 class SessionMemoryScreen extends StatefulWidget {
   const SessionMemoryScreen({super.key});
@@ -564,8 +565,8 @@ class _MemoryRow extends StatelessWidget {
       onTap: onEdit,
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 11),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Color(0xFF242424))),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: context.palette.border)),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,

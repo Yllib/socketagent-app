@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../config/app_palette.dart';
 
 class PanelHideNotice extends StatelessWidget {
   const PanelHideNotice({
@@ -16,9 +17,9 @@ class PanelHideNotice extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF2E2E2E)),
+        border: Border.all(color: context.palette.border),
       ),
       child: Row(
         children: [
@@ -29,20 +30,20 @@ class PanelHideNotice extends StatelessWidget {
               children: [
                 Text(
                   'Hiding $label…',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 11,
                     height: 1.2,
                     fontWeight: FontWeight.w600,
-                    color: Color(0xFFE6E6E6),
+                    color: context.palette.text,
                   ),
                 ),
                 const SizedBox(height: 2),
-                const Text(
+                Text(
                   'Restore: More → Session settings',
                   style: TextStyle(
                     fontSize: 10,
                     height: 1.2,
-                    color: Color(0xFFB0B0B0),
+                    color: context.palette.textSecondary,
                   ),
                 ),
               ],

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
 import 'tool_output_block.dart';
+import '../config/app_palette.dart';
 
 class MonitorToolDetails {
   final String description;
@@ -116,9 +117,9 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF89B4FA).withAlpha(80)),
+        border: Border.all(color: context.palette.blue.withAlpha(80)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -135,10 +136,10 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
               child: Row(
                 children: [
-                  const Icon(
+                  Icon(
                     Icons.monitor_heart_outlined,
                     size: 17,
-                    color: Color(0xFF89B4FA),
+                    color: context.palette.blue,
                   ),
                   const SizedBox(width: 8),
                   Text(
@@ -146,7 +147,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
                     style: GoogleFonts.jetBrainsMono(
                       fontSize: 12,
                       fontWeight: FontWeight.bold,
-                      color: const Color(0xFF89B4FA),
+                      color: context.palette.blue,
                     ),
                   ),
                   const SizedBox(width: 9),
@@ -157,7 +158,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 11,
-                        color: const Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                     ),
                   ),
@@ -168,7 +169,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF767676),
+                      color: context.palette.textMuted,
                     ),
                   ],
                 ],
@@ -192,10 +193,10 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
           if (_expanded)
             Container(
               constraints: const BoxConstraints(maxHeight: 300),
-              decoration: const BoxDecoration(
-                color: Color(0xFF121212),
+              decoration: BoxDecoration(
+                color: context.palette.panelLow,
                 border: Border(
-                  top: BorderSide(color: Color(0xFF2E2E2E), width: 1),
+                  top: BorderSide(color: context.palette.border, width: 1),
                 ),
                 borderRadius: BorderRadius.vertical(
                   bottom: Radius.circular(12),
@@ -215,7 +216,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 11,
                             height: 1.4,
-                            color: const Color(0xFFF9E2AF),
+                            color: context.palette.yellow,
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -242,7 +243,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
                           style: GoogleFonts.jetBrainsMono(
                             fontSize: 11,
                             height: 1.4,
-                            color: const Color(0xFFF38BA8),
+                            color: context.palette.red,
                           ),
                         ),
                       ],
@@ -256,21 +257,21 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
     );
   }
 
-  static Color _statusColor(String status) {
+  Color _statusColor(String status) {
     switch (status) {
       case 'running':
-        return const Color(0xFFA6E3A1);
+        return context.palette.green;
       case 'failed':
-        return const Color(0xFFF38BA8);
+        return context.palette.red;
       case 'stopped':
       case 'cancelled':
-        return const Color(0xFFF9E2AF);
+        return context.palette.yellow;
       case 'completed':
-        return const Color(0xFF94E2D5);
+        return context.palette.teal;
       case 'started':
-        return const Color(0xFF89B4FA);
+        return context.palette.blue;
       default:
-        return const Color(0xFF89B4FA);
+        return context.palette.blue;
     }
   }
 
@@ -280,25 +281,25 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
     return '${seconds}s';
   }
 
-  static Widget _metaText(String value) => Text(
+  Widget _metaText(String value) => Text(
     value,
     style: GoogleFonts.jetBrainsMono(
       fontSize: 10,
-      color: const Color(0xFF767676),
+      color: context.palette.textMuted,
     ),
   );
 
-  static Widget _label(String value) => Text(
+  Widget _label(String value) => Text(
     value,
     style: GoogleFonts.jetBrainsMono(
       fontSize: 9,
       fontWeight: FontWeight.bold,
       letterSpacing: 0.8,
-      color: const Color(0xFF767676),
+      color: context.palette.textMuted,
     ),
   );
 
-  static Widget _detail(String label, String value) => Column(
+  Widget _detail(String label, String value) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     mainAxisSize: MainAxisSize.min,
     children: [
@@ -308,7 +309,7 @@ class _MonitorToolCardState extends State<MonitorToolCard> {
         value,
         style: GoogleFonts.jetBrainsMono(
           fontSize: 10,
-          color: const Color(0xFFE6E6E6),
+          color: context.palette.text,
         ),
       ),
     ],

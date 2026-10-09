@@ -39,12 +39,17 @@ import 'codex_activity_card.dart';
 import 'notification_receipt_card.dart';
 import 'socketagent_tool_card.dart';
 import '../models/composer_attachment.dart';
+import '../config/app_palette.dart';
+import 'light_backdrop.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
   final String? sessionStorageKey;
   final String? serverId;
   final bool isProcessing;
+
+  /// The agent is idle while agents it delegated to keep working.
+  final bool isWaitingOnAgent;
   final bool followLatest;
   final bool condensedToolUsage;
   final ValueChanged<bool>? onFollowLatestChanged;
@@ -100,6 +105,7 @@ class ChatView extends StatefulWidget {
     this.sessionStorageKey,
     this.serverId,
     required this.isProcessing,
+    this.isWaitingOnAgent = false,
     this.followLatest = true,
     this.condensedToolUsage = false,
     this.onFollowLatestChanged,
@@ -205,6 +211,15 @@ class _AutoFollowScrollController extends ScrollController {
     }
   }
 
+  /// Moves to [pixels] during the next layout pass, clamped to the content
+  /// that pass produces. Use it when the same frame also changes row heights
+  /// so the viewport never paints the stale offset first.
+  void requestPixelsAfterLayout(double pixels) {
+    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
+      position.requestPixelsAfterLayout(pixels);
+    }
+  }
+
   @override
   ScrollPosition createScrollPosition(
     ScrollPhysics physics,
@@ -250,6 +265,7 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
   bool _followRequested;
   double? _preservedEndDistance;
   double? _preservedPixels;
+  double? _requestedPixels;
 
   void requestFollow() => _followRequested = true;
 
@@ -265,6 +281,8 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
     _preservedPixels = null;
   }
 
+  void requestPixelsAfterLayout(double pixels) => _requestedPixels = pixels;
+
   @override
   bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
     final previousMaxExtent = hasContentDimensions
@@ -274,8 +292,11 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
         previousMaxExtent != null &&
         hasPixels &&
         (pixels - previousMaxExtent).abs() < 1.0;
+    final requestedPixels = _requestedPixels;
     final correctToBottom =
-        shouldFollow() && (_followRequested || wasPinnedToBottom);
+        requestedPixels == null &&
+        shouldFollow() &&
+        (_followRequested || wasPinnedToBottom);
     final preservedEndDistance = shouldFollow() ? null : _preservedEndDistance;
 
     final accepted = super.applyContentDimensions(
@@ -283,7 +304,18 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
       maxScrollExtent,
     );
     var corrected = false;
-    if (correctToBottom && hasPixels) {
+    if (requestedPixels != null && hasPixels) {
+      // An explicit reveal, such as collapsing a tool group from its pinned
+      // header, wins over follow and prepend preservation for this frame.
+      _requestedPixels = null;
+      final target = requestedPixels
+          .clamp(minScrollExtent, maxScrollExtent)
+          .toDouble();
+      if ((pixels - target).abs() >= 0.5) {
+        correctPixels(target);
+        corrected = true;
+      }
+    } else if (correctToBottom && hasPixels) {
       if ((pixels - maxScrollExtent).abs() >= 0.5) {
         // applyContentDimensions runs during layout. Correcting here updates
         // the viewport before paint, unlike jumpTo after a frame, so history
@@ -317,10 +349,30 @@ class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
   }
 }
 
+/// The expanded tool group whose header has scrolled above the viewport while
+/// the rest of the group is still on screen.
+class _PinnedCondensedGroup {
+  const _PinnedCondensedGroup({required this.rowKey, required this.row});
+
+  final String rowKey;
+  final CondensedWorkRow row;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _PinnedCondensedGroup &&
+      other.rowKey == rowKey &&
+      identical(other.row, row);
+
+  @override
+  int get hashCode => Object.hash(rowKey, identityHashCode(row));
+}
+
 class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   late final _AutoFollowScrollController _scrollController;
   final Set<String> _expandedImageCardIds = {};
   final Map<String, Set<String>> _expandedCondensedRowsBySession = {};
+  final _pinnedCondensedGroup = ValueNotifier<_PinnedCondensedGroup?>(null);
+  final _pinnedCondensedHeaderKey = GlobalKey();
   final Map<String, GlobalKey> _messageRowKeys = {};
   final Map<String, GlobalKey> _taskKeys = {};
   final Map<String, String> _taskRowKeyByToolUseId = {};
@@ -437,6 +489,95 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   void _onScroll() {
     if (!_scrollController.hasClients) return;
     _scheduleHistoryPrefetchIfNeeded();
+    _updatePinnedCondensedGroup();
+  }
+
+  /// Vertical margin of a condensed work card, so the pinned header and the
+  /// revealed collapsed card share the same top edge.
+  static const double _condensedCardMargin = 4;
+
+  /// Scroll offset at which [box]'s leading edge meets the top of the chat
+  /// viewport, or null when the row is not laid out inside it.
+  double? _revealOffsetFor(RenderBox box) {
+    if (!box.attached || !box.hasSize) return null;
+    final viewport = RenderAbstractViewport.maybeOf(box);
+    if (viewport == null) return null;
+    return viewport.getOffsetToReveal(box, 0).offset;
+  }
+
+  /// Recomputes which expanded tool group, if any, needs a pinned header. Runs
+  /// on every scroll frame but only touches the few rows the user expanded,
+  /// and only the pinned header rebuilds when the answer changes.
+  void _updatePinnedCondensedGroup() {
+    final expanded = widget.condensedToolUsage
+        ? _expandedCondensedRowsBySession[widget.sessionStorageKey ?? '']
+        : null;
+    if (expanded == null || expanded.isEmpty || !_scrollController.hasClients) {
+      _pinnedCondensedGroup.value = null;
+      return;
+    }
+    final pixels = _scrollController.position.pixels;
+    final headerBox = _pinnedCondensedHeaderKey.currentContext
+        ?.findRenderObject();
+    final headerHeight = headerBox is RenderBox && headerBox.hasSize
+        ? headerBox.size.height
+        : 56.0;
+    String? pinnedKey;
+    for (final rowKey in expanded) {
+      final box = _messageRowKeys[rowKey]?.currentContext?.findRenderObject();
+      if (box is! RenderBox) continue;
+      final reveal = _revealOffsetFor(box);
+      if (reveal == null) continue;
+      // The row box includes the card's vertical margins; measure the card.
+      final top = reveal - pixels + _condensedCardMargin;
+      final bottom = reveal - pixels + box.size.height - _condensedCardMargin;
+      if (top < 0 && bottom > headerHeight) {
+        pinnedKey = rowKey;
+        break;
+      }
+    }
+    final current = _pinnedCondensedGroup.value;
+    if (pinnedKey == null) {
+      _pinnedCondensedGroup.value = null;
+      return;
+    }
+    final row = _lastRenderedRows
+        .where((candidate) => candidate.rowKey == pinnedKey)
+        .firstOrNull
+        ?.content;
+    if (row is! CondensedWorkRow) {
+      _pinnedCondensedGroup.value = null;
+      return;
+    }
+    if (current?.rowKey == pinnedKey && identical(current?.row, row)) return;
+    _pinnedCondensedGroup.value = _PinnedCondensedGroup(
+      rowKey: pinnedKey,
+      row: row,
+    );
+  }
+
+  void _toggleCondensedGroup(String rowKey) {
+    final expanded = _expandedCondensedRows;
+    setState(() {
+      if (!expanded.remove(rowKey)) expanded.add(rowKey);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _updatePinnedCondensedGroup();
+    });
+  }
+
+  /// Collapses an expanded tool group from its pinned header and leaves the
+  /// collapsed card at the top of the viewport, where the header was. The
+  /// offset is corrected during the same layout pass that shrinks the group,
+  /// so the reader never sees the rows that used to sit below it.
+  void _collapseCondensedGroupFromPinnedHeader(String rowKey) {
+    final box = _messageRowKeys[rowKey]?.currentContext?.findRenderObject();
+    final reveal = box is RenderBox ? _revealOffsetFor(box) : null;
+    if (reveal != null) {
+      _scrollController.requestPixelsAfterLayout(reveal + _condensedCardMargin);
+    }
+    _pinnedCondensedGroup.value = null;
+    _toggleCondensedGroup(rowKey);
   }
 
   /// Scroll to a task card in the chat by its toolUseId
@@ -547,7 +688,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       final listIndex = messageIndex + (widget.hasMoreHistory ? 1 : 0);
       final listItemCount =
           rows.length +
-          (widget.isProcessing ? 1 : 0) +
+          (_showsStatusRow ? 1 : 0) +
           (widget.hasMoreHistory ? 1 : 0);
       _seekMountedTranscriptRow(
         rowKey: rowKey,
@@ -774,6 +915,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       _userScrollInProgress = _userPointerDown;
       _requestedFollowLatest = null;
       _expandedImageCardIds.clear();
+      // Not synchronously: this runs during build and the pinned header's
+      // ValueListenableBuilder may not rebuild from inside it.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updatePinnedCondensedGroup();
+      });
       _messageRowKeys.clear();
       _taskKeys.clear();
       _taskRowKeyByToolUseId.clear();
@@ -1150,6 +1296,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _pinnedCondensedGroup.dispose();
     super.dispose();
   }
 
@@ -1217,9 +1364,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
     final hasLoadMore = widget.hasMoreHistory;
     final itemCount =
-        (hasLoadMore ? 1 : 0) +
-        visibleRows.length +
-        (widget.isProcessing ? 1 : 0);
+        (hasLoadMore ? 1 : 0) + visibleRows.length + (_showsStatusRow ? 1 : 0);
     final listIndexByMessageKey = <Key, int>{};
     for (
       var messageIndex = 0;
@@ -1268,54 +1413,91 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             child: ColoredBox(
               key: const ValueKey('chat-scroll-surface'),
               color: chatSurfaceColor,
-              child: SizedBox.expand(
-                child: Listener(
-                  behavior: HitTestBehavior.translucent,
-                  onPointerDown: _handleViewportPointerDown,
-                  onPointerMove: _handleViewportPointerMove,
-                  onPointerUp: _handleViewportPointerEnd,
-                  onPointerCancel: _handleViewportPointerEnd,
-                  child: RawScrollbar(
-                    key: const ValueKey('chat-scrollbar'),
-                    controller: _scrollController,
-                    thumbVisibility: true,
-                    trackVisibility: false,
-                    interactive: true,
-                    thickness: 3,
-                    minThumbLength: 56,
-                    radius: const Radius.circular(2),
-                    mainAxisMargin: 4,
-                    crossAxisMargin: 0,
-                    scrollbarOrientation: ScrollbarOrientation.right,
-                    thumbColor: Theme.of(
-                      context,
-                    ).colorScheme.onSurfaceVariant.withAlpha(145),
-                    child: NotificationListener<ScrollNotification>(
-                      onNotification: _handleUserScrollNotification,
-                      child: ListView.builder(
-                        key: ValueKey<String>(
-                          'chat-list:${widget.sessionStorageKey ?? ''}',
+              // The glow paints inside this opaque surface, so the viewport
+              // stays opaque while light mode still gets it.
+              child: LightBackdrop(
+                child: SizedBox.expand(
+                  child: Listener(
+                    behavior: HitTestBehavior.translucent,
+                    onPointerDown: _handleViewportPointerDown,
+                    onPointerMove: _handleViewportPointerMove,
+                    onPointerUp: _handleViewportPointerEnd,
+                    onPointerCancel: _handleViewportPointerEnd,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Own layer, so the pinned header appearing or
+                        // disappearing never repaints the transcript.
+                        RepaintBoundary(
+                          child: RawScrollbar(
+                            key: const ValueKey('chat-scrollbar'),
+                            controller: _scrollController,
+                            thumbVisibility: true,
+                            trackVisibility: false,
+                            interactive: true,
+                            thickness: 3,
+                            minThumbLength: 56,
+                            radius: const Radius.circular(2),
+                            mainAxisMargin: 4,
+                            crossAxisMargin: 0,
+                            scrollbarOrientation: ScrollbarOrientation.right,
+                            thumbColor: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant.withAlpha(145),
+                            child: NotificationListener<ScrollMetricsNotification>(
+                              onNotification: _handleScrollMetricsNotification,
+                              child: NotificationListener<ScrollNotification>(
+                                onNotification: _handleUserScrollNotification,
+                                child: ListView.builder(
+                                  key: ValueKey<String>(
+                                    'chat-list:${widget.sessionStorageKey ?? ''}',
+                                  ),
+                                  controller: _scrollController,
+                                  findChildIndexCallback: (key) =>
+                                      listIndexByMessageKey[key],
+                                  padding: const EdgeInsets.only(
+                                    top: 8,
+                                    bottom: 8,
+                                  ),
+                                  itemCount: itemCount,
+                                  itemBuilder: (context, index) {
+                                    var messageIndex = index;
+                                    if (hasLoadMore) {
+                                      if (messageIndex == 0) {
+                                        return _buildLoadMoreButton(context);
+                                      }
+                                      messageIndex--;
+                                    }
+                                    if (messageIndex < visibleRows.length) {
+                                      final row = visibleRows[messageIndex];
+                                      return _buildRenderRow(
+                                        row.content,
+                                        row.rowKey,
+                                      );
+                                    }
+                                    return _buildThinkingIndicator(context);
+                                  },
+                                ),
+                              ),
+                            ),
+                          ),
                         ),
-                        controller: _scrollController,
-                        findChildIndexCallback: (key) =>
-                            listIndexByMessageKey[key],
-                        padding: const EdgeInsets.only(top: 8, bottom: 8),
-                        itemCount: itemCount,
-                        itemBuilder: (context, index) {
-                          var messageIndex = index;
-                          if (hasLoadMore) {
-                            if (messageIndex == 0) {
-                              return _buildLoadMoreButton(context);
-                            }
-                            messageIndex--;
-                          }
-                          if (messageIndex < visibleRows.length) {
-                            final row = visibleRows[messageIndex];
-                            return _buildRenderRow(row.content, row.rowKey);
-                          }
-                          return _buildThinkingIndicator(context);
-                        },
-                      ),
+                        Positioned(
+                          top: 0,
+                          left: _condensedCardMarginHorizontal,
+                          right: _condensedCardMarginHorizontal,
+                          child: RepaintBoundary(
+                            child:
+                                ValueListenableBuilder<_PinnedCondensedGroup?>(
+                                  valueListenable: _pinnedCondensedGroup,
+                                  builder: (context, pinned, _) =>
+                                      pinned == null
+                                      ? const SizedBox.shrink()
+                                      : _buildPinnedCondensedHeader(pinned),
+                                ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -1343,15 +1525,18 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
+  static const double _condensedCardMarginHorizontal = 8;
+
   Widget _buildCondensedWorkRow(CondensedWorkRow row, String rowKey) {
     final expanded = _expandedCondensedRows.contains(rowKey);
     final theme = Theme.of(context);
-    final summary = _condensedSummary(row.metrics);
-    final details = _condensedDetails(row.metrics);
 
     return Container(
       key: ValueKey<String>('condensed-work:$rowKey'),
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: const EdgeInsets.symmetric(
+        horizontal: _condensedCardMarginHorizontal,
+        vertical: _condensedCardMargin,
+      ),
       decoration: BoxDecoration(
         color: theme.colorScheme.surfaceContainerLow,
         borderRadius: BorderRadius.circular(8),
@@ -1361,77 +1546,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Semantics(
-            button: true,
+          _buildCondensedWorkHeader(
+            row,
+            key: ValueKey<String>('condensed-work-toggle:$rowKey'),
+            summaryKey: ValueKey<String>('condensed-work-summary:$rowKey'),
             expanded: expanded,
-            label: '$summary. $details',
-            child: InkWell(
-              key: ValueKey<String>('condensed-work-toggle:$rowKey'),
-              onTap: () {
-                setState(() {
-                  if (expanded) {
-                    _expandedCondensedRows.remove(rowKey);
-                  } else {
-                    _expandedCondensedRows.add(rowKey);
-                  }
-                });
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 9,
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      expanded ? Icons.expand_more : Icons.chevron_right,
-                      size: 19,
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 6),
-                    Icon(
-                      Icons.view_stream_outlined,
-                      size: 16,
-                      color: theme.colorScheme.primary,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            summary,
-                            key: ValueKey<String>(
-                              'condensed-work-summary:$rowKey',
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          if (details.isNotEmpty)
-                            Text(
-                              details,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 10.5,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          if (row.messages.isNotEmpty)
-                            MessageTimestamp(
-                              timestamp: row.messages.first.timestamp,
-                            ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+            onTap: () => _toggleCondensedGroup(rowKey),
           ),
           if (expanded && row.messages.isNotEmpty) ...[
             Divider(height: 1, color: theme.colorScheme.outlineVariant),
@@ -1444,6 +1564,108 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         ],
       ),
     );
+  }
+
+  /// Header row of a condensed work card. The card uses it in place, and the
+  /// same widget is pinned to the top of the viewport while the card's own
+  /// header is scrolled away.
+  Widget _buildCondensedWorkHeader(
+    CondensedWorkRow row, {
+    required Key key,
+    required bool expanded,
+    required VoidCallback onTap,
+    Key? summaryKey,
+  }) {
+    final theme = Theme.of(context);
+    final summary = _condensedSummary(row.metrics);
+    final details = _condensedDetails(row.metrics);
+    return Semantics(
+      button: true,
+      expanded: expanded,
+      label: '$summary. $details',
+      child: InkWell(
+        key: key,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+          child: Row(
+            children: [
+              Icon(
+                expanded ? Icons.expand_more : Icons.chevron_right,
+                size: 19,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 6),
+              Icon(
+                Icons.view_stream_outlined,
+                size: 16,
+                color: theme.colorScheme.primary,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      summary,
+                      key: summaryKey,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (details.isNotEmpty)
+                      Text(
+                        details,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    if (row.messages.isNotEmpty)
+                      MessageTimestamp(timestamp: row.messages.first.timestamp),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Copy of an expanded group's header, pinned over the top of the viewport
+  /// so the group can be collapsed from anywhere inside it.
+  Widget _buildPinnedCondensedHeader(_PinnedCondensedGroup pinned) {
+    final theme = Theme.of(context);
+    return Material(
+      key: _pinnedCondensedHeaderKey,
+      color: theme.colorScheme.surfaceContainerLow,
+      shape: Border(
+        left: BorderSide(color: theme.colorScheme.outlineVariant),
+        right: BorderSide(color: theme.colorScheme.outlineVariant),
+        bottom: BorderSide(color: theme.colorScheme.outlineVariant),
+      ),
+      child: _buildCondensedWorkHeader(
+        pinned.row,
+        key: ValueKey<String>('condensed-work-pinned:${pinned.rowKey}'),
+        expanded: true,
+        onTap: () => _collapseCondensedGroupFromPinnedHeader(pinned.rowKey),
+      ),
+    );
+  }
+
+  /// Row heights can change without the offset moving, for example when a
+  /// live group grows below the fold. Re-check the pinned header then too.
+  bool _handleScrollMetricsNotification(
+    ScrollMetricsNotification notification,
+  ) {
+    if (notification.depth == 0) _updatePinnedCondensedGroup();
+    return false;
   }
 
   Widget _buildCondensedChild(ChatMessage message, String rowKey) {
@@ -1727,7 +1949,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
+  /// The trailing row that says the agent is working or waiting.
+  bool get _showsStatusRow => widget.isProcessing || widget.isWaitingOnAgent;
+
   Widget _buildThinkingIndicator(BuildContext context) {
+    if (!widget.isProcessing) return _buildWaitingOnAgentRow(context);
     final theme = Theme.of(context);
     final elapsed = widget.processingElapsed;
     final labelBase = widget.isCompacting ? 'Compacting context' : 'Working';
@@ -1771,6 +1997,28 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// Static, so a long wait on delegated agents does not keep repainting.
+  Widget _buildWaitingOnAgentRow(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurface.withAlpha(178);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 8, 64, 8),
+      child: Row(
+        children: [
+          Icon(Icons.hourglass_empty, size: 16, color: color),
+          const SizedBox(width: 10),
+          Text(
+            'Waiting on agent',
+            style: TextStyle(
+              color: color,
+              fontSize: 14,
+              fontStyle: FontStyle.italic,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1831,27 +2079,27 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       bgColor = theme.colorScheme.tertiaryContainer.withAlpha(70);
     } else if (isPermissionMode) {
       icon = Icons.shield_outlined;
-      color = Colors.cyan.shade300;
+      color = context.palette.shade(Colors.cyan, 300);
       bgColor = Colors.cyan.shade900.withAlpha(40);
     } else if (isCancelled) {
       icon = Icons.cancel_outlined;
-      color = Colors.red.shade300;
+      color = context.palette.shade(Colors.red, 300);
       bgColor = Colors.red.shade900.withAlpha(40);
     } else if (isUploaded) {
       icon = Icons.upload_file;
-      color = Colors.teal.shade300;
+      color = context.palette.shade(Colors.teal, 300);
       bgColor = Colors.teal.shade900.withAlpha(40);
     } else if (isSuccess) {
       icon = Icons.check_circle_outline;
-      color = Colors.green.shade300;
+      color = context.palette.shade(Colors.green, 300);
       bgColor = Colors.green.shade900.withAlpha(50);
     } else if (isFailed) {
       icon = Icons.error_outline;
-      color = Colors.orange.shade300;
+      color = context.palette.shade(Colors.orange, 300);
       bgColor = Colors.orange.shade900.withAlpha(50);
     } else {
       icon = Icons.info_outline;
-      color = Colors.blue.shade300;
+      color = context.palette.shade(Colors.blue, 300);
       bgColor = Colors.blue.shade900.withAlpha(50);
     }
 
@@ -1891,7 +2139,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               icon: Icon(
                 Icons.stop_circle_outlined,
                 size: 18,
-                color: Colors.red.shade300,
+                color: context.palette.shade(Colors.red, 300),
               ),
               padding: const EdgeInsets.only(right: 8),
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
@@ -2127,18 +2375,21 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF4A4A4A)),
+        border: Border.all(color: context.palette.outline),
       ),
       child: Row(
         children: [
-          const Icon(Icons.summarize, size: 14, color: Color(0xFF89B4FA)),
+          Icon(Icons.summarize, size: 14, color: context.palette.blue),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               msg.textContent,
-              style: const TextStyle(fontSize: 12, color: Color(0xFFB0B0B0)),
+              style: TextStyle(
+                fontSize: 12,
+                color: context.palette.textSecondary,
+              ),
             ),
           ),
         ],
@@ -2176,7 +2427,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       decoration: BoxDecoration(
         color: Colors.red.shade900.withAlpha(76),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.red.shade300.withAlpha(76)),
+        border: Border.all(
+          color: context.palette.shade(Colors.red, 300).withAlpha(76),
+        ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -2186,7 +2439,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             child: Icon(
               Icons.error_outline,
               size: 18,
-              color: Colors.red.shade300,
+              color: context.palette.shade(Colors.red, 300),
             ),
           ),
           const SizedBox(width: 8),
@@ -2198,9 +2451,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
   Widget _buildErrorText(String text) {
     final urlPattern = RegExp(r'(?:https?://|socketagent://)\S+');
-    final style = TextStyle(color: Colors.red.shade200, fontSize: 13);
+    final style = TextStyle(
+      color: context.palette.shade(Colors.red, 200),
+      fontSize: 13,
+    );
     final linkStyle = TextStyle(
-      color: Colors.blue.shade300,
+      color: context.palette.shade(Colors.blue, 300),
       fontSize: 13,
       decoration: TextDecoration.underline,
     );
@@ -2255,7 +2511,7 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
         .split('\n')
         .where((l) => l.isNotEmpty)
         .toList();
-    const baseColor = Color(0xFF89B4FA);
+    final baseColor = context.palette.blue;
 
     return GestureDetector(
       onTap: () => setState(() => _expanded = !_expanded),
@@ -2263,7 +2519,7 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
         margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFF181818),
+          color: context.palette.panel,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: baseColor.withAlpha(40)),
         ),
@@ -2272,9 +2528,9 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
           children: [
             Row(
               children: [
-                const Icon(Icons.checklist, size: 14, color: baseColor),
+                Icon(Icons.checklist, size: 14, color: baseColor),
                 const SizedBox(width: 8),
-                const Expanded(
+                Expanded(
                   child: Text(
                     'Tasks Modified',
                     style: TextStyle(
@@ -2287,7 +2543,7 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
                 Icon(
                   _expanded ? Icons.expand_less : Icons.expand_more,
                   size: 16,
-                  color: const Color(0xFF767676),
+                  color: context.palette.textMuted,
                 ),
               ],
             ),
@@ -2297,22 +2553,22 @@ class _TodoUpdateCardState extends State<_TodoUpdateCard> {
                 final Color lineColor;
                 final IconData lineIcon;
                 if (line.startsWith('\u2713 ')) {
-                  lineColor = Colors.green.shade300;
+                  lineColor = context.palette.shade(Colors.green, 300);
                   lineIcon = Icons.check_circle;
                 } else if (line.startsWith('\u25b6 ')) {
-                  lineColor = Colors.yellow.shade300;
+                  lineColor = context.palette.shade(Colors.yellow, 300);
                   lineIcon = Icons.play_circle_fill;
                 } else if (line.startsWith('+ ')) {
-                  lineColor = const Color(0xFFB0B0B0);
+                  lineColor = context.palette.textSecondary;
                   lineIcon = Icons.radio_button_unchecked;
                 } else if (line.startsWith('- ')) {
-                  lineColor = Colors.red.shade300;
+                  lineColor = context.palette.shade(Colors.red, 300);
                   lineIcon = Icons.remove_circle_outline;
                 } else if (line.startsWith('\u25cb ')) {
-                  lineColor = const Color(0xFF5E5E5E);
+                  lineColor = context.palette.textFaint;
                   lineIcon = Icons.radio_button_unchecked;
                 } else {
-                  lineColor = const Color(0xFFB0B0B0);
+                  lineColor = context.palette.textSecondary;
                   lineIcon = Icons.info_outline;
                 }
 

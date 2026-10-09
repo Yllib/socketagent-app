@@ -4,6 +4,7 @@ import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import 'copy_button.dart';
+import '../config/app_palette.dart';
 
 /// Draws a code block with a copy button in its corner. Register it for the
 /// `pre` tag; the style sheet's codeblockDecoration still draws the box.
@@ -11,14 +12,15 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
   CodeBlockBuilder({
     required this.style,
     this.padding = const EdgeInsets.all(12),
-    this.background = const Color(0xFF181818),
+    this.background,
   });
 
   final TextStyle style;
   final EdgeInsets padding;
 
   /// Sits behind the copy button so scrolled code does not show through it.
-  final Color background;
+  /// Defaults to the theme's panel fill.
+  final Color? background;
 
   @override
   bool isBlockElement() => true;
@@ -44,7 +46,10 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
         Positioned(
           top: 0,
           right: 0,
-          child: CopyButton(text: code, background: background),
+          child: CopyButton(
+            text: code,
+            background: background ?? context.palette.panel,
+          ),
         ),
       ],
     );

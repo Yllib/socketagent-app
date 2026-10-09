@@ -7,6 +7,7 @@ import '../models/message.dart';
 import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
 import 'tool_output_block.dart';
+import '../config/app_palette.dart';
 
 class CodexActivityCard extends StatefulWidget {
   final ChatMessage message;
@@ -85,29 +86,29 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
   Color get _accent {
     switch (_kind) {
       case 'webSearch':
-        return const Color(0xFFB4BEFE);
+        return context.palette.lavender;
       case 'mcpToolCall':
-        return const Color(0xFF89DCEB);
+        return context.palette.sky;
       case 'dynamicToolCall':
-        return const Color(0xFFCBA6F7);
+        return context.palette.mauve;
       case 'reviewMode':
-        return const Color(0xFFA6E3A1);
+        return context.palette.green;
       case 'sleep':
-        return const Color(0xFFF9E2AF);
+        return context.palette.yellow;
       case 'hookPrompt':
-        return const Color(0xFFF5C2E7);
+        return context.palette.pink;
       case 'modelRerouted':
-        return const Color(0xFFFAB387);
+        return context.palette.peach;
       case 'safetyBuffering':
-        return const Color(0xFFF9E2AF);
+        return context.palette.yellow;
       case 'modelVerification':
-        return const Color(0xFFF38BA8);
+        return context.palette.red;
       case 'autoApprovalReview':
-        return const Color(0xFF94E2D5);
+        return context.palette.teal;
       case 'unrecognized':
-        return const Color(0xFFFAB387);
+        return context.palette.peach;
       default:
-        return const Color(0xFF89B4FA);
+        return context.palette.blue;
     }
   }
 
@@ -260,7 +261,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _accent.withAlpha(85)),
       ),
@@ -294,7 +295,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.jetBrainsMono(
                         fontSize: 10.5,
-                        color: const Color(0xFFB0B0B0),
+                        color: context.palette.textSecondary,
                       ),
                     ),
                   ),
@@ -311,10 +312,14 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
                       size: 18,
-                      color: const Color(0xFF767676),
+                      color: context.palette.textMuted,
                     )
                   else
-                    const Icon(Icons.check, size: 16, color: Color(0xFF767676)),
+                    Icon(
+                      Icons.check,
+                      size: 16,
+                      color: context.palette.textMuted,
+                    ),
                 ],
               ),
             ),
@@ -362,8 +367,8 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
     final results = decoded.whereType<Map>().take(12).toList();
     if (results.isEmpty) return _section('RESULTS', _pretty(decoded));
     return Container(
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: context.palette.border)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -390,8 +395,8 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                 children: [
                   SelectableText(
                     title,
-                    style: const TextStyle(
-                      color: Color(0xFFE6E6E6),
+                    style: TextStyle(
+                      color: context.palette.text,
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
                     ),
@@ -399,8 +404,8 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                   if (url.isNotEmpty)
                     SelectableText(
                       url,
-                      style: const TextStyle(
-                        color: Color(0xFF89B4FA),
+                      style: TextStyle(
+                        color: context.palette.blue,
                         fontSize: 9.5,
                       ),
                     ),
@@ -411,8 +416,8 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                         snippet,
                         maxLines: 4,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFB0B0B0),
+                        style: TextStyle(
+                          color: context.palette.textSecondary,
                           fontSize: 10,
                           height: 1.3,
                         ),
@@ -432,8 +437,8 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
     final structured = decodeJsonDocument(content);
     return Container(
       constraints: const BoxConstraints(maxHeight: 280),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: Color(0xFF2E2E2E))),
+      decoration: BoxDecoration(
+        border: Border(top: BorderSide(color: context.palette.border)),
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
@@ -449,7 +454,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                   content,
                   style: GoogleFonts.jetBrainsMono(
                     fontSize: 10.5,
-                    color: const Color(0xFFE6E6E6),
+                    color: context.palette.text,
                     height: 1.4,
                   ),
                 ),

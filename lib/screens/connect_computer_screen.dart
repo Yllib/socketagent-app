@@ -9,6 +9,7 @@ import '../services/chat_provider.dart';
 import '../services/server_connection_probe.dart';
 import 'pair_screen.dart';
 import 'paywall_screen.dart';
+import '../config/app_palette.dart';
 
 enum _ConnectStage { ready, verifying, success, failure }
 
@@ -217,10 +218,10 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                   color: Colors.green.withAlpha(28),
                   shape: BoxShape.circle,
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.check_circle,
                   size: 54,
-                  color: Colors.green,
+                  color: context.palette.success,
                 ),
               ),
               const SizedBox(height: 22),
@@ -839,7 +840,7 @@ class _VerifiedRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 7),
       child: Row(
         children: [
-          const Icon(Icons.check_circle, color: Colors.green, size: 21),
+          Icon(Icons.check_circle, color: context.palette.success, size: 21),
           const SizedBox(width: 10),
           Icon(icon, size: 20),
           const SizedBox(width: 8),

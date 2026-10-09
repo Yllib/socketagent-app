@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../services/crypto_service.dart';
+import '../config/app_palette.dart';
 
 /// A scanned pairing code. Every code pairs the relay; newer servers also
 /// include [local], the details for connecting directly on the same network.
@@ -167,9 +168,11 @@ class _PairScreenState extends State<PairScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Text(
+                    Text(
                       'Paste the pairing code shown by SocketAgent on the computer:',
-                      style: TextStyle(color: Colors.grey),
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                     if (Platform.isWindows) ...[
                       const SizedBox(height: 12),
@@ -220,7 +223,7 @@ class _PairScreenState extends State<PairScreen> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
-              color: Colors.red.shade100,
+              color: context.palette.shade(Colors.red, 100),
               child: Text(
                 _error!,
                 style: TextStyle(color: Colors.red.shade900),
@@ -244,12 +247,14 @@ class _PairScreenState extends State<PairScreen> {
               ),
             ),
           if (!_showManualInput)
-            const Padding(
+            Padding(
               padding: EdgeInsets.all(16),
               child: Text(
                 'Point your camera at the QR code, or tap the edit icon to paste manually',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ),
         ],

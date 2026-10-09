@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../models/message.dart';
+import '../config/app_palette.dart';
 
 class NotificationReceiptCard extends StatefulWidget {
   final ChatMessage message;
@@ -31,13 +32,13 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF89DCEB);
+    final accent = context.palette.sky;
     final body = _body;
     final expandable = body.length > 180 || body.split('\n').length > 3;
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: const Color(0xFF181818),
+        color: context.palette.panel,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: accent.withAlpha(85)),
       ),
@@ -56,7 +57,7 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                   color: accent.withAlpha(24),
                   borderRadius: BorderRadius.circular(9),
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.notifications_active_outlined,
                   size: 18,
                   color: accent,
@@ -69,7 +70,7 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                   children: [
                     Row(
                       children: [
-                        const Expanded(
+                        Expanded(
                           child: Text(
                             'Notification sent',
                             style: TextStyle(
@@ -86,13 +87,13 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                             vertical: 2,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFA6E3A1).withAlpha(24),
+                            color: context.palette.green.withAlpha(24),
                             borderRadius: BorderRadius.circular(5),
                           ),
-                          child: const Text(
+                          child: Text(
                             'SENT',
                             style: TextStyle(
-                              color: Color(0xFFA6E3A1),
+                              color: context.palette.green,
                               fontSize: 8.5,
                               fontWeight: FontWeight.w800,
                             ),
@@ -103,8 +104,8 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                     const SizedBox(height: 5),
                     Text(
                       _title.isEmpty ? 'Phone notification' : _title,
-                      style: const TextStyle(
-                        color: Color(0xFFE6E6E6),
+                      style: TextStyle(
+                        color: context.palette.text,
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
                       ),
@@ -117,8 +118,8 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                         overflow: _expanded
                             ? TextOverflow.visible
                             : TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Color(0xFFB0B0B0),
+                        style: TextStyle(
+                          color: context.palette.textSecondary,
                           fontSize: 11.5,
                           height: 1.35,
                         ),
@@ -133,7 +134,7 @@ class _NotificationReceiptCardState extends State<NotificationReceiptCard> {
                   child: Icon(
                     _expanded ? Icons.expand_less : Icons.expand_more,
                     size: 18,
-                    color: const Color(0xFF767676),
+                    color: context.palette.textMuted,
                   ),
                 ),
             ],

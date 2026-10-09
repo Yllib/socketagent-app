@@ -11,6 +11,7 @@ import 'services/desktop_workspace_controller.dart';
 import 'services/desktop_window_service.dart';
 import 'services/desktop_audio.dart';
 import 'services/windows_preferences_worker.dart';
+import 'services/theme_mode_controller.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'widgets/desktop_window_frame.dart';
 import 'widgets/desktop_startup.dart';
@@ -53,6 +54,7 @@ Future<Widget> _initializeApp() async {
   WorkReviewRepository? workReviews;
   try {
     await chatProvider.settingsReady;
+    final themeMode = await ThemeModeController.load();
     if (AppBuild.supportsPlayBilling) {
       PlayBillingService.instance.initialize(
         chatProvider.verifyGooglePlayPurchase,
@@ -66,6 +68,7 @@ Future<Widget> _initializeApp() async {
     return ClaudeAssistantApp(
       chatProvider: chatProvider,
       workReviews: workReviews,
+      themeMode: themeMode,
     );
   } catch (_) {
     workReviews?.dispose();
@@ -96,11 +99,13 @@ Future<void> _verifyDistribution() async {
 class ClaudeAssistantApp extends StatelessWidget {
   final ChatProvider chatProvider;
   final WorkReviewRepository workReviews;
+  final ThemeModeController themeMode;
 
   const ClaudeAssistantApp({
     super.key,
     required this.chatProvider,
     required this.workReviews,
+    required this.themeMode,
   });
 
   @override
@@ -110,20 +115,41 @@ class ClaudeAssistantApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => DesktopWorkspaceController()),
         ChangeNotifierProvider.value(value: chatProvider),
         ChangeNotifierProvider.value(value: workReviews),
+        ChangeNotifierProvider.value(value: themeMode),
       ],
-      child: MaterialApp(
-        title: Platform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
-        builder: (context, child) => Platform.isWindows
-            ? Overlay.wrap(
-                child: DesktopWindowFrame(
-                  child: child ?? const SizedBox.shrink(),
-                ),
-              )
-            : child ?? const SizedBox.shrink(),
-        debugShowCheckedModeBanner: false,
-        navigatorObservers: [routeObserver],
-        theme: appTheme(),
-        home: const AppLauncher(),
+      child: Consumer<ThemeModeController>(
+        builder: (context, themeMode, _) => MaterialApp(
+          title: Platform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
+          builder: (context, child) {
+            // Status and navigation bar icons follow the theme on screens
+            // without an AppBar; an AppBar's own style still wins at the top.
+            final theme = Theme.of(context);
+            final dark = theme.brightness == Brightness.dark;
+            final body = AnnotatedRegion<SystemUiOverlayStyle>(
+              value: SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: dark
+                    ? Brightness.light
+                    : Brightness.dark,
+                statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+                systemNavigationBarColor: theme.colorScheme.surface,
+                systemNavigationBarIconBrightness: dark
+                    ? Brightness.light
+                    : Brightness.dark,
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+            return Platform.isWindows
+                ? Overlay.wrap(child: DesktopWindowFrame(child: body))
+                : body;
+          },
+          debugShowCheckedModeBanner: false,
+          navigatorObservers: [routeObserver],
+          theme: appTheme(brightness: Brightness.light),
+          darkTheme: appTheme(),
+          themeMode: themeMode.mode,
+          home: const AppLauncher(),
+        ),
       ),
     );
   }

@@ -5,6 +5,7 @@ import '../models/message.dart';
 import '../screens/settings/mcp_servers_screen.dart';
 import '../screens/settings/settings_v2_screen.dart';
 import '../services/chat_provider.dart';
+import '../config/app_palette.dart';
 
 class BackendAuthCard extends StatelessWidget {
   const BackendAuthCard({super.key, required this.message});
@@ -31,7 +32,7 @@ class BackendAuthCard extends StatelessWidget {
         final isMcp = authScope == 'mcp';
         final theme = Theme.of(context);
         final accent = completed
-            ? Colors.green
+            ? context.palette.success
             : failed
             ? theme.colorScheme.error
             : theme.colorScheme.primary;

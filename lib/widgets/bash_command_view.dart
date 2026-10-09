@@ -1,6 +1,7 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import '../config/app_palette.dart';
 
 enum ShellTokenKind {
   command,
@@ -859,7 +860,7 @@ class _BashCommandViewState extends State<BashCommandView> {
       style: GoogleFonts.jetBrainsMono(
         fontSize: 11,
         height: 1.45,
-        color: const Color(0xFFE6E6E6),
+        color: context.palette.text,
       ),
     );
   }
@@ -867,33 +868,33 @@ class _BashCommandViewState extends State<BashCommandView> {
   TextStyle _styleFor(ShellTokenKind kind) {
     switch (kind) {
       case ShellTokenKind.command:
-        return const TextStyle(
-          color: Color(0xFF89B4FA),
+        return TextStyle(
+          color: context.palette.blue,
           fontWeight: FontWeight.w700,
           decoration: TextDecoration.underline,
-          decorationColor: Color(0x6689B4FA),
+          decorationColor: context.palette.blue.withAlpha(0x66),
         );
       case ShellTokenKind.flag:
-        return const TextStyle(color: Color(0xFFCBA6F7));
+        return TextStyle(color: context.palette.mauve);
       case ShellTokenKind.string:
-        return const TextStyle(color: Color(0xFFA6E3A1));
+        return TextStyle(color: context.palette.green);
       case ShellTokenKind.variable:
-        return const TextStyle(color: Color(0xFFFAB387));
+        return TextStyle(color: context.palette.peach);
       case ShellTokenKind.operator:
-        return const TextStyle(
-          color: Color(0xFFF38BA8),
+        return TextStyle(
+          color: context.palette.red,
           fontWeight: FontWeight.w700,
         );
       case ShellTokenKind.assignment:
-        return const TextStyle(color: Color(0xFF94E2D5));
+        return TextStyle(color: context.palette.teal);
       case ShellTokenKind.comment:
-        return const TextStyle(
-          color: Color(0xFF767676),
+        return TextStyle(
+          color: context.palette.textMuted,
           fontStyle: FontStyle.italic,
         );
       case ShellTokenKind.word:
       case ShellTokenKind.whitespace:
-        return const TextStyle(color: Color(0xFFE6E6E6));
+        return TextStyle(color: context.palette.text);
     }
   }
 
@@ -911,7 +912,7 @@ class _BashCommandViewState extends State<BashCommandView> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.terminal, color: Color(0xFF89B4FA)),
+                  Icon(Icons.terminal, color: context.palette.blue),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -929,13 +930,13 @@ class _BashCommandViewState extends State<BashCommandView> {
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF89B4FA).withAlpha(28),
+                      color: context.palette.blue.withAlpha(28),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
                       info.category,
-                      style: const TextStyle(
-                        color: Color(0xFF89B4FA),
+                      style: TextStyle(
+                        color: context.palette.blue,
                         fontSize: 11,
                       ),
                     ),
@@ -958,7 +959,7 @@ class _BashCommandViewState extends State<BashCommandView> {
                 SelectableText(
                   command,
                   style: GoogleFonts.jetBrainsMono(
-                    color: const Color(0xFFB0B0B0),
+                    color: context.palette.textSecondary,
                     fontSize: 12,
                   ),
                 ),

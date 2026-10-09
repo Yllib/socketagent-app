@@ -21,6 +21,8 @@ import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
 import 'session_browser_screen.dart';
+import '../config/app_palette.dart';
+import '../widgets/light_backdrop.dart';
 
 /// Teleport asks before sending a transcript at least this large, uncompressed.
 const _largeTranscriptBytes = 100 * 1024 * 1024;
@@ -290,10 +292,6 @@ class _SessionsTabState extends State<SessionsTab> {
             )
             .firstOrNull;
         accessServerId ??= session?.serverId;
-        if (session != null && !provider.isSessionAvailable(session)) {
-          _showOfflineSessionSnack(context, session);
-          return;
-        }
       }
 
       if (!await _requireSubscription(serverId: accessServerId)) return;
@@ -456,7 +454,7 @@ class _SessionsTabState extends State<SessionsTab> {
                                       ? Icons.cloud_done
                                       : Icons.cloud_off,
                                   color: isConnected
-                                      ? Colors.green
+                                      ? context.palette.success
                                       : Colors.grey,
                                 ),
                                 dense: true,
@@ -925,7 +923,9 @@ class _SessionsTabState extends State<SessionsTab> {
                         Icon(
                           connected ? Icons.cloud_done : Icons.cloud_off,
                           size: 16,
-                          color: connected ? Colors.green : Colors.grey,
+                          color: connected
+                              ? context.palette.success
+                              : Colors.grey,
                         ),
                         const SizedBox(width: 8),
                         Text(c.name),
@@ -936,7 +936,9 @@ class _SessionsTabState extends State<SessionsTab> {
                 child: AbsorbPointer(
                   child: miniChip(
                     icon: isConnected ? Icons.cloud_done : Icons.cloud_off,
-                    iconColor: isConnected ? Colors.green : Colors.grey,
+                    iconColor: isConnected
+                        ? context.palette.success
+                        : Colors.grey,
                     label: config.name,
                     onTap: () {},
                   ),
@@ -1352,9 +1354,9 @@ class _SessionsTabState extends State<SessionsTab> {
           )
           .length;
       final color = expectedOfflineCount > 0
-          ? Colors.orange
+          ? context.palette.warning
           : connectedCount > 0
-          ? Colors.green
+          ? context.palette.success
           : Colors.grey;
       final tooltip = expectedOfflineCount > 0
           ? '$connectedCount online · $expectedOfflineCount expected offline'
@@ -1373,7 +1375,7 @@ class _SessionsTabState extends State<SessionsTab> {
                   shape: BoxShape.circle,
                   color: color,
                   boxShadow: [
-                    if (color == Colors.green)
+                    if (color == context.palette.success)
                       BoxShadow(
                         color: color.withAlpha(100),
                         blurRadius: 4,
@@ -1401,11 +1403,11 @@ class _SessionsTabState extends State<SessionsTab> {
     String tooltip;
     switch (provider.connectionStatus) {
       case ConnectionStatus.connected:
-        color = Colors.green;
+        color = context.palette.success;
         tooltip = 'Connected';
         break;
       case ConnectionStatus.connecting:
-        color = Colors.orange;
+        color = context.palette.warning;
         tooltip = 'Connecting...';
         break;
       case ConnectionStatus.disconnected:
@@ -1413,7 +1415,7 @@ class _SessionsTabState extends State<SessionsTab> {
         tooltip = 'Disconnected';
         break;
       case ConnectionStatus.error:
-        color = Colors.red;
+        color = context.palette.danger;
         tooltip = 'Connection error';
         break;
     }
@@ -1428,7 +1430,7 @@ class _SessionsTabState extends State<SessionsTab> {
             shape: BoxShape.circle,
             color: color,
             boxShadow: [
-              if (color == Colors.green)
+              if (color == context.palette.success)
                 BoxShadow(
                   color: color.withAlpha(100),
                   blurRadius: 4,
@@ -2174,30 +2176,34 @@ class _SessionsTabState extends State<SessionsTab> {
                     _buildConnectionIndicator(provider),
                   ],
           ),
-          body: Column(
-            children: [
-              _buildUpdateBanner(context),
-              if (widget.sidebar && !_selectionMode)
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                  child: SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: () =>
-                          _showSessionActionMenu(context, provider),
-                      icon: const Icon(Icons.add, size: 18),
-                      label: const Text('New session'),
+          body: LightBackdrop(
+            child: Column(
+              children: [
+                _buildUpdateBanner(context),
+                if (widget.sidebar && !_selectionMode)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: () =>
+                            _showSessionActionMenu(context, provider),
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('New session'),
+                      ),
                     ),
                   ),
-                ),
-              _buildFilterChipBar(context, provider),
-              if (_searchQuery.trim().isNotEmpty)
-                Expanded(child: _buildGlobalSearchResults(context, provider))
-              else if (provider.sessions.isEmpty)
-                Expanded(child: _buildEmptyState(context))
-              else
-                Expanded(child: _buildSectionedSessionList(context, provider)),
-            ],
+                _buildFilterChipBar(context, provider),
+                if (_searchQuery.trim().isNotEmpty)
+                  Expanded(child: _buildGlobalSearchResults(context, provider))
+                else if (provider.sessions.isEmpty)
+                  Expanded(child: _buildEmptyState(context))
+                else
+                  Expanded(
+                    child: _buildSectionedSessionList(context, provider),
+                  ),
+              ],
+            ),
           ),
           floatingActionButton: _selectionMode || widget.sidebar
               ? null
@@ -2446,15 +2452,15 @@ class _SessionsTabState extends State<SessionsTab> {
             value: _SessionMenuAction.archive,
             label: 'Archive',
             icon: Icons.archive_outlined,
-            iconColor: Colors.orange.shade300,
-            textColor: Colors.orange.shade300,
+            iconColor: context.palette.shade(Colors.orange, 300),
+            textColor: context.palette.shade(Colors.orange, 300),
           ),
           AdaptiveSheetAction(
             value: _SessionMenuAction.delete,
             label: 'Delete',
             icon: Icons.delete_outline,
-            iconColor: Colors.red.shade300,
-            textColor: Colors.red.shade300,
+            iconColor: context.palette.shade(Colors.red, 300),
+            textColor: context.palette.shade(Colors.red, 300),
           ),
         ]),
       ],
@@ -3640,7 +3646,7 @@ class _SessionsTabState extends State<SessionsTab> {
     bool delegated = false,
   }) {
     // Accents in the row take the backend's brand color.
-    final theme = backendTheme(session.backend);
+    final theme = backendTheme(context, session.backend);
     final provider = context.read<ChatProvider>();
     final status = provider.sessionServerStatus(session);
     final isAvailable = provider.isSessionAvailable(session);
@@ -3680,7 +3686,9 @@ class _SessionsTabState extends State<SessionsTab> {
     final statusText = openingThisSession
         ? 'Opening...'
         : showRunning
-        ? 'Working...'
+        ? provider.isSessionWaitingOnAgent(session)
+              ? 'Waiting on agent'
+              : 'Working...'
         : timeAgo;
     final turnCountText = session.turnCount > 0
         ? '${session.turnCount} turn${session.turnCount == 1 ? '' : 's'}'
@@ -3742,15 +3750,14 @@ class _SessionsTabState extends State<SessionsTab> {
               ? isAvailable
                     ? () => _toggleSessionSelection(session)
                     : () => _showOfflineSessionSnack(context, session)
-              : isAvailable
-              ? _openingSessionKey == null
-                    ? () => _openSession(
-                        context,
-                        sessionId: session.id,
-                        serverId: session.serverId,
-                      )
-                    : null
-              : () => _showOfflineSessionSnack(context, session),
+              // Offline sessions open read-only on the phone's cached copy.
+              : _openingSessionKey == null
+              ? () => _openSession(
+                  context,
+                  sessionId: session.id,
+                  serverId: session.serverId,
+                )
+              : null,
           onLongPress: isAvailable
               ? _openingSessionKey == null
                     ? () => _enterSelection(session)
@@ -3856,7 +3863,7 @@ class _SessionsTabState extends State<SessionsTab> {
                               overflow: TextOverflow.ellipsis,
                               style: TextStyle(
                                 fontSize: 11.5,
-                                color: const Color(0xFFD6D6D6),
+                                color: theme.palette.text,
                               ),
                             ),
                           ],
@@ -3872,7 +3879,7 @@ class _SessionsTabState extends State<SessionsTab> {
                                   statusText,
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: const Color(0xFFD6D6D6),
+                                    color: theme.palette.text,
                                   ),
                                 ),
                                 if (provider.serverConfigs.length > 1)
@@ -3886,7 +3893,7 @@ class _SessionsTabState extends State<SessionsTab> {
                                       overflow: TextOverflow.ellipsis,
                                       style: TextStyle(
                                         fontSize: 11,
-                                        color: const Color(0xFFD6D6D6),
+                                        color: theme.palette.text,
                                       ),
                                     ),
                                   ),
@@ -3914,7 +3921,7 @@ class _SessionsTabState extends State<SessionsTab> {
                                       fontSize: 11,
                                       color: showBusy
                                           ? theme.colorScheme.primary
-                                          : const Color(0xFFD6D6D6),
+                                          : theme.palette.text,
                                     ),
                                   ),
                                 ),
@@ -3970,7 +3977,7 @@ class _SessionsTabState extends State<SessionsTab> {
                                         fontSize: 10,
                                         fontWeight: FontWeight.w600,
                                         letterSpacing: 0.5,
-                                        color: const Color(0xFFD6D6D6),
+                                        color: theme.palette.text,
                                       ),
                                     ),
                                   ),
@@ -4112,7 +4119,9 @@ class _SessionsTabState extends State<SessionsTab> {
         : 'computer';
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('$server is offline. Reconnect it to open this session.'),
+        content: Text(
+          '$server is offline. Reconnect it to change this session.',
+        ),
       ),
     );
   }
