@@ -152,6 +152,53 @@ void main() {
     },
   );
 
+  test('a transfer with new keys updates the saved computer', () async {
+    await withProvider((provider) async {
+      await provider.importServerConfigs([computer]);
+      final repaired = {
+        ...computer,
+        'serverPubkey': base64Encode(
+          PrivateKey.generate().publicKey.asTypedList,
+        ),
+      };
+      expect(await provider.importServerConfigs([repaired]), 1);
+      expect(provider.serverConfigs, hasLength(1));
+      expect(
+        provider.serverConfigs.single.serverPubkey,
+        repaired['serverPubkey'],
+      );
+    });
+  });
+
+  test('imported computers keep auto routing', () async {
+    await withProvider((provider) async {
+      await provider.importServerConfigs([
+        {...computer, 'name': 'Fixed relay', 'autoRoute': false},
+        {...computer, 'name': 'Auto by default'},
+        {'name': 'Direct only', 'host': '10.0.0.9', 'token': 'secret'},
+      ]);
+      final byName = {
+        for (final config in provider.serverConfigs) config.name: config,
+      };
+      expect(byName['Fixed relay']!.autoRoute, isFalse);
+      expect(byName['Auto by default']!.autoRoute, isTrue);
+      expect(byName['Direct only']!.autoRoute, isFalse);
+
+      expect(
+        await provider.importServerConfigs([
+          {...computer, 'name': 'Fixed relay', 'autoRoute': true},
+        ]),
+        1,
+      );
+      expect(
+        provider.serverConfigs
+            .singleWhere((config) => config.name == 'Fixed relay')
+            .autoRoute,
+        isTrue,
+      );
+    });
+  });
+
   test('a computer-only export preserves existing relay access', () async {
     await withProvider((provider) async {
       await provider.saveSubscriberToken('test-play-access');

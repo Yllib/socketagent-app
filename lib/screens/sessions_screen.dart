@@ -9,6 +9,7 @@ import '../models/message.dart';
 import '../models/session_grouping.dart';
 import '../models/session_list_filter.dart';
 import '../util/format.dart';
+import '../widgets/extra_folders_dialog.dart';
 import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/transfer_history_dialog.dart';
 import '../widgets/computer_filter_dialog.dart';
@@ -36,11 +37,19 @@ enum _SessionMenuAction {
   delete,
 }
 
+/// "None" or "2 folders", for an extra folders menu entry.
+String _folderCount(int count) => switch (count) {
+  0 => 'None',
+  1 => '1 folder',
+  _ => '$count folders',
+};
+
 enum _SessionToolsAction {
   compact,
   rollback,
   clearContext,
   blockedTools,
+  extraFolders,
   instructions,
 }
 
@@ -2515,6 +2524,16 @@ class _SessionsTabState extends State<SessionsTab> {
               }(),
               icon: Icons.block,
             ),
+          if (session.backend != 'codex' &&
+              provider.supportsAdditionalDirectories(session.serverId))
+            AdaptiveSheetAction(
+              value: _SessionToolsAction.extraFolders,
+              label: 'Extra folders',
+              subtitle: _folderCount(
+                provider.getAdditionalDirectories(session.id).length,
+              ),
+              icon: Icons.create_new_folder_outlined,
+            ),
           AdaptiveSheetAction(
             value: _SessionToolsAction.instructions,
             label: session.backend == 'codex'
@@ -2539,6 +2558,13 @@ class _SessionsTabState extends State<SessionsTab> {
         await _confirmClearContext(context, session);
       case _SessionToolsAction.blockedTools:
         _showBlockedToolsDialog(context, session);
+      case _SessionToolsAction.extraFolders:
+        await showExtraFoldersDialog(
+          context,
+          provider: provider,
+          sessionId: session.id,
+          serverId: session.serverId,
+        );
       case _SessionToolsAction.instructions:
         _showSystemPromptDialog(context, session);
     }

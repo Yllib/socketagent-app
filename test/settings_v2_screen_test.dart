@@ -132,12 +132,11 @@ void main() {
     expect(find.text('SocketAgent is up to date'), findsOneWidget);
 
     await tester.scrollUntilVisible(
-      find.text('Export Computers'),
+      find.text('Credential Manager'),
       500,
       scrollable: find.byType(Scrollable).first,
     );
-    expect(find.text('Export Computers'), findsOneWidget);
-    expect(find.text('Import Computers'), findsOneWidget);
+    expect(find.text('Credential Manager'), findsOneWidget);
   });
 
   testWidgets('seven version taps reveal owner access', (tester) async {

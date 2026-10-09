@@ -42,6 +42,7 @@ void main() {
           {'name': 'Laptop', 'host': '10.0.0.5', 'token': 'secret'},
         ],
         subscriberToken: 'relay-token',
+        from: 'Pixel 9',
         client: relay,
       );
       expect(
@@ -53,6 +54,7 @@ void main() {
       expect(payload.servers.single['name'], 'Laptop');
       expect(payload.servers.single['token'], 'secret');
       expect(payload.subscriberToken, 'relay-token');
+      expect(payload.from, 'Pixel 9');
     },
   );
 

@@ -9,10 +9,14 @@ class ExportPayload {
   final String subscriberToken;
   final String subscriberEmail;
 
+  /// The sending device's name. Empty in files and older transfers.
+  final String from;
+
   ExportPayload({
     required this.servers,
     this.subscriberToken = '',
     this.subscriberEmail = '',
+    this.from = '',
   });
 }
 
@@ -22,6 +26,10 @@ class ConfigTransfer {
   static const int version = 1;
   static const int encryptedVersion = 2;
   static const int _pbkdf2Iterations = 120000;
+
+  /// Anyone holding an encrypted file can guess passphrases offline, so the
+  /// app asks for at least this many characters.
+  static const int minPassphraseLength = 12;
 
   // Short key mappings
   static const _shortKeys = {
@@ -52,19 +60,20 @@ class ConfigTransfer {
     'c': 'colorValue',
   };
 
-  /// Encode server configs + subscriber info into a legacy plaintext string.
-  ///
-  /// Kept for backwards compatibility with older exports. New UI should use
-  /// [encodeEncrypted] because server configs include auth tokens.
+  /// Encode server configs + subscriber info into a plaintext string. Only
+  /// for content that is encrypted another way, like a relay handoff sealed
+  /// to the receiver's key. [from] names the sending device.
   static String encode(
     List<Map<String, dynamic>> configs, {
     String subscriberToken = '',
     String subscriberEmail = '',
+    String from = '',
   }) {
     final payload = _compactPayload(
       configs,
       subscriberToken: subscriberToken,
       subscriberEmail: subscriberEmail,
+      from: from,
     );
     final b64 = base64Encode(_compressPayload(payload));
     return '$prefix|$version|$b64';
@@ -107,6 +116,7 @@ class ConfigTransfer {
     List<Map<String, dynamic>> configs, {
     String subscriberToken = '',
     String subscriberEmail = '',
+    String from = '',
   }) {
     // Convert to compact format with short keys, omit empty/default values
     final compact = configs.map((c) {
@@ -128,6 +138,7 @@ class ConfigTransfer {
     final payload = <String, dynamic>{'s': compact};
     if (subscriberToken.isNotEmpty) payload['st'] = subscriberToken;
     if (subscriberEmail.isNotEmpty) payload['se'] = subscriberEmail;
+    if (from.isNotEmpty) payload['f'] = from;
     return payload;
   }
 
@@ -219,6 +230,7 @@ class ConfigTransfer {
       servers: servers,
       subscriberToken: payload['st'] as String? ?? '',
       subscriberEmail: payload['se'] as String? ?? '',
+      from: payload['f'] as String? ?? '',
     );
   }
 

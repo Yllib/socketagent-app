@@ -39,6 +39,20 @@ String formatShortDate(DateTime time, {DateTime? now}) {
       : formatDate(local);
 }
 
+/// Time left until a deadline, in its two largest units: "2d 4h", "4h 12m",
+/// "12m", or "< 1m".
+String formatTimeLeft(Duration left) {
+  if (left.inMinutes < 1) return '< 1m';
+  final days = left.inDays;
+  final hours = left.inHours % 24;
+  final minutes = left.inMinutes % 60;
+  if (days > 0) return hours > 0 ? '${days}d ${hours}h' : '${days}d';
+  if (left.inHours > 0) {
+    return minutes > 0 ? '${left.inHours}h ${minutes}m' : '${left.inHours}h';
+  }
+  return '${minutes}m';
+}
+
 /// Relative time for lists: "just now", "5m ago", "3h ago", "2d ago", and for
 /// future times "in < 1m", "in 5m", "in 3h", "in 2d". Times at least
 /// [dateAfter] away fall back to [formatShortDate]; pass null to stay relative

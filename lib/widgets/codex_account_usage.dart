@@ -148,6 +148,7 @@ class _CodexAccountUsageState extends State<CodexAccountUsage> {
         ? _status['resetCredits'] as Map
         : null;
     final available = (resets?['availableCount'] as num?)?.toInt();
+    final credits = _availableCredits(resets?['credits']);
     final latestDate = DateTime.tryParse('${usage['latestUsageDate']}');
     final delayed =
         usage['todayTokens'] == null &&
@@ -162,6 +163,10 @@ class _CodexAccountUsageState extends State<CodexAccountUsage> {
       children: [
         Text('Codex account', style: theme.textTheme.titleSmall),
         const SizedBox(height: 6),
+        if (codexAccountRows(_status) case final rows when rows.isNotEmpty) ...[
+          for (final (label, value) in rows) _detailRow(label, value, theme),
+          const SizedBox(height: 6),
+        ],
         for (final limit in limits) _limitCard(limit, theme),
         if (usage.isNotEmpty) ...[
           const SizedBox(height: 4),
@@ -240,6 +245,7 @@ class _CodexAccountUsageState extends State<CodexAccountUsage> {
                     ),
                 ],
               ),
+              for (final credit in credits) _creditRow(credit, theme),
               if (_message != null) ...[
                 const SizedBox(height: 8),
                 Text(_message!, style: theme.textTheme.bodySmall),
@@ -371,6 +377,107 @@ class _CodexAccountUsageState extends State<CodexAccountUsage> {
     );
   }
 
+  Widget _detailRow(String label, String value, ThemeData theme) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Row(
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            color: theme.colorScheme.onSurface.withAlpha(128),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            value,
+            textAlign: TextAlign.end,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// Available reset credits, soonest to expire first. Credits that never
+  /// expire go last.
+  List<Map<Object?, Object?>> _availableCredits(Object? raw) {
+    if (raw is! List) return const [];
+    final credits = [
+      for (final credit in raw.whereType<Map<Object?, Object?>>())
+        if (credit['status'] == 'available') credit,
+    ];
+    double expiry(Map<Object?, Object?> credit) =>
+        (credit['expiresAt'] as num?)?.toDouble() ?? double.infinity;
+    credits.sort((a, b) => expiry(a).compareTo(expiry(b)));
+    return credits;
+  }
+
+  /// One reset on its own rows: title and time left, then when it expires,
+  /// when it was granted and what it resets, then the description.
+  Widget _creditRow(Map<Object?, Object?> credit, ThemeData theme) {
+    final localizations = MaterialLocalizations.of(context);
+    DateTime? time(Object? epoch) => epoch is num
+        ? DateTime.fromMillisecondsSinceEpoch(epoch.toInt() * 1000).toLocal()
+        : null;
+    String at(DateTime date) =>
+        '${localizations.formatShortMonthDay(date)}, '
+        '${localizations.formatTimeOfDay(TimeOfDay.fromDateTime(date))}';
+    final title = credit['title'] as String?;
+    final description = credit['description'] as String?;
+    final expires = time(credit['expiresAt']);
+    final granted = time(credit['grantedAt']);
+    final left = expires?.difference(DateTime.now());
+    final muted = theme.textTheme.labelSmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title == null || title.isEmpty ? 'Reset' : title,
+                  style: theme.textTheme.bodySmall,
+                ),
+              ),
+              Text(
+                left == null
+                    ? 'No expiry'
+                    : left.isNegative
+                    ? 'Expired'
+                    : '${formatTimeLeft(left)} left',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: left != null && left.inHours < 24
+                      ? theme.colorScheme.error
+                      : theme.colorScheme.onSurface,
+                ),
+              ),
+            ],
+          ),
+          Text(
+            [
+              expires == null ? 'Never expires' : 'Expires ${at(expires)}',
+              if (granted != null) 'Granted ${at(granted)}',
+              switch (credit['resetType']) {
+                'codexRateLimits' => 'Resets Codex limits',
+                _ => 'Unknown reset type',
+              },
+            ].join(' · '),
+            style: muted,
+          ),
+          if (description != null && description.isNotEmpty)
+            Text(description, style: muted),
+        ],
+      ),
+    );
+  }
+
   Widget _window(Map window, ThemeData theme, {bool showHeader = true}) {
     final percent = window['usedPercent'] is num
         ? window['usedPercent'] as num
@@ -429,4 +536,56 @@ class _CodexAccountUsageState extends State<CodexAccountUsage> {
       ],
     );
   }
+}
+
+/// Label and value rows for who Codex is signed in as: account, sign-in
+/// method, plan and credit balance. Rows Codex did not report are left out.
+List<(String, String)> codexAccountRows(Map<String, dynamic> status) {
+  final account = status['account'] is Map ? status['account'] as Map : null;
+  String? text(Object? value) =>
+      value is String && value.trim().isNotEmpty ? value.trim() : null;
+  final limits = status['limits'] is List ? status['limits'] as List : const [];
+  final limitMaps = limits.whereType<Map<Object?, Object?>>();
+  final plan =
+      text(account?['planType']) ??
+      limitMaps.map((limit) => text(limit['plan'])).nonNulls.firstOrNull;
+  final credits = limitMaps
+      .map((limit) => text(limit['credits']))
+      .nonNulls
+      .firstOrNull;
+  return [
+    if (text(account?['email']) case final email?) ('Account', email),
+    if (text(account?['type']) case final type?)
+      (
+        'Signed in with',
+        switch (type) {
+          'chatgpt' => 'ChatGPT',
+          'apiKey' => 'API key',
+          'amazonBedrock' => 'Amazon Bedrock',
+          _ => type,
+        },
+      ),
+    if (plan != null && plan != 'unknown') ('Plan', _planName(plan)),
+    if (credits != null) ('Credits', _creditBalance(credits)),
+  ];
+}
+
+/// "plus" to "Plus", "prolite" to "Pro Lite", "edu_plus" to "Edu Plus".
+String _planName(String plan) {
+  const names = {'prolite': 'Pro Lite', 'ent26': 'Enterprise'};
+  return names[plan] ??
+      plan
+          .split('_')
+          .where((word) => word.isNotEmpty)
+          .map((word) => word[0].toUpperCase() + word.substring(1))
+          .join(' ');
+}
+
+/// "62500.0000000000" to "62,500"; keeps cents when there are any.
+String _creditBalance(String balance) {
+  if (balance == 'unlimited') return 'Unlimited';
+  final value = double.tryParse(balance);
+  if (value == null) return balance;
+  if (value == value.roundToDouble()) return formatThousands(value.round());
+  return value.toStringAsFixed(2);
 }

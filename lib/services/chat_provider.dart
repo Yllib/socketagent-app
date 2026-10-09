@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import 'windows_local_server.dart';
 import 'desktop_window_service.dart';
 import 'codex_reset_attempts.dart';
+import 'codex_realtime_service.dart';
 import 'downloads_directory.dart';
 import 'backend_warning.dart';
 import 'dart:async';
@@ -497,6 +498,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Dummy WebSocketService for when no server is active (avoids null crashes).
   final WebSocketService _fallbackWs = WebSocketService();
+
+  /// Live voice calls with Codex. One per provider so server events route
+  /// to it regardless of which screen is open.
+  late final CodexRealtimeService codexRealtime = CodexRealtimeService(
+    send: _sendToActiveSessionServer,
+    onEnded: (sessionId, hadTranscript) {
+      // The server persisted the transcript; pull it into the chat.
+      if (hadTranscript && sessionId != null && sessionId == _activeSessionId) {
+        retryHistoryRefresh();
+      }
+    },
+  );
   final AsrModelManager _asrModelManager = AsrModelManager();
   late final LocalSpeechService _speech = LocalSpeechService(_asrModelManager);
   final TtsService _tts = TtsService();
@@ -736,6 +749,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<String> _availableTools = [];
   // Per-session disallowed tools and system prompt caches
   final Map<String, List<String>> _sessionDisallowedTools = {};
+  final Map<String, List<String>> _sessionAdditionalDirectories = {};
   final Map<String, String> _sessionSystemPrompts = {};
   final Map<String, bool> _sessionCodexFastModes = {};
   final Map<String, bool> _sessionClaudeAutoCompact = {};
@@ -829,6 +843,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, int> _serverSessionMemoryVersions = {};
   // Servers whose browser sessions take streamed pointer and key events.
   final Set<String> _serversWithBrowserNativeInput = {};
+  final Set<String> _serversWithClaudeBackgroundTasks = {};
+  final Set<String> _serversWithClaudeAdditionalDirectories = {};
   final Map<String, CodexGoal?> _codexGoals = {};
   final Set<String> _loadedCodexGoals = {};
   final Set<String> _loadingCodexGoals = {};
@@ -3209,36 +3225,65 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return imported;
   }
 
-  /// Import server configs from compact maps (from QR decode).
-  /// Returns the number of servers imported (skips duplicates).
+  /// Import server configs from compact maps (from a transfer decode).
+  /// A computer already in the list, matched by name plus host or pairing
+  /// token, takes the transferred credentials instead of being added twice.
+  /// Returns how many computers were added or changed.
   Future<int> importServerConfigs(List<Map<String, dynamic>> configs) async {
     int imported = 0;
     for (final m in configs) {
       final name = m['name'] as String? ?? 'Imported';
       final host = m['host'] as String? ?? '';
       final pairingToken = m['pairingToken'] as String? ?? '';
+      final port = m['port'] as int? ?? 8085;
+      final token = m['token'] as String? ?? '';
+      final useRelay = m['useRelay'] as bool? ?? false;
+      // Same default as ServerConfig.fromJson: relay computers auto route.
+      final autoRoute = m['autoRoute'] as bool? ?? useRelay;
+      final relayUrl = m['relayUrl'] as String? ?? '';
+      final serverPubkey = m['serverPubkey'] as String? ?? '';
 
-      // Skip duplicates: matching name+host or name+pairingToken
-      final isDuplicate = _serverConfigs.any(
-        (existing) =>
-            existing.name == name &&
-            ((host.isNotEmpty && existing.host == host) ||
-                (pairingToken.isNotEmpty &&
-                    existing.pairingToken == pairingToken)),
-      );
-      if (isDuplicate) continue;
+      final existing = _serverConfigs
+          .where(
+            (existing) =>
+                existing.name == name &&
+                ((host.isNotEmpty && existing.host == host) ||
+                    (pairingToken.isNotEmpty &&
+                        existing.pairingToken == pairingToken)),
+          )
+          .firstOrNull;
+      if (existing != null) {
+        final updated = existing.copyWith(
+          host: host,
+          port: port,
+          token: token,
+          useRelay: useRelay,
+          autoRoute: autoRoute,
+          relayUrl: relayUrl,
+          pairingToken: pairingToken,
+          serverPubkey: serverPubkey,
+        );
+        if (!_requiresServerReconnect(existing, updated) &&
+            existing.autoRoute == updated.autoRoute) {
+          continue;
+        }
+        await updateServer(updated);
+        imported++;
+        continue;
+      }
 
       final config = ServerConfig(
         id: ServerConfig.generateId(),
         name: name,
         host: host,
-        port: m['port'] as int? ?? 8085,
-        token: m['token'] as String? ?? '',
-        useRelay: m['useRelay'] as bool? ?? false,
+        port: port,
+        token: token,
+        useRelay: useRelay,
+        autoRoute: autoRoute,
         sortOrder: _serverConfigs.length,
-        relayUrl: m['relayUrl'] as String? ?? '',
+        relayUrl: relayUrl,
         pairingToken: pairingToken,
-        serverPubkey: m['serverPubkey'] as String? ?? '',
+        serverPubkey: serverPubkey,
         defaultCwd: m['defaultCwd'] as String? ?? '',
         colorValue: m['colorValue'] as int?,
       );
@@ -4999,6 +5044,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _serverSessionMemoryVersions[serverId] = sessionMemory is Map
                   ? (sessionMemory['version'] as num?)?.toInt() ?? 0
                   : 0;
+              if (msg['claudeAdditionalDirectories'] is Map) {
+                _serversWithClaudeAdditionalDirectories.add(serverId);
+              } else {
+                _serversWithClaudeAdditionalDirectories.remove(serverId);
+              }
+              if (msg['claudeBackgroundTasks'] is Map) {
+                _serversWithClaudeBackgroundTasks.add(serverId);
+              } else {
+                _serversWithClaudeBackgroundTasks.remove(serverId);
+              }
               final browserSessions = msg['browserSessions'];
               if (browserSessions is Map &&
                   browserSessions['nativeInput'] == true) {
@@ -5183,7 +5238,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'speak':
           final text = msg['text'] as String? ?? '';
-          if (_ttsEnabled && text.isNotEmpty) {
+          // A live voice call already speaks; chat TTS would talk over it.
+          if (_ttsEnabled && text.isNotEmpty && !codexRealtime.isLive) {
             if (_ttsEngineMode == TtsEngineMode.kokoroServer) {
               // Audio generated by the server arrives separately. Publish a
               // loading state now so the wait is visible to the user.
@@ -5233,6 +5289,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if ((_ttsEnabled ||
                   _kokoroServerEngine.playbackState.value.visible) &&
               audioData.isNotEmpty &&
+              !codexRealtime.isLive &&
               _ttsEngineMode == TtsEngineMode.kokoroServer) {
             unawaited(
               _kokoroServerEngine.playAudioData(
@@ -5671,7 +5728,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
         case 'context_usage':
+          final previous = _contextUsage;
+          final previousAccount =
+              previous != null && previous['sessionId'] == msg['sessionId']
+              ? previous['account']
+              : null;
           _contextUsage = Map<String, dynamic>.from(msg);
+          // Only the dialog's own request carries the account; the updates
+          // pushed after each turn keep the last one.
+          if (_contextUsage!['account'] == null && previousAccount != null) {
+            _contextUsage!['account'] = previousAccount;
+          }
           notifyListeners();
           break;
         case 'codex_compact_result':
@@ -5875,6 +5942,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'codex_goal_state':
           _handleCodexGoalState(msg, serverId);
+          break;
+        case 'codex_realtime_event':
+        case 'codex_realtime_voices':
+          codexRealtime.handleServerMessage(msg);
           break;
         case 'session_memory_state':
           _handleSessionMemoryState(msg, serverId);
@@ -9745,6 +9816,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .map((value) => value.toString())
           .toList();
     }
+    final additionalDirectories = settings['additionalDirectories'];
+    if (additionalDirectories is List) {
+      _sessionAdditionalDirectories[sessionId] = additionalDirectories
+          .whereType<String>()
+          .toList();
+    }
     if (settings.containsKey('systemPrompt')) {
       _sessionSystemPrompts[sessionId] =
           settings['systemPrompt']?.toString() ?? '';
@@ -10454,6 +10531,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final muteChanged = moveSessionSetMember(_notifMutedSessions, oldId, newId);
     final draftChanged = moveSessionMapEntry(_sessionDrafts, oldId, newId);
     moveSessionMapEntry(_sessionDisallowedTools, oldId, newId);
+    moveSessionMapEntry(_sessionAdditionalDirectories, oldId, newId);
     moveSessionMapEntry(_sessionSystemPrompts, oldId, newId);
     moveSessionMapEntry(_sessionCodexFastModes, oldId, newId);
     moveSessionMapEntry(_sessionClaudeAutoCompact, oldId, newId);
@@ -16107,6 +16185,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Whether [serverId] can give Claude sessions extra folders.
+  bool supportsAdditionalDirectories(String serverId) =>
+      _serversWithClaudeAdditionalDirectories.contains(serverId);
+
+  /// A Claude session's extra folders, from its loaded settings or else the
+  /// session list.
+  List<String> getAdditionalDirectories(String sessionId) =>
+      _sessionAdditionalDirectories[sessionId] ??
+      _sessions
+          .where((session) => session.id == sessionId)
+          .firstOrNull
+          ?.additionalDirectories ??
+      const [];
+
+  /// Replaces a Claude session's extra folders. The server applies them from
+  /// the next prompt.
+  void setAdditionalDirectories(String sessionId, List<String> directories) {
+    _sessionAdditionalDirectories[sessionId] = directories;
+    _sendSessionSetting(sessionId, {
+      'type': 'set_additional_directories',
+      'directories': directories,
+    });
+    notifyListeners();
+  }
+
   // Per-session system prompt override
   String getSessionSystemPrompt(String sessionId) {
     return _sessionSystemPrompts[sessionId] ?? '';
@@ -16402,6 +16505,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         prefs.remove('prepends_$_activeSessionId');
       });
     }
+  }
+
+  /// Whether a running Claude command in the active session can move to the
+  /// background. Codex has no equivalent.
+  bool get canBackgroundClaudeTasks {
+    final serverId = activeSessionServerId;
+    return activeSessionBackend != 'codex' &&
+        serverId != null &&
+        _serversWithClaudeBackgroundTasks.contains(serverId);
+  }
+
+  /// Moves the running Bash command or subagent started by [toolUseId] to the
+  /// background, so the turn carries on while it keeps running.
+  void backgroundTask(String toolUseId) {
+    _sendToActiveSessionServer({
+      'type': 'background_task',
+      'toolUseId': toolUseId,
+    });
   }
 
   void stopTask(String taskId) {

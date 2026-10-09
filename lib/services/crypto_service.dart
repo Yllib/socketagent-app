@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:pinenacl/x25519.dart';
+import 'nacl_cipher.dart';
 import 'secure_storage_service.dart';
 import 'socket_frame_decoder.dart';
 
@@ -10,18 +11,22 @@ class CryptoService {
   PrivateKey? _secretKey;
   PublicKey? _publicKey;
   Uint8List? _serverPublicKey;
-  Box? _box;
+  NaclCipher? _cipher;
 
   /// Whether this service has a key pair loaded
   bool get hasKeyPair => _secretKey != null && _publicKey != null;
 
   /// Whether encryption is ready (we have both our keys and the server's)
-  bool get isReady => _box != null;
+  bool get isReady => _cipher != null;
 
   Future<DecodedSocketFrame?> decodeFrame(
     Object? frame, {
     required bool relay,
-  }) => decodeSocketFrame(frame, box: _box, encryptedBinary: relay || isReady);
+  }) => decodeSocketFrame(
+    frame,
+    cipher: _cipher,
+    encryptedBinary: relay || isReady,
+  );
 
   /// Our public key as base64 (for key exchange)
   String get publicKeyBase64 {
@@ -70,60 +75,61 @@ class CryptoService {
   /// Initialize the NaCl Box for encrypt/decrypt
   void _initBox() {
     if (_secretKey == null || _serverPublicKey == null) return;
-    _box = Box(
-      myPrivateKey: _secretKey!,
-      theirPublicKey: PublicKey(_serverPublicKey!),
+    _cipher?.dispose();
+    _cipher = NaclCipher(
+      Box(
+        myPrivateKey: _secretKey!,
+        theirPublicKey: PublicKey(_serverPublicKey!),
+      ),
     );
   }
 
   /// Encrypt a plaintext message. Returns a JSON map with {n: nonce, c: ciphertext}.
   Map<String, String> encrypt(String plaintext) {
-    if (_box == null) throw StateError('Encryption not initialized');
-    final encrypted = _box!.encrypt(Uint8List.fromList(utf8.encode(plaintext)));
+    final cipher = _cipher;
+    if (cipher == null) throw StateError('Encryption not initialized');
+    final sealed = cipher.seal(utf8.encode(plaintext));
     return {
-      'n': base64Encode(Uint8List.fromList(encrypted.nonce.asTypedList)),
-      'c': base64Encode(Uint8List.fromList(encrypted.cipherText.asTypedList)),
+      'n': base64Encode(sealed.nonce),
+      'c': base64Encode(sealed.cipherText),
     };
   }
 
   /// Decrypt an encrypted envelope {n: nonce, c: ciphertext}. Returns plaintext.
   String decrypt(Map<String, dynamic> envelope) {
-    if (_box == null) throw StateError('Decryption not initialized');
-    final nonce = Uint8List.fromList(base64Decode(envelope['n'] as String));
-    final cipherText = Uint8List.fromList(
-      base64Decode(envelope['c'] as String),
+    final cipher = _cipher;
+    if (cipher == null) throw StateError('Decryption not initialized');
+    return utf8.decode(
+      cipher.open(
+        base64Decode(envelope['c'] as String),
+        base64Decode(envelope['n'] as String),
+      ),
     );
-    final decrypted = _box!.decrypt(
-      ByteList(cipherText),
-      nonce: Uint8List.fromList(nonce),
-    );
-    return utf8.decode(decrypted);
   }
 
   /// Encrypt arbitrary bytes into a packed binary envelope: `[24-byte nonce | ciphertext]`.
   /// Sent as a WebSocket binary frame — no JSON wrapping, no base64 inflation.
   Uint8List encryptBinary(Uint8List plaintext) {
-    if (_box == null) throw StateError('Encryption not initialized');
-    final encrypted = _box!.encrypt(plaintext);
-    final nonce = Uint8List.fromList(encrypted.nonce.asTypedList);
-    final cipher = Uint8List.fromList(encrypted.cipherText.asTypedList);
-    final out = Uint8List(nonce.length + cipher.length);
-    out.setRange(0, nonce.length, nonce);
-    out.setRange(nonce.length, nonce.length + cipher.length, cipher);
-    return out;
+    final cipher = _cipher;
+    if (cipher == null) throw StateError('Encryption not initialized');
+    final sealed = cipher.seal(plaintext);
+    return Uint8List(sealed.nonce.length + sealed.cipherText.length)
+      ..setAll(0, sealed.nonce)
+      ..setAll(sealed.nonce.length, sealed.cipherText);
   }
 
   /// Decrypt a packed binary envelope produced by [encryptBinary].
   Uint8List decryptBinary(Uint8List envelope) {
-    if (_box == null) throw StateError('Decryption not initialized');
+    final cipher = _cipher;
+    if (cipher == null) throw StateError('Decryption not initialized');
     const nonceLen = 24;
     if (envelope.length < nonceLen) {
       throw StateError('Binary envelope too short');
     }
-    final nonce = envelope.sublist(0, nonceLen);
-    final cipher = envelope.sublist(nonceLen);
-    final decrypted = _box!.decrypt(ByteList(cipher), nonce: nonce);
-    return Uint8List.fromList(decrypted);
+    return cipher.open(
+      Uint8List.sublistView(envelope, nonceLen),
+      Uint8List.sublistView(envelope, 0, nonceLen),
+    );
   }
 
   /// Clear all keys and state
@@ -131,7 +137,8 @@ class CryptoService {
     _secretKey = null;
     _publicKey = null;
     _serverPublicKey = null;
-    _box = null;
+    _cipher?.dispose();
+    _cipher = null;
     await _secureStorage.deleteRelaySecretKey();
     await _secureStorage.deleteRelayPublicKey();
   }

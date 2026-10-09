@@ -58,7 +58,9 @@ dependencies:
   share_plus: ^13.3.1
   intl: ^0.20.3
   in_app_update: ^5.0.0
-
+  device_info_plus: ^13.3.0
+  flutter_webrtc: ^1.6.2+hotfix.4
+  sodium: ^4.1.1+2
 dev_dependencies:
   flutter_test:
     sdk: flutter

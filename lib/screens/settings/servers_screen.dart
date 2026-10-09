@@ -9,8 +9,7 @@ import '../../widgets/adaptive_action_sheet.dart';
 import '../pair_screen.dart';
 import '../connect_computer_screen.dart';
 import '../paywall_screen.dart';
-import '../config_export_screen.dart';
-import '../config_import_screen.dart';
+import '../credential_manager_screen.dart';
 import 'settings_v2_screen.dart'
     show showBackendSignIn, showBackendOperationDialog;
 
@@ -60,37 +59,15 @@ class _ServersScreenState extends State<ServersScreen> {
           appBar: AppBar(
             title: const Text('Computers'),
             actions: [
-              if (configs.isNotEmpty)
-                IconButton(
-                  icon: const Icon(Icons.qr_code, size: 20),
-                  tooltip: 'Export configs',
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const ConfigExportScreen(),
-                    ),
+              IconButton(
+                icon: const Icon(Icons.key_outlined, size: 20),
+                tooltip: 'Credential Manager',
+                onPressed: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const CredentialManagerScreen(),
                   ),
                 ),
-              IconButton(
-                icon: const Icon(Icons.qr_code_scanner, size: 20),
-                tooltip: 'Import configs',
-                onPressed: () async {
-                  final imported = await Navigator.push<int>(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const ConfigImportScreen(),
-                    ),
-                  );
-                  if (imported != null && imported > 0 && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Imported $imported computer${imported == 1 ? '' : 's'}',
-                        ),
-                      ),
-                    );
-                  }
-                },
               ),
             ],
           ),

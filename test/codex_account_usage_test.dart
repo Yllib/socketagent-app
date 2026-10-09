@@ -135,6 +135,100 @@ void main() {
     },
   );
 
+  test('account rows name the sign-in, plan and credit balance', () {
+    final data = status()
+      ..['account'] = {
+        'type': 'chatgpt',
+        'email': 'me@example.com',
+        'planType': 'prolite',
+      };
+    (data['limits'] as List)[2]['credits'] = '62500.0000000000';
+    expect(codexAccountRows(data), [
+      ('Account', 'me@example.com'),
+      ('Signed in with', 'ChatGPT'),
+      ('Plan', 'Pro Lite'),
+      ('Credits', '62,500'),
+    ]);
+    expect(
+      codexAccountRows({
+        'account': {'type': 'apiKey'},
+      }),
+      [('Signed in with', 'API key')],
+    );
+  });
+
+  testWidgets('lists each available reset with its expiry, soonest first', (
+    tester,
+  ) async {
+    int inSeconds(Duration offset) =>
+        DateTime.now().add(offset).millisecondsSinceEpoch ~/ 1000;
+    final data = status();
+    data['resetCredits'] = {
+      'availableCount': 3,
+      'credits': [
+        {
+          'id': 'later',
+          'resetType': 'codexRateLimits',
+          'status': 'available',
+          'grantedAt': inSeconds(const Duration(days: -1)),
+          'expiresAt': inSeconds(const Duration(days: 9, minutes: 30)),
+          'title': 'Weekly bonus',
+          'description': 'Earned for a 7 day streak',
+        },
+        {
+          'id': 'forever',
+          'resetType': 'codexRateLimits',
+          'status': 'available',
+          'grantedAt': inSeconds(const Duration(days: -3)),
+          'expiresAt': null,
+          'title': null,
+          'description': null,
+        },
+        {
+          'id': 'soon',
+          'resetType': 'codexRateLimits',
+          'status': 'available',
+          'grantedAt': inSeconds(const Duration(days: -2)),
+          'expiresAt': inSeconds(
+            const Duration(days: 2, hours: 4, minutes: 30),
+          ),
+          'title': 'Launch gift',
+          'description': null,
+        },
+        {
+          'id': 'used',
+          'resetType': 'codexRateLimits',
+          'status': 'redeemed',
+          'grantedAt': inSeconds(const Duration(days: -5)),
+          'expiresAt': inSeconds(const Duration(days: 1)),
+          'title': 'Already used',
+          'description': null,
+        },
+      ],
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(child: CodexAccountUsage(status: data)),
+        ),
+      ),
+    );
+    expect(tester.takeException(), isNull);
+    expect(find.text('Already used'), findsNothing);
+    expect(find.text('2d 4h left'), findsOneWidget);
+    expect(find.text('9d left'), findsOneWidget);
+    expect(find.text('No expiry'), findsOneWidget);
+    expect(find.text('Earned for a 7 day streak'), findsOneWidget);
+    expect(find.textContaining('Never expires'), findsOneWidget);
+    expect(find.textContaining('Granted'), findsNWidgets(3));
+    final order = [
+      'Launch gift',
+      'Weekly bonus',
+      'Reset',
+    ].map((title) => tester.getTopLeft(find.text(title)).dy).toList();
+    expect(order, orderedEquals([...order]..sort()));
+  });
+
   testWidgets(
     'reset requires confirmation and retries the same failed attempt',
     (tester) async {

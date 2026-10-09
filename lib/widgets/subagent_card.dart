@@ -1,3 +1,4 @@
+import 'running_task_menu.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -23,6 +24,10 @@ class SubAgentCard extends StatefulWidget {
   final String? sourceServerId;
   final ValueChanged<String>? onReadAloud;
 
+  /// Moves this running subagent to the background, by its tool use id.
+  /// Null hides the menu.
+  final ValueChanged<String>? onBackgroundTask;
+
   const SubAgentCard({
     super.key,
     required this.message,
@@ -32,6 +37,7 @@ class SubAgentCard extends StatefulWidget {
     this.greenTheme = false,
     this.sourceServerId,
     this.onReadAloud,
+    this.onBackgroundTask,
   });
 
   @override
@@ -219,6 +225,13 @@ class _SubAgentCardState extends State<SubAgentCard> {
                     ),
                   ),
                   if (widget.isRunning) ...[
+                    if (widget.onBackgroundTask case final onBackground?
+                        when !widget.message.isBackgrounded &&
+                            (widget.message.toolUseId ?? '').isNotEmpty)
+                      RunningTaskMenu(
+                        onBackground: () =>
+                            onBackground(widget.message.toolUseId!),
+                      ),
                     if (widget.message.toolElapsedSeconds > 0)
                       Padding(
                         padding: const EdgeInsets.only(right: 6),

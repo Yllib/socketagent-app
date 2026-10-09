@@ -24,9 +24,7 @@ import '../../util/format.dart';
 import '../../widgets/adaptive_action_sheet.dart';
 import '../file_manager_screen.dart';
 import '../../services/codex_sign_in_callback.dart';
-import '../config_export_screen.dart';
-import '../send_to_desktop_screen.dart';
-import '../config_import_screen.dart';
+import '../credential_manager_screen.dart';
 import '../connect_computer_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
@@ -206,36 +204,6 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           ? null
           : _handleUpdateAction,
     );
-  }
-
-  Future<void> _openSendToDesktop() async {
-    final sent = await Navigator.of(
-      context,
-    ).push<int>(MaterialPageRoute(builder: (_) => const SendToDesktopScreen()));
-    if (sent != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Sent $sent computer${sent == 1 ? '' : 's'}. Confirm on the desktop.',
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _openConfigImport() async {
-    final imported = await Navigator.of(
-      context,
-    ).push<int>(MaterialPageRoute(builder: (_) => const ConfigImportScreen()));
-    if (imported != null && imported > 0 && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Imported $imported computer${imported == 1 ? '' : 's'}',
-          ),
-        ),
-      );
-    }
   }
 
   Future<void> _openPrivacyPolicy() async {
@@ -519,34 +487,17 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                     ),
                   ),
                   _NavTile(
-                    icon: Icons.qr_code,
-                    title: 'Export Computers',
-                    subtitle: 'Create an encrypted transfer QR code',
+                    icon: Icons.key_outlined,
+                    title: 'Credential Manager',
+                    subtitle:
+                        'Send computers to another device or receive them',
                     trailing: Icons.chevron_right,
                     onTap: () => Navigator.of(context).push(
                       MaterialPageRoute(
-                        builder: (_) => const ConfigExportScreen(),
+                        builder: (_) => const CredentialManagerScreen(),
                       ),
                     ),
                   ),
-                  _NavTile(
-                    icon: Icons.qr_code_scanner,
-                    title: 'Import Computers',
-                    subtitle: Platform.isWindows
-                        ? 'Send from your phone or paste an export'
-                        : 'Scan or paste an encrypted config export',
-                    trailing: Icons.chevron_right,
-                    onTap: _openConfigImport,
-                  ),
-                  if (!Platform.isWindows)
-                    _NavTile(
-                      icon: Icons.desktop_windows_outlined,
-                      title: 'Send to Desktop',
-                      subtitle:
-                          'Scan the code on a desktop to send it computers',
-                      trailing: Icons.chevron_right,
-                      onTap: _openSendToDesktop,
-                    ),
                 ],
               ),
               _SettingsGroup(

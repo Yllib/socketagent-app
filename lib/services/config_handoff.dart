@@ -5,16 +5,19 @@ import 'package:http/http.dart' as http;
 import 'package:pinenacl/x25519.dart';
 
 import 'config_transfer.dart';
+import 'device_name.dart';
 
-/// The relay forgot this code, so the desktop must show a new one.
+/// The relay forgot this code, so the receiver must show a new one.
 class HandoffExpired implements Exception {
   const HandoffExpired();
 }
 
-/// What a desktop shows as a QR code so a phone can send it computers.
+/// What a receiving device shows as a QR code so another device can send it
+/// computers.
 ///
 /// `SAXH|1|<relay https url>|<slot id>|<public key>|<device name>`. The public
-/// key belongs to a key pair the desktop makes for this one transfer.
+/// key belongs to a key pair the receiver makes for this one transfer. It
+/// travels by camera, so the relay never gets a chance to swap it.
 class HandoffCode {
   HandoffCode({
     required this.relayUrl,
@@ -68,19 +71,22 @@ class HandoffCode {
   }
 }
 
-/// Phone side: seals the chosen computers to the desktop's key and hands them
-/// to the relay. Throws [HandoffExpired] when the desktop's code is stale.
+/// Sending side: seals the chosen computers to the receiver's key and hands
+/// them to the relay. [from] names this device on the receiver's confirmation.
+/// Throws [HandoffExpired] when the receiver's code is stale.
 Future<void> sendConfigHandoff(
   HandoffCode code,
   List<Map<String, dynamic>> computers, {
   String subscriberToken = '',
   String subscriberEmail = '',
+  String from = '',
   http.Client? client,
 }) async {
   final plaintext = ConfigTransfer.encode(
     computers,
     subscriberToken: subscriberToken,
     subscriberEmail: subscriberEmail,
+    from: from,
   );
   final sealed = SealedBox(
     PublicKey(code.publicKey),
@@ -106,8 +112,8 @@ Future<void> sendConfigHandoff(
   }
 }
 
-/// Desktop side of one transfer: holds the private key behind a [HandoffCode]
-/// and waits on the relay for the phone's sealed computers.
+/// Receiving side of one transfer: holds the private key behind a
+/// [HandoffCode] and waits on the relay for the sender's sealed computers.
 class ConfigHandoffReceiver {
   ConfigHandoffReceiver._(this.code, this._key, this._client);
 
@@ -136,14 +142,14 @@ class ConfigHandoffReceiver {
         relayUrl: relayUrl,
         id: id,
         publicKey: Uint8List.fromList(key.publicKey),
-        deviceName: deviceName ?? Platform.localHostname,
+        deviceName: deviceName ?? await localDeviceName(),
       ),
       key,
       client,
     );
   }
 
-  /// Waits up to about 25 seconds. Returns null if the phone hasn't sent yet.
+  /// Waits up to about 25 seconds. Returns null if nothing has arrived yet.
   /// Throws [FormatException] if what arrived can't be opened with this key.
   Future<ExportPayload?> next() async {
     final response = await _client
@@ -158,10 +164,14 @@ class ConfigHandoffReceiver {
     try {
       plaintext = utf8.decode(SealedBox(_key).decrypt(response.bodyBytes));
     } catch (_) {
-      throw const FormatException('The phone sent something unreadable.');
+      throw const FormatException(
+        'The other device sent something unreadable.',
+      );
     }
     if (!plaintext.startsWith('${ConfigTransfer.prefix}|')) {
-      throw const FormatException('The phone sent something unreadable.');
+      throw const FormatException(
+        'The other device sent something unreadable.',
+      );
     }
     return ConfigTransfer.decode(plaintext);
   }

@@ -73,6 +73,18 @@ void main() {
     });
   });
 
+  test('formatTimeLeft keeps the two largest units', () {
+    expect(formatTimeLeft(const Duration(seconds: 40)), '< 1m');
+    expect(formatTimeLeft(const Duration(minutes: 12)), '12m');
+    expect(formatTimeLeft(const Duration(hours: 4, minutes: 12)), '4h 12m');
+    expect(formatTimeLeft(const Duration(hours: 4)), '4h');
+    expect(
+      formatTimeLeft(const Duration(days: 2, hours: 4, minutes: 30)),
+      '2d 4h',
+    );
+    expect(formatTimeLeft(const Duration(days: 3)), '3d');
+  });
+
   test('formatDate', () {
     expect(formatDate(DateTime(2026, 3, 4, 15)), 'Mar 4, 2026');
   });

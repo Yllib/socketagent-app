@@ -1,3 +1,4 @@
+import 'running_task_menu.dart';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -130,6 +131,10 @@ class ToolOutputBlock extends StatefulWidget {
   onExpansionChanged;
   final ValueChanged<bool>? onImageInspectionChanged;
 
+  /// Moves this card's running Bash command to the background, by its
+  /// tool use id. Null hides the menu, as when the server cannot do it.
+  final ValueChanged<String>? onBackgroundTask;
+
   const ToolOutputBlock({
     super.key,
     required this.message,
@@ -138,6 +143,7 @@ class ToolOutputBlock extends StatefulWidget {
     this.expanded,
     this.onExpansionChanged,
     this.onImageInspectionChanged,
+    this.onBackgroundTask,
   });
 
   @override
@@ -345,6 +351,15 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         patchDiff != null ||
         _hasImage;
     final isBg = widget.message.isBackgrounded;
+    final toolUseId = widget.message.toolUseId;
+    final onBackground = widget.onBackgroundTask;
+    final canBackground =
+        onBackground != null &&
+        _isBash &&
+        !isBg &&
+        !(gotResult && !isStreaming) &&
+        toolUseId != null &&
+        toolUseId.isNotEmpty;
 
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -449,6 +464,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   else if (gotResult && !isStreaming)
                     const Icon(Icons.check, size: 16, color: Color(0xFF767676))
                   else ...[
+                    if (canBackground)
+                      RunningTaskMenu(
+                        onBackground: () => onBackground(toolUseId),
+                      ),
                     if (elapsed > 0)
                       Padding(
                         padding: const EdgeInsets.only(right: 6),

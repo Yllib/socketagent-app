@@ -1,3 +1,4 @@
+import '../widgets/extra_folders_dialog.dart';
 import '../widgets/linked_scheduled_tasks_panel.dart';
 import '../models/session_scheduled_tasks.dart';
 import 'scheduled_tasks_screen.dart';
@@ -31,6 +32,7 @@ import 'browser_session_screen.dart';
 import 'project_instructions_screen.dart';
 import 'terminal_screen.dart';
 import 'settings/voice_speech_screen.dart';
+import 'codex_realtime_screen.dart';
 import '../widgets/chat_view.dart';
 import '../widgets/conversation_rewind_notice.dart';
 import '../widgets/active_tasks_pane.dart';
@@ -941,6 +943,15 @@ class _ChatScreenState extends State<_ChatScreen> {
     }
   }
 
+  void _openRealtimeCall(ChatProvider provider) {
+    if (provider.isListening) unawaited(provider.toggleListening());
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => CodexRealtimeScreen(sessionId: provider.activeSessionId),
+      ),
+    );
+  }
+
   Future<void> _showSecretManager(ChatProvider provider) {
     return showModalBottomSheet<void>(
       context: context,
@@ -1353,6 +1364,9 @@ class _ChatScreenState extends State<_ChatScreen> {
                         availableSecrets: provider.secretInventory,
                         onLoadMore: provider.loadMoreHistory,
                         onStopTask: provider.stopTask,
+                        onBackgroundTask: provider.canBackgroundClaudeTasks
+                            ? provider.backgroundTask
+                            : null,
                         onDismissTodos: () =>
                             _setPanelHidden(provider, SessionPanel.tasks, true),
                         showTodos:
@@ -1856,6 +1870,24 @@ class _ChatScreenState extends State<_ChatScreen> {
                 selected: provider.codexFastMode,
                 subtitle: provider.codexFastMode ? 'On' : 'Off',
               ),
+            if (!codex &&
+                serverId != null &&
+                provider.supportsAdditionalDirectories(serverId))
+              SessionAction(
+                'extra_folders',
+                'Extra folders',
+                Icons.create_new_folder_outlined,
+                enabled: hasSession,
+                subtitle: switch (hasSession
+                    ? provider
+                          .getAdditionalDirectories(provider.activeSessionId!)
+                          .length
+                    : 0) {
+                  0 => 'None',
+                  1 => '1 folder',
+                  final count => '$count folders',
+                },
+              ),
             if (!codex)
               SessionAction(
                 'claude_auto_compact',
@@ -1951,6 +1983,21 @@ class _ChatScreenState extends State<_ChatScreen> {
         Future.microtask(() {
           if (mounted) showCodexGoalManagerSheet(context, provider);
         });
+        break;
+      case 'extra_folders':
+        final sessionId = provider.activeSessionId;
+        if (sessionId != null && serverId != null) {
+          Future.microtask(() {
+            if (mounted) {
+              showExtraFoldersDialog(
+                context,
+                provider: provider,
+                sessionId: sessionId,
+                serverId: serverId,
+              );
+            }
+          });
+        }
         break;
       case 'session_analytics':
         Navigator.of(context).push(
@@ -2788,6 +2835,8 @@ class _ChatScreenState extends State<_ChatScreen> {
                   theme,
                 ),
 
+                ..._accountRows(ctx?['account'], theme),
+
                 if (claudeUsageFuture != null)
                   FutureBuilder<Map<String, dynamic>?>(
                     future: claudeUsageFuture,
@@ -2842,6 +2891,37 @@ class _ChatScreenState extends State<_ChatScreen> {
         ),
       ),
     );
+  }
+
+  /// Which Claude account the session runs under, from the SDK's
+  /// `accountInfo`. Third-party providers report only the provider.
+  List<Widget> _accountRows(Object? account, ThemeData theme) {
+    if (account is! Map) return const [];
+    String? field(String key) {
+      final value = account[key];
+      return value is String && value.trim().isNotEmpty ? value.trim() : null;
+    }
+
+    const providers = {
+      'bedrock': 'Amazon Bedrock',
+      'vertex': 'Google Vertex AI',
+      'foundry': 'Microsoft Foundry',
+      'gateway': 'Enterprise gateway',
+    };
+    final provider = field('apiProvider');
+    final rows = [
+      if (field('email') case final email?) ('Account', email),
+      if (field('organization') case final org?) ('Organization', org),
+      if (field('subscriptionType') case final plan?)
+        ('Plan', plan[0].toUpperCase() + plan.substring(1)),
+      if (provider != null && provider != 'firstParty')
+        ('Provider', providers[provider] ?? provider),
+    ];
+    if (rows.isEmpty) return const [];
+    return [
+      const Divider(height: 20),
+      for (final (label, value) in rows) _contextDetailRow(label, value, theme),
+    ];
   }
 
   /// The parts of the window the percentage does not count.
@@ -3706,6 +3786,28 @@ class _ChatScreenState extends State<_ChatScreen> {
                       isListening: provider.isListening,
                       onPressed: () => provider.toggleListening(
                         existingText: _textController.text,
+                      ),
+                    ),
+                  ),
+                ),
+              // Realtime voice is its own mode with its own model, so it
+              // gets its own button next to the regular speech-to-text mic.
+              if (provider.activeSessionBackend == 'codex')
+                SizedBox(
+                  height: 48,
+                  child: Center(
+                    child: IconButton(
+                      icon: Icon(
+                        Icons.graphic_eq,
+                        color: theme.colorScheme.onSurface.withAlpha(178),
+                        size: 22,
+                      ),
+                      tooltip: 'Voice call',
+                      onPressed: () => _openRealtimeCall(provider),
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
                       ),
                     ),
                   ),

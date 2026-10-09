@@ -7,7 +7,7 @@ import 'package:webview_flutter/webview_flutter.dart';
 import '../config/app_distribution.dart';
 import '../services/chat_provider.dart';
 import '../services/play_billing_service.dart';
-import 'config_import_screen.dart';
+import 'receive_credentials_screen.dart';
 
 class PaywallScreen extends StatefulWidget {
   const PaywallScreen({super.key});
@@ -47,9 +47,9 @@ class _PaywallScreenState extends State<PaywallScreen> {
   }
 
   Future<void> _importAccess() async {
-    final imported = await Navigator.of(
-      context,
-    ).push<int>(MaterialPageRoute(builder: (_) => const ConfigImportScreen()));
+    final imported = await Navigator.of(context).push<int>(
+      MaterialPageRoute(builder: (_) => const ReceiveCredentialsScreen()),
+    );
     if (!mounted || imported == null) return;
     final provider = context.read<ChatProvider>();
     if (provider.hasCachedRelayAccess) {
@@ -57,8 +57,8 @@ class _PaywallScreenState extends State<PaywallScreen> {
     } else {
       setState(
         () => _message =
-            'Relay access was not restored. On your phone, check that relay access '
-            'is active, then create a new computer export and import it here.',
+            'Relay access was not restored. On your phone, open Credential '
+            'Manager, tap Share next to Relay access, and send again.',
       );
     }
   }

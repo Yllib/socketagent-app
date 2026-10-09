@@ -768,6 +768,9 @@ class Session {
   final String? delegatedBySessionId;
   final String? delegationId;
 
+  /// Claude only. Folders the agent may use besides [cwd].
+  final List<String> additionalDirectories;
+
   Session({
     required this.id,
     required this.title,
@@ -789,6 +792,7 @@ class Session {
     this.freshThreadPending = false,
     this.delegatedBySessionId,
     this.delegationId,
+    this.additionalDirectories = const [],
   });
 
   factory Session.fromJson(
@@ -825,6 +829,11 @@ class Session {
       freshThreadPending: json['freshThreadPending'] == true,
       delegatedBySessionId: json['delegatedBySessionId'] as String?,
       delegationId: json['delegationId'] as String?,
+      additionalDirectories: switch (json['agentSettings']) {
+        {'additionalDirectories': final List<dynamic> dirs} =>
+          dirs.whereType<String>().toList(growable: false),
+        _ => const [],
+      },
     );
   }
 
@@ -849,6 +858,8 @@ class Session {
     'freshThreadPending': freshThreadPending,
     'delegatedBySessionId': delegatedBySessionId,
     'delegationId': delegationId,
+    if (additionalDirectories.isNotEmpty)
+      'agentSettings': {'additionalDirectories': additionalDirectories},
   };
 
   Session copyWith({
@@ -872,6 +883,7 @@ class Session {
     bool? freshThreadPending,
     String? delegatedBySessionId,
     String? delegationId,
+    List<String>? additionalDirectories,
   }) {
     return Session(
       id: id ?? this.id,
@@ -896,6 +908,8 @@ class Session {
       freshThreadPending: freshThreadPending ?? this.freshThreadPending,
       delegatedBySessionId: delegatedBySessionId ?? this.delegatedBySessionId,
       delegationId: delegationId ?? this.delegationId,
+      additionalDirectories:
+          additionalDirectories ?? this.additionalDirectories,
     );
   }
 
@@ -925,6 +939,7 @@ class Session {
       freshThreadPending: freshThreadPending,
       delegatedBySessionId: delegatedBySessionId,
       delegationId: delegationId,
+      additionalDirectories: additionalDirectories,
     );
   }
 }

@@ -5,9 +5,9 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../services/config_handoff.dart';
 import '../services/config_transfer.dart';
 
-/// Desktop import panel: shows a one-time QR code that the phone's
-/// "Send to Desktop" screen scans, then hands whatever the phone sends to
-/// [onReceived]. A new code replaces each used or expired one.
+/// Shows a one-time QR code that another device's Credential Manager scans
+/// with Scan to send, then hands whatever it sends to [onReceived]. A new code
+/// replaces each used or expired one.
 class PhoneHandoffPanel extends StatefulWidget {
   const PhoneHandoffPanel({
     super.key,
@@ -85,8 +85,6 @@ class _PhoneHandoffPanelState extends State<PhoneHandoffPanel> {
     final code = _code;
     return Column(
       children: [
-        Text('Send from your phone', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 12),
         SizedBox(
           width: 232,
           height: 232,
@@ -112,9 +110,12 @@ class _PhoneHandoffPanelState extends State<PhoneHandoffPanel> {
                 ),
         ),
         const SizedBox(height: 12),
+        if (code != null)
+          Text(code.deviceName, style: theme.textTheme.titleMedium),
+        const SizedBox(height: 4),
         const Text(
-          'On your phone, open SocketAgent, then Settings, Send to Desktop, '
-          'and scan this code.',
+          'On the other device, open Credential Manager, tap Share next to a '
+          'computer, then Scan to send.',
           textAlign: TextAlign.center,
         ),
         if (_notice != null) ...[

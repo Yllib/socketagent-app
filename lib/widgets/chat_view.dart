@@ -66,6 +66,10 @@ class ChatView extends StatefulWidget {
   final List<SecretMetadata> availableSecrets;
   final VoidCallback? onLoadMore;
   final void Function(String taskId)? onStopTask;
+
+  /// Moves a running Bash command or subagent to the background by tool use
+  /// id. Null when the session's server cannot.
+  final ValueChanged<String>? onBackgroundTask;
   final VoidCallback? onDismissTodos;
   final bool showCodexPlan;
   final bool codexRewind;
@@ -116,6 +120,7 @@ class ChatView extends StatefulWidget {
     this.availableSecrets = const [],
     this.onLoadMore,
     this.onStopTask,
+    this.onBackgroundTask,
     this.onDismissTodos,
     this.showCodexPlan = true,
     this.codexRewind = false,
@@ -916,6 +921,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       expanded: _expandedImageCardIds.contains(id) ? true : null,
       onExpansionChanged: (expanded, {required hasImage}) =>
           _handleToolExpansionChanged(id, expanded, hasImage: hasImage),
+      onBackgroundTask: widget.onBackgroundTask,
     );
   }
 
@@ -1455,9 +1461,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       );
     }
     if (metrics.thinkingTokens > 0) {
-      parts.add(
-        '${formatCompactCount(metrics.thinkingTokens)} thought tokens',
-      );
+      parts.add('${formatCompactCount(metrics.thinkingTokens)} thought tokens');
     } else if (metrics.thinkingBlocks > 0) {
       parts.add(
         '${metrics.thinkingBlocks} ${metrics.thinkingBlocks == 1 ? 'thought' : 'thoughts'}',
@@ -1616,6 +1620,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             scrollKey: _taskKeys[rowKey],
             sourceServerId: widget.serverId,
             onReadAloud: widget.onReadAloud,
+            onBackgroundTask: widget.onBackgroundTask,
           );
         }
         // Backgrounded bash — register key for scroll-to
