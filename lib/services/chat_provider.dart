@@ -1593,6 +1593,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Map<String, dynamic> serverRuntimeInfo(String serverId) =>
       Map.unmodifiable(_serverRuntimeInfo[serverId] ?? const {});
 
+  /// True when a Windows computer was installed without administrator rights.
+  bool isLimitedWindowsInstall(String serverId) =>
+      _serverRuntimeInfo[serverId]?['windowsElevated'] == false;
+
   /// See [backendWarningFor] for the rule.
   Map<String, dynamic>? backendWarningForServer(String serverId) =>
       backendWarningFor(backendHealthForServer(serverId));
@@ -13843,6 +13847,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final startedAt = msg['serverStartedAt'];
     if (startedAt != null) existing['startedAt'] = startedAt.toString();
+
+    final elevated = msg['windowsElevated'];
+    if (elevated is bool) existing['windowsElevated'] = elevated;
 
     final pid = msg['serverPid'];
     if (pid != null) existing['pid'] = pid;

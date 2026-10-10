@@ -728,16 +728,18 @@ class ComputerInstallScreen extends StatefulWidget {
   State<ComputerInstallScreen> createState() => _ComputerInstallScreenState();
 }
 
+/// One-line Windows setup. Rerunning it over an install keeps the pairing.
+const windowsInstallCommand =
+    'powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Yllib/socketagent/master/install-windows.ps1 | iex"';
+
 class _ComputerInstallScreenState extends State<ComputerInstallScreen> {
-  static const _windowsCommand =
-      'powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Yllib/socketagent/master/install-windows.ps1 | iex"';
   static const _unixCommand =
       'curl -fsSL https://raw.githubusercontent.com/Yllib/socketagent/master/install.sh | bash';
 
   _ComputerOs _selected = _ComputerOs.windows;
 
   String get _command =>
-      _selected == _ComputerOs.windows ? _windowsCommand : _unixCommand;
+      _selected == _ComputerOs.windows ? windowsInstallCommand : _unixCommand;
 
   @override
   Widget build(BuildContext context) {

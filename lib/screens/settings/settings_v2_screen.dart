@@ -816,6 +816,8 @@ class _SettingsV2ServerDetailScreenState
             padding: const EdgeInsets.only(bottom: 28),
             children: [
               _ServerHeader(config: config, status: status, runtime: runtime),
+              if (provider.isLimitedWindowsInstall(config.id))
+                const _LimitedInstallRow(),
               _SettingsGroup(
                 title: 'Connection',
                 children: [
@@ -1736,6 +1738,8 @@ class _ServerTile extends StatelessWidget {
               _routeLabel(config),
               _statusLabel(status),
               if (!build.isEmpty) build.compactLabel,
+              if (provider.isLimitedWindowsInstall(config.id))
+                'limited install',
               config.expectedOnline ? 'always on' : 'on demand',
               if (warning != null)
                 warning['label']?.toString().toLowerCase() ??
@@ -3026,6 +3030,39 @@ class _NavTile extends StatelessWidget {
       subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: trailing == null ? null : Icon(trailing),
       onTap: onTap,
+    );
+  }
+}
+
+/// Warns that a Windows computer runs without administrator rights and copies
+/// the setup command that fixes it.
+class _LimitedInstallRow extends StatelessWidget {
+  const _LimitedInstallRow();
+
+  @override
+  Widget build(BuildContext context) {
+    final error = Theme.of(context).colorScheme.error;
+    return ListTile(
+      leading: Icon(Icons.gpp_maybe_outlined, color: error),
+      title: Text(
+        'Limited install, not administrator',
+        style: TextStyle(color: error, fontWeight: FontWeight.w600),
+      ),
+      subtitle: const Text(
+        'Agents cannot install software or change system settings, and the '
+        'firewall may block direct connections. Rerun setup in PowerShell '
+        'opened as administrator. Pairing is kept.',
+      ),
+      trailing: IconButton(
+        tooltip: 'Copy setup command',
+        icon: const Icon(Icons.copy),
+        onPressed: () {
+          Clipboard.setData(const ClipboardData(text: windowsInstallCommand));
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Setup command copied')));
+        },
+      ),
     );
   }
 }
