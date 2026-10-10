@@ -83,6 +83,7 @@ import 'hard_stop_target.dart';
 import 'session_live_state.dart';
 import 'session_identity_remap.dart';
 import '../models/session_message_routing.dart';
+import '../models/visible_transcript_ledger.dart';
 import 'ai_response_report_service.dart';
 import '../config/app_distribution.dart';
 import '../util/format.dart';
@@ -615,6 +616,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _directPrivateAuthRequestIds = {};
   String? _activeSessionId;
   String? _activeSessionServerId;
+  final _visibleTranscript = VisibleTranscriptLedger();
   NotificationTranscriptFocus? _notificationTranscriptFocus;
   String? _activeSessionCwd;
   String? _activeSessionTitle;
@@ -1415,6 +1417,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       );
     }
     _syncOngoingSessionNotifications();
+    if (sessionId == _activeSessionId) {
+      scheduleMicrotask(_verifyVisibleTranscript);
+    }
   }
 
   void _replaceRunningSessionsForServer(
@@ -4932,6 +4937,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _ackDeferredSessionDelivery(msg, serverId);
         return;
       }
+    }
+
+    final transcriptKey = _activeTranscriptKey();
+    if (transcriptKey != null && messageSessionId == _activeSessionId) {
+      _visibleTranscript.record(transcriptKey, [msg]);
     }
 
     // Capture SDK events for raw debug mode (coalesced)
@@ -10785,6 +10795,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
       return;
     }
+    final transcriptKey = _activeTranscriptKey(serverId);
+    if (transcriptKey != null && historySessionId == _activeSessionId) {
+      if (isAppend || isPrepend) {
+        _visibleTranscript.record(transcriptKey, rawMessages);
+      } else {
+        _visibleTranscript.replace(transcriptKey, rawMessages);
+      }
+    }
 
     // Silently restore todos from session_history (server includes current state)
     final rawTodos = msg['todos'] as List?;
@@ -12127,6 +12145,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _transcriptCache.save(ownerServerId, historySessionId, msg),
           );
         }
+        // A delta starts at the cache cursor, which can be ahead of the chat.
+        scheduleMicrotask(_verifyVisibleTranscript);
       }
     } else if (isPrepend) {
       final ownerServerId = serverId ?? _activeSessionServerId ?? '';
@@ -14726,6 +14746,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _markInitialHistoryRequestDispatched(historyRequestId, sessionId);
     }
 
+    notifyListeners();
+  }
+
+  /// Ledger key for the open chat, matching the transcript cache's key.
+  String? _activeTranscriptKey([String? serverId]) {
+    final sessionId = _activeSessionId;
+    final owner = serverId ?? _activeSessionServerId ?? _connMgr.activeServerId;
+    if (sessionId == null || owner == null || owner.isEmpty) return null;
+    return '$owner\u0001$sessionId';
+  }
+
+  /// Redraw the open chat from the transcript cache when the cache holds
+  /// durable entries the chat never applied. This happens when live events
+  /// reach the cache but routing defers them, and when a server delta starts
+  /// at a cache cursor that is ahead of the chat. Runs once the session is
+  /// idle so it never replaces a streaming turn.
+  void _verifyVisibleTranscript() {
+    final sessionId = _activeSessionId;
+    final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
+    final key = _activeTranscriptKey();
+    if (sessionId == null || serverId == null || key == null) return;
+    if (_sessionLiveState.isRunning(serverId, sessionId) == true) return;
+    final snapshot = _transcriptCache.peek(serverId, sessionId);
+    final digest = _transcriptCache.historyDigest(snapshot);
+    final entries = snapshot?['messages'];
+    if (digest == null || entries is! List) return;
+    if (!_visibleTranscript.needsRepair(key, entries, digest)) return;
+    debugPrint(
+      '[Transcript] Chat missed cached entries, redrawing session $sessionId',
+    );
+    final refreshing = _isRefreshingHistory;
+    _handleSessionHistory(snapshot!, serverId: serverId, fromCache: true);
+    _isRefreshingHistory = refreshing;
     notifyListeners();
   }
 

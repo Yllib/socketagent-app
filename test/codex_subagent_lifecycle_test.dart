@@ -267,7 +267,9 @@ void main() {
             'audit-server',
             'audit-root',
           );
-          if (diskCache != null) break;
+          // The rewind's write runs in the background; the earlier file can
+          // still be on disk when the loop starts.
+          if ((diskCache?['messages'] as List?)?.isEmpty == true) break;
           await Future<void>.delayed(const Duration(milliseconds: 20));
         } while (DateTime.now().isBefore(deadline));
         expect(diskCache?['messages'], isEmpty);
