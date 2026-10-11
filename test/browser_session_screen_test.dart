@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:app/models/active_browser_session.dart';
 import 'package:app/screens/browser_session_screen.dart';
 import 'package:app/services/chat_provider.dart';
 import 'package:flutter/material.dart';
@@ -48,6 +49,39 @@ class _NativeInputProvider extends ChatProvider {
   @override
   bool serverSupportsBrowserNativeInput(String? serverId) => true;
 
+  final closed = <String>[];
+  final started = <String>[];
+  List<ActiveBrowserSession> browsers = const [];
+
+  @override
+  List<ActiveBrowserSession> get activeBrowserSessions => browsers;
+
+  @override
+  bool serverSupportsBrowserClose(String? serverId) => true;
+
+  @override
+  bool serverSupportsBrowserStart(String? serverId) => true;
+
+  @override
+  Future<List<BrowserProfile>> requestBrowserProfiles() async => const [
+    BrowserProfile(profile: 'work', label: 'work', running: false),
+  ];
+
+  @override
+  Future<ActiveBrowserSession> startBrowserSession({
+    required String profile,
+    required String url,
+  }) async {
+    started.add('$profile $url');
+    return browser(profile);
+  }
+
+  @override
+  bool closeBrowserSession({required String profile, String? serverId}) {
+    closed.add(profile);
+    return true;
+  }
+
   @override
   bool sendBrowserSessionInput({
     required String profile,
@@ -83,6 +117,16 @@ class _NativeInputProvider extends ChatProvider {
     return true;
   }
 }
+
+ActiveBrowserSession browser(String profile) => ActiveBrowserSession(
+  serverId: '',
+  sessionId: 'chat',
+  profile: profile,
+  label: profile == 'browser-test' ? 'Browser test' : profile,
+  url: 'https://example.test',
+  width: 430,
+  height: 860,
+);
 
 /// The viewer shows a spinner until the first frame, so it never settles.
 Future<void> settle(WidgetTester tester) async {
@@ -164,6 +208,91 @@ void main() {
     });
     await tester.pump();
     expect(provider.acks, [7]);
+  });
+
+  testWidgets('closing the browser asks first, then closes it and leaves', (
+    tester,
+  ) async {
+    final provider = _NativeInputProvider();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<ChatProvider>(
+        create: (_) => provider,
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const BrowserSessionScreen(
+                    profile: 'browser-test',
+                    label: 'Browser test',
+                    initialUrl: 'https://example.test',
+                    browserWidth: 430,
+                    browserHeight: 860,
+                  ),
+                ),
+              ),
+              child: const Text('Chat'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Chat'));
+    await settle(tester);
+
+    await tester.tap(find.byTooltip('Close Browser test'));
+    await settle(tester);
+    expect(find.text('Close Browser test?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await settle(tester);
+    expect(provider.closed, isEmpty);
+    expect(find.byType(BrowserSessionScreen), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Close Browser test'));
+    await settle(tester);
+    await tester.tap(find.widgetWithText(FilledButton, 'Close'));
+    await settle(tester);
+    expect(provider.closed, ['browser-test']);
+    expect(find.byType(BrowserSessionScreen), findsNothing);
+  });
+
+  testWidgets('the session\'s other browsers are tabs that switch the view', (
+    tester,
+  ) async {
+    final provider = await pumpNativeBrowser(tester);
+    provider.browsers = [browser('browser-test'), browser('work')];
+    provider.notifyListeners();
+    await settle(tester);
+    await tester.tap(find.text('work'));
+    await settle(tester);
+    final screen = tester.widget<BrowserSessionScreen>(
+      find.byType(BrowserSessionScreen),
+    );
+    expect(screen.profile, 'work');
+  });
+
+  testWidgets('a new browser opens from the tab row and is shown', (
+    tester,
+  ) async {
+    final provider = await pumpNativeBrowser(tester);
+    await tester.tap(find.byTooltip('New browser'));
+    await settle(tester);
+    await tester.enterText(
+      find
+          .descendant(
+            of: find.byType(AlertDialog),
+            matching: find.byType(TextField),
+          )
+          .first,
+      'example.com',
+    );
+    await tester.tap(find.widgetWithText(FilledButton, 'Open'));
+    await settle(tester);
+    expect(provider.started, ['work https://example.com']);
+    final screen = tester.widget<BrowserSessionScreen>(
+      find.byType(BrowserSessionScreen),
+    );
+    expect(screen.profile, 'work');
   });
 
   testWidgets('a page dropdown opens as a phone list and sends the choice', (
@@ -272,7 +401,9 @@ void main() {
     provider.sent.clear();
     // The page is scaled to fit and centered, so the viewer's center is the
     // page's center.
-    final viewer = tester.getCenter(find.byType(GestureDetector).first);
+    final viewer = tester.getCenter(
+      find.byKey(const ValueKey('browser-viewer')),
+    );
     await tester.tapAt(viewer);
     await tester.pump(const Duration(milliseconds: 100));
     final pointer = provider.sent.where((m) => m['action'] == 'pointer');

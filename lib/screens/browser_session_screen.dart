@@ -8,10 +8,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../models/active_browser_session.dart';
 import '../services/browser_keyboard.dart';
 import '../services/chat_provider.dart';
 import '../services/window_security_service.dart';
 import '../widgets/browser_prompts.dart';
+import '../widgets/start_browser_dialog.dart';
 import '../config/app_palette.dart';
 
 enum _BrowserClipboardAction { pasteIntoPage, sendToBrowser, copyToPhone }
@@ -27,6 +29,15 @@ class BrowserSessionScreen extends StatefulWidget {
     this.serverId,
     this.initialRuntimeRequired = false,
   });
+
+  BrowserSessionScreen.forBrowser(ActiveBrowserSession browser, {super.key})
+    : profile = browser.profile,
+      label = browser.label,
+      initialUrl = browser.url,
+      browserWidth = browser.width,
+      browserHeight = browser.height,
+      serverId = browser.serverId,
+      initialRuntimeRequired = browser.runtimeRequired;
 
   final String profile;
   final String label;
@@ -1221,6 +1232,147 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
     _send('navigate', values: {'url': value.trim()});
   }
 
+  /// The chat session's browsers on this computer. This one is included even
+  /// before the computer reports it.
+  List<ActiveBrowserSession> _sessionBrowsers(ChatProvider provider) {
+    final serverId = widget.serverId ?? provider.activeSessionServerId ?? '';
+    final browsers = provider.activeBrowserSessions
+        .where((browser) => browser.serverId == serverId)
+        .toList();
+    if (!browsers.any((browser) => browser.profile == widget.profile)) {
+      browsers.insert(
+        0,
+        ActiveBrowserSession(
+          serverId: serverId,
+          sessionId: provider.activeSessionId ?? '',
+          profile: widget.profile,
+          label: widget.label,
+          url: _url,
+          width: _browserSize.width.round(),
+          height: _browserSize.height.round(),
+        ),
+      );
+    }
+    return browsers;
+  }
+
+  void _switchTo(ActiveBrowserSession browser) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute<void>(
+        builder: (_) => BrowserSessionScreen.forBrowser(browser),
+      ),
+    );
+  }
+
+  Future<void> _startBrowser() async {
+    final browser = await showStartBrowserDialog(context, _provider);
+    if (browser != null && mounted) _switchTo(browser);
+  }
+
+  /// Closes [target] on the computer for every viewer. Closing the one on
+  /// screen moves to another of the session's browsers, or leaves.
+  Future<void> _closeBrowser(ActiveBrowserSession target) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        title: Text('Close ${target.label}?'),
+        content: const Text('Sign-ins stay saved.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    final sent = _provider.closeBrowserSession(
+      profile: target.profile,
+      serverId: target.serverId,
+    );
+    if (!sent) {
+      setState(() => _error = 'The computer is not connected.');
+      return;
+    }
+    if (target.profile != widget.profile) return;
+    final remaining = _sessionBrowsers(
+      _provider,
+    ).where((browser) => browser.profile != target.profile);
+    if (remaining.isEmpty) {
+      Navigator.of(context).pop();
+    } else {
+      _switchTo(remaining.first);
+    }
+  }
+
+  /// One tab per browser in the chat session, plus a new browser button.
+  Widget _buildBrowserTabs() {
+    return Consumer<ChatProvider>(
+      builder: (context, provider, _) => SizedBox(
+        height: 32,
+        child: Row(
+          children: [
+            Expanded(
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final browser in _sessionBrowsers(provider))
+                    _buildBrowserTab(browser),
+                ],
+              ),
+            ),
+            if (provider.serverSupportsBrowserStart(widget.serverId))
+              IconButton(
+                tooltip: 'New browser',
+                iconSize: 18,
+                visualDensity: VisualDensity.compact,
+                onPressed: _startBrowser,
+                icon: const Icon(Icons.add),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBrowserTab(ActiveBrowserSession browser) {
+    final current = browser.profile == widget.profile;
+    final color = current ? context.palette.text : context.palette.textMuted;
+    return InkWell(
+      onTap: current ? null : () => _switchTo(browser),
+      child: Container(
+        padding: const EdgeInsets.only(left: 10),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: current ? color : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(browser.label, style: TextStyle(fontSize: 12, color: color)),
+            IconButton(
+              tooltip: 'Close ${browser.label}',
+              iconSize: 14,
+              visualDensity: VisualDensity.compact,
+              color: color,
+              onPressed: () => _closeBrowser(browser),
+              icon: const Icon(Icons.close),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1272,270 +1424,298 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
           ),
         ],
       ),
-      body: _runtimeRequired
-          ? _buildRuntimeInstaller()
-          : Focus(
-              focusNode: _keyboardFocus,
-              autofocus: true,
-              onKeyEvent: _onKeyEvent,
-              child: Column(
-                children: [
-                  if (_error != null)
-                    Container(
-                      width: double.infinity,
-                      color: Theme.of(context).brightness == Brightness.dark
-                          ? const Color(0xFF3B0000)
-                          : context.palette.red.withAlpha(30),
-                      padding: const EdgeInsets.all(10),
-                      child: Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.onSurface,
-                        ),
-                      ),
-                    ),
-                  Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final size = Size(
-                          constraints.maxWidth,
-                          constraints.maxHeight,
-                        );
-                        _viewerSize = size;
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (mounted) _onViewerSizeChanged(size);
-                        });
-                        final native = _nativeInput;
-                        final viewer = GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          // A mouse is forwarded event by event below.
-                          supportedDevices: native
-                              ? const {
-                                  PointerDeviceKind.touch,
-                                  PointerDeviceKind.stylus,
-                                  PointerDeviceKind.invertedStylus,
-                                  PointerDeviceKind.unknown,
-                                }
-                              : null,
-                          onTapUp: (details) => _tapAt(details.localPosition),
-                          onLongPressStart: native ? _onLongPressStart : null,
-                          onLongPressMoveUpdate: native
-                              ? _onLongPressMove
-                              : null,
-                          onLongPressEnd: native ? _onLongPressEnd : null,
-                          onPanStart: native
-                              ? (details) {
-                                  _scrollAnchor = _toPage(
-                                    details.localPosition,
-                                    clamp: true,
-                                  );
-                                  _pendingScroll = Offset.zero;
-                                }
-                              : null,
-                          onPanUpdate: native
-                              ? (details) => _queueScroll(-details.delta)
-                              : null,
-                          onPanEnd: native
-                              ? (details) {
-                                  // Carry a flick on as one longer scroll.
-                                  _queueScroll(
-                                    -details.velocity.pixelsPerSecond * 0.2,
-                                  );
-                                  _flushScroll();
-                                }
-                              : null,
-                          onVerticalDragStart: native
-                              ? null
-                              : (_) => _dragDistance = 0,
-                          onVerticalDragUpdate: native
-                              ? null
-                              : (details) => _dragDistance += details.delta.dy,
-                          onVerticalDragEnd: native
-                              ? null
-                              : (_) {
-                                  if (_dragDistance.abs() > 8) {
-                                    _send(
-                                      'scroll',
-                                      values: {'deltaY': -_dragDistance * 3},
-                                    );
-                                  }
-                                  _dragDistance = 0;
-                                },
-                          child: Center(
-                            child: _frame == null
-                                ? const SizedBox(
-                                    width: 180,
-                                    child: LinearProgressIndicator(
-                                      minHeight: 2,
-                                    ),
-                                  )
-                                : Image.memory(
-                                    _frame!,
-                                    fit: BoxFit.contain,
-                                    gaplessPlayback: true,
-                                    filterQuality: FilterQuality.medium,
-                                  ),
-                          ),
-                        );
-                        if (!native) return viewer;
-                        return Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            Listener(
-                              onPointerDown: _onMouseDown,
-                              onPointerMove: _onMouseMove,
-                              onPointerHover: _onMouseMove,
-                              onPointerUp: _onMouseUp,
-                              onPointerSignal: _onMouseSignal,
-                              onPointerPanZoomStart: (event) => _scrollAnchor =
-                                  _toPage(event.localPosition, clamp: true),
-                              onPointerPanZoomUpdate: (event) =>
-                                  _queueScroll(-event.localPanDelta),
-                              onPointerPanZoomEnd: (_) => _flushScroll(),
-                              child: viewer,
+      body: Column(
+        children: [
+          if (_provider.serverSupportsBrowserClose(widget.serverId))
+            _buildBrowserTabs(),
+          Expanded(
+            child: _runtimeRequired
+                ? _buildRuntimeInstaller()
+                : Focus(
+                    focusNode: _keyboardFocus,
+                    autofocus: true,
+                    onKeyEvent: _onKeyEvent,
+                    child: Column(
+                      children: [
+                        if (_error != null)
+                          Container(
+                            width: double.infinity,
+                            color:
+                                Theme.of(context).brightness == Brightness.dark
+                                ? const Color(0xFF3B0000)
+                                : context.palette.red.withAlpha(30),
+                            padding: const EdgeInsets.all(10),
+                            child: Text(
+                              _error!,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onSurface,
+                              ),
                             ),
-                            if (_usesSoftKeyboard) _buildImeField(),
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                  SafeArea(
-                    top: false,
-                    child: Container(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerLowest,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 4,
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              IconButton(
-                                tooltip: 'Back',
-                                onPressed: () => _send('back'),
-                                icon: const Icon(Icons.arrow_back),
-                              ),
-                              IconButton(
-                                tooltip: 'Forward',
-                                onPressed: () => _send('forward'),
-                                icon: const Icon(Icons.arrow_forward),
-                              ),
-                              IconButton(
-                                tooltip: _desktopLayout
-                                    ? 'Switch to mobile layout'
-                                    : 'Switch to desktop layout',
-                                onPressed: () =>
-                                    _setLayout(desktop: !_desktopLayout),
-                                icon: Icon(
-                                  _desktopLayout
-                                      ? Icons.phone_iphone
-                                      : Icons.desktop_windows,
-                                ),
-                              ),
-                              if (_nativeInput && _usesSoftKeyboard)
-                                IconButton(
-                                  tooltip: 'Keyboard',
-                                  onPressed: _toggleSoftKeyboard,
-                                  icon: const Icon(Icons.keyboard),
-                                )
-                              else
-                                IconButton(
-                                  tooltip: 'Enter text',
-                                  onPressed: _enterText,
-                                  icon: const Icon(Icons.notes),
-                                ),
-                              IconButton(
-                                tooltip: 'Enter privately',
-                                onPressed: _enterPrivateText,
-                                icon: const Icon(Icons.password),
-                              ),
-                              if (_readingBrowserClipboard)
-                                const Padding(
-                                  padding: EdgeInsets.all(14),
-                                  child: SizedBox.square(
-                                    dimension: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                )
-                              else
-                                PopupMenuButton<_BrowserClipboardAction>(
-                                  tooltip: 'Clipboard',
-                                  icon: const Icon(Icons.content_paste),
-                                  onSelected: _handleClipboardAction,
-                                  itemBuilder: (context) => const [
-                                    PopupMenuItem(
-                                      value:
-                                          _BrowserClipboardAction.pasteIntoPage,
-                                      child: ListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        leading: Icon(Icons.content_paste_go),
-                                        title: Text('Paste into page'),
-                                      ),
-                                    ),
-                                    PopupMenuItem(
-                                      value:
-                                          _BrowserClipboardAction.sendToBrowser,
-                                      child: ListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        leading: Icon(Icons.phone_android),
-                                        title: Text(
-                                          'Send to browser clipboard',
+                          ),
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              final size = Size(
+                                constraints.maxWidth,
+                                constraints.maxHeight,
+                              );
+                              _viewerSize = size;
+                              WidgetsBinding.instance.addPostFrameCallback((_) {
+                                if (mounted) _onViewerSizeChanged(size);
+                              });
+                              final native = _nativeInput;
+                              final viewer = GestureDetector(
+                                key: const ValueKey('browser-viewer'),
+                                behavior: HitTestBehavior.opaque,
+                                // A mouse is forwarded event by event below.
+                                supportedDevices: native
+                                    ? const {
+                                        PointerDeviceKind.touch,
+                                        PointerDeviceKind.stylus,
+                                        PointerDeviceKind.invertedStylus,
+                                        PointerDeviceKind.unknown,
+                                      }
+                                    : null,
+                                onTapUp: (details) =>
+                                    _tapAt(details.localPosition),
+                                onLongPressStart: native
+                                    ? _onLongPressStart
+                                    : null,
+                                onLongPressMoveUpdate: native
+                                    ? _onLongPressMove
+                                    : null,
+                                onLongPressEnd: native ? _onLongPressEnd : null,
+                                onPanStart: native
+                                    ? (details) {
+                                        _scrollAnchor = _toPage(
+                                          details.localPosition,
+                                          clamp: true,
+                                        );
+                                        _pendingScroll = Offset.zero;
+                                      }
+                                    : null,
+                                onPanUpdate: native
+                                    ? (details) => _queueScroll(-details.delta)
+                                    : null,
+                                onPanEnd: native
+                                    ? (details) {
+                                        // Carry a flick on as one longer scroll.
+                                        _queueScroll(
+                                          -details.velocity.pixelsPerSecond *
+                                              0.2,
+                                        );
+                                        _flushScroll();
+                                      }
+                                    : null,
+                                onVerticalDragStart: native
+                                    ? null
+                                    : (_) => _dragDistance = 0,
+                                onVerticalDragUpdate: native
+                                    ? null
+                                    : (details) =>
+                                          _dragDistance += details.delta.dy,
+                                onVerticalDragEnd: native
+                                    ? null
+                                    : (_) {
+                                        if (_dragDistance.abs() > 8) {
+                                          _send(
+                                            'scroll',
+                                            values: {
+                                              'deltaY': -_dragDistance * 3,
+                                            },
+                                          );
+                                        }
+                                        _dragDistance = 0;
+                                      },
+                                child: Center(
+                                  child: _frame == null
+                                      ? const SizedBox(
+                                          width: 180,
+                                          child: LinearProgressIndicator(
+                                            minHeight: 2,
+                                          ),
+                                        )
+                                      : Image.memory(
+                                          _frame!,
+                                          fit: BoxFit.contain,
+                                          gaplessPlayback: true,
+                                          filterQuality: FilterQuality.medium,
                                         ),
+                                ),
+                              );
+                              if (!native) return viewer;
+                              return Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Listener(
+                                    onPointerDown: _onMouseDown,
+                                    onPointerMove: _onMouseMove,
+                                    onPointerHover: _onMouseMove,
+                                    onPointerUp: _onMouseUp,
+                                    onPointerSignal: _onMouseSignal,
+                                    onPointerPanZoomStart: (event) =>
+                                        _scrollAnchor = _toPage(
+                                          event.localPosition,
+                                          clamp: true,
+                                        ),
+                                    onPointerPanZoomUpdate: (event) =>
+                                        _queueScroll(-event.localPanDelta),
+                                    onPointerPanZoomEnd: (_) => _flushScroll(),
+                                    child: viewer,
+                                  ),
+                                  if (_usesSoftKeyboard) _buildImeField(),
+                                ],
+                              );
+                            },
+                          ),
+                        ),
+                        SafeArea(
+                          top: false,
+                          child: Container(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerLowest,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 4,
+                              vertical: 4,
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceEvenly,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Back',
+                                      onPressed: () => _send('back'),
+                                      icon: const Icon(Icons.arrow_back),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Forward',
+                                      onPressed: () => _send('forward'),
+                                      icon: const Icon(Icons.arrow_forward),
+                                    ),
+                                    IconButton(
+                                      tooltip: _desktopLayout
+                                          ? 'Switch to mobile layout'
+                                          : 'Switch to desktop layout',
+                                      onPressed: () =>
+                                          _setLayout(desktop: !_desktopLayout),
+                                      icon: Icon(
+                                        _desktopLayout
+                                            ? Icons.phone_iphone
+                                            : Icons.desktop_windows,
                                       ),
                                     ),
-                                    PopupMenuItem(
-                                      value:
-                                          _BrowserClipboardAction.copyToPhone,
-                                      child: ListTile(
-                                        contentPadding: EdgeInsets.zero,
-                                        leading: Icon(Icons.content_copy),
-                                        title: Text('Copy browser clipboard'),
+                                    if (_nativeInput && _usesSoftKeyboard)
+                                      IconButton(
+                                        tooltip: 'Keyboard',
+                                        onPressed: _toggleSoftKeyboard,
+                                        icon: const Icon(Icons.keyboard),
+                                      )
+                                    else
+                                      IconButton(
+                                        tooltip: 'Enter text',
+                                        onPressed: _enterText,
+                                        icon: const Icon(Icons.notes),
+                                      ),
+                                    IconButton(
+                                      tooltip: 'Enter privately',
+                                      onPressed: _enterPrivateText,
+                                      icon: const Icon(Icons.password),
+                                    ),
+                                    if (_readingBrowserClipboard)
+                                      const Padding(
+                                        padding: EdgeInsets.all(14),
+                                        child: SizedBox.square(
+                                          dimension: 20,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        ),
+                                      )
+                                    else
+                                      PopupMenuButton<_BrowserClipboardAction>(
+                                        tooltip: 'Clipboard',
+                                        icon: const Icon(Icons.content_paste),
+                                        onSelected: _handleClipboardAction,
+                                        itemBuilder: (context) => const [
+                                          PopupMenuItem(
+                                            value: _BrowserClipboardAction
+                                                .pasteIntoPage,
+                                            child: ListTile(
+                                              contentPadding: EdgeInsets.zero,
+                                              leading: Icon(
+                                                Icons.content_paste_go,
+                                              ),
+                                              title: Text('Paste into page'),
+                                            ),
+                                          ),
+                                          PopupMenuItem(
+                                            value: _BrowserClipboardAction
+                                                .sendToBrowser,
+                                            child: ListTile(
+                                              contentPadding: EdgeInsets.zero,
+                                              leading: Icon(
+                                                Icons.phone_android,
+                                              ),
+                                              title: Text(
+                                                'Send to browser clipboard',
+                                              ),
+                                            ),
+                                          ),
+                                          PopupMenuItem(
+                                            value: _BrowserClipboardAction
+                                                .copyToPhone,
+                                            child: ListTile(
+                                              contentPadding: EdgeInsets.zero,
+                                              leading: Icon(Icons.content_copy),
+                                              title: Text(
+                                                'Copy browser clipboard',
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                  ],
+                                ),
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceEvenly,
+                                  children: [
+                                    _buildBackspaceButton(),
+                                    IconButton(
+                                      tooltip: 'Enter',
+                                      onPressed: () => _sendKey('Enter'),
+                                      icon: const Icon(Icons.keyboard_return),
+                                    ),
+                                    Tooltip(
+                                      message: 'Tab',
+                                      child: TextButton(
+                                        onPressed: () => _sendKey('Tab'),
+                                        child: const Text('Tab'),
+                                      ),
+                                    ),
+                                    Tooltip(
+                                      message: 'Escape',
+                                      child: TextButton(
+                                        onPressed: () => _sendKey('Escape'),
+                                        child: const Text('Esc'),
                                       ),
                                     ),
                                   ],
                                 ),
-                            ],
+                              ],
+                            ),
                           ),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                            children: [
-                              _buildBackspaceButton(),
-                              IconButton(
-                                tooltip: 'Enter',
-                                onPressed: () => _sendKey('Enter'),
-                                icon: const Icon(Icons.keyboard_return),
-                              ),
-                              Tooltip(
-                                message: 'Tab',
-                                child: TextButton(
-                                  onPressed: () => _sendKey('Tab'),
-                                  child: const Text('Tab'),
-                                ),
-                              ),
-                              Tooltip(
-                                message: 'Escape',
-                                child: TextButton(
-                                  onPressed: () => _sendKey('Escape'),
-                                  child: const Text('Esc'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
-            ),
+          ),
+        ],
+      ),
     );
   }
 }

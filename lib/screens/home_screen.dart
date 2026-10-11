@@ -1,3 +1,4 @@
+import '../widgets/start_browser_dialog.dart';
 import '../widgets/extra_folders_dialog.dart';
 import '../widgets/light_backdrop.dart';
 import '../widgets/offline_watermark.dart';
@@ -441,15 +442,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   Future<void> _openBrowserSession(ActiveBrowserSession browser) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => BrowserSessionScreen(
-          profile: browser.profile,
-          label: browser.label,
-          initialUrl: browser.url,
-          browserWidth: browser.width,
-          browserHeight: browser.height,
-          serverId: browser.serverId,
-          initialRuntimeRequired: browser.runtimeRequired,
-        ),
+        builder: (_) => BrowserSessionScreen.forBrowser(browser),
       ),
     );
   }
@@ -843,8 +836,8 @@ class _ChatScreenState extends State<_ChatScreen> {
     });
   }
 
-  /// Photos, files, or a secure value. A popup at the button on Windows, a
-  /// bottom sheet on phones.
+  /// Photos, files, a secure value, or a browser. A popup at the button on
+  /// Windows, a bottom sheet on phones.
   Future<void> _showAttachmentMenu(
     ChatProvider provider, {
     Rect? anchor,
@@ -852,24 +845,31 @@ class _ChatScreenState extends State<_ChatScreen> {
     final choice = await showAdaptiveActionSheet<String>(
       context: context,
       anchor: anchor,
-      sections: const [
+      sections: [
         AdaptiveSheetSection([
-          AdaptiveSheetAction(
+          const AdaptiveSheetAction(
             value: 'photos',
             label: 'Photos',
             icon: Icons.photo_library_outlined,
           ),
-          AdaptiveSheetAction(
+          const AdaptiveSheetAction(
             value: 'files',
             label: 'Files',
             icon: Icons.attach_file,
           ),
-          AdaptiveSheetAction(
+          const AdaptiveSheetAction(
             value: 'secure',
             label: 'Secure value',
             subtitle: 'Attach to your next message',
             icon: Icons.lock_outline,
           ),
+          if (provider.serverSupportsBrowserStart(null))
+            const AdaptiveSheetAction(
+              value: 'browser',
+              label: 'Browser',
+              subtitle: 'Open a browser on the computer',
+              icon: Icons.public,
+            ),
         ]),
       ],
     );
@@ -880,6 +880,10 @@ class _ChatScreenState extends State<_ChatScreen> {
         await provider.pickFiles();
       case 'secure':
         await _showSecureInputDialog(provider);
+      case 'browser':
+        if (!mounted) return;
+        final browser = await showStartBrowserDialog(context, provider);
+        if (browser != null && mounted) await _openBrowserSession(browser);
     }
   }
 

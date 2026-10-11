@@ -882,6 +882,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, int> _serverSessionMemoryVersions = {};
   // Servers whose browser sessions take streamed pointer and key events.
   final Set<String> _serversWithBrowserNativeInput = {};
+  final Set<String> _serversWithBrowserClose = {};
+  final Set<String> _serversWithBrowserStart = {};
+
+  /// Browsers the user asked to start, by server and profile, waiting for the
+  /// server to report them running or failed.
+  final Map<String, Completer<ActiveBrowserSession>> _browserStarts = {};
+  final List<Completer<List<BrowserProfile>>> _browserProfileRequests = [];
   final Set<String> _serversWithClaudeBackgroundTasks = {};
   final Set<String> _serversWithClaudeAdditionalDirectories = {};
   final Map<String, CodexGoal?> _codexGoals = {};
@@ -5423,6 +5430,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               } else {
                 _serversWithBrowserNativeInput.remove(serverId);
               }
+              if (browserSessions is Map && browserSessions['close'] == true) {
+                _serversWithBrowserClose.add(serverId);
+              } else {
+                _serversWithBrowserClose.remove(serverId);
+              }
+              if (browserSessions is Map && browserSessions['start'] == true) {
+                _serversWithBrowserStart.add(serverId);
+              } else {
+                _serversWithBrowserStart.remove(serverId);
+              }
               _captureCodexDriverSettings(msg, serverId);
               unawaited(
                 (() async {
@@ -6972,6 +6989,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'browser_session_state':
           _handleBrowserSessionState(msg, serverId);
           break;
+        case 'browser_profiles':
+          final profiles = [
+            for (final value in msg['profiles'] as List? ?? const [])
+              ?BrowserProfile.fromPayload(value),
+          ];
+          for (final request in _browserProfileRequests) {
+            if (!request.isCompleted) request.complete(profiles);
+          }
+          _browserProfileRequests.clear();
+          break;
         case 'browser_frame':
         case 'browser_clipboard':
         case 'browser_focus':
@@ -6980,6 +7007,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'browser_tabs':
         case 'browser_session_error':
         case 'browser_runtime_install_progress':
+          if (msg['type'] == 'browser_session_error') {
+            final start = _browserStarts.remove(
+              '$serverId\u0001${msg['profile']}',
+            );
+            if (start != null && !start.isCompleted) {
+              start.completeError(
+                StateError(
+                  msg['message'] as String? ?? 'The browser did not open.',
+                ),
+              );
+            }
+          }
           _browserFrameController.add({...msg, '_serverId': serverId});
           break;
         case 'tool_summary':
@@ -7319,6 +7358,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeBrowserSessions.remove(browser.key);
     } else {
       _activeBrowserSessions[browser.key] = browser;
+      final start = _browserStarts.remove('$serverId\u0001${browser.profile}');
+      if (start != null && !start.isCompleted) start.complete(browser);
     }
     notifyListeners();
   }
@@ -7443,6 +7484,83 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool serverSupportsBrowserNativeInput(String? serverId) {
     final id = serverId ?? activeSessionServerId;
     return id != null && _serversWithBrowserNativeInput.contains(id);
+  }
+
+  /// Whether [serverId] (or the active session's server) closes a browser
+  /// when the viewer asks.
+  bool serverSupportsBrowserClose(String? serverId) {
+    final id = serverId ?? activeSessionServerId;
+    return id != null && _serversWithBrowserClose.contains(id);
+  }
+
+  /// Whether [serverId] (or the active session's server) opens a browser
+  /// the user asks for, without the agent.
+  bool serverSupportsBrowserStart(String? serverId) {
+    final id = serverId ?? activeSessionServerId;
+    return id != null && _serversWithBrowserStart.contains(id);
+  }
+
+  /// The browser profiles saved on the active session's computer.
+  Future<List<BrowserProfile>> requestBrowserProfiles() {
+    final request = Completer<List<BrowserProfile>>();
+    if (!_sendToActiveSessionServer({'type': 'browser_profiles_request'})) {
+      return Future.error(StateError('The computer is not connected.'));
+    }
+    _browserProfileRequests.add(request);
+    return request.future.timeout(
+      const Duration(seconds: 15),
+      onTimeout: () {
+        _browserProfileRequests.remove(request);
+        throw TimeoutException('The computer did not list its browsers.');
+      },
+    );
+  }
+
+  /// Opens [url] in [profile] for the active session, without the agent.
+  /// Completes once the computer reports the browser running.
+  Future<ActiveBrowserSession> startBrowserSession({
+    required String profile,
+    required String url,
+  }) {
+    final serverId = activeSessionServerId;
+    final sessionId = _activeSessionId;
+    if (serverId == null || sessionId == null) {
+      return Future.error(StateError('Open a session first.'));
+    }
+    final key = '$serverId\u0001$profile';
+    final start = Completer<ActiveBrowserSession>();
+    _browserStarts[key]?.completeError(
+      StateError('Replaced by a newer start.'),
+    );
+    _browserStarts[key] = start;
+    final sent = _connMgr.sendToServer(serverId, {
+      'type': 'browser_session_start',
+      'sessionId': sessionId,
+      'profile': profile,
+      'url': url,
+    });
+    if (!sent) {
+      _browserStarts.remove(key);
+      return Future.error(StateError('The computer is not connected.'));
+    }
+    // Chrome can take a while to launch on a busy computer.
+    return start.future.timeout(
+      const Duration(seconds: 60),
+      onTimeout: () {
+        if (_browserStarts[key] == start) _browserStarts.remove(key);
+        throw TimeoutException('The browser did not open within a minute.');
+      },
+    );
+  }
+
+  /// Closes the profile's browser on its computer. Sign-ins stay saved. The
+  /// server answers with an inactive `browser_session_state` for every viewer.
+  bool closeBrowserSession({required String profile, String? serverId}) {
+    final message = {'type': 'browser_session_close', 'profile': profile};
+    if (serverId != null && serverId.isNotEmpty) {
+      return _connMgr.sendToServer(serverId, message);
+    }
+    return _sendToActiveSessionServer(message);
   }
 
   bool sendBrowserSessionInput({
@@ -8312,7 +8430,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       } else {
         toolMsg = existing;
         applyTranscriptPosition(toolMsg, msg);
-        toolMsg.toolStreaming = toolMsg.toolOutput == null;
+        // History settles unfinished calls with empty output, then a resume
+        // status marks the live one streaming. Its replay must not undo that.
+        toolMsg.toolStreaming =
+            toolMsg.toolOutput == null || toolMsg.toolStreaming;
         toolMsg.parentToolUseId ??= msg['parentToolUseId']?.toString();
         toolMsg.uuid ??= msg['uuid']?.toString();
       }
@@ -18545,13 +18666,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _socketDownloadTokens[id] = 'paused';
     _downloadingFiles.remove(id);
     _downloadErrors[id] = error;
-    if (reconnect) _resumeDownloadIds.add(id);
+    final preview = _fileBytesCompleters.remove(id);
+    // A preview's caller gets the error and can fetch again. Resuming it
+    // here would finish without a caller, saving it as a user download.
+    if (reconnect && preview == null) _resumeDownloadIds.add(id);
     final part = _downloadParts[id];
     if (part != null) {
       part.metadata['state'] = 'paused';
       unawaited(part.save().catchError((Object _) {}));
     }
-    final preview = _fileBytesCompleters.remove(id);
     if (preview != null) {
       if (!preview.isCompleted) preview.completeError(Exception(error));
     } else if (notify) {
