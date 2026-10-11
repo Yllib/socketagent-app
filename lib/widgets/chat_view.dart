@@ -61,6 +61,12 @@ class ChatView extends StatefulWidget {
   final int historyWindowRevision;
   final String? targetEntryId;
   final int? targetSessionSeq;
+
+  /// Scrolls to this message, like [targetEntryId], for find in chat.
+  final String? targetMessageId;
+
+  /// Tints the row showing this message: the current find match.
+  final String? highlightMessageId;
   final VoidCallback? onTranscriptTargetReached;
   final List<Map<String, dynamic>> todos;
   final void Function(String questionId, Map<String, String> answers) onAnswer;
@@ -117,6 +123,8 @@ class ChatView extends StatefulWidget {
     this.historyWindowRevision = 0,
     this.targetEntryId,
     this.targetSessionSeq,
+    this.targetMessageId,
+    this.highlightMessageId,
     this.onTranscriptTargetReached,
     required this.todos,
     required this.onAnswer,
@@ -399,6 +407,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
   bool get _hasTranscriptTarget =>
       (widget.targetEntryId?.isNotEmpty ?? false) ||
+      (widget.targetMessageId?.isNotEmpty ?? false) ||
       (widget.targetSessionSeq != null && widget.targetSessionSeq! > 0);
 
   @override
@@ -632,9 +641,14 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   String _transcriptTargetIdentity() =>
       '${widget.sessionStorageKey ?? ''}\u0001'
       '${widget.targetEntryId ?? ''}\u0001'
+      '${widget.targetMessageId ?? ''}\u0001'
       '${widget.targetSessionSeq ?? ''}';
 
   bool _matchesTranscriptTarget(ChatMessage message) {
+    final messageId = widget.targetMessageId;
+    if (messageId != null && messageId.isNotEmpty && message.id == messageId) {
+      return true;
+    }
     final entryId = widget.targetEntryId;
     if (entryId != null && entryId.isNotEmpty && message.entryId == entryId) {
       return true;
@@ -1515,6 +1529,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       child: KeyedSubtree(
         key: _messageRowKeys.putIfAbsent(rowKey, () => GlobalKey()),
         child: switch (row) {
+          CondensedVisibleRow(:final message)
+              when message.id == widget.highlightMessageId =>
+            ColoredBox(
+              color: Theme.of(context).colorScheme.primary.withAlpha(48),
+              child: _buildMessageContent(message, rowKey),
+            ),
           CondensedVisibleRow(:final message) => _buildMessageContent(
             message,
             rowKey,

@@ -143,4 +143,27 @@ void main() {
       }
     },
   );
+
+  test('composer files stay with their session across switches', () async {
+    final dir = await Directory.systemTemp.createTemp('composer-files-');
+    final file = await File('${dir.path}/shot.png').writeAsBytes([1, 2, 3]);
+    try {
+      await withSession((provider, _) async {
+        provider.attachFilePaths([file.path]);
+        provider.resumeSession(
+          'other-session',
+          serverId: 'multi-client-server',
+        );
+        expect(provider.pendingFileAttachments, isEmpty);
+        provider.resumeSession(
+          'shared-session',
+          serverId: 'multi-client-server',
+        );
+        expect(provider.pendingFileAttachments.single.path, file.path);
+        expect(provider.pendingFileAttachments.single.isImage, isTrue);
+      });
+    } finally {
+      await dir.delete(recursive: true);
+    }
+  });
 }

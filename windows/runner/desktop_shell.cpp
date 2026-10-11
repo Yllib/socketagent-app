@@ -12,6 +12,10 @@ constexpr UINT kTrayMessage = WM_APP + 41;
 constexpr UINT_PTR kSaveTimer = 41;
 constexpr wchar_t kPlacementKey[] = L"Software\\Rubano Enterprises\\SocketAgent\\Desktop";
 constexpr wchar_t kPlacementValue[] = L"WindowPlacementV1";
+constexpr wchar_t kRunKey[] = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+// The installer deletes this value on uninstall; keep the two names in sync.
+constexpr wchar_t kRunValue[] = L"SocketAgent Desktop";
+constexpr wchar_t kBackgroundArgument[] = L"--background";
 constexpr UINT kShowCommand = 1;
 constexpr UINT kHideCommand = 2;
 constexpr UINT kQuitCommand = 3;
@@ -35,6 +39,22 @@ DesktopShell::DesktopShell(HWND window, HWND content, flutter::BinaryMessenger* 
     const auto& method = call.method_name();
     if (method == "getState") {
       result->Success(State());
+      return;
+    }
+    if (method == "getStartWithWindows") {
+      result->Success(flutter::EncodableValue(StartsWithWindows()));
+      return;
+    }
+    if (method == "setStartWithWindows") {
+      const auto* enabled = call.arguments()
+          ? std::get_if<bool>(call.arguments()) : nullptr;
+      if (!enabled) {
+        result->Error("INVALID_ARGUMENT", "Expected a boolean");
+      } else if (SetStartWithWindows(*enabled)) {
+        result->Success();
+      } else {
+        result->Error("UNAVAILABLE", "Windows did not accept the startup entry");
+      }
       return;
     }
     if (method == "show") Show();
@@ -67,7 +87,45 @@ DesktopShell::~DesktopShell() {
   if (tray_ready_) Shell_NotifyIconW(NIM_DELETE, &tray_);
 }
 
+bool DesktopShell::StartsWithWindows() const {
+  return RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ,
+      nullptr, nullptr, nullptr) == ERROR_SUCCESS;
+}
+
+bool DesktopShell::SetStartWithWindows(bool enabled) {
+  HKEY key;
+  if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0,
+          KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS) {
+    return false;
+  }
+  LSTATUS status;
+  if (enabled) {
+    wchar_t path[MAX_PATH];
+    const DWORD length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+    if (length == 0 || length == MAX_PATH) {
+      RegCloseKey(key);
+      return false;
+    }
+    const std::wstring command =
+        L"\"" + std::wstring(path, length) + L"\" " + kBackgroundArgument;
+    status = RegSetValueExW(key, kRunValue, 0, REG_SZ,
+        reinterpret_cast<const BYTE*>(command.c_str()),
+        static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t)));
+  } else {
+    status = RegDeleteValueW(key, kRunValue);
+    if (status == ERROR_FILE_NOT_FOUND) status = ERROR_SUCCESS;
+  }
+  RegCloseKey(key);
+  return status == ERROR_SUCCESS;
+}
+
 void DesktopShell::ShowInitial() {
+  // A sign-in launch from the Run key starts in the tray. Without a usable
+  // tray icon the window shows anyway, so it is never unreachable.
+  if (!tray_ready_) AddTrayIcon();
+  const bool background =
+      wcsstr(GetCommandLineW(), kBackgroundArgument) != nullptr &&
+      tray_ready_ && HasReachableTrayIcon();
   WINDOWPLACEMENT placement{};
   DWORD size = sizeof(placement);
   bool restored = false;
@@ -79,18 +137,20 @@ void DesktopShell::ShowInitial() {
         static_cast<long long>(r.right) - r.left <= 100000 &&
         static_cast<long long>(r.bottom) - r.top <= 100000) {
       placement.flags = 0;
-      placement.showCmd = placement.showCmd == SW_SHOWMAXIMIZED
-          ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
+      maximized_ = placement.showCmd == SW_SHOWMAXIMIZED;
+      placement.showCmd = background ? SW_HIDE
+          : maximized_ ? SW_SHOWMAXIMIZED : SW_SHOWNORMAL;
       // Only SetWindowPlacement consumes these workspace coordinates. Windows
       // also moves a saved off-screen window back onto an available display.
       restored = SetWindowPlacement(window_, &placement) != FALSE;
     }
   }
-  if (!restored) ShowWindow(window_, SW_SHOWNORMAL);
-  maximized_ = IsZoomed(window_) != FALSE;
   ready_ = true;
-  if (!tray_ready_) AddTrayIcon();
-  SetForegroundWindow(window_);
+  if (!background) {
+    if (!restored) ShowWindow(window_, SW_SHOWNORMAL);
+    maximized_ = IsZoomed(window_) != FALSE;
+    SetForegroundWindow(window_);
+  }
   NotifyState();
 }
 

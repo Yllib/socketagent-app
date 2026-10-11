@@ -61,9 +61,16 @@ class CodeBlockBuilder extends MarkdownElementBuilder {
 /// text widgets with nothing between them, so a copied message came out as
 /// one run-on line.
 class MarkdownSelectionArea extends StatefulWidget {
-  const MarkdownSelectionArea({super.key, required this.child});
+  const MarkdownSelectionArea({
+    super.key,
+    required this.child,
+    this.menuItems = const [],
+  });
 
   final Widget child;
+
+  /// Added after Copy and Select all in the right-click menu.
+  final List<ContextMenuButtonItem> menuItems;
 
   @override
   State<MarkdownSelectionArea> createState() => _MarkdownSelectionAreaState();
@@ -81,6 +88,11 @@ class _MarkdownSelectionAreaState extends State<MarkdownSelectionArea> {
   @override
   Widget build(BuildContext context) {
     return SelectionArea(
+      contextMenuBuilder: (context, state) =>
+          AdaptiveTextSelectionToolbar.buttonItems(
+            anchors: state.contextMenuAnchors,
+            buttonItems: [...state.contextMenuButtonItems, ...widget.menuItems],
+          ),
       child: SelectionContainer(delegate: _delegate, child: widget.child),
     );
   }

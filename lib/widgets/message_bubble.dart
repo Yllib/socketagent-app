@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
@@ -197,10 +199,19 @@ class MessageBubble extends StatelessWidget {
                           SelectableText(
                             message.textContent,
                             style: TextStyle(color: textColor, fontSize: 15),
+                            contextMenuBuilder: (_, state) =>
+                                AdaptiveTextSelectionToolbar.buttonItems(
+                                  anchors: state.contextMenuAnchors,
+                                  buttonItems: [
+                                    ...state.contextMenuButtonItems,
+                                    ..._desktopMenuItems(context, hasActions),
+                                  ],
+                                ),
                           ),
                       ],
                     )
                   : MarkdownSelectionArea(
+                      menuItems: _desktopMenuItems(context, false),
                       // MarkdownBody's selectable mode creates one independent
                       // SelectableText per block. One selection area around
                       // ordinary rich text lets selection span paragraphs,
@@ -372,6 +383,57 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
+  Future<void> _copy(BuildContext context, String text, String notice) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(notice)));
+  }
+
+  /// Message actions in the Windows right-click menu, after the text
+  /// selection items. Phones reach the same actions by long press.
+  List<ContextMenuButtonItem> _desktopMenuItems(
+    BuildContext context,
+    bool hasRewind,
+  ) {
+    if (!Platform.isWindows || message.textContent.trim().isEmpty) {
+      return const [];
+    }
+    ContextMenuButtonItem item(String label, VoidCallback action) =>
+        ContextMenuButtonItem(
+          label: label,
+          onPressed: () {
+            ContextMenuController.removeAny();
+            action();
+          },
+        );
+    final isUser = message.sender == MessageSender.user;
+    return [
+      item(
+        'Copy message',
+        () => _copy(
+          context,
+          isUser
+              ? message.textContent
+              : markdownToPlainText(message.textContent),
+          'Message copied',
+        ),
+      ),
+      if (!isUser)
+        item(
+          'Copy as Markdown',
+          () => _copy(context, message.textContent, 'Markdown copied'),
+        ),
+      if (!isUser && onReadAloud != null)
+        item(
+          'Read aloud',
+          () => onReadAloud!(markdownToPlainText(message.textContent)),
+        ),
+      if (!isUser && onReport != null)
+        item('Report response', () => _showReportSheet(context)),
+      if (hasRewind) item('Rewind or branch', () => _showRewindSheet(context)),
+    ];
+  }
+
   void _showMessageActions(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
@@ -386,15 +448,13 @@ class MessageBubble extends StatelessWidget {
             leading: const Icon(Icons.content_copy_outlined),
             title: const Text('Copy as plain text'),
             subtitle: const Text('Copy without Markdown formatting'),
-            onTap: () async {
+            onTap: () {
               Navigator.pop(sheetContext);
-              await Clipboard.setData(
-                ClipboardData(text: markdownToPlainText(message.textContent)),
-              );
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(
+              _copy(
                 context,
-              ).showSnackBar(const SnackBar(content: Text('Message copied')));
+                markdownToPlainText(message.textContent),
+                'Message copied',
+              );
             },
           ),
           ListTile(
@@ -402,13 +462,9 @@ class MessageBubble extends StatelessWidget {
             leading: const Icon(Icons.code_outlined),
             title: const Text('Copy as Markdown'),
             subtitle: const Text('Copy the original formatting source'),
-            onTap: () async {
+            onTap: () {
               Navigator.pop(sheetContext);
-              await Clipboard.setData(ClipboardData(text: message.textContent));
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('Markdown copied')));
+              _copy(context, message.textContent, 'Markdown copied');
             },
           ),
           ListTile(

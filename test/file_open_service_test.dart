@@ -171,28 +171,36 @@ void main() {
       },
     );
 
-    // The case this was written for: tapping Open on a downloaded installer
-    // must not run it.
-    test('an executable is revealed, never launched', () async {
-      final file = write('socketagent_desktop_installer.exe');
+    // Explorer opened Documents when the path reached it with forward
+    // slashes or inside one quoted "/select,path" argument.
+    test('Show in folder selects the file in the file manager', () async {
+      final file = write('socketagent desktop installer.exe');
       expect(
-        (await serviceFor('windows').open(file.path)).outcome,
+        (await serviceFor('windows').reveal(file.path)).outcome,
         FileOpenOutcome.opened,
       );
       expect(ran!.executable, 'explorer');
-      expect(ran!.arguments, ['/select,${file.path}']);
+      expect(ran!.arguments, ['/select,', file.path.replaceAll('/', r'\')]);
 
-      await serviceFor('macos').open(file.path);
+      await serviceFor('macos').reveal(file.path);
       expect(ran!.arguments, ['-R', file.path]);
 
-      await serviceFor('linux').open(file.path);
+      await serviceFor('linux').reveal(file.path);
       expect(ran!.arguments, [dir.path]);
+    });
+
+    test('Open launches an executable once the card has confirmed', () async {
+      final file = write('installer.exe');
+      await serviceFor('windows').open(file.path);
+      expect(ran!.arguments, [file.path.replaceAll('/', r'\')]);
+      expect(isExecutablePath(file.path), isTrue);
+      expect(isExecutablePath('report.txt'), isFalse);
     });
 
     test('an ordinary file opens in its default app', () async {
       final file = write('report.txt');
       await serviceFor('windows').open(file.path);
-      expect(ran!.arguments, [file.path]);
+      expect(ran!.arguments, [file.path.replaceAll('/', r'\')]);
 
       await serviceFor('linux').open(file.path);
       expect(ran!.executable, 'xdg-open');

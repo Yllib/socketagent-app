@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart' show DateFormat;
 import '../config/app_palette.dart';
 
 /// Plan rate-limit windows for the Claude account, shown where the Codex
@@ -8,7 +9,8 @@ import '../config/app_palette.dart';
 class ClaudeAccountUsage extends StatelessWidget {
   const ClaudeAccountUsage({super.key, required this.usage});
 
-  /// The structured /usage response: `rate_limits`, `subscription_type`.
+  /// The structured /usage response: `rate_limits`, `subscription_type`,
+  /// and `fetched_at` when it is the server's saved last reading.
   final Map<String, dynamic> usage;
 
   @override
@@ -16,6 +18,9 @@ class ClaudeAccountUsage extends StatelessWidget {
     final theme = Theme.of(context);
     final plan = usage['subscription_type'] as String?;
     final windows = claudeUsageWindows(usage['rate_limits']);
+    final fetchedAt = DateTime.tryParse(
+      usage['fetched_at'] as String? ?? '',
+    )?.toLocal();
 
     if (usage['rate_limits_available'] != true || windows.isEmpty) {
       return Text(
@@ -34,6 +39,11 @@ class ClaudeAccountUsage extends StatelessWidget {
             Expanded(
               child: Text('Claude account', style: theme.textTheme.titleSmall),
             ),
+            if (fetchedAt != null)
+              Text(
+                'as of ${DateFormat.jm().format(fetchedAt)}  ',
+                style: theme.textTheme.labelSmall,
+              ),
             if (plan != null && plan.isNotEmpty)
               Text(plan, style: theme.textTheme.labelSmall),
           ],

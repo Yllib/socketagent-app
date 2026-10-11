@@ -32,6 +32,41 @@ void main() {
     expect(key.currentState!.followLatest, isFalse);
   });
 
+  testWidgets('find in chat seeks a message by id and tints its row', (
+    WidgetTester tester,
+  ) async {
+    final key = GlobalKey<_HistoryHarnessState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: _HistoryHarness(
+          key: key,
+          initiallyLoadingHistory: false,
+          messageCount: 100,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('History response 35'), findsNothing);
+    key.currentState!.findMessage(35);
+    await tester.pumpAndSettle();
+
+    expect(find.text('History response 35'), findsOneWidget);
+    expect(key.currentState!.targetReached, isTrue);
+    final tint = Theme.of(
+      tester.element(find.text('History response 35')),
+    ).colorScheme.primary.withAlpha(48);
+    expect(
+      find.ancestor(
+        of: find.text('History response 35'),
+        matching: find.byWidgetPredicate(
+          (widget) => widget is ColoredBox && widget.color == tint,
+        ),
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('notification focus pages backward until its row is available', (
     WidgetTester tester,
   ) async {
@@ -1086,6 +1121,8 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
   String sessionStorageKey = 'server:session-1';
   String? targetEntryId;
   int? targetSessionSeq;
+  String? targetMessageId;
+  String? highlightMessageId;
   bool targetReached = false;
   bool followLatest = true;
   bool isProcessing = false;
@@ -1126,6 +1163,13 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
       messages[index].sessionSeq = index + 1;
       targetEntryId = 'entry-$index';
       targetSessionSeq = index + 1;
+      targetReached = false;
+    });
+  }
+
+  void findMessage(int index) {
+    setState(() {
+      targetMessageId = highlightMessageId = 'message-$index';
       targetReached = false;
     });
   }
@@ -1445,12 +1489,15 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
                 historyWindowRevision: historyWindowRevision,
                 targetEntryId: targetEntryId,
                 targetSessionSeq: targetSessionSeq,
+                targetMessageId: targetMessageId,
+                highlightMessageId: highlightMessageId,
                 onTranscriptTargetReached: () {
                   targetReached = true;
                   if (mounted) {
                     setState(() {
                       targetEntryId = null;
                       targetSessionSeq = null;
+                      targetMessageId = null;
                     });
                   }
                 },

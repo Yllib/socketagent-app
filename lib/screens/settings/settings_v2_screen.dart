@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../services/desktop_shortcuts.dart';
+import '../../services/desktop_window_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -450,6 +452,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                           'Keep SocketAgent open to receive session alerts.',
                         ),
                       ),
+                    if (Platform.isWindows) const _StartWithWindowsTile(),
                     SwitchListTile(
                       secondary: const Icon(Icons.volume_up_outlined),
                       title: const Text('Sound when a run finishes'),
@@ -465,6 +468,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                   title: 'Chat & Display',
                   children: [
                     const _AppearanceTile(),
+                    if (Platform.isWindows) const _TextSizeTile(),
                     SwitchListTile(
                       secondary: const Icon(Icons.view_stream_outlined),
                       title: const Text('Condensed Tool Usage'),
@@ -4180,4 +4184,82 @@ String _mcpSubtitle(ChatProvider provider) {
   }).length;
   if (failed > 0) return '$connected connected, $failed failed';
   return '$connected of ${servers.length} connected';
+}
+
+/// Adds or removes the Run entry that opens the app in the tray at sign-in.
+class _StartWithWindowsTile extends StatefulWidget {
+  const _StartWithWindowsTile();
+
+  @override
+  State<_StartWithWindowsTile> createState() => _StartWithWindowsTileState();
+}
+
+class _StartWithWindowsTileState extends State<_StartWithWindowsTile> {
+  bool? _enabled;
+
+  @override
+  void initState() {
+    super.initState();
+    DesktopWindowService.instance.startsWithWindows().then((enabled) {
+      if (mounted) setState(() => _enabled = enabled);
+    });
+  }
+
+  Future<void> _set(bool enabled) async {
+    try {
+      await DesktopWindowService.instance.setStartWithWindows(enabled);
+      if (mounted) setState(() => _enabled = enabled);
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Could not change startup')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => SwitchListTile(
+    secondary: const Icon(Icons.power_settings_new),
+    title: const Text('Start with Windows'),
+    subtitle: const Text('Opens in the tray when you sign in'),
+    value: _enabled ?? false,
+    onChanged: _enabled == null ? null : _set,
+  );
+}
+
+/// Same steps as Ctrl+= and Ctrl+-.
+class _TextSizeTile extends StatelessWidget {
+  const _TextSizeTile();
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder<double>(
+    valueListenable: DesktopTextScale.value,
+    builder: (context, scale, _) => ListTile(
+      leading: const Icon(Icons.format_size),
+      title: const Text('Text size'),
+      subtitle: const Text('Ctrl+= and Ctrl+-, Ctrl+0 resets'),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            tooltip: 'Smaller',
+            icon: const Icon(Icons.remove),
+            onPressed: () => DesktopTextScale.step(-1),
+          ),
+          SizedBox(
+            width: 44,
+            child: Text(
+              '${(scale * 100).round()}%',
+              textAlign: TextAlign.center,
+            ),
+          ),
+          IconButton(
+            tooltip: 'Larger',
+            icon: const Icon(Icons.add),
+            onPressed: () => DesktopTextScale.step(1),
+          ),
+        ],
+      ),
+    ),
+  );
 }

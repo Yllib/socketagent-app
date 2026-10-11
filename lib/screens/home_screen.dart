@@ -6,15 +6,22 @@ import '../models/session_scheduled_tasks.dart';
 import 'scheduled_tasks_screen.dart';
 import '../widgets/outgoing_queue_notice.dart';
 import 'dart:io';
+import '../services/desktop_clipboard_attachments.dart';
+import '../models/chat_find.dart';
+import '../models/message.dart' show ChatMessage;
 import '../services/desktop_composer_keys.dart';
+import '../services/desktop_shortcuts.dart';
+import 'package:desktop_drop/desktop_drop.dart';
 import '../services/desktop_workspace_controller.dart';
 import '../widgets/desktop_split_view.dart';
+import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/adaptive_control_bar.dart';
 import '../widgets/claude_account_usage.dart';
 import '../widgets/context_window_breakdown.dart';
 import '../widgets/codex_account_usage.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -354,12 +361,23 @@ class _ChatScreenState extends State<_ChatScreen> {
   final GlobalKey<ChatViewState> _chatViewKey = GlobalKey();
   StreamSubscription? _speechSub;
   StreamSubscription<String>? _speechErrorSub;
+  StreamSubscription<DesktopShortcut>? _findShortcutSub;
   String? _trackedSessionId;
   bool _showCommandPicker = false;
   String _commandFilter = '';
   bool _pttPressed = false;
   bool _pttStartChecking = false;
   bool _followLatest = true;
+  bool _fileDragOver = false;
+  final _findController = TextEditingController();
+  late final _findFocus = FocusNode(onKeyEvent: _handleFindKey);
+  bool _findOpen = false;
+  List<ChatMessage> _findMatches = const [];
+  int _findIndex = 0;
+
+  /// The match ChatView still has to scroll to; cleared once it arrives so
+  /// the user can scroll away without the view pulling back.
+  String? _findTargetId;
   SessionPanelPreferences? _panelPreferences;
   final _pendingPanelHides = PendingPanelHides();
 
@@ -481,6 +499,13 @@ class _ChatScreenState extends State<_ChatScreen> {
     final provider = context.read<ChatProvider>();
     _lifecycleProvider = provider;
     if (Platform.isWindows) {
+      _findShortcutSub = context
+          .read<DesktopWorkspaceController>()
+          .shortcuts
+          .where((shortcut) => shortcut == DesktopShortcut.find)
+          .listen((_) {
+            if (mounted && widget.visible) openFind();
+          });
       _focusNode.onKeyEvent = (focus, event) => handleDesktopComposerKey(
         event,
         context: focus.context!,
@@ -489,6 +514,24 @@ class _ChatScreenState extends State<_ChatScreen> {
           provider,
           priority: provider.isProcessing ? 'next' : null,
         ),
+        onRecallPrompt: () => lastSentPrompt(provider.messages),
+        onEscape: () {
+          if (_findOpen) {
+            _closeFind();
+          } else if (_showCommandPicker) {
+            setState(() => _showCommandPicker = false);
+          } else if (provider.isProcessing) {
+            provider.abortQuery();
+          } else {
+            return false;
+          }
+          return true;
+        },
+        onPasteAttachments: () async {
+          final paths = await clipboardAttachmentPaths();
+          provider.attachFilePaths(paths);
+          return paths.isNotEmpty;
+        },
       );
     }
 
@@ -586,8 +629,11 @@ class _ChatScreenState extends State<_ChatScreen> {
     assistVoiceTrigger.removeListener(_onAssistVoiceTrigger);
     _speechSub?.cancel();
     _speechErrorSub?.cancel();
+    _findShortcutSub?.cancel();
     _textController.dispose();
     _focusNode.dispose();
+    _findController.dispose();
+    _findFocus.dispose();
     super.dispose();
   }
 
@@ -780,45 +826,44 @@ class _ChatScreenState extends State<_ChatScreen> {
     });
   }
 
-  void _showAttachmentMenu(ChatProvider provider) {
-    showModalBottomSheet<void>(
+  /// Photos, files, or a secure value. A popup at the button on Windows, a
+  /// bottom sheet on phones.
+  Future<void> _showAttachmentMenu(
+    ChatProvider provider, {
+    Rect? anchor,
+  }) async {
+    final choice = await showAdaptiveActionSheet<String>(
       context: context,
-      showDragHandle: true,
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.photo_library_outlined),
-                title: const Text('Photos'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  provider.pickFiles(imagesOnly: true);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.attach_file),
-                title: const Text('Files'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  provider.pickFiles();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.lock_outline),
-                title: const Text('Secure value'),
-                subtitle: const Text('Attach to your next message'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _showSecureInputDialog(provider);
-                },
-              ),
-            ],
+      anchor: anchor,
+      sections: const [
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: 'photos',
+            label: 'Photos',
+            icon: Icons.photo_library_outlined,
           ),
-        );
-      },
+          AdaptiveSheetAction(
+            value: 'files',
+            label: 'Files',
+            icon: Icons.attach_file,
+          ),
+          AdaptiveSheetAction(
+            value: 'secure',
+            label: 'Secure value',
+            subtitle: 'Attach to your next message',
+            icon: Icons.lock_outline,
+          ),
+        ]),
+      ],
     );
+    switch (choice) {
+      case 'photos':
+        await provider.pickFiles(imagesOnly: true);
+      case 'files':
+        await provider.pickFiles();
+      case 'secure':
+        await _showSecureInputDialog(provider);
+    }
   }
 
   Future<void> _showSecureInputDialog(ChatProvider provider) async {
@@ -1030,6 +1075,146 @@ class _ChatScreenState extends State<_ChatScreen> {
   Widget _conversationLayout(Widget child) =>
       Platform.isWindows ? DesktopConversationWidth(child: child) : child;
 
+  /// Opens the find bar, or selects its query when it is already open.
+  void openFind() {
+    setState(() => _findOpen = true);
+    _findController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _findController.text.length,
+    );
+    _findFocus.requestFocus();
+  }
+
+  void _closeFind() {
+    setState(() {
+      _findOpen = false;
+      _findMatches = const [];
+      _findTargetId = null;
+    });
+    _focusNode.requestFocus();
+  }
+
+  void _runFind(ChatProvider provider) {
+    setState(() {
+      _findMatches = findChatMatches(
+        provider.filteredMessages,
+        _findController.text,
+      );
+      _findIndex = 0;
+      _findTargetId = _findMatches.firstOrNull?.id;
+    });
+  }
+
+  /// Positive [delta] moves to older matches, up the chat.
+  void _stepFind(int delta) {
+    if (_findMatches.isEmpty) return;
+    setState(() {
+      _findIndex = (_findIndex + delta) % _findMatches.length;
+      _findTargetId = _findMatches[_findIndex].id;
+    });
+  }
+
+  KeyEventResult _handleFindKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      _closeFind();
+      return KeyEventResult.handled;
+    }
+    if (event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+      _stepFind(HardwareKeyboard.instance.isShiftPressed ? -1 : 1);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  Widget _buildFindBar(ChatProvider provider) {
+    final muted = Theme.of(context).colorScheme.onSurface.withAlpha(178);
+    final hasQuery = _findController.text.trim().isNotEmpty;
+    final hasMatches = _findMatches.isNotEmpty;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 2, 4, 2),
+      child: Row(
+        children: [
+          Icon(Icons.search, size: 18, color: muted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _findController,
+              focusNode: _findFocus,
+              decoration: const InputDecoration(
+                hintText: 'Find in chat',
+                border: InputBorder.none,
+                isDense: true,
+              ),
+              onChanged: (_) => _runFind(provider),
+            ),
+          ),
+          if (hasQuery)
+            Text(
+              hasMatches
+                  ? '${_findIndex + 1} of ${_findMatches.length}'
+                  : 'No matches',
+              style: TextStyle(fontSize: 12, color: muted),
+            ),
+          IconButton(
+            tooltip: 'Older match',
+            icon: const Icon(Icons.keyboard_arrow_up),
+            onPressed: hasMatches ? () => _stepFind(1) : null,
+          ),
+          IconButton(
+            tooltip: 'Newer match',
+            icon: const Icon(Icons.keyboard_arrow_down),
+            onPressed: hasMatches ? () => _stepFind(-1) : null,
+          ),
+          IconButton(
+            tooltip: 'Close',
+            icon: const Icon(Icons.close),
+            onPressed: _closeFind,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// On Windows, files dragged from Explorer onto the chat attach to the
+  /// composer. Folders are skipped; only files can be uploaded.
+  Widget _fileDropTarget(ChatProvider provider, Widget child) {
+    if (!Platform.isWindows) return child;
+    return DropTarget(
+      enable: widget.visible,
+      onDragEntered: (_) => setState(() => _fileDragOver = true),
+      onDragExited: (_) => setState(() => _fileDragOver = false),
+      onDragDone: (details) {
+        setState(() => _fileDragOver = false);
+        provider.attachFilePaths(
+          details.files
+              .map((file) => file.path)
+              .where((path) => FileSystemEntity.isFileSync(path)),
+        );
+        _focusNode.requestFocus();
+      },
+      child: Stack(
+        children: [
+          child,
+          if (_fileDragOver)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: Container(
+                  color: Colors.black.withAlpha(200),
+                  alignment: Alignment.center,
+                  child: const Text(
+                    'Drop to attach',
+                    style: TextStyle(fontSize: 18, color: Colors.white),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<ChatProvider>(
@@ -1043,6 +1228,9 @@ class _ChatScreenState extends State<_ChatScreen> {
           }
           _trackedSessionId = currentSessionId;
           _followLatest = true;
+          _findOpen = false;
+          _findMatches = const [];
+          _findTargetId = null;
           provider.setViewingSession(
             currentSessionId,
             chatScreenVisible: widget.visible,
@@ -1249,232 +1437,250 @@ class _ChatScreenState extends State<_ChatScreen> {
                 ),
               ),
             ),
-            body: LightBackdrop(
-              child: _conversationLayout(
-                Column(
-                  children: [
-                    if (provider.weeklyRateLimit != null)
-                      _buildRateLimitBanner(provider.weeklyRateLimit!),
-                    if (provider.fiveHourRateLimit != null)
-                      _buildRateLimitBanner(provider.fiveHourRateLimit!),
-                    if (provider.conversationRewindStatus != null)
-                      ConversationRewindNotice(
-                        status: provider.conversationRewindStatus!,
-                        onDismiss: provider.dismissConversationRewindNotice,
-                      ),
-                    if (provider.activeSessionId != null ||
-                        provider.isPendingNewSession)
-                      _buildControlChips(provider),
-                    LinkedScheduledTasksPanel(
-                      tasks: scheduledTasksForSession(
-                        provider.scheduledTasks,
-                        sessionId: provider.activeSessionId,
-                        serverId: provider.activeSessionServerId,
-                        pendingOnly: true,
-                      ),
-                      onOpen: () => _showSessionScheduledTasks(provider),
-                    ),
-                    if (_panelPreferences != null &&
-                        !_panelHidden(provider, SessionPanel.browser) &&
-                        provider.activeBrowserSessions.isNotEmpty)
-                      ActiveBrowserStrip(
-                        browsers: provider.activeBrowserSessions,
-                        hidingNotice: _panelHideNotice(
-                          provider,
-                          SessionPanel.browser,
-                          'browser',
+            body: _fileDropTarget(
+              provider,
+              LightBackdrop(
+                child: _conversationLayout(
+                  Column(
+                    children: [
+                      if (provider.weeklyRateLimit != null)
+                        _buildRateLimitBanner(provider.weeklyRateLimit!),
+                      if (provider.fiveHourRateLimit != null)
+                        _buildRateLimitBanner(provider.fiveHourRateLimit!),
+                      if (provider.conversationRewindStatus != null)
+                        ConversationRewindNotice(
+                          status: provider.conversationRewindStatus!,
+                          onDismiss: provider.dismissConversationRewindNotice,
                         ),
-                        onHide: () => _setPanelHidden(
-                          provider,
-                          SessionPanel.browser,
-                          true,
-                        ),
-                        onOpen: () => unawaited(
-                          _openActiveBrowser(provider.activeBrowserSessions),
-                        ),
-                      ),
-                    if (provider.ttsPlaybackState.visible)
-                      TtsPlaybackBar(
-                        state: provider.ttsPlaybackState,
-                        onPause: () => unawaited(provider.pauseReplaySpeak()),
-                        onResume: () => unawaited(provider.resumeReplaySpeak()),
-                        onRestart: () =>
-                            unawaited(provider.restartReplaySpeak()),
-                        onSeek: (fraction) =>
-                            unawaited(provider.seekReplaySpeak(fraction)),
-                        onClose: () => unawaited(provider.closeReplaySpeak()),
-                        speed:
-                            provider.ttsEngineMode == TtsEngineMode.elevenLabs
-                            ? provider.elevenLabsSpeechRate
-                            : null,
-                        onSpeedChanged:
-                            provider.ttsEngineMode == TtsEngineMode.elevenLabs
-                            ? (speed) => unawaited(
-                                provider.setElevenLabsSpeechRate(speed),
-                              )
-                            : null,
-                      ),
-                    OutgoingQueueNotice(provider: provider),
-                    if (provider.historyRefreshError != null)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(provider.historyRefreshError!),
-                            ),
-                            TextButton(
-                              onPressed: provider.retryHistoryRefresh,
-                              child: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (provider.isRefreshingHistory)
-                      const LinearProgressIndicator(minHeight: 2),
-                    Expanded(
-                      child: OfflineWatermark(
-                        offline: provider.activeSessionOffline,
-                        child: ChatView(
-                          key: _chatViewKey,
-                          messages: provider.filteredMessages,
+                      if (provider.activeSessionId != null ||
+                          provider.isPendingNewSession)
+                        _buildControlChips(provider),
+                      LinkedScheduledTasksPanel(
+                        tasks: scheduledTasksForSession(
+                          provider.scheduledTasks,
+                          sessionId: provider.activeSessionId,
                           serverId: provider.activeSessionServerId,
-                          sessionStorageKey:
-                              '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
-                          isProcessing: provider.isProcessing,
-                          isWaitingOnAgent:
-                              provider.activeSessionWaitingOnAgent,
-                          followLatest: _followLatest,
-                          condensedToolUsage: provider.condensedToolUsage,
-                          onFollowLatestChanged: (follow) {
-                            if (_followLatest != follow) {
-                              setState(() => _followLatest = follow);
-                            }
-                          },
-                          processingElapsed: provider.currentPromptElapsed,
-                          isCompacting: provider.isCompacting,
-                          // Offline with nothing cached shows the empty
-                          // transcript instead of a spinner that never ends.
-                          isLoadingHistory:
-                              provider.isLoadingHistory &&
-                              !provider.activeSessionOffline,
-                          isLoadingMore: provider.isLoadingMore,
-                          hasMoreHistory: provider.hasMoreHistory,
-                          historyWindowRevision: provider.historyWindowRevision,
-                          targetEntryId: notificationFocus?.entryId,
-                          targetSessionSeq: notificationFocus?.sessionSeq,
-                          onTranscriptTargetReached: notificationFocus == null
-                              ? null
-                              : () => provider.clearNotificationTranscriptFocus(
-                                  notificationFocus,
-                                ),
-                          todos: provider.todos,
-                          onAnswer: provider.answerQuestion,
-                          onSecureInputSubmit: provider.submitSecureInput,
-                          onSecureInputUseStored:
-                              provider.submitStoredSecureInput,
-                          onSecureInputCancel: provider.cancelSecureInput,
-                          availableSecrets: provider.secretInventory,
-                          onLoadMore: provider.loadMoreHistory,
-                          onStopTask: provider.stopTask,
-                          onBackgroundTask: provider.canBackgroundClaudeTasks
-                              ? provider.backgroundTask
+                          pendingOnly: true,
+                        ),
+                        onOpen: () => _showSessionScheduledTasks(provider),
+                      ),
+                      if (_panelPreferences != null &&
+                          !_panelHidden(provider, SessionPanel.browser) &&
+                          provider.activeBrowserSessions.isNotEmpty)
+                        ActiveBrowserStrip(
+                          browsers: provider.activeBrowserSessions,
+                          hidingNotice: _panelHideNotice(
+                            provider,
+                            SessionPanel.browser,
+                            'browser',
+                          ),
+                          onHide: () => _setPanelHidden(
+                            provider,
+                            SessionPanel.browser,
+                            true,
+                          ),
+                          onOpen: () => unawaited(
+                            _openActiveBrowser(provider.activeBrowserSessions),
+                          ),
+                        ),
+                      if (provider.ttsPlaybackState.visible)
+                        TtsPlaybackBar(
+                          state: provider.ttsPlaybackState,
+                          onPause: () => unawaited(provider.pauseReplaySpeak()),
+                          onResume: () =>
+                              unawaited(provider.resumeReplaySpeak()),
+                          onRestart: () =>
+                              unawaited(provider.restartReplaySpeak()),
+                          onSeek: (fraction) =>
+                              unawaited(provider.seekReplaySpeak(fraction)),
+                          onClose: () => unawaited(provider.closeReplaySpeak()),
+                          speed:
+                              provider.ttsEngineMode == TtsEngineMode.elevenLabs
+                              ? provider.elevenLabsSpeechRate
                               : null,
-                          onDismissTodos: () => _setPanelHidden(
+                          onSpeedChanged:
+                              provider.ttsEngineMode == TtsEngineMode.elevenLabs
+                              ? (speed) => unawaited(
+                                  provider.setElevenLabsSpeechRate(speed),
+                                )
+                              : null,
+                        ),
+                      OutgoingQueueNotice(provider: provider),
+                      if (provider.historyRefreshError != null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(provider.historyRefreshError!),
+                              ),
+                              TextButton(
+                                onPressed: provider.retryHistoryRefresh,
+                                child: const Text('Retry'),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (provider.isRefreshingHistory)
+                        const LinearProgressIndicator(minHeight: 2),
+                      if (_findOpen) _buildFindBar(provider),
+                      Expanded(
+                        child: OfflineWatermark(
+                          offline: provider.activeSessionOffline,
+                          child: ChatView(
+                            key: _chatViewKey,
+                            messages: provider.filteredMessages,
+                            serverId: provider.activeSessionServerId,
+                            sessionStorageKey:
+                                '${provider.activeServerId ?? ''}:${provider.activeSessionId ?? ''}',
+                            isProcessing: provider.isProcessing,
+                            isWaitingOnAgent:
+                                provider.activeSessionWaitingOnAgent,
+                            followLatest: _followLatest,
+                            condensedToolUsage: provider.condensedToolUsage,
+                            onFollowLatestChanged: (follow) {
+                              if (_followLatest != follow) {
+                                setState(() => _followLatest = follow);
+                              }
+                            },
+                            processingElapsed: provider.currentPromptElapsed,
+                            isCompacting: provider.isCompacting,
+                            // Offline with nothing cached shows the empty
+                            // transcript instead of a spinner that never ends.
+                            isLoadingHistory:
+                                provider.isLoadingHistory &&
+                                !provider.activeSessionOffline,
+                            isLoadingMore: provider.isLoadingMore,
+                            hasMoreHistory: provider.hasMoreHistory,
+                            historyWindowRevision:
+                                provider.historyWindowRevision,
+                            targetEntryId: _findTargetId == null
+                                ? notificationFocus?.entryId
+                                : null,
+                            targetSessionSeq: _findTargetId == null
+                                ? notificationFocus?.sessionSeq
+                                : null,
+                            targetMessageId: _findTargetId,
+                            highlightMessageId: _findOpen
+                                ? _findMatches.elementAtOrNull(_findIndex)?.id
+                                : null,
+                            onTranscriptTargetReached: _findTargetId != null
+                                ? () => setState(() => _findTargetId = null)
+                                : notificationFocus == null
+                                ? null
+                                : () =>
+                                      provider.clearNotificationTranscriptFocus(
+                                        notificationFocus,
+                                      ),
+                            todos: provider.todos,
+                            onAnswer: provider.answerQuestion,
+                            onSecureInputSubmit: provider.submitSecureInput,
+                            onSecureInputUseStored:
+                                provider.submitStoredSecureInput,
+                            onSecureInputCancel: provider.cancelSecureInput,
+                            availableSecrets: provider.secretInventory,
+                            onLoadMore: provider.loadMoreHistory,
+                            onStopTask: provider.stopTask,
+                            onBackgroundTask: provider.canBackgroundClaudeTasks
+                                ? provider.backgroundTask
+                                : null,
+                            onDismissTodos: () => _setPanelHidden(
+                              provider,
+                              SessionPanel.tasks,
+                              true,
+                            ),
+                            showTodos:
+                                _panelPreferences != null &&
+                                !_panelHidden(provider, SessionPanel.tasks),
+                            tasksHidingNotice: _panelHideNotice(
+                              provider,
+                              SessionPanel.tasks,
+                              'tasks',
+                            ),
+                            codexPlanHidingNotice: _panelHideNotice(
+                              provider,
+                              SessionPanel.codexPlan,
+                              'plan',
+                            ),
+                            showCodexPlan:
+                                _panelPreferences != null &&
+                                !_panelHidden(provider, SessionPanel.codexPlan),
+                            onDismissCodexPlan: () => _setPanelHidden(
+                              provider,
+                              SessionPanel.codexPlan,
+                              true,
+                            ),
+                            onDismissTodo: provider.dismissTodo,
+                            onRewindConversation: provider.rewindConversation,
+                            codexRewind:
+                                provider.activeSessionBackend == 'codex',
+                            onBranch: provider.activeSessionBackend == 'codex'
+                                ? null
+                                : provider.branchFromMessage,
+                            onRetractQueuedMessage: (messageId) {
+                              final text = provider.retractQueuedMessage(
+                                messageId,
+                              );
+                              if (text == null) return;
+                              _textController.text = text;
+                              _textController.selection =
+                                  TextSelection.fromPosition(
+                                    TextPosition(offset: text.length),
+                                  );
+                              provider.saveDraft(text.trim());
+                              _focusNode.requestFocus();
+                            },
+                            onReadAloud: provider.replaySpeak,
+                            onReportAiResponse: provider.reportAiResponse,
+                            rawMode: provider.rawMode,
+                            rawItems: provider.rawItems,
+                            subagentTasks: provider.subagentTasks,
+                            workflowTasks: provider.workflowTasks,
+                            allMessages: provider.messages,
+                          ),
+                        ),
+                      ),
+                      if (provider.isRetrying) _buildRetryingBanner(),
+                      if (provider.backendAuthRecoveryMessage != null)
+                        _buildBackendRecoveryBanner(
+                          provider.backendAuthRecoveryMessage!,
+                        ),
+                      if (provider.activeHookName != null)
+                        _buildHookBanner(provider.activeHookName!),
+                      if (provider.activePaneTasks.isNotEmpty &&
+                          _panelPreferences != null &&
+                          !_panelHidden(provider, SessionPanel.activity))
+                        ActiveTasksPane(
+                          key: ValueKey((
+                            'activity',
+                            provider.activeSessionServerId,
+                            provider.activeSessionId,
+                          )),
+                          sessionId: provider.activeSessionId,
+                          onHide: () => _setPanelHidden(
                             provider,
-                            SessionPanel.tasks,
+                            SessionPanel.activity,
                             true,
                           ),
-                          showTodos:
-                              _panelPreferences != null &&
-                              !_panelHidden(provider, SessionPanel.tasks),
-                          tasksHidingNotice: _panelHideNotice(
+                          hidingNotice: _panelHideNotice(
                             provider,
-                            SessionPanel.tasks,
-                            'tasks',
+                            SessionPanel.activity,
+                            'activity',
                           ),
-                          codexPlanHidingNotice: _panelHideNotice(
-                            provider,
-                            SessionPanel.codexPlan,
-                            'plan',
-                          ),
-                          showCodexPlan:
-                              _panelPreferences != null &&
-                              !_panelHidden(provider, SessionPanel.codexPlan),
-                          onDismissCodexPlan: () => _setPanelHidden(
-                            provider,
-                            SessionPanel.codexPlan,
-                            true,
-                          ),
-                          onDismissTodo: provider.dismissTodo,
-                          onRewindConversation: provider.rewindConversation,
-                          codexRewind: provider.activeSessionBackend == 'codex',
-                          onBranch: provider.activeSessionBackend == 'codex'
-                              ? null
-                              : provider.branchFromMessage,
-                          onRetractQueuedMessage: (messageId) {
-                            final text = provider.retractQueuedMessage(
-                              messageId,
-                            );
-                            if (text == null) return;
-                            _textController.text = text;
-                            _textController.selection =
-                                TextSelection.fromPosition(
-                                  TextPosition(offset: text.length),
-                                );
-                            provider.saveDraft(text.trim());
-                            _focusNode.requestFocus();
-                          },
-                          onReadAloud: provider.replaySpeak,
-                          onReportAiResponse: provider.reportAiResponse,
-                          rawMode: provider.rawMode,
-                          rawItems: provider.rawItems,
+                          backgroundTasks: provider.backgroundTasks,
                           subagentTasks: provider.subagentTasks,
                           workflowTasks: provider.workflowTasks,
-                          allMessages: provider.messages,
+                          messages: provider.messages,
+                          sourceServerId: provider.activeSessionServerId,
+                          onStopTask: provider.stopTask,
+                          onScrollToTask: (toolUseId) {
+                            _chatViewKey.currentState?.scrollToTask(toolUseId);
+                          },
+                          onReadAloud: provider.replaySpeak,
                         ),
-                      ),
-                    ),
-                    if (provider.isRetrying) _buildRetryingBanner(),
-                    if (provider.backendAuthRecoveryMessage != null)
-                      _buildBackendRecoveryBanner(
-                        provider.backendAuthRecoveryMessage!,
-                      ),
-                    if (provider.activeHookName != null)
-                      _buildHookBanner(provider.activeHookName!),
-                    if (provider.activePaneTasks.isNotEmpty &&
-                        _panelPreferences != null &&
-                        !_panelHidden(provider, SessionPanel.activity))
-                      ActiveTasksPane(
-                        key: ValueKey((
-                          'activity',
-                          provider.activeSessionServerId,
-                          provider.activeSessionId,
-                        )),
-                        sessionId: provider.activeSessionId,
-                        onHide: () => _setPanelHidden(
-                          provider,
-                          SessionPanel.activity,
-                          true,
-                        ),
-                        hidingNotice: _panelHideNotice(
-                          provider,
-                          SessionPanel.activity,
-                          'activity',
-                        ),
-                        backgroundTasks: provider.backgroundTasks,
-                        subagentTasks: provider.subagentTasks,
-                        workflowTasks: provider.workflowTasks,
-                        messages: provider.messages,
-                        sourceServerId: provider.activeSessionServerId,
-                        onStopTask: provider.stopTask,
-                        onScrollToTask: (toolUseId) {
-                          _chatViewKey.currentState?.scrollToTask(toolUseId);
-                        },
-                        onReadAloud: provider.replaySpeak,
-                      ),
-                    _buildInputBar(provider),
-                  ],
+                      _buildInputBar(provider),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -3848,17 +4054,29 @@ class _ChatScreenState extends State<_ChatScreen> {
               SizedBox(
                 height: 48,
                 child: Center(
-                  child: IconButton(
-                    icon: Icon(
-                      Icons.attach_file,
-                      color: theme.colorScheme.onSurface.withAlpha(178),
-                      size: 22,
-                    ),
-                    onPressed: () => _showAttachmentMenu(provider),
-                    padding: const EdgeInsets.all(8),
-                    constraints: const BoxConstraints(
-                      minWidth: 40,
-                      minHeight: 40,
+                  child: Builder(
+                    builder: (buttonContext) => IconButton(
+                      tooltip: 'Attach',
+                      icon: Icon(
+                        Icons.attach_file,
+                        color: theme.colorScheme.onSurface.withAlpha(178),
+                        size: 22,
+                      ),
+                      onPressed: () {
+                        final box =
+                            buttonContext.findRenderObject()! as RenderBox;
+                        _showAttachmentMenu(
+                          provider,
+                          anchor: Platform.isWindows
+                              ? box.localToGlobal(Offset.zero) & box.size
+                              : null,
+                        );
+                      },
+                      padding: const EdgeInsets.all(8),
+                      constraints: const BoxConstraints(
+                        minWidth: 40,
+                        minHeight: 40,
+                      ),
                     ),
                   ),
                 ),

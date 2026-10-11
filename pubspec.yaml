@@ -61,6 +61,8 @@ dependencies:
   device_info_plus: ^13.3.0
   flutter_webrtc: ^1.6.2+hotfix.4
   sodium: ^4.1.1+2
+  desktop_drop: ^0.8.4
+  pasteboard: ^0.5.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

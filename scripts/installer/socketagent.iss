@@ -53,6 +53,7 @@ Root: HKCU; Subkey: "Software\Classes\socketagent"; ValueType: string; ValueName
 Root: HKCU; Subkey: "Software\Classes\socketagent"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
 Root: HKCU; Subkey: "Software\Classes\socketagent\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\socketagent.exe,0"
 Root: HKCU; Subkey: "Software\Classes\socketagent\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\socketagent.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: none; ValueName: "SocketAgent Desktop"; Flags: uninsdeletevalue dontcreatekey
 
 [Run]
 Filename: "{app}\socketagent.exe"; Description: "Open SocketAgent Desktop"; Flags: nowait postinstall skipifsilent; Check: not IsAppUpdate

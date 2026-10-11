@@ -11,6 +11,16 @@ import '../models/notification_navigation.dart';
 import '../config/app_distribution.dart';
 import 'desktop_window_service.dart';
 
+/// Small header label for notifications about a scheduled task's run. Push
+/// payloads for those sessions carry a `scheduledTaskId` query parameter.
+String? scheduledRunLabel(String? payload) {
+  final query = payload?.split('?').skip(1).firstOrNull;
+  if (query == null) return null;
+  return Uri.splitQueryString(query).containsKey('scheduledTaskId')
+      ? 'Scheduled'
+      : null;
+}
+
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
   factory NotificationService() => _instance;
@@ -130,7 +140,9 @@ class NotificationService {
       ),
     );
 
-    final launchDetails = Platform.isWindows ? null : await _plugin.getNotificationAppLaunchDetails();
+    final launchDetails = Platform.isWindows
+        ? null
+        : await _plugin.getNotificationAppLaunchDetails();
     if (launchDetails?.didNotificationLaunchApp == true) {
       _launchPayload = payloadForResponse(launchDetails?.notificationResponse);
     }
@@ -311,10 +323,14 @@ class NotificationService {
           enableVibration: true,
           channelShowBadge: false,
           autoCancel: autoCancel,
+          subText: scheduledRunLabel(payload),
           styleInformation: BigTextStyleInformation(body, contentTitle: title),
           actions: actions,
         );
-        final details = NotificationDetails(android: androidDetails, windows: const WindowsNotificationDetails());
+        final details = NotificationDetails(
+          android: androidDetails,
+          windows: const WindowsNotificationDetails(),
+        );
 
         await _plugin.show(
           id: id,
@@ -439,6 +455,7 @@ class NotificationService {
         autoCancel: true,
         onlyAlertOnce: !alert,
         silent: !alert,
+        subText: scheduledRunLabel(payload),
         styleInformation: BigTextStyleInformation(body, contentTitle: title),
       ),
     );
@@ -644,10 +661,14 @@ class NotificationService {
           showWhen: startedAt != null,
           when: startedAt?.millisecondsSinceEpoch,
           usesChronometer: startedAt != null,
+          subText: scheduledRunLabel(payload),
           styleInformation: BigTextStyleInformation(body, contentTitle: title),
           actions: actions,
         );
-        final details = NotificationDetails(android: androidDetails, windows: const WindowsNotificationDetails());
+        final details = NotificationDetails(
+          android: androidDetails,
+          windows: const WindowsNotificationDetails(),
+        );
         await _plugin.show(
           id: id,
           title: title,
@@ -712,7 +733,10 @@ class NotificationService {
         enableVibration: true,
         channelShowBadge: false,
       );
-      const details = NotificationDetails(android: androidDetails, windows: WindowsNotificationDetails());
+      const details = NotificationDetails(
+        android: androidDetails,
+        windows: WindowsNotificationDetails(),
+      );
 
       final scheduledTz = tz.TZDateTime.from(scheduledTime, tz.local);
 

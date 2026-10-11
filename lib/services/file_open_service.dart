@@ -29,22 +29,33 @@ typedef PlatformFileOpener =
 typedef DesktopCommandRunner =
     Future<bool> Function(String executable, List<String> arguments);
 
-/// Extensions the desktop opens by revealing rather than by launching.
-///
-/// Tapping Open must never run a binary that just came off the network. The
-/// installer this was written for is exactly that case: revealing it costs one
-/// double click and leaves the decision to run it with the user.
+/// Extensions that run code when opened. The file card asks before opening
+/// one, since it came off the network.
 const _executableExtensions = {
-  '.exe', '.msi', '.bat', '.cmd', '.com', '.scr', '.ps1',
-  '.sh', '.command', '.app', '.appimage', '.run', '.jar',
+  '.exe',
+  '.msi',
+  '.bat',
+  '.cmd',
+  '.com',
+  '.scr',
+  '.ps1',
+  '.sh',
+  '.command',
+  '.app',
+  '.appimage',
+  '.run',
+  '.jar',
 };
 
-bool _isExecutablePath(String path) {
+bool isExecutablePath(String path) {
   final lower = path.toLowerCase();
   return _executableExtensions.any(lower.endsWith);
 }
 
-Future<bool> _runDesktopCommand(String executable, List<String> arguments) async {
+Future<bool> _runDesktopCommand(
+  String executable,
+  List<String> arguments,
+) async {
   try {
     final result = await Process.run(executable, arguments);
     return result.exitCode == 0;
@@ -72,7 +83,8 @@ class FileOpenService {
            supportsApkInstalls ?? AppBuild.supportsApkInstalls,
        // Gated on Android so a test naming a mobile platform is not treated as
        // the Linux host it runs on.
-       _desktopPlatform = desktopPlatform ??
+       _desktopPlatform =
+           desktopPlatform ??
            ((isAndroid ?? Platform.isAndroid) ? '' : _currentDesktopPlatform()),
        _desktopCommandRunner = desktopCommandRunner ?? _runDesktopCommand;
 
@@ -131,16 +143,26 @@ class FileOpenService {
   /// open_filex registers no desktop implementation, so every desktop open
   /// went through a plugin that is not there. Shelling out to the platform's
   /// own file manager is what it would have done anyway.
-  Future<FileOpenResult> _openOnDesktop(String path) async {
+  Future<FileOpenResult> _openOnDesktop(
+    String path, {
+    required bool reveal,
+  }) async {
     if (!File(path).existsSync() && !Directory(path).existsSync()) {
       return const FileOpenResult.failed(
         'The downloaded file is no longer available.',
       );
     }
 
-    final reveal = _isExecutablePath(path);
+    // Explorer reads neither forward slashes nor a quoted "/select,path",
+    // which is how a path with a space would arrive as one argument. Either
+    // made it open Documents instead. The path goes after "/select," as its
+    // own argument.
+    final windowsPath = path.replaceAll('/', r'\');
     final (executable, arguments) = switch (_desktopPlatform) {
-      'windows' => ('explorer', reveal ? ['/select,$path'] : [path]),
+      'windows' => (
+        'explorer',
+        reveal ? ['/select,', windowsPath] : [windowsPath],
+      ),
       'macos' => ('open', reveal ? ['-R', path] : [path]),
       _ => ('xdg-open', [reveal ? File(path).parent.path : path]),
     };
@@ -148,7 +170,9 @@ class FileOpenService {
     // Windows explorer reports a nonzero exit code even when it succeeds, so
     // its result is not worth believing either way.
     final ok = await _desktopCommandRunner(executable, arguments);
-    if (ok || _desktopPlatform == 'windows') return const FileOpenResult.opened();
+    if (ok || _desktopPlatform == 'windows') {
+      return const FileOpenResult.opened();
+    }
     return FileOpenResult.failed(
       reveal
           ? 'Could not show the file. It is in $path'
@@ -156,11 +180,15 @@ class FileOpenService {
     );
   }
 
+  /// Shows the file selected in the desktop file manager.
+  Future<FileOpenResult> reveal(String path) =>
+      _openOnDesktop(path, reveal: true);
+
   Future<FileOpenResult> open(String path) async {
     // An injected opener wins, so a caller supplying one still controls where
     // the file goes. Nothing injects one on a real desktop.
     if (_desktopPlatform.isNotEmpty && _platformFileOpener == null) {
-      return await _openOnDesktop(path);
+      return await _openOnDesktop(path, reveal: false);
     }
 
     final isApk = path.toLowerCase().endsWith('.apk');

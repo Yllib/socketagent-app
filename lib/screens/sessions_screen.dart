@@ -3,6 +3,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
+import '../services/desktop_shortcuts.dart';
+import '../services/desktop_workspace_controller.dart';
+import '../widgets/session_switcher_dialog.dart';
 import '../services/session_teleport.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
@@ -72,7 +75,7 @@ class _SessionsTabState extends State<SessionsTab> {
   bool _searchOpen = false;
   String _searchQuery = '';
   final TextEditingController _searchController = TextEditingController();
-  final Set<String> _collapsedDelegatedParents = {};
+  final Set<String> _expandedDelegatedParents = {};
   final Set<String> _selectedSessionKeys = {};
   bool _selectionMode = false;
   Timer? _globalSearchDebounce;
@@ -80,10 +83,17 @@ class _SessionsTabState extends State<SessionsTab> {
   bool _globalSearchLoading = false;
   List<Map<String, dynamic>> _globalSearchResults = const [];
   bool _filtersChanged = false;
+  StreamSubscription<DesktopShortcut>? _shortcutSub;
 
   @override
   void initState() {
     super.initState();
+    if (widget.sidebar) {
+      _shortcutSub = context
+          .read<DesktopWorkspaceController>()
+          .shortcuts
+          .listen(_handleShortcut);
+    }
     SessionListFilter.load().then((saved) {
       // A filter picked while this loaded wins over the saved one.
       if (!mounted || _filtersChanged) return;
@@ -107,6 +117,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
   @override
   void dispose() {
+    _shortcutSub?.cancel();
     _globalSearchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
@@ -1857,30 +1868,57 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Widget _buildSectionedSessionList(
-    BuildContext context,
+  void _handleShortcut(DesktopShortcut shortcut) {
+    if (!mounted) return;
+    final provider = context.read<ChatProvider>();
+    switch (shortcut) {
+      case DesktopShortcut.newSession:
+        _showSessionActionMenu(context, provider);
+      case DesktopShortcut.switchSession:
+        unawaited(_switchSession(provider));
+      case DesktopShortcut.nextSession:
+        _openAdjacentSession(provider, 1);
+      case DesktopShortcut.previousSession:
+        _openAdjacentSession(provider, -1);
+      default:
+    }
+  }
+
+  List<Session> _sidebarOrder(ChatProvider provider) => [
+    for (final section in _sessionSections(provider))
+      for (final node in section.roots) node.session,
+  ];
+
+  Future<void> _switchSession(ChatProvider provider) async {
+    final session = await showSessionSwitcher(context, _sidebarOrder(provider));
+    if (session == null || !mounted) return;
+    await _openSession(
+      context,
+      sessionId: session.id,
+      serverId: session.serverId,
+    );
+  }
+
+  void _openAdjacentSession(ChatProvider provider, int delta) {
+    final order = _sidebarOrder(provider);
+    if (order.isEmpty) return;
+    final current = order.indexWhere(
+      (session) =>
+          session.id == provider.activeSessionId &&
+          session.serverId == provider.activeSessionServerId,
+    );
+    final next = order[(current + delta) % order.length];
+    _openSession(context, sessionId: next.id, serverId: next.serverId);
+  }
+
+  /// The sidebar's sections in display order. Ctrl+Tab follows this order.
+  List<({String title, List<SessionTreeNode> roots})> _sessionSections(
     ChatProvider provider,
   ) {
     final forest = filterSessionForest(
       buildSessionForest(provider.sessions),
       (session) => _matchesSessionFilters(provider, session),
     );
-    if (forest.isEmpty) {
-      return Center(
-        child: Text(
-          provider.sessions.isEmpty
-              ? (provider.isLoadingSessionCache
-                    ? 'Loading sessions…'
-                    : 'No sessions yet')
-              : 'No matching sessions',
-          style: TextStyle(
-            fontSize: 14,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-        ),
-      );
-    }
-
     final seen = <String>{};
     List<SessionTreeNode> take(bool Function(SessionTreeNode node) predicate) {
       final result = <SessionTreeNode>[];
@@ -1904,6 +1942,33 @@ class _SessionsTabState extends State<SessionsTab> {
         (left, right) =>
             sessionTreeLastActive(right).compareTo(sessionTreeLastActive(left)),
       );
+    return [
+      (title: 'Working', roots: working),
+      (title: 'Pinned', roots: pinned),
+      (title: 'Recent', roots: recent),
+    ];
+  }
+
+  Widget _buildSectionedSessionList(
+    BuildContext context,
+    ChatProvider provider,
+  ) {
+    final sections = _sessionSections(provider);
+    if (sections.every((section) => section.roots.isEmpty)) {
+      return Center(
+        child: Text(
+          provider.sessions.isEmpty
+              ? (provider.isLoadingSessionCache
+                    ? 'Loading sessions…'
+                    : 'No sessions yet')
+              : 'No matching sessions',
+          style: TextStyle(
+            fontSize: 14,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+        ),
+      );
+    }
 
     final children = <({Key key, Widget Function() build})>[];
     void addSection(String title, List<SessionTreeNode> sectionRoots) {
@@ -1935,9 +2000,9 @@ class _SessionsTabState extends State<SessionsTab> {
       }
     }
 
-    addSection('Working', working);
-    addSection('Pinned', pinned);
-    addSection('Recent', recent);
+    for (final section in sections) {
+      addSection(section.title, section.roots);
+    }
 
     final indices = {
       for (var i = 0; i < children.length; i++) children[i].key: i,
@@ -3548,8 +3613,15 @@ class _SessionsTabState extends State<SessionsTab> {
     );
     if (node.children.isEmpty) return tile;
 
+    // Groups start collapsed and show only working agents (with the agents
+    // above them). Searching shows every match.
     final groupKey = _sessionKey(node.session);
-    final collapsed = _collapsedDelegatedParents.contains(groupKey);
+    final expanded =
+        _expandedDelegatedParents.contains(groupKey) ||
+        _searchQuery.trim().isNotEmpty;
+    final visibleChildren = expanded
+        ? node.children
+        : filterSessionForest(node.children, (session) => session.running);
     final descendantCount = node.sessionCount - 1;
     final runningCount = node.sessions
         .skip(1)
@@ -3565,10 +3637,8 @@ class _SessionsTabState extends State<SessionsTab> {
           key: Key('delegated-group-$groupKey'),
           onTap: () {
             setState(() {
-              if (collapsed) {
-                _collapsedDelegatedParents.remove(groupKey);
-              } else {
-                _collapsedDelegatedParents.add(groupKey);
+              if (!_expandedDelegatedParents.remove(groupKey)) {
+                _expandedDelegatedParents.add(groupKey);
               }
             });
           },
@@ -3597,7 +3667,7 @@ class _SessionsTabState extends State<SessionsTab> {
                   ),
                 ),
                 Icon(
-                  collapsed ? Icons.expand_more : Icons.expand_less,
+                  expanded ? Icons.expand_less : Icons.expand_more,
                   size: 19,
                   color: theme.colorScheme.onSurface.withAlpha(130),
                 ),
@@ -3605,7 +3675,7 @@ class _SessionsTabState extends State<SessionsTab> {
             ),
           ),
         ),
-        if (!collapsed)
+        if (visibleChildren.isNotEmpty)
           Container(
             margin: EdgeInsets.only(left: 20.0 + (depth * 16)),
             decoration: BoxDecoration(
@@ -3619,13 +3689,13 @@ class _SessionsTabState extends State<SessionsTab> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                for (var i = 0; i < node.children.length; i++) ...[
+                for (var i = 0; i < visibleChildren.length; i++) ...[
                   _buildSessionTreeNode(
                     context,
-                    node.children[i],
+                    visibleChildren[i],
                     depth: depth + 1,
                   ),
-                  if (i != node.children.length - 1)
+                  if (i != visibleChildren.length - 1)
                     Divider(
                       height: 1,
                       indent: 40,
@@ -3907,6 +3977,11 @@ class _SessionsTabState extends State<SessionsTab> {
                                     'AGENT',
                                     style: TextStyle(fontSize: 10),
                                   ),
+                                if (session.scheduledTaskId != null)
+                                  const Text(
+                                    'SCHEDULED',
+                                    style: TextStyle(fontSize: 10),
+                                  ),
                               ],
                             )
                           else
@@ -3998,6 +4073,33 @@ class _SessionsTabState extends State<SessionsTab> {
                                     ),
                                     child: Text(
                                       'AGENT',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.5,
+                                        color: theme
+                                            .colorScheme
+                                            .onSecondaryContainer,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                                if (session.scheduledTaskId != null) ...[
+                                  const SizedBox(width: 6),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 5,
+                                      vertical: 1,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: theme
+                                          .colorScheme
+                                          .secondaryContainer
+                                          .withAlpha(170),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      'SCHEDULED',
                                       style: TextStyle(
                                         fontSize: 10,
                                         fontWeight: FontWeight.w600,

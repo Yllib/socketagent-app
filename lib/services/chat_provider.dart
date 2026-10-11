@@ -661,6 +661,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   // Per-session input drafts (sessionId → unsent text)
   final Map<String, String> _sessionDrafts = {};
   final _draftStore = BackgroundJsonStore('session-drafts-v1');
+
+  /// Composer files per session, kept and saved like text drafts so switching
+  /// away and back keeps them. Secure values are never kept here.
+  final Map<String, List<PendingFileAttachment>> _sessionFileDrafts = {};
+  final _fileDraftStore = BackgroundJsonStore('session-file-drafts-v1');
   final _sessionListStore = BackgroundJsonStore('session-lists-v1');
   final _sessionSettingsStore = BackgroundJsonStore('session-settings-v1');
   // Server and session keys for supervisors whose own agent is idle while
@@ -1539,7 +1544,49 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  /// Records the open session's composer files. Call after each change.
+  void _composerFilesChanged() {
+    final id = _activeSessionId;
+    if (id == null) return;
+    if (_pendingFileAttachments.isEmpty) {
+      if (_sessionFileDrafts.remove(id) == null) return;
+    } else {
+      _sessionFileDrafts[id] = [..._pendingFileAttachments];
+    }
+    unawaited(
+      _fileDraftStore
+          .save({
+            for (final entry in _sessionFileDrafts.entries)
+              entry.key: [for (final file in entry.value) file.toJson()],
+          })
+          .catchError((Object error) {
+            debugPrint('[Drafts] Failed to save attachments: $error');
+          }),
+    );
+  }
+
+  /// Puts the open session's saved files back in the composer, skipping any
+  /// that no longer exist.
+  void _restoreComposerFiles() {
+    final files = _sessionFileDrafts[_activeSessionId ?? ''];
+    if (files == null || _pendingFileAttachments.isNotEmpty) return;
+    _pendingFileAttachments.addAll(files.where((file) => file.exists));
+  }
+
   Future<void> _loadDrafts() async {
+    try {
+      final data = await _fileDraftStore.load();
+      for (final MapEntry(:key, :value) in (data ?? const {}).entries) {
+        if (value is! List) continue;
+        final files = value.map(PendingFileAttachment.fromJson).nonNulls;
+        if (files.isNotEmpty) {
+          _sessionFileDrafts.putIfAbsent(key, () => files.toList());
+        }
+      }
+      _restoreComposerFiles();
+    } catch (error) {
+      debugPrint('[Drafts] Failed to load attachments: $error');
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final data = await _draftStore.load(
@@ -5291,8 +5338,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
         case 'claude_usage':
           {
+            // fetchedAt marks a saved reading: no Claude process was
+            // running on the server to ask.
             final usage = msg['error'] == null && msg['usage'] is Map
-                ? Map<String, dynamic>.from(msg['usage'] as Map)
+                ? {
+                    ...Map<String, dynamic>.from(msg['usage'] as Map),
+                    if (msg['fetchedAt'] is String)
+                      'fetched_at': msg['fetchedAt'],
+                  }
                 : null;
             _pendingClaudeUsage?.complete(usage);
             _pendingClaudeUsage = null;
@@ -12467,6 +12520,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _promptSuggestions = [];
     _pendingFileAttachments.clear();
     _pendingSecretAttachments.clear();
+    _composerFilesChanged();
     _dropLegacyCancelPrepends();
     if (_pendingPrepends.isNotEmpty) {
       promptPayload['text'] =
@@ -12578,21 +12632,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final files = await FilePicker.pickFiles(
       type: imagesOnly ? FileType.image : FileType.any,
     );
+    attachFilePaths(
+      files.map((file) => file.path).nonNulls,
+      images: imagesOnly,
+    );
+  }
+
+  /// Adds local files to the composer. The picker, drag and drop, and
+  /// clipboard paste all land here. A path that is already attached is skipped.
+  void attachFilePaths(Iterable<String> paths, {bool images = false}) {
     final existingPaths = _pendingFileAttachments
         .map((item) => item.path)
         .toSet();
-    for (final file in files) {
-      final filePath = file.path;
-      if (filePath == null || !existingPaths.add(filePath)) continue;
+    final before = _pendingFileAttachments.length;
+    for (final filePath in paths) {
+      if (!existingPaths.add(filePath)) continue;
+      final name = filePath.split(RegExp(r'[\\/]')).last;
       _pendingFileAttachments.add(
         PendingFileAttachment(
           path: filePath,
-          name: file.name,
-          isImage:
-              imagesOnly || PendingFileAttachment.looksLikeImage(file.name),
+          name: name,
+          isImage: images || PendingFileAttachment.looksLikeImage(name),
         ),
       );
     }
+    if (_pendingFileAttachments.length == before) return;
+    _composerFilesChanged();
     notifyListeners();
   }
 
@@ -12600,6 +12665,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void removeFileAttachment(String id) {
     _pendingFileAttachments.removeWhere((item) => item.id == id);
+    _composerFilesChanged();
     notifyListeners();
   }
 
@@ -12648,6 +12714,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _pendingFileAttachments.clear();
     _pendingSecretAttachments.clear();
+    _composerFilesChanged();
     _uploadProgress = null;
     _pendingUploadId = null;
     notifyListeners();
@@ -14666,6 +14733,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingImageLoads.clear();
     _toolEventReconciler.clear();
     _clearAttachment();
+    _restoreComposerFiles();
     _clearRawState();
     // Look up which server owns this session and switch active server
     final session = _sessions

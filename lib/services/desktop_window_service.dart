@@ -58,4 +58,10 @@ class DesktopWindowService extends ValueNotifier<DesktopWindowState> {
       _channel.invokeMethod<void>('toggleMaximize');
   Future<void> showMenu() => _channel.invokeMethod<void>('showMenu');
   Future<void> quit() => _channel.invokeMethod<void>('quit');
+
+  /// Whether Windows launches the app, in the tray, when the user signs in.
+  Future<bool> startsWithWindows() async =>
+      await _channel.invokeMethod<bool>('getStartWithWindows') ?? false;
+  Future<void> setStartWithWindows(bool enabled) =>
+      _channel.invokeMethod<void>('setStartWithWindows', enabled);
 }

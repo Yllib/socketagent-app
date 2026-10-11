@@ -8,6 +8,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <string>
 
 // Windows owns placement, resizing and the tray; Flutter draws all title controls.
 class DesktopShell {
@@ -22,6 +23,8 @@ class DesktopShell {
   void Show();
   void Hide();
   void SavePlacement();
+  bool StartsWithWindows() const;
+  bool SetStartWithWindows(bool enabled);
   void AddTrayIcon();
   bool HasReachableTrayIcon() const;
   void ShowTrayMenu();

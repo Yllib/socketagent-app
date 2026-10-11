@@ -1,3 +1,4 @@
+import 'services/desktop_shortcuts.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -44,7 +45,10 @@ void main() async {
 Future<Widget> _initializeApp() async {
   initializeDesktopAudio();
   await _verifyDistribution();
-  if (Platform.isWindows) await DesktopWindowService.instance.initialize();
+  if (Platform.isWindows) {
+    await DesktopWindowService.instance.initialize();
+    await DesktopTextScale.load();
+  }
   if (Platform.isAndroid) {
     await FirebaseProjectConfigurationService.instance.initialize();
   }
@@ -140,7 +144,20 @@ class ClaudeAssistantApp extends StatelessWidget {
               child: child ?? const SizedBox.shrink(),
             );
             return Platform.isWindows
-                ? Overlay.wrap(child: DesktopWindowFrame(child: body))
+                ? Overlay.wrap(
+                    child: DesktopWindowFrame(
+                      child: ValueListenableBuilder<double>(
+                        valueListenable: DesktopTextScale.value,
+                        builder: (context, scale, body) => MediaQuery(
+                          data: MediaQuery.of(
+                            context,
+                          ).copyWith(textScaler: TextScaler.linear(scale)),
+                          child: body!,
+                        ),
+                        child: body,
+                      ),
+                    ),
+                  )
                 : body;
           },
           debugShowCheckedModeBanner: false,

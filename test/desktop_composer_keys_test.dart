@@ -143,4 +143,51 @@ void main() {
       expect(controller.text, 'candidate');
     },
   );
+
+  testWidgets('Ctrl V pastes text only when nothing was attached', (
+    tester,
+  ) async {
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => switch (call.method) {
+        'Clipboard.getData' => {'text': 'pasted'},
+        'Clipboard.hasStrings' => {'value': true},
+        _ => null,
+      },
+    );
+    final controller = TextEditingController();
+    var attaches = true;
+    final node = FocusNode(
+      onKeyEvent: (focus, event) => handleDesktopComposerKey(
+        event,
+        context: focus.context!,
+        controller: controller,
+        onSend: () {},
+        onPasteAttachments: () async => attaches,
+      ),
+    );
+    addTearDown(controller.dispose);
+    addTearDown(node.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: TextField(controller: controller, focusNode: node),
+        ),
+      ),
+    );
+    node.requestFocus();
+    await tester.pump();
+    Future<void> pressPaste() async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+    }
+
+    await pressPaste();
+    expect(controller.text, isEmpty);
+    attaches = false;
+    await pressPaste();
+    expect(controller.text, 'pasted');
+  });
 }

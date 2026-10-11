@@ -61,6 +61,23 @@ class PendingFileAttachment {
   }
 
   bool get exists => File(path).existsSync();
+
+  /// Saved with a session's draft so the file comes back with it.
+  Map<String, Object> toJson() => {
+    'path': path,
+    'name': name,
+    'isImage': isImage,
+  };
+
+  static PendingFileAttachment? fromJson(Object? json) => switch (json) {
+    {'path': final String path, 'name': final String name} =>
+      PendingFileAttachment(
+        path: path,
+        name: name,
+        isImage: json['isImage'] == true,
+      ),
+    _ => null,
+  };
 }
 
 class PendingSecretAttachment {

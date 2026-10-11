@@ -2,9 +2,11 @@ import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
+import '../services/desktop_shortcuts.dart';
 import '../services/desktop_workspace_controller.dart';
 import '../widgets/desktop_split_view.dart';
 import 'home_screen.dart';
@@ -55,6 +57,9 @@ class MainShellScreenState extends State<MainShellScreen>
     super.initState();
     _currentIndex = widget.initialIndex.clamp(0, 2).toInt();
     WidgetsBinding.instance.addObserver(this);
+    if (Platform.isWindows) {
+      HardwareKeyboard.instance.addHandler(_handleDesktopShortcut);
+    }
     _updateService.addListener(_onUpdateChange);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
@@ -178,6 +183,7 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void dispose() {
     _desktopController?.removeListener(_openDesktopConversation);
+    HardwareKeyboard.instance.removeHandler(_handleDesktopShortcut);
     WidgetsBinding.instance.removeObserver(this);
     _updateCheckTimer?.cancel();
     _scheduledTaskRefreshTimer?.cancel();
@@ -200,6 +206,50 @@ class MainShellScreenState extends State<MainShellScreen>
       _scheduledTaskRefreshTimer?.cancel();
       _scheduledTaskRefreshTimer = null;
     }
+  }
+
+  /// Runs before focus dispatch. Ignored while a dialog, sheet, or pushed
+  /// screen covers the shell, so those keep their own keys.
+  bool _handleDesktopShortcut(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted || !_desktopRouteVisible) {
+      return false;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    final shortcut = desktopShortcutFor(
+      event.logicalKey,
+      control: keyboard.isControlPressed,
+      shift: keyboard.isShiftPressed,
+      alt: keyboard.isAltPressed,
+    );
+    if (shortcut == null) return false;
+    switch (shortcut) {
+      case DesktopShortcut.textLarger:
+      case DesktopShortcut.textSmaller:
+      case DesktopShortcut.textReset:
+        final scale = DesktopTextScale.step(switch (shortcut) {
+          DesktopShortcut.textLarger => 1,
+          DesktopShortcut.textSmaller => -1,
+          _ => 0,
+        });
+        ScaffoldMessenger.of(context)
+          ..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text('Text size ${(scale * 100).round()}%'),
+              duration: const Duration(seconds: 1),
+            ),
+          );
+      case DesktopShortcut.find:
+        if (_currentIndex != sessionsIndex ||
+            !_desktopController!.hasConversation) {
+          return false;
+        }
+        _desktopController!.sendShortcut(shortcut);
+      default:
+        _onTabChanged(sessionsIndex);
+        _desktopController!.sendShortcut(shortcut);
+    }
+    return true;
   }
 
   void _openDesktopConversation() {

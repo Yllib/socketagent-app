@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   bonsoir_windows
   connectivity_plus
+  desktop_drop
   firebase_core
   flutter_secure_storage_windows
   flutter_timezone
@@ -12,6 +13,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_webrtc
   fullscreen_window
   media_kit_libs_windows_audio
+  pasteboard
   pdfx
   record_windows
   share_plus

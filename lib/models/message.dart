@@ -768,6 +768,9 @@ class Session {
   final String? delegatedBySessionId;
   final String? delegationId;
 
+  /// Scheduled task whose run started this session.
+  final String? scheduledTaskId;
+
   /// Claude only. Folders the agent may use besides [cwd].
   final List<String> additionalDirectories;
 
@@ -792,6 +795,7 @@ class Session {
     this.freshThreadPending = false,
     this.delegatedBySessionId,
     this.delegationId,
+    this.scheduledTaskId,
     this.additionalDirectories = const [],
   });
 
@@ -829,6 +833,7 @@ class Session {
       freshThreadPending: json['freshThreadPending'] == true,
       delegatedBySessionId: json['delegatedBySessionId'] as String?,
       delegationId: json['delegationId'] as String?,
+      scheduledTaskId: json['scheduledTaskId'] as String?,
       additionalDirectories: switch (json['agentSettings']) {
         {'additionalDirectories': final List<dynamic> dirs} =>
           dirs.whereType<String>().toList(growable: false),
@@ -858,6 +863,7 @@ class Session {
     'freshThreadPending': freshThreadPending,
     'delegatedBySessionId': delegatedBySessionId,
     'delegationId': delegationId,
+    'scheduledTaskId': scheduledTaskId,
     if (additionalDirectories.isNotEmpty)
       'agentSettings': {'additionalDirectories': additionalDirectories},
   };
@@ -883,6 +889,7 @@ class Session {
     bool? freshThreadPending,
     String? delegatedBySessionId,
     String? delegationId,
+    String? scheduledTaskId,
     List<String>? additionalDirectories,
   }) {
     return Session(
@@ -908,6 +915,7 @@ class Session {
       freshThreadPending: freshThreadPending ?? this.freshThreadPending,
       delegatedBySessionId: delegatedBySessionId ?? this.delegatedBySessionId,
       delegationId: delegationId ?? this.delegationId,
+      scheduledTaskId: scheduledTaskId ?? this.scheduledTaskId,
       additionalDirectories:
           additionalDirectories ?? this.additionalDirectories,
     );
@@ -939,6 +947,7 @@ class Session {
       freshThreadPending: freshThreadPending,
       delegatedBySessionId: delegatedBySessionId,
       delegationId: delegationId,
+      scheduledTaskId: scheduledTaskId,
       additionalDirectories: additionalDirectories,
     );
   }

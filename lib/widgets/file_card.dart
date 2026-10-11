@@ -65,9 +65,54 @@ class FileCard extends StatelessWidget {
     return Icons.insert_drive_file;
   }
 
-  Future<void> _openFile(BuildContext context, String path) async {
+  static bool get _desktop =>
+      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+
+  /// Programs run when opened, so the desktop asks first: an agent sent it.
+  Future<bool> _confirmRun(BuildContext context, String name) async =>
+      await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          icon: Icon(
+            Icons.warning_amber_rounded,
+            color: context.palette.yellow,
+          ),
+          title: const Text('Do you want to run this file?'),
+          content: Text(
+            '$name\n\n'
+            'This program can make changes to your computer. '
+            'Only run programs you trust.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('Run'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+
+  Future<void> _openFile(
+    BuildContext context,
+    String path, {
+    bool reveal = false,
+  }) async {
     final service = fileOpenService ?? _defaultFileOpenService;
-    final result = await service.open(path);
+    if (!reveal &&
+        _desktop &&
+        isExecutablePath(path) &&
+        !await _confirmRun(context, path.split(RegExp(r'[\\/]')).last)) {
+      return;
+    }
+    if (!context.mounted) return;
+    final result = reveal
+        ? await service.reveal(path)
+        : await service.open(path);
     if (!context.mounted || result.outcome == FileOpenOutcome.opened) return;
 
     if (result.outcome == FileOpenOutcome.needsApkPermission) {
@@ -220,6 +265,22 @@ class FileCard extends StatelessWidget {
                     minHeight: 36,
                   ),
                 ),
+                if (_desktop)
+                  IconButton(
+                    icon: Icon(
+                      Icons.folder_open,
+                      size: 20,
+                      color: context.palette.textMuted,
+                    ),
+                    onPressed: () =>
+                        _openFile(context, localPath, reveal: true),
+                    tooltip: 'Show in folder',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 36,
+                      minHeight: 36,
+                    ),
+                  ),
               ] else if (isDownloading)
                 SizedBox(
                   width: 20,
