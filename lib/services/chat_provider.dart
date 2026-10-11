@@ -30,6 +30,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/message.dart';
 import '../models/conversation_rewind_status.dart';
 import '../models/ai_response_report.dart';
+import '../models/traced_error.dart';
+import 'error_log.dart';
+import 'error_report_service.dart';
 import '../models/message_reconciliation.dart';
 import '../models/file_event_routing.dart';
 import '../models/history_normalization.dart';
@@ -537,6 +540,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get savedComputersLost => _savedComputersLost;
   bool _savedComputersLost = false;
   final AiResponseReportService _aiResponseReports = AiResponseReportService();
+  final ErrorLog _errorLog = ErrorLog();
+  final ErrorReportService _errorReports = ErrorReportService();
   final _subscriptionRequiredController = StreamController<void>.broadcast();
   final _backendAuthRequiredController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -665,6 +670,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Composer files per session, kept and saved like text drafts so switching
   /// away and back keeps them. Secure values are never kept here.
   final Map<String, List<PendingFileAttachment>> _sessionFileDrafts = {};
+
+  /// Composer secrets per session. Memory only, so a typed value never
+  /// reaches disk and is gone when the app closes.
+  final Map<String, List<PendingSecretAttachment>> _sessionSecretDrafts = {};
   final _fileDraftStore = BackgroundJsonStore('session-file-drafts-v1');
   final _sessionListStore = BackgroundJsonStore('session-lists-v1');
   final _sessionSettingsStore = BackgroundJsonStore('session-settings-v1');
@@ -684,7 +693,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
   final Map<String, OutgoingRequest> _pendingPromptDispatches = {};
   final Map<String, int> _serverCommandReceiptVersions = {};
-  String? outgoingQueueError;
+
+  /// A problem with the outbox itself, such as a record that could not be
+  /// written. Shown above the composer until the next one replaces it.
+  TracedError? outgoingQueueError;
   final OutgoingQueue _outgoingQueue = OutgoingQueue();
   late final Future<void> _outgoingReady;
   Timer? _outgoingTimer;
@@ -694,11 +706,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool _outgoingDrainRequested = false;
   bool _outgoingDisposed = false;
   final Map<String, DateTime> _outgoingSentAt = {};
+
+  /// The last error for requests that are still retrying, so a send that
+  /// keeps failing shows why instead of sitting queued.
+  final Map<String, TracedError> _outgoingRetryErrors = {};
+
+  /// Why request [id] is in trouble: its failure, or the error it keeps
+  /// retrying past.
+  TracedError? deliveryProblem(String id) =>
+      _pendingPromptDispatches[id]?.failure ?? _outgoingRetryErrors[id];
   List<OutgoingRequest> get pendingOutgoing =>
       _pendingPromptDispatches.values.toList();
   List<OutgoingRequest> get activeDeliveryProblems =>
       _pendingPromptDispatches.values.where((request) {
-        if (request.error == null ||
+        if (deliveryProblem(request.id) == null ||
             request.serverId !=
                 (_activeSessionServerId ?? _connMgr.activeServerId)) {
           return false;
@@ -1544,15 +1565,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Records the open session's composer files. Call after each change.
-  void _composerFilesChanged() {
+  /// Records the open session's composer files and secrets. Call after each
+  /// change.
+  void _composerAttachmentsChanged() {
     final id = _activeSessionId;
     if (id == null) return;
+    if (_pendingSecretAttachments.isEmpty) {
+      _sessionSecretDrafts.remove(id);
+    } else {
+      _sessionSecretDrafts[id] = [..._pendingSecretAttachments];
+    }
     if (_pendingFileAttachments.isEmpty) {
       if (_sessionFileDrafts.remove(id) == null) return;
     } else {
       _sessionFileDrafts[id] = [..._pendingFileAttachments];
     }
+    _saveFileDrafts();
+  }
+
+  void _saveFileDrafts() {
     unawaited(
       _fileDraftStore
           .save({
@@ -1565,12 +1596,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Puts the open session's saved files back in the composer, skipping any
-  /// that no longer exist.
-  void _restoreComposerFiles() {
-    final files = _sessionFileDrafts[_activeSessionId ?? ''];
-    if (files == null || _pendingFileAttachments.isNotEmpty) return;
-    _pendingFileAttachments.addAll(files.where((file) => file.exists));
+  /// Puts the open session's saved files and secrets back in the composer,
+  /// skipping files that no longer exist.
+  void _restoreComposerAttachments() {
+    final id = _activeSessionId ?? '';
+    final files = _sessionFileDrafts[id];
+    if (files != null && _pendingFileAttachments.isEmpty) {
+      _pendingFileAttachments.addAll(files.where((file) => file.exists));
+    }
+    final secrets = _sessionSecretDrafts[id];
+    if (secrets != null && _pendingSecretAttachments.isEmpty) {
+      _pendingSecretAttachments.addAll(secrets);
+    }
   }
 
   Future<void> _loadDrafts() async {
@@ -1583,7 +1620,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _sessionFileDrafts.putIfAbsent(key, () => files.toList());
         }
       }
-      _restoreComposerFiles();
+      _restoreComposerAttachments();
     } catch (error) {
       debugPrint('[Drafts] Failed to load attachments: $error');
     }
@@ -3591,7 +3628,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         notifyListeners();
       }
     } catch (error) {
-      outgoingQueueError = 'Saved requests could not be loaded: $error';
+      outgoingQueueError = traceError(
+        'outbox_load',
+        'Saved requests could not be loaded: $error',
+      );
       if (!_outgoingDisposed) notifyListeners();
     }
   }
@@ -3665,7 +3705,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       unawaited(_drainOutgoingQueue());
       return true;
     } catch (error) {
-      outgoingQueueError = 'Could not save request: $error';
+      outgoingQueueError = traceError(
+        'outbox_save',
+        'Could not save request: $error',
+      );
       if (!_outgoingDisposed) notifyListeners();
       return false;
     }
@@ -3683,7 +3726,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _failOutgoing(String id, String reason) {
+  /// Stops retrying request [id] and keeps [failure] on it for the delivery
+  /// notice. The caller traces the failure so a chat row can share its ID.
+  void _failOutgoing(String id, TracedError failure) {
     for (final message in _messages) {
       if (message.id == id && message.sender == MessageSender.user) {
         message.delivery = MessageDelivery.failed;
@@ -3691,11 +3736,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     final request = _pendingPromptDispatches[id];
     if (request == null) return;
-    if (request.error == reason) return;
-    request.error = reason;
+    if (request.error == failure.message) return;
+    request.failure = failure;
     unawaited(
       _outgoingQueue.save(request).catchError((Object error) {
-        outgoingQueueError = 'Could not save request status: $error';
+        outgoingQueueError = traceError(
+          'outbox_save',
+          'Could not save request status: $error',
+        );
         if (!_outgoingDisposed) notifyListeners();
       }),
     );
@@ -3705,10 +3753,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _forgetOutgoing(String id) {
     _pendingPromptDispatches.remove(id);
     _outgoingSentAt.remove(id);
+    _outgoingRetryErrors.remove(id);
     unawaited(
       _outgoingQueue.remove(id).catchError((Object error) {
-        outgoingQueueError =
-            'A delivered request could not be removed from this device: $error';
+        outgoingQueueError = traceError(
+          'outbox_remove',
+          'A delivered request could not be removed from this device: $error',
+        );
         if (!_outgoingDisposed) notifyListeners();
       }),
     );
@@ -3723,6 +3774,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _messages.removeWhere((m) => m.id == id && m.isPending);
     _pendingLocalUserMessageIds.remove(id);
     notifyListeners();
+    // Discarded means gone, queued secret values included, before returning.
+    await _outgoingQueue.flush();
   }
 
   void _retryPendingPromptsForServer(String serverId) {
@@ -3763,7 +3816,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 const Duration(minutes: 2)) {
           _failOutgoing(
             request.id,
-            'This request expired. Check the conversation before trying again.',
+            traceError(
+              'request_expired',
+              'This request expired. Check the conversation before trying again.',
+              serverId: request.serverId,
+            ),
           );
           continue;
         }
@@ -3774,7 +3831,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (receiptVersion < 1) {
             _failOutgoing(
               request.id,
-              'Update this computer before retrying saved requests.',
+              traceError(
+                'server_outdated',
+                'Update this computer before retrying saved requests.',
+                serverId: request.serverId,
+              ),
             );
             continue;
           }
@@ -3797,6 +3858,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               textContent: request.displayText,
             );
         try {
+          if (!await _deliverQueuedSecrets(request, bubble)) continue;
+          if (!_pendingPromptDispatches.containsKey(request.id)) continue;
           for (var i = 0; i < request.files.length; i++) {
             final file = request.files[i];
             if (file['serverPath'] != null) continue;
@@ -3816,10 +3879,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             notifyListeners();
           }
           if (!_pendingPromptDispatches.containsKey(request.id)) continue;
-          if (request.files.isNotEmpty &&
+          if ((request.files.isNotEmpty || request.secrets.isNotEmpty) &&
               request.payload['attachmentsPrepared'] != true) {
-            request.payload['text'] =
-                '${request.files.map((f) => '[Attached file: ${f['serverPath']}]').join('\n')}\n${request.payload['text']}';
+            request.payload['text'] = [
+              for (final file in request.files)
+                '[Attached file: ${file['serverPath']}]',
+              for (final secret in request.secrets)
+                if (secret.saved case final saved?)
+                  '[Attached secret: ${jsonEncode({'label': saved.label, 'scope': saved.scope, 'envHint': saved.envHint, 'filePath': saved.filePath})}]',
+              request.payload['text'],
+            ].join('\n');
             request.payload['attachmentsPrepared'] = true;
             await _outgoingQueue.save(request);
           }
@@ -3832,6 +3901,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _pendingCacheUserPromptContent[request.id] =
               request.payload['text']?.toString() ?? '';
           final sent = ws!.send(request.payload);
+          if (sent) _outgoingRetryErrors.remove(request.id);
           if (sent &&
               request.payload['type'] == 'prompt' &&
               !_isProcessing &&
@@ -3845,7 +3915,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         } catch (error) {
           // Keep the staged files and prompt for the next connection/attempt.
           bubble.uploadProgress = null;
-          debugPrint('Outgoing request retained for retry: $error');
+          final message = 'Not sent yet, will retry: $error';
+          if (_outgoingRetryErrors[request.id]?.message != message) {
+            _outgoingRetryErrors[request.id] = traceError(
+              'outbox_retry',
+              message,
+              serverId: request.serverId,
+              sessionId: request.payload['sessionId'] as String?,
+            );
+          }
         }
       }
     } finally {
@@ -3855,6 +3933,92 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         if (_outgoingDrainRequested) unawaited(_drainOutgoingQueue());
       }
     }
+  }
+
+  /// Saves [request]'s secrets on its computer before the prompt goes out.
+  /// Returns false when the request failed and now waits for the user. A
+  /// computer that never answers throws, and the next drain tries again with
+  /// the same IDs, so the computer keeps one copy.
+  Future<bool> _deliverQueuedSecrets(
+    OutgoingRequest request,
+    ChatMessage bubble,
+  ) async {
+    final sessionId = request.payload['sessionId'] as String?;
+    for (final secret in request.secrets) {
+      if (secret.saved != null) continue;
+      if (_serverSecretManagementVersions[request.serverId] == 0) {
+        _failOutgoing(
+          request.id,
+          traceError(
+            'server_outdated',
+            '${_computerName(request.serverId)} needs a SocketAgent update '
+                'to receive secrets.',
+            serverId: request.serverId,
+            sessionId: sessionId,
+          ),
+        );
+        return false;
+      }
+      final value = await _outgoingQueue.secretValue(request.id, secret);
+      if (value == null || value.isEmpty) {
+        _failOutgoing(
+          request.id,
+          traceError(
+            'secret_value_lost',
+            'The value for ${secret.label} is no longer on this device. '
+                'Remove this message and attach the secret again.',
+            serverId: request.serverId,
+            sessionId: sessionId,
+          ),
+        );
+        return false;
+      }
+      final SecretMetadata saved;
+      try {
+        saved = await storeSecureInput(
+          label: secret.label,
+          value: value,
+          scope: secret.scope,
+          envHint: secret.envHint,
+          requestId: 'secret_create_${secret.id}',
+          targetServerId: request.serverId,
+          targetSessionId: sessionId,
+          targetCwd: request.payload['cwd'] as String?,
+        );
+      } on SecretOperationError catch (rejection) {
+        if (rejection.retryable) rethrow;
+        _failOutgoing(
+          request.id,
+          traceError(
+            'secret_store',
+            '${secret.label} was not saved: ${rejection.message}',
+            serverId: request.serverId,
+            sessionId: sessionId,
+          ),
+        );
+        return false;
+      }
+      secret.saved = saved;
+      await _outgoingQueue.save(request);
+      await _outgoingQueue.forgetSecretValue(request.id, secret);
+      _resolveMatchingSecureInput(saved);
+      final index = _messages.indexOf(bubble);
+      if (index >= 0) {
+        _messages.insert(
+          index,
+          ChatMessage(
+            id: 'secret_attach_${request.id}_${secret.id}',
+            sender: MessageSender.system,
+            type: MessageType.taskNotification,
+            timestamp: DateTime.now(),
+            textContent: 'Attached secret: ${saved.label} (${saved.scope})',
+            toolName: 'secure_attached',
+          ),
+        );
+      }
+      notifyListeners();
+    }
+    return true;
   }
 
   /// Switch connection mode for a specific server (or first relay server).
@@ -3990,6 +4154,76 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       distribution: AppBuild.distributionName,
       backend: _activeSessionBackend ?? '',
     );
+  }
+
+  /// Records an error the user is about to see and returns it with its ID.
+  /// The app's error log always gets it. The computer's log gets it too
+  /// while connected, prefixed with the same ID, so either side can find it.
+  TracedError traceError(
+    String kind,
+    String message, {
+    String? serverId,
+    String? sessionId,
+  }) {
+    final error = TracedError(
+      kind: kind,
+      message: message,
+      serverId: serverId ?? _activeSessionServerId ?? _connMgr.activeServerId,
+      sessionId: sessionId ?? _activeSessionId,
+    );
+    debugPrint('[Error ${error.id}] $kind: $message');
+    unawaited(
+      _errorLog.record(error).catchError((Object failure) {
+        debugPrint(
+          '[Error ${error.id}] Could not write the error log: $failure',
+        );
+      }),
+    );
+    final target = error.serverId;
+    if (target != null && target.isNotEmpty) {
+      _connMgr.sendToServer(target, {
+        'type': 'client_event_error',
+        'sessionId': error.sessionId ?? '',
+        'eventType': kind,
+        'errorId': error.id,
+        'message': '[${error.id}] $message',
+      });
+    }
+    return error;
+  }
+
+  /// A chat error row whose error is already traced.
+  ChatMessage _errorRow(
+    String kind,
+    String message, {
+    String? serverId,
+    String? sessionId,
+  }) => ChatMessage.error(
+    message,
+    trace: traceError(kind, message, serverId: serverId, sessionId: sessionId),
+  );
+
+  /// Sends a traced error to the SocketAgent relay. Only the user's Report
+  /// tap calls this. Returns null on success, otherwise what went wrong.
+  Future<String?> reportError(TracedError error) async {
+    final packageInfo = await PackageInfo.fromPlatform();
+    final serverVersion =
+        _serverRuntimeInfo[error.serverId]?['version']?.toString() ?? '';
+    final failure = await _errorReports.submit(
+      relayHttpUrls: _relayHttpUrlCandidates(),
+      error: error,
+      subscriberToken: _subscriberToken,
+      appVersion: '${packageInfo.version}+${packageInfo.buildNumber}',
+      distribution: AppBuild.distributionName,
+      platform:
+          '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
+      serverVersion: serverVersion,
+      backend: _activeSessionBackend ?? '',
+    );
+    if (failure != null) {
+      debugPrint('[Error ${error.id}] Report not sent: $failure');
+    }
+    return failure;
   }
 
   String? _relayHttpUrlFromWs(String relayUrl) {
@@ -5955,8 +6189,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 msg['status'] == 'conflict') {
               _failOutgoing(
                 commandId,
-                msg['message']?.toString() ??
-                    'Check the conversation before trying again.',
+                traceError(
+                  'command_${msg['status']}',
+                  msg['message']?.toString() ??
+                      'Check the conversation before trying again.',
+                  serverId: serverId,
+                ),
               );
             }
             notifyListeners();
@@ -5978,9 +6216,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final failedSessionId = msg['sessionId']?.toString() ?? '';
           final failureReason =
               msg['message']?.toString() ?? 'The prompt could not be started';
+          final failure = traceError(
+            'prompt_failed',
+            failureReason,
+            serverId: serverId,
+            sessionId: failedSessionId,
+          );
           var visibleMessageIndex = -1;
           if (failedMessageId.isNotEmpty) {
-            _failOutgoing(failedMessageId, failureReason);
+            _failOutgoing(failedMessageId, failure);
             _pendingLocalUserMessageIds.remove(failedMessageId);
             _pendingCacheUserPromptContent.remove(failedMessageId);
             visibleMessageIndex = _messages.indexWhere(
@@ -5998,16 +6242,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _isProcessing = false;
             _processingSetAt = null;
             _stopPromptRuntime();
-            _messages.add(ChatMessage.error(failureReason));
+            _messages.add(ChatMessage.error(failureReason, trace: failure));
             notifyListeners();
           }
           break;
         case 'injection_failed':
           final failedMsgId = msg['messageId'] as String? ?? '';
           final reason = msg['message'] as String? ?? 'Message was not sent';
+          final failure = traceError(
+            'injection_failed',
+            'Message was not sent: $reason',
+            serverId: serverId,
+          );
           var removed = false;
           if (failedMsgId.isNotEmpty) {
-            _failOutgoing(failedMsgId, reason);
+            _failOutgoing(failedMsgId, failure);
             final idx = _messages.indexWhere(
               (m) => m.id == failedMsgId && m.isPending,
             );
@@ -6034,7 +6283,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _messages.removeAt(idx);
             }
           }
-          _messages.add(ChatMessage.error('Message was not sent: $reason'));
+          _messages.add(ChatMessage.error(failure.message, trace: failure));
           notifyListeners();
           break;
         case 'supported_commands':
@@ -6379,8 +6628,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _initialHistoryTimeout?.cancel();
             _initialHistoryTimeout = null;
           }
-          final errorMessage = ChatMessage.error(
-            msg['message'] ?? 'Unknown error',
+          final errorMessage = _errorRow(
+            'server_error',
+            msg['message']?.toString() ?? 'Unknown error',
+            serverId: serverId,
+            sessionId: msg['sessionId']?.toString(),
           );
           applyTranscriptPosition(errorMessage, msg);
           _messages.add(errorMessage);
@@ -6488,8 +6740,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _restorePendingArchivedSession(serverId, failedId);
           }
           _messages.add(
-            ChatMessage.error(
+            _errorRow(
+              'session_archive_failed',
               'Archive failed: ${msg['error'] ?? 'unknown error'}',
+              serverId: serverId,
+              sessionId: failedId,
             ),
           );
           notifyListeners();
@@ -8543,7 +8798,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ),
         );
       } else {
-        writeCompleter.completeError(Exception(error));
+        writeCompleter.completeError(SecretOperationError(error));
       }
     }
     final deleteCompleter = _secretDeleteCompleters.remove(requestId);
@@ -8551,7 +8806,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (ok) {
         deleteCompleter.complete();
       } else {
-        deleteCompleter.completeError(Exception(error));
+        deleteCompleter.completeError(SecretOperationError(error));
       }
     }
     refreshSecretInventory();
@@ -8914,7 +9169,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final errorText = errors.isNotEmpty
           ? errors.join('\n')
           : subtype.replaceAll('_', ' ');
-      _messages.add(ChatMessage.error(errorText));
+      _messages.add(_errorRow('agent_result', errorText));
     }
     // Mark any foreground tool calls that never got a result so spinners stop.
     // Background commands remain live only while their task is still tracked.
@@ -10639,7 +10894,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (name == 'fork') {
       if (_activeSessionId == null || _activeSessionId!.isEmpty) {
-        _messages.add(ChatMessage.error('No Codex session to fork'));
+        _messages.add(_errorRow('codex_fork', 'No Codex session to fork'));
         notifyListeners();
         return true;
       }
@@ -12447,20 +12702,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
-  Future<void> sendPrompt(String text, {String? priority}) async {
-    if (text.trim().isEmpty && !hasAttachment) return;
+  /// Sends the composer's text and attachments. Returns false when the
+  /// message did not go out and its text belongs back in the composer; the
+  /// attachments are already back there.
+  Future<bool> sendPrompt(String text, {String? priority}) async {
+    if (text.trim().isEmpty && !hasAttachment) return false;
 
     final knownSlashCommand = _knownCodexSlashCommand(text);
     if (knownSlashCommand != null && !hasAttachment && priority == null) {
       _sendCodexSlashCommand(text);
-      return;
+      return true;
     }
 
     final fileAttachments = [..._pendingFileAttachments];
     final secretAttachments = [..._pendingSecretAttachments];
+    final sendSessionId = _activeSessionId;
     final promptServerId =
         _activeSessionServerId ?? _connMgr.activeServerId ?? '';
-    if (promptServerId.isEmpty) return;
+    if (promptServerId.isEmpty) {
+      showError(
+        'no_computer',
+        'Not sent: no computer is selected. Your message is still in the '
+            'composer.',
+      );
+      return false;
+    }
     // Capture routing and model choices before waiting for disk or uploads.
     final displayText = text.trim().isEmpty && fileAttachments.isEmpty
         ? 'Attached secrets'
@@ -12520,7 +12786,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _promptSuggestions = [];
     _pendingFileAttachments.clear();
     _pendingSecretAttachments.clear();
-    _composerFilesChanged();
+    _composerAttachmentsChanged();
     _dropLegacyCancelPrepends();
     if (_pendingPrepends.isNotEmpty) {
       promptPayload['text'] =
@@ -12528,47 +12794,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _clearPrepends();
     }
     notifyListeners();
+    var staged = false;
     try {
-      // Secret values never enter the disk outbox. Store them through the
-      // protected channel first; persist only the returned references.
-      final prefixes = <String>[];
-      for (final attachment in secretAttachments) {
-        final metadata =
-            attachment.metadata ??
-            await storeSecureInput(
-              label: attachment.label,
-              value: attachment.value,
-              scope: attachment.scope,
-              envHint: attachment.envHint,
-              targetServerId: promptServerId,
-              targetSessionId: promptPayload['sessionId'] as String?,
-              targetCwd: promptPayload['cwd'] as String?,
-            );
-        attachment.clearValue();
-        _resolveMatchingSecureInput(metadata);
-        final index = _messages.indexOf(userMsg);
-        if (index >= 0) {
-          _messages.insert(
-            index,
-            ChatMessage(
-              id: 'secret_attach_${DateTime.now().microsecondsSinceEpoch}',
-              sender: MessageSender.system,
-              type: MessageType.taskNotification,
-              timestamp: DateTime.now(),
-              textContent:
-                  'Attached secret: ${metadata.label} (${metadata.scope})',
-              toolName: 'secure_attached',
-            ),
-          );
-        }
-        prefixes.add(
-          '[Attached secret: ${jsonEncode({'label': metadata.label, 'scope': metadata.scope, 'envHint': metadata.envHint, 'filePath': metadata.filePath})}]',
-        );
-      }
-      if (prefixes.isNotEmpty) {
-        promptPayload['text'] =
-            '${prefixes.join('\n')}\n${promptPayload['text']}';
-      }
+      // Secrets queue with the message like files do. Their values go to the
+      // OS secure store, never the outbox files, and the drain saves them on
+      // the computer before the prompt goes out.
       final request = OutgoingRequest(
         id: userMsg.id,
         serverId: promptServerId,
@@ -12579,27 +12809,104 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           for (final file in fileAttachments)
             {'path': file.path, 'name': file.name},
         ],
+        secrets: [
+          for (final attachment in secretAttachments)
+            QueuedSecret(
+              id: attachment.id.replaceAll(RegExp(r'[^A-Za-z0-9_-]'), '_'),
+              label: attachment.label,
+              scope: attachment.scope,
+              envHint: attachment.envHint,
+              saved: attachment.metadata,
+              value: attachment.metadata == null ? attachment.value : null,
+            ),
+        ],
       );
       await _outgoingReady;
       await _outgoingQueue.stage(request);
+      staged = true;
+      for (final attachment in secretAttachments) {
+        attachment.clearValue();
+      }
       userMsg.attachments = _outgoingAttachments(request);
       if ((_outgoingCancelEpochs[sendKey] ?? 0) != sendEpoch) {
         await _outgoingQueue.remove(request.id);
         userMsg.isPending = false;
         _pendingLocalUserMessageIds.remove(userMsg.id);
-        return;
+        return true;
       }
       _pendingPromptDispatches[userMsg.id] = request;
       await _drainOutgoingQueue();
     } catch (error) {
+      if (staged) {
+        // The outbox has it and retries on its own; only this attempt failed.
+        _messages.add(
+          _errorRow(
+            'outbox_drain',
+            'Sending hit an error and will retry: $error',
+            serverId: promptServerId,
+            sessionId: sendSessionId,
+          ),
+        );
+        notifyListeners();
+        return true;
+      }
       userMsg.isPending = false;
       _pendingLocalUserMessageIds.remove(userMsg.id);
-      _messages.add(ChatMessage.error('Message could not be saved: $error'));
-      for (final secret in secretAttachments) {
-        secret.clearValue();
+      // Nothing reached the outbox, so the message goes back to the composer
+      // instead of being lost, secrets with their typed values.
+      _messages.remove(userMsg);
+      _handBackToComposer(sendSessionId, fileAttachments, secretAttachments);
+      final failure = traceError(
+        'outbox_stage',
+        'Message not saved for sending: $error. It is back in the composer.',
+        serverId: promptServerId,
+        sessionId: sendSessionId,
+      );
+      if (sendSessionId == _activeSessionId) {
+        _messages.add(ChatMessage.error(failure.message, trace: failure));
+      } else {
+        outgoingQueueError = failure;
       }
+      if (sendSessionId != _activeSessionId &&
+          sendSessionId != null &&
+          text.trim().isNotEmpty) {
+        final draft = getDraft(sendSessionId);
+        saveDraft(draft.isEmpty ? text : '$text\n\n$draft', sendSessionId);
+      }
+      notifyListeners();
+      return false;
     }
     notifyListeners();
+    return true;
+  }
+
+  /// Returns unsent attachments to the session they were sent from, ahead of
+  /// anything attached since.
+  void _handBackToComposer(
+    String? sessionId,
+    List<PendingFileAttachment> files,
+    List<PendingSecretAttachment> secrets,
+  ) {
+    if (sessionId == _activeSessionId) {
+      _pendingFileAttachments.insertAll(0, files);
+      _pendingSecretAttachments.insertAll(0, secrets);
+      _composerAttachmentsChanged();
+      return;
+    }
+    if (sessionId == null) return;
+    if (secrets.isNotEmpty) {
+      _sessionSecretDrafts[sessionId] = [
+        ...secrets,
+        ...?_sessionSecretDrafts[sessionId],
+      ];
+    }
+    if (files.isNotEmpty) {
+      _sessionFileDrafts[sessionId] = [
+        ...files,
+        ...?_sessionFileDrafts[sessionId],
+      ];
+      _saveFileDrafts();
+    }
   }
 
   String? retractQueuedMessage(String messageId) {
@@ -12629,25 +12936,54 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> pickFiles({bool imagesOnly = false}) async {
-    final files = await FilePicker.pickFiles(
-      type: imagesOnly ? FileType.image : FileType.any,
-    );
+    final List<PlatformFile> files;
+    try {
+      files = await FilePicker.pickFiles(
+        type: imagesOnly ? FileType.image : FileType.any,
+      );
+    } catch (error) {
+      showError('file_picker', 'The file picker failed: $error');
+      return;
+    }
+    final pathless = [
+      for (final file in files)
+        if (file.path == null) file.name,
+    ];
+    if (pathless.isNotEmpty) {
+      showError(
+        'attach_file',
+        'Could not attach ${pathless.join(', ')}: the picker gave no file path.',
+      );
+    }
     attachFilePaths(
       files.map((file) => file.path).nonNulls,
       images: imagesOnly,
     );
   }
 
+  /// Adds a traced error row to the open chat, for failures the user caused
+  /// directly, such as an attachment that could not be added.
+  void showError(String kind, String message) {
+    _messages.add(_errorRow(kind, message));
+    notifyListeners();
+  }
+
   /// Adds local files to the composer. The picker, drag and drop, and
-  /// clipboard paste all land here. A path that is already attached is skipped.
+  /// clipboard paste all land here. A path that is already attached is
+  /// skipped; one that is not a file, such as a folder, is reported.
   void attachFilePaths(Iterable<String> paths, {bool images = false}) {
     final existingPaths = _pendingFileAttachments
         .map((item) => item.path)
         .toSet();
     final before = _pendingFileAttachments.length;
+    final notFiles = <String>[];
     for (final filePath in paths) {
       if (!existingPaths.add(filePath)) continue;
       final name = filePath.split(RegExp(r'[\\/]')).last;
+      if (!FileSystemEntity.isFileSync(filePath)) {
+        notFiles.add(name);
+        continue;
+      }
       _pendingFileAttachments.add(
         PendingFileAttachment(
           path: filePath,
@@ -12656,8 +12992,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ),
       );
     }
+    if (notFiles.isNotEmpty) {
+      showError(
+        'attach_file',
+        'Could not attach ${notFiles.join(', ')}: only files can be attached, '
+            'not folders.',
+      );
+    }
     if (_pendingFileAttachments.length == before) return;
-    _composerFilesChanged();
+    _composerAttachmentsChanged();
     notifyListeners();
   }
 
@@ -12665,7 +13008,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void removeFileAttachment(String id) {
     _pendingFileAttachments.removeWhere((item) => item.id == id);
-    _composerFilesChanged();
+    _composerAttachmentsChanged();
     notifyListeners();
   }
 
@@ -12675,7 +13018,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String scope = 'session',
     String? envHint,
   }) {
-    if (label.trim().isEmpty || value.isEmpty) return;
+    if (label.trim().isEmpty || value.isEmpty) {
+      showError(
+        'secret_attach',
+        'Secret not attached: it needs a label and a value.',
+      );
+      return;
+    }
     _pendingSecretAttachments.add(
       PendingSecretAttachment.newValue(
         label: label.trim(),
@@ -12686,6 +13035,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             : envHint.trim(),
       ),
     );
+    _composerAttachmentsChanged();
     notifyListeners();
   }
 
@@ -12696,6 +13046,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     _pendingSecretAttachments.add(PendingSecretAttachment.stored(secret));
+    _composerAttachmentsChanged();
     notifyListeners();
   }
 
@@ -12705,6 +13056,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       item.clearValue();
     }
     _pendingSecretAttachments.removeWhere((item) => item.id == id);
+    _composerAttachmentsChanged();
     notifyListeners();
   }
 
@@ -12714,7 +13066,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _pendingFileAttachments.clear();
     _pendingSecretAttachments.clear();
-    _composerFilesChanged();
+    _composerAttachmentsChanged();
     _uploadProgress = null;
     _pendingUploadId = null;
     notifyListeners();
@@ -13163,11 +13515,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? targetServerId,
     String? targetSessionId,
     String? targetCwd,
+    String? requestId,
   }) async {
     if (label.trim().isEmpty || value.isEmpty) {
-      throw ArgumentError('Label and secret value are required');
+      throw const SecretOperationError('Label and secret value are required');
     }
-    final requestId = 'secret_create_${DateTime.now().microsecondsSinceEpoch}';
+    requestId ??= 'secret_create_${DateTime.now().microsecondsSinceEpoch}';
     final completer = Completer<SecretMetadata>();
     _secretWriteCompleters[requestId] = completer;
     final payload = <String, dynamic>{
@@ -13185,19 +13538,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if ((targetCwd ?? _activeSessionCwd) != null)
         'cwd': targetServerId != null ? targetCwd : _activeSessionCwd,
     };
-    if (targetServerId != null) {
-      _connMgr.sendToServer(targetServerId, payload);
-    } else {
-      _sendToActiveSessionServer(payload);
+    final sent = targetServerId != null
+        ? _connMgr.sendToServer(targetServerId, payload)
+        : _sendToActiveSessionServer(payload);
+    if (!sent) {
+      _secretWriteCompleters.remove(requestId);
+      final serverId =
+          targetServerId ?? _activeSessionServerId ?? _connMgr.activeServerId;
+      throw SecretOperationError(
+        '${_computerName(serverId)} is offline',
+        retryable: true,
+      );
     }
     return completer.future.timeout(
       const Duration(seconds: 30),
       onTimeout: () {
         _secretWriteCompleters.remove(requestId);
-        throw TimeoutException('Timed out saving secret');
+        throw SecretOperationError(
+          '${_computerName(targetServerId ?? _activeSessionServerId)} did not '
+          'confirm the secret was saved',
+          retryable: true,
+        );
       },
     );
   }
+
+  /// The computer's configured name, for messages about it.
+  String _computerName(String? serverId) =>
+      _serverConfigs
+          .where((config) => config.id == serverId)
+          .map((config) => config.name.trim())
+          .where((name) => name.isNotEmpty)
+          .firstOrNull ??
+      'The selected computer';
 
   void refreshSecretInventory() {
     final serverId = _activeSessionServerId ?? _connMgr.activeServerId;
@@ -13209,12 +13582,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
 
-    final serverName = _serverConfigs
-        .where((config) => config.id == serverId)
-        .map((config) => config.name.trim())
-        .where((name) => name.isNotEmpty)
-        .firstOrNull;
-    final serverLabel = serverName ?? 'The selected computer';
+    final serverLabel = _computerName(serverId);
     if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) {
       _secretInventoryLoading = false;
       _secretInventoryError =
@@ -13478,8 +13846,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Clear file attachment state (without notifyListeners)
   void _clearAttachment() {
     _secretInventoryRequestTracker.cancel();
+    // Secrets kept for their session wait there; only orphans are wiped.
+    final kept = _sessionSecretDrafts.values.expand((secrets) => secrets);
     for (final secret in _pendingSecretAttachments) {
-      secret.clearValue();
+      if (!kept.contains(secret)) secret.clearValue();
     }
     _pendingFileAttachments.clear();
     _pendingSecretAttachments.clear();
@@ -14733,7 +15103,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingImageLoads.clear();
     _toolEventReconciler.clear();
     _clearAttachment();
-    _restoreComposerFiles();
+    _restoreComposerAttachments();
     _clearRawState();
     // Look up which server owns this session and switch active server
     final session = _sessions
@@ -18326,6 +18696,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _sessionMemoryCompleters.clear();
     _connMgr.dispose();
     _aiResponseReports.dispose();
+    _errorReports.dispose();
     _speech.dispose();
     _systemEngine.playbackState.removeListener(_onTtsPlaybackChanged);
     _kokoroServerEngine.playbackState.removeListener(_onTtsPlaybackChanged);
@@ -18407,4 +18778,19 @@ class _UploadState {
     _stallTimer = null;
     _wakeWaiter();
   }
+}
+
+/// A secret the computer did not save or delete. The message reads on its
+/// own, with no exception type in front.
+class SecretOperationError implements Exception {
+  const SecretOperationError(this.message, {this.retryable = false});
+
+  final String message;
+
+  /// True when the computer never answered, so trying again may work. False
+  /// when it answered no.
+  final bool retryable;
+
+  @override
+  String toString() => message;
 }

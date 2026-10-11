@@ -1,5 +1,6 @@
 import '../util/format.dart';
 import 'message_attachment.dart';
+import 'traced_error.dart';
 
 enum MessageSender { user, assistant, system }
 
@@ -129,6 +130,10 @@ class ChatMessage {
   String? toolImageMimeType; // "image/png", etc.
   String? toolImageFilePath; // server file path (for history reload)
 
+  /// Set on error rows the app recorded; the row shows its ID and can be
+  /// reported. Errors replayed from server history have none.
+  final TracedError? trace;
+
   ChatMessage({
     required this.id,
     required this.sender,
@@ -174,6 +179,7 @@ class ChatMessage {
     this.injectionPriority,
     this.uploadProgress,
     this.uploadFileName,
+    this.trace,
   });
 
   factory ChatMessage.userText(String text) {
@@ -404,13 +410,14 @@ class ChatMessage {
     );
   }
 
-  factory ChatMessage.error(String message) {
+  factory ChatMessage.error(String message, {TracedError? trace}) {
     return ChatMessage(
       id: 'error_${DateTime.now().microsecondsSinceEpoch}',
       sender: MessageSender.system,
       type: MessageType.error,
       timestamp: DateTime.now(),
       textContent: message,
+      trace: trace,
     );
   }
 

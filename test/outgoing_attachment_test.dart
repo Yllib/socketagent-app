@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:app/models/message.dart';
@@ -165,5 +166,131 @@ void main() {
     } finally {
       await dir.delete(recursive: true);
     }
+  });
+
+  test('a dropped folder is reported, not silently skipped', () async {
+    final dir = await Directory.systemTemp.createTemp('composer-folder-');
+    try {
+      await withSession((provider, _) async {
+        provider.attachFilePaths([dir.path]);
+        expect(provider.pendingFileAttachments, isEmpty);
+        final row = provider.messages.last;
+        expect(row.type, MessageType.error);
+        expect(row.textContent, contains('only files can be attached'));
+        expect(row.trace?.kind, 'attach_file');
+      });
+    } finally {
+      await dir.delete(recursive: true);
+    }
+  });
+
+  test('a secret stays with its session across switches', () async {
+    await withSession((provider, _) async {
+      provider.queueSecureAttachment(label: 'API_KEY', value: 'hunter2');
+      provider.resumeSession('other-session', serverId: 'multi-client-server');
+      expect(provider.pendingSecretAttachments, isEmpty);
+      provider.resumeSession('shared-session', serverId: 'multi-client-server');
+      expect(provider.pendingSecretAttachments.single.value, 'hunter2');
+    });
+  });
+
+  test('an offline secret waits in the outbox, never in its files', () async {
+    await withSession((provider, _) async {
+      provider.queueSecureAttachment(label: 'API_KEY', value: 'hunter2');
+      provider.disconnect();
+      expect(await provider.sendPrompt('use this key'), isTrue);
+      expect(provider.pendingSecretAttachments, isEmpty);
+      final queued = (await OutgoingQueue().load()).single;
+      expect(queued.secrets.single.label, 'API_KEY');
+      expect(queued.secrets.single.saved, isNull);
+      expect(jsonEncode(queued.toJson()), isNot(contains('hunter2')));
+      expect(
+        await OutgoingQueue().secretValue(queued.id, queued.secrets.single),
+        'hunter2',
+      );
+    });
+  });
+
+  test('a queued secret is saved on the computer before its prompt', () async {
+    final stored = Completer<Map<String, dynamic>>();
+    final received = <Map<String, dynamic>>[];
+    await withSession(
+      (provider, send) async {
+        provider.queueSecureAttachment(label: 'API_KEY', value: 'hunter2');
+        final sending = provider.sendPrompt('use this key');
+        final store = await stored.future.timeout(const Duration(seconds: 5));
+        expect(store['value'], 'hunter2');
+        expect(received.where((m) => m['type'] == 'prompt'), isEmpty);
+        await send({
+          'type': 'secret_operation_result',
+          'requestId': store['clientRequestId'],
+          'operation': 'create',
+          'ok': true,
+          'secret': {
+            'secretId': 'sec_1',
+            'label': 'API_KEY',
+            'scope': 'session',
+            'filePath': '/secrets/API_KEY_sec_1',
+            'envHint': 'API_KEY',
+            'createdAt': '2026-10-11T12:00:00.000Z',
+          },
+        });
+        await sending.timeout(const Duration(seconds: 5));
+        final prompt = received.singleWhere((m) => m['type'] == 'prompt');
+        expect(
+          prompt['text'],
+          startsWith('[Attached secret: {"label":"API_KEY"'),
+        );
+        expect(prompt['text'], endsWith('\nuse this key'));
+        final queued = (await OutgoingQueue().load()).single;
+        expect(queued.secrets.single.saved?.secretId, 'sec_1');
+        expect(
+          await OutgoingQueue().secretValue(queued.id, queued.secrets.single),
+          isNull,
+        );
+      },
+      onClientMessage: (event) {
+        received.add(event);
+        if (event['type'] == 'secure_input_store' && !stored.isCompleted) {
+          stored.complete(event);
+        }
+      },
+    );
+  });
+
+  test('a secret the computer refuses fails with a traceable error', () async {
+    final stored = Completer<Map<String, dynamic>>();
+    final received = <Map<String, dynamic>>[];
+    await withSession(
+      (provider, send) async {
+        provider.queueSecureAttachment(label: 'API_KEY', value: 'hunter2');
+        final sending = provider.sendPrompt('use this key');
+        final store = await stored.future.timeout(const Duration(seconds: 5));
+        await send({
+          'type': 'secret_operation_result',
+          'requestId': store['clientRequestId'],
+          'operation': 'create',
+          'ok': false,
+          'error': 'disk full',
+        });
+        await sending.timeout(const Duration(seconds: 5));
+        final problem = provider.activeDeliveryProblems.single.failure;
+        expect(problem?.message, 'API_KEY was not saved: disk full');
+        expect(problem?.id, matches(RegExp(r'^E-[0-9A-F]{8}$')));
+        expect(received.where((m) => m['type'] == 'prompt'), isEmpty);
+        expect(
+          received.singleWhere(
+            (m) => m['type'] == 'client_event_error',
+          )['message'],
+          '[${problem?.id}] API_KEY was not saved: disk full',
+        );
+      },
+      onClientMessage: (event) {
+        received.add(event);
+        if (event['type'] == 'secure_input_store' && !stored.isCompleted) {
+          stored.complete(event);
+        }
+      },
+    );
   });
 }

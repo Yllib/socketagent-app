@@ -7,20 +7,21 @@ import 'package:pasteboard/pasteboard.dart';
 import 'package:path_provider/path_provider.dart';
 
 /// Paths to attach when Ctrl+V is pressed in the desktop composer: files
-/// copied in Explorer, or a copied image saved as a PNG. Returns an empty list
-/// when the clipboard holds text, so the composer pastes it as usual. Text
-/// wins over an image because Word and Excel copy both.
+/// and folders copied in Explorer, or a copied image saved as a PNG. Returns
+/// an empty list when the clipboard holds text, so the composer pastes it as
+/// usual. Text wins over an image because Word and Excel copy both. Throws
+/// when a copied image cannot be converted.
 Future<List<String>> clipboardAttachmentPaths() async {
-  final files = (await Pasteboard.files()).where(
-    (path) => FileSystemEntity.isFileSync(path),
-  );
-  if (files.isNotEmpty) return files.toList();
+  final files = await Pasteboard.files();
+  if (files.isNotEmpty) return files;
   final text = await Clipboard.getData(Clipboard.kTextPlain);
   if (text?.text?.isNotEmpty ?? false) return const [];
   final bitmap = await Pasteboard.image;
   if (bitmap == null) return const [];
   final png = await compute(pngFromClipboardBitmap, bitmap);
-  if (png == null) return const [];
+  if (png == null) {
+    throw const FormatException('The copied image is not a readable bitmap');
+  }
   final folder = Directory(
     '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}socketagent-paste',
   );

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../services/chat_provider.dart';
+import 'error_trace_row.dart';
 
 class OutgoingQueueNotice extends StatelessWidget {
   const OutgoingQueueNotice({super.key, required this.provider});
@@ -17,7 +18,7 @@ class OutgoingQueueNotice extends StatelessWidget {
         children: [
           Expanded(
             child: Text(
-              provider.outgoingQueueError ??
+              provider.outgoingQueueError?.message ??
                   (count == 1
                       ? 'Delivery needs attention'
                       : '$count delivery problems'),
@@ -37,8 +38,15 @@ class OutgoingQueueNotice extends StatelessWidget {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          if (provider.outgoingQueueError != null)
-                            Text(provider.outgoingQueueError!),
+                          if (provider.outgoingQueueError
+                              case final queueError?) ...[
+                            Text(queueError.message),
+                            ErrorTraceRow(
+                              trace: queueError,
+                              onReport: provider.reportError,
+                            ),
+                            const Divider(),
+                          ],
                           if (provider.activeDeliveryProblems.isEmpty &&
                               provider.outgoingQueueError == null)
                             const Text('No delivery problems.'),
@@ -50,10 +58,17 @@ class OutgoingQueueNotice extends StatelessWidget {
                               overflow: TextOverflow.ellipsis,
                             ),
                             const SizedBox(height: 4),
-                            Text(
-                              request.error ??
-                                  'Saved on this device. Will retry when the computer is connected.',
-                            ),
+                            if (provider.deliveryProblem(request.id)
+                                case final problem?) ...[
+                              Text(problem.message),
+                              ErrorTraceRow(
+                                trace: problem,
+                                onReport: provider.reportError,
+                              ),
+                            ] else
+                              const Text(
+                                'Saved on this device. Will retry when the computer is connected.',
+                              ),
                             Wrap(
                               children: [
                                 TextButton(

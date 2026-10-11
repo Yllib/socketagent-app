@@ -528,9 +528,14 @@ class _ChatScreenState extends State<_ChatScreen> {
           return true;
         },
         onPasteAttachments: () async {
-          final paths = await clipboardAttachmentPaths();
-          provider.attachFilePaths(paths);
-          return paths.isNotEmpty;
+          try {
+            final paths = await clipboardAttachmentPaths();
+            provider.attachFilePaths(paths);
+            return paths.isNotEmpty;
+          } catch (error) {
+            provider.showError('clipboard_paste', 'Paste failed: $error');
+            return true;
+          }
         },
       );
     }
@@ -746,7 +751,19 @@ class _ChatScreenState extends State<_ChatScreen> {
     if (!_followLatest) {
       setState(() => _followLatest = true);
     }
-    provider.sendPrompt(text, priority: priority);
+    final sessionId = provider.activeSessionId;
+    provider.sendPrompt(text, priority: priority).then((sent) {
+      // A message that never left comes back, ahead of anything typed since.
+      if (sent || !mounted || text.trim().isEmpty) return;
+      if (provider.activeSessionId != sessionId) return;
+      final typed = _textController.text;
+      final restored = typed.isEmpty ? text : '$text\n\n$typed';
+      _textController.text = restored;
+      _textController.selection = TextSelection.collapsed(
+        offset: restored.length,
+      );
+      provider.saveDraft(restored.trim());
+    });
     _textController.clear();
     provider.saveDraft(''); // Clear draft on send
     _focusNode.requestFocus();
@@ -872,6 +889,8 @@ class _ChatScreenState extends State<_ChatScreen> {
     final valueController = TextEditingController();
     String scope = 'session';
     bool obscure = true;
+    String? labelError;
+    String? valueError;
 
     try {
       await showDialog<void>(
@@ -879,6 +898,29 @@ class _ChatScreenState extends State<_ChatScreen> {
         builder: (dialogContext) {
           return StatefulBuilder(
             builder: (context, setDialogState) {
+              // The env var hint stands in for a missing label, so the only
+              // way to fail is leaving both empty or the value empty.
+              void attach() {
+                final envHint = envController.text.trim();
+                final label = labelController.text.trim().isEmpty
+                    ? envHint
+                    : labelController.text.trim();
+                final value = valueController.text;
+                setDialogState(() {
+                  labelError = label.isEmpty ? 'Enter a label' : null;
+                  valueError = value.isEmpty ? 'Enter the secret' : null;
+                });
+                if (label.isEmpty || value.isEmpty) return;
+                provider.queueSecureAttachment(
+                  label: label,
+                  value: value,
+                  scope: scope,
+                  envHint: envHint,
+                );
+                valueController.clear();
+                Navigator.of(dialogContext).pop();
+              }
+
               return AlertDialog(
                 title: const Row(
                   children: [
@@ -892,15 +934,16 @@ class _ChatScreenState extends State<_ChatScreen> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       const Text(
-                        'This value stays in the composer until you send your next message.',
+                        "Waits in this session's composer until you send.",
                         style: TextStyle(fontSize: 12),
                       ),
                       const SizedBox(height: 12),
                       TextField(
                         controller: labelController,
-                        decoration: const InputDecoration(
+                        decoration: InputDecoration(
                           labelText: 'Label',
                           hintText: 'OPENAI_API_KEY',
+                          errorText: labelError,
                         ),
                       ),
                       const SizedBox(height: 12),
@@ -940,8 +983,10 @@ class _ChatScreenState extends State<_ChatScreen> {
                         obscureText: obscure,
                         enableSuggestions: false,
                         autocorrect: false,
+                        onSubmitted: (_) => attach(),
                         decoration: InputDecoration(
                           labelText: 'Secret value',
+                          errorText: valueError,
                           suffixIcon: IconButton(
                             tooltip: obscure ? 'Show' : 'Hide',
                             icon: Icon(
@@ -966,19 +1011,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                   FilledButton.icon(
                     icon: const Icon(Icons.lock_outline, size: 18),
                     label: const Text('Attach'),
-                    onPressed: () {
-                      final label = labelController.text.trim();
-                      final value = valueController.text;
-                      if (label.isEmpty || value.isEmpty) return;
-                      provider.queueSecureAttachment(
-                        label: label,
-                        value: value,
-                        scope: scope,
-                        envHint: envController.text,
-                      );
-                      valueController.clear();
-                      Navigator.of(dialogContext).pop();
-                    },
+                    onPressed: attach,
                   ),
                 ],
               );
@@ -1187,11 +1220,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       onDragExited: (_) => setState(() => _fileDragOver = false),
       onDragDone: (details) {
         setState(() => _fileDragOver = false);
-        provider.attachFilePaths(
-          details.files
-              .map((file) => file.path)
-              .where((path) => FileSystemEntity.isFileSync(path)),
-        );
+        provider.attachFilePaths(details.files.map((file) => file.path));
         _focusNode.requestFocus();
       },
       child: Stack(
@@ -1632,6 +1661,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                             },
                             onReadAloud: provider.replaySpeak,
                             onReportAiResponse: provider.reportAiResponse,
+                            onReportError: provider.reportError,
                             rawMode: provider.rawMode,
                             rawItems: provider.rawItems,
                             subagentTasks: provider.subagentTasks,

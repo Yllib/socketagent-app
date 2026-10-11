@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../models/composer_attachment.dart';
 import '../services/chat_provider.dart';
+import 'error_trace_row.dart';
 
 class SecretManagerSheet extends StatefulWidget {
   const SecretManagerSheet({super.key, required this.provider});
@@ -33,7 +35,7 @@ class _SecretManagerSheetState extends State<SecretManagerSheet> {
       );
       if (mounted) _showMessage('Secret created');
     } catch (error) {
-      if (mounted) _showMessage('Could not create secret: $error');
+      _showError('secret_create', 'Could not create secret: $error');
     } finally {
       input.clear();
     }
@@ -51,7 +53,7 @@ class _SecretManagerSheetState extends State<SecretManagerSheet> {
       );
       if (mounted) _showMessage('Secret replaced');
     } catch (error) {
-      if (mounted) _showMessage('Could not replace secret: $error');
+      _showError('secret_replace', 'Could not replace secret: $error');
     } finally {
       input.clear();
     }
@@ -82,7 +84,7 @@ class _SecretManagerSheetState extends State<SecretManagerSheet> {
       await widget.provider.deleteManagedSecret(secret);
       if (mounted) _showMessage('Secret deleted');
     } catch (error) {
-      if (mounted) _showMessage('Could not delete secret: $error');
+      _showError('secret_delete', 'Could not delete secret: $error');
     }
   }
 
@@ -217,6 +219,24 @@ class _SecretManagerSheetState extends State<SecretManagerSheet> {
       valueController.clear();
       valueController.dispose();
     }
+  }
+
+  /// Traces the failure and shows it with its ID, which the user can quote.
+  void _showError(String kind, String message) {
+    final error = widget.provider.traceError(kind, message);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('$message (${error.id})'),
+        duration: const Duration(seconds: 6),
+        action: SnackBarAction(
+          label: 'Report',
+          onPressed: () => unawaited(
+            confirmAndReportError(context, error, widget.provider.reportError),
+          ),
+        ),
+      ),
+    );
   }
 
   void _showMessage(String message) {

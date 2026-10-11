@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import '../models/message.dart';
 import '../models/ai_response_report.dart';
+import '../models/traced_error.dart';
 import '../models/condensed_chat_rows.dart';
 import '../models/message_reconciliation.dart';
 import '../models/raw_event.dart';
 import '../services/socketagent_link_router.dart';
 import '../util/format.dart';
+import 'error_trace_row.dart';
 import 'message_bubble.dart';
 import 'message_timestamp.dart';
 import 'tool_output_block.dart';
@@ -98,6 +100,9 @@ class ChatView extends StatefulWidget {
     AiResponseReportCategory category,
   )?
   onReportAiResponse;
+
+  /// Sends a traced error to SocketAgent after the user confirms.
+  final Future<String?> Function(TracedError trace)? onReportError;
   final bool rawMode;
   final List<SdkItem> rawItems;
   // For SubAgentCard: tracked subagent tasks and full message list for child lookup
@@ -148,6 +153,7 @@ class ChatView extends StatefulWidget {
     this.onRetractQueuedMessage,
     this.onReadAloud,
     this.onReportAiResponse,
+    this.onReportError,
     this.rawMode = false,
     this.rawItems = const [],
     this.subagentTasks = const {},
@@ -2463,7 +2469,18 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             ),
           ),
           const SizedBox(width: 8),
-          Expanded(child: _buildErrorText(msg.textContent)),
+          Expanded(
+            child: switch (msg.trace) {
+              null => _buildErrorText(msg.textContent),
+              final trace => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildErrorText(msg.textContent),
+                  ErrorTraceRow(trace: trace, onReport: widget.onReportError),
+                ],
+              ),
+            },
+          ),
         ],
       ),
     );

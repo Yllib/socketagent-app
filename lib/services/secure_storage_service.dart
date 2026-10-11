@@ -22,6 +22,17 @@ class SecureStorageService {
     }
   }
 
+  // ────────── Queued secrets ──────────
+
+  /// A secret value waiting in the outbox for its computer. Kept here, never
+  /// in the outbox files, and deleted once the computer has saved it.
+  Future<String?> getOutgoingSecret(String key) =>
+      _storage.read(key: 'outgoing_secret:$key');
+  Future<void> setOutgoingSecret(String key, String value) =>
+      _storage.write(key: 'outgoing_secret:$key', value: value);
+  Future<void> deleteOutgoingSecret(String key) =>
+      _storage.delete(key: 'outgoing_secret:$key');
+
   // ────────── Credentials ──────────
 
   /// Auth token for direct server connections

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'multi_client_prompt_test.dart' show withSession;
+import 'package:app/models/traced_error.dart';
 
 void main() {
   testWidgets(
@@ -63,7 +64,10 @@ void main() {
           expect(find.text('View'), findsNothing);
 
           // Device-wide storage errors remain visible even without a failed request here.
-          provider.outgoingQueueError = 'Saved requests could not be loaded.';
+          provider.outgoingQueueError = TracedError(
+            kind: 'outbox_load',
+            message: 'Saved requests could not be loaded.',
+          );
           provider.notifyListeners();
           await tester.pump();
           expect(

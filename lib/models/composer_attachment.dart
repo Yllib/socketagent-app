@@ -32,6 +32,16 @@ class SecretMetadata {
       updatedAt: DateTime.tryParse(json['updatedAt'] as String? ?? ''),
     );
   }
+
+  Map<String, String> toJson() => {
+    'secretId': secretId,
+    'label': label,
+    'scope': scope,
+    'filePath': filePath,
+    'envHint': envHint,
+    'createdAt': createdAt.toIso8601String(),
+    if (updatedAt case final updated?) 'updatedAt': updated.toIso8601String(),
+  };
 }
 
 class PendingFileAttachment {
