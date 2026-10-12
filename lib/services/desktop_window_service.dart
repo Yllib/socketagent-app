@@ -54,6 +54,10 @@ class DesktopWindowService extends ValueNotifier<DesktopWindowState> {
   Future<void> show() => _channel.invokeMethod<void>('show');
   Future<void> hide() => _channel.invokeMethod<void>('hide');
   Future<void> minimize() => _channel.invokeMethod<void>('minimize');
+
+  /// Flashes the taskbar button until the window comes to the front. Does
+  /// nothing while the window is in front or hidden in the tray.
+  Future<void> flash() => _channel.invokeMethod<void>('flash');
   Future<void> toggleMaximize() =>
       _channel.invokeMethod<void>('toggleMaximize');
   Future<void> showMenu() => _channel.invokeMethod<void>('showMenu');

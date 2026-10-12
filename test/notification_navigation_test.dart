@@ -1,5 +1,7 @@
 import 'package:app/models/notification_navigation.dart';
+import 'package:app/services/notification_service.dart';
 import 'package:app/services/push_notification_service.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -73,6 +75,32 @@ void main() {
         serverId: 'server-1',
       ),
       isTrue,
+    );
+  });
+
+  test('a Windows toast click opens its session, not a button action', () {
+    // The Windows plugin repeats the payload as the action ID on every click.
+    expect(
+      NotificationService.payloadForResponse(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotification,
+          payload: 'session:session-1:server-1',
+          actionId: 'session:session-1:server-1',
+        ),
+      ),
+      'session:session-1:server-1',
+    );
+    expect(
+      NotificationService.payloadForResponse(
+        const NotificationResponse(
+          notificationResponseType:
+              NotificationResponseType.selectedNotificationAction,
+          payload: 'download:1',
+          actionId: 'download_retry',
+        ),
+      ),
+      'notification_action:download_retry:download%3A1',
     );
   });
 }

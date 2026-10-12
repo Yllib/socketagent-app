@@ -884,6 +884,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _serversWithBrowserNativeInput = {};
   final Set<String> _serversWithBrowserClose = {};
   final Set<String> _serversWithBrowserStart = {};
+  final Set<String> _serversWithBrowserProfileDelete = {};
 
   /// Browsers the user asked to start, by server and profile, waiting for the
   /// server to report them running or failed.
@@ -5440,6 +5441,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               } else {
                 _serversWithBrowserStart.remove(serverId);
               }
+              if (browserSessions is Map &&
+                  browserSessions['deleteProfile'] == true) {
+                _serversWithBrowserProfileDelete.add(serverId);
+              } else {
+                _serversWithBrowserProfileDelete.remove(serverId);
+              }
               _captureCodexDriverSettings(msg, serverId);
               unawaited(
                 (() async {
@@ -6994,8 +7001,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             for (final value in msg['profiles'] as List? ?? const [])
               ?BrowserProfile.fromPayload(value),
           ];
+          final error = msg['error'];
           for (final request in _browserProfileRequests) {
-            if (!request.isCompleted) request.complete(profiles);
+            if (request.isCompleted) continue;
+            if (error is String && error.isNotEmpty) {
+              request.completeError(StateError(error));
+            } else {
+              request.complete(profiles);
+            }
           }
           _browserProfileRequests.clear();
           break;
@@ -7500,10 +7513,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return id != null && _serversWithBrowserStart.contains(id);
   }
 
+  /// Whether the active session's server deletes saved browser profiles.
+  bool get serverSupportsBrowserProfileDelete {
+    final id = activeSessionServerId;
+    return id != null && _serversWithBrowserProfileDelete.contains(id);
+  }
+
   /// The browser profiles saved on the active session's computer.
-  Future<List<BrowserProfile>> requestBrowserProfiles() {
+  Future<List<BrowserProfile>> requestBrowserProfiles() =>
+      _browserProfiles({'type': 'browser_profiles_request'});
+
+  /// Deletes [profile] and its sign-ins from the active session's computer.
+  /// Completes with the profiles left, or fails with the computer's reason.
+  Future<List<BrowserProfile>> deleteBrowserProfile(String profile) =>
+      _browserProfiles({'type': 'browser_profile_delete', 'profile': profile});
+
+  Future<List<BrowserProfile>> _browserProfiles(Map<String, Object> message) {
     final request = Completer<List<BrowserProfile>>();
-    if (!_sendToActiveSessionServer({'type': 'browser_profiles_request'})) {
+    if (!_sendToActiveSessionServer(message)) {
       return Future.error(StateError('The computer is not connected.'));
     }
     _browserProfileRequests.add(request);

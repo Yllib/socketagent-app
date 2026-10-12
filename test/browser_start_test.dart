@@ -75,4 +75,45 @@ void main() {
       },
     );
   });
+
+  test('deleting a profile returns what is left, or why it was kept', () async {
+    final deletes = StreamController<Map<String, dynamic>>();
+    await withSession(
+      (provider, send) async {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        final requests = StreamIterator(deletes.stream);
+        final profile = {'profile': 'bank', 'label': 'bank', 'running': false};
+
+        final deleted = provider.deleteBrowserProfile('old');
+        expect(await requests.moveNext(), isTrue);
+        expect(requests.current['profile'], 'old');
+        await send({
+          'type': 'browser_profiles',
+          'profiles': [profile],
+        });
+        expect((await deleted).map((saved) => saved.profile), ['bank']);
+
+        final refused = expectLater(
+          provider.deleteBrowserProfile('bank'),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'Close bank before deleting it.',
+            ),
+          ),
+        );
+        expect(await requests.moveNext(), isTrue);
+        await send({
+          'type': 'browser_profiles',
+          'profiles': [profile],
+          'error': 'Close bank before deleting it.',
+        });
+        await refused;
+      },
+      onClientMessage: (event) {
+        if (event['type'] == 'browser_profile_delete') deletes.add(event);
+      },
+    );
+  });
 }

@@ -111,10 +111,23 @@ class NotificationService {
   /// Set this to handle notification taps (e.g., navigate to a session)
   static void Function(String? payload)? onNotificationTap;
 
+  /// A toast on its own is easy to miss on the desktop.
+  static void _flashTaskbar() {
+    if (!Platform.isWindows) return;
+    unawaited(
+      DesktopWindowService.instance.flash().catchError(
+        (Object error) => debugPrint('[Notification] flash failed: $error'),
+      ),
+    );
+  }
+
   static String? payloadForResponse(NotificationResponse? response) {
     if (response == null) return null;
     final actionId = response.actionId;
-    final isAction = actionId != null && actionId.isNotEmpty;
+    // The Windows plugin reports every click with the payload as its action
+    // ID. Treating that as a button press would drop a click on the toast.
+    final isAction =
+        actionId != null && actionId.isNotEmpty && actionId != response.payload;
     if (!isAction) return response.payload;
     return 'notification_action:${Uri.encodeComponent(actionId)}:${Uri.encodeComponent(response.payload ?? '')}';
   }
@@ -340,6 +353,7 @@ class NotificationService {
           payload: payload,
         );
         debugPrint('[Notification] shown: "$title" (id=$id)');
+        _flashTaskbar();
         return true;
       } catch (e) {
         debugPrint('[Notification] show error: $e');
@@ -378,6 +392,7 @@ class NotificationService {
           unread: unread,
           alert: true,
         );
+        _flashTaskbar();
         await _refreshCompletedSessionSummary();
         return true;
       } catch (e) {

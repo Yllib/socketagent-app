@@ -8,8 +8,9 @@ import '../services/chat_provider.dart';
 import 'error_trace_row.dart';
 
 /// Asks for an address and a profile, then opens a browser for the active
-/// session without the agent. Returns the running browser, or null when the
-/// user cancels. Failures stay in the dialog with a traceable ID.
+/// session without the agent. Saved profiles can be picked or deleted from
+/// the list. Returns the running browser, or null when the user cancels.
+/// Failures stay in the dialog with a traceable ID.
 Future<ActiveBrowserSession?> showStartBrowserDialog(
   BuildContext context,
   ChatProvider provider,
@@ -39,6 +40,9 @@ class _StartBrowserDialogState extends State<_StartBrowserDialog> {
   TracedError? _failure;
   bool _opening = false;
 
+  /// The profile being deleted, while the computer works on it.
+  String? _deleting;
+
   @override
   void initState() {
     super.initState();
@@ -56,16 +60,7 @@ class _StartBrowserDialogState extends State<_StartBrowserDialog> {
     try {
       final all = await widget.provider.requestBrowserProfiles();
       if (!mounted) return;
-      final taken = {for (final profile in all) profile.profile};
-      var fresh = 'browser';
-      for (var n = 2; taken.contains(fresh); n++) {
-        fresh = 'browser-$n';
-      }
-      final available = all.where((profile) => !profile.running).toList();
-      setState(() {
-        _profiles = available;
-        _profile.text = available.isEmpty ? fresh : available.first.profile;
-      });
+      setState(() => _show(all));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -74,6 +69,65 @@ class _StartBrowserDialogState extends State<_StartBrowserDialog> {
         _failure = widget.provider.traceError(
           'browser_profiles',
           'Saved browsers could not be listed: ${_describe(error)}',
+        );
+      });
+    }
+  }
+
+  /// Lists the profiles that are not open. An empty name gets the first
+  /// saved profile, or a fresh name when none are free.
+  void _show(List<BrowserProfile> all) {
+    final taken = {for (final profile in all) profile.profile};
+    var fresh = 'browser';
+    for (var n = 2; taken.contains(fresh); n++) {
+      fresh = 'browser-$n';
+    }
+    final available = all.where((profile) => !profile.running).toList();
+    if (_profile.text.trim().isEmpty) {
+      _profile.text = available.isEmpty ? fresh : available.first.profile;
+    }
+    _profiles = available;
+  }
+
+  Future<void> _delete(BrowserProfile profile) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        title: Text('Delete ${profile.profile}?'),
+        content: const Text('Its sign-ins and browsing data are removed.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _deleting = profile.profile;
+      _failure = null;
+    });
+    try {
+      final all = await widget.provider.deleteBrowserProfile(profile.profile);
+      if (!mounted) return;
+      setState(() {
+        _deleting = null;
+        if (_profile.text.trim() == profile.profile) _profile.clear();
+        _show(all);
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _deleting = null;
+        _failure = widget.provider.traceError(
+          'browser_profile_delete',
+          '${profile.profile} was not deleted: ${_describe(error)}',
         );
       });
     }
@@ -117,6 +171,44 @@ class _StartBrowserDialogState extends State<_StartBrowserDialog> {
     _ => '$error',
   };
 
+  Widget _profileRow(BrowserProfile profile) {
+    final colors = Theme.of(context).colorScheme;
+    final selected = _profile.text.trim() == profile.profile;
+    final busy = _opening || _deleting != null;
+    return InkWell(
+      onTap: busy ? null : () => _profile.text = profile.profile,
+      child: SizedBox(
+        height: 36,
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                profile.profile,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected
+                      ? colors.onSurface
+                      : colors.onSurface.withValues(alpha: 0.6),
+                  fontWeight: selected ? FontWeight.w600 : null,
+                ),
+              ),
+            ),
+            if (_deleting == profile.profile)
+              const Text('Deleting')
+            else if (widget.provider.serverSupportsBrowserProfileDelete)
+              IconButton(
+                tooltip: 'Delete ${profile.profile}',
+                iconSize: 18,
+                visualDensity: VisualDensity.compact,
+                onPressed: busy ? null : () => _delete(profile),
+                icon: const Icon(Icons.close),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final profiles = _profiles;
@@ -143,25 +235,36 @@ class _StartBrowserDialogState extends State<_StartBrowserDialog> {
               onSubmitted: (_) => _open(),
             ),
             const SizedBox(height: 12),
-            if (profiles == null)
-              const Text('Loading saved browsers')
-            else
-              DropdownMenu<String>(
-                controller: _profile,
-                enabled: !_opening,
-                expandedInsets: EdgeInsets.zero,
-                label: const Text('Profile'),
+            TextField(
+              controller: _profile,
+              enabled: !_opening && profiles != null,
+              autocorrect: false,
+              decoration: InputDecoration(
+                labelText: 'Profile',
                 helperText:
                     'Keeps its own sign-ins. Type a name for a new one.',
                 errorText: _profileError,
-                requestFocusOnTap: true,
-                dropdownMenuEntries: [
-                  for (final profile in profiles)
-                    DropdownMenuEntry(
-                      value: profile.profile,
-                      label: profile.profile,
-                    ),
-                ],
+              ),
+              onSubmitted: (_) => _open(),
+            ),
+            if (profiles == null)
+              const Padding(
+                padding: EdgeInsets.only(top: 8),
+                child: Text('Loading saved browsers'),
+              )
+            else if (profiles.isNotEmpty)
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 240),
+                child: ListenableBuilder(
+                  listenable: _profile,
+                  builder: (context, _) => ListView(
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.only(top: 8),
+                    children: [
+                      for (final profile in profiles) _profileRow(profile),
+                    ],
+                  ),
+                ),
               ),
             if (failure != null) ...[
               const SizedBox(height: 12),

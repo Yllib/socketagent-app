@@ -64,6 +64,15 @@ DesktopShell::DesktopShell(HWND window, HWND content, flutter::BinaryMessenger* 
       PostMessage(window_, kTrayMessage, 0, WM_CONTEXTMENU);
       return;
     }
+    else if (method == "flash") {
+      // Flashes the taskbar button until the user switches to the window.
+      // Nothing to flash while it is hidden in the tray or already in front.
+      if (IsWindowVisible(window_) && GetForegroundWindow() != window_) {
+        FLASHWINFO flash{sizeof(FLASHWINFO), window_,
+                         FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0};
+        FlashWindowEx(&flash);
+      }
+    }
     else if (method == "minimize") ShowWindow(window_, SW_MINIMIZE);
     else if (method == "toggleMaximize") {
       ShowWindow(window_, IsZoomed(window_) ? SW_RESTORE : SW_MAXIMIZE);
