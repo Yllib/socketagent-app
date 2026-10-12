@@ -62,14 +62,58 @@ class _NativeInputProvider extends ChatProvider {
   @override
   bool serverSupportsBrowserStart(String? serverId) => true;
 
-  @override
-  Future<List<BrowserProfile>> requestBrowserProfiles() async => const [
+  List<BrowserProfile> profiles = const [
+    BrowserProfile(
+      profile: 'browser-test',
+      label: 'browser-test',
+      running: true,
+    ),
     BrowserProfile(profile: 'work', label: 'work', running: false),
   ];
+  final switched = <String>[];
+  final saved = <String>[];
+  final deleted = <String>[];
+
+  @override
+  Future<List<BrowserProfile>> requestBrowserProfiles() async => profiles;
+
+  @override
+  bool serverSupportsBrowserProfiles(String? serverId) => true;
+
+  @override
+  bool get serverSupportsBrowserProfileDelete => true;
+
+  @override
+  Future<ActiveBrowserSession> switchBrowserProfile(
+    ActiveBrowserSession browser,
+    String to,
+  ) async {
+    switched.add('${browser.profile} $to');
+    return browser;
+  }
+
+  @override
+  Future<ActiveBrowserSession> saveBrowserProfileAs(
+    ActiveBrowserSession browser,
+    String name,
+  ) async {
+    saved.add('${browser.profile} $name');
+    return browser;
+  }
+
+  @override
+  Future<List<BrowserProfile>> deleteBrowserProfile(String profile) async {
+    deleted.add(profile);
+    profiles = [
+      for (final saved in profiles)
+        if (saved.profile != profile) saved,
+    ];
+    return profiles;
+  }
 
   @override
   Future<ActiveBrowserSession> startBrowserSession({
-    required String profile,
+    String profile = 'default',
     required String url,
   }) async {
     started.add('$profile $url');
@@ -122,7 +166,9 @@ ActiveBrowserSession browser(String profile) => ActiveBrowserSession(
   serverId: '',
   sessionId: 'chat',
   profile: profile,
-  label: profile == 'browser-test' ? 'Browser test' : profile,
+  // The server labels a browser with its profile, which a later browser's ID
+  // extends with ~N.
+  label: profile == 'browser-test' ? 'Browser test' : profile.split('~').first,
   url: 'https://example.test',
   width: 430,
   height: 860,
@@ -277,23 +323,67 @@ void main() {
     final provider = await pumpNativeBrowser(tester);
     await tester.tap(find.byTooltip('New browser'));
     await settle(tester);
-    await tester.enterText(
-      find
-          .descendant(
-            of: find.byType(AlertDialog),
-            matching: find.byType(TextField),
-          )
-          .first,
-      'example.com',
-    );
-    await tester.tap(find.widgetWithText(FilledButton, 'Open'));
-    await settle(tester);
-    expect(provider.started, ['work https://example.com']);
+    expect(provider.started, ['default https://www.google.com']);
     final screen = tester.widget<BrowserSessionScreen>(
       find.byType(BrowserSessionScreen),
     );
-    expect(screen.profile, 'work');
+    expect(screen.profile, 'default');
   });
+
+  testWidgets('browsers sharing a profile get numbered tabs', (tester) async {
+    final provider = await pumpNativeBrowser(tester);
+    provider.browsers = [
+      browser('browser-test'),
+      browser('default'),
+      browser('default~2'),
+    ];
+    provider.notifyListeners();
+    await settle(tester);
+    expect(find.text('default 1'), findsOneWidget);
+    expect(find.text('default 2'), findsOneWidget);
+  });
+
+  testWidgets(
+    'the profile sheet switches, saves, and deletes after confirming',
+    (tester) async {
+      final provider = await pumpNativeBrowser(tester);
+      Future<void> openSheet() async {
+        await tester.tap(find.byIcon(Icons.arrow_drop_down));
+        await settle(tester);
+      }
+
+      await openSheet();
+      await tester.tap(find.text('work'));
+      await settle(tester);
+      expect(provider.switched, ['browser-test work']);
+      expect(find.text('Save as...'), findsNothing);
+
+      await openSheet();
+      await tester.tap(find.text('Save as...'));
+      await settle(tester);
+      await tester.enterText(find.byType(TextField).last, 'work');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await settle(tester);
+      expect(find.text('work already exists'), findsOneWidget);
+      await tester.enterText(find.byType(TextField).last, 'bank');
+      await tester.tap(find.widgetWithText(FilledButton, 'Save'));
+      await settle(tester);
+      expect(provider.saved, ['browser-test bank']);
+
+      await openSheet();
+      await tester.tap(find.byTooltip('Delete work'));
+      await settle(tester);
+      await tester.tap(find.text('Cancel').last);
+      await settle(tester);
+      expect(provider.deleted, isEmpty);
+      await tester.tap(find.byTooltip('Delete work'));
+      await settle(tester);
+      await tester.tap(find.text('Delete'));
+      await settle(tester);
+      expect(provider.deleted, ['work']);
+      expect(find.byTooltip('Delete work'), findsNothing);
+    },
+  );
 
   testWidgets('a page dropdown opens as a phone list and sends the choice', (
     tester,

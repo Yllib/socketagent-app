@@ -885,10 +885,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _serversWithBrowserClose = {};
   final Set<String> _serversWithBrowserStart = {};
   final Set<String> _serversWithBrowserProfileDelete = {};
+  final Set<String> _serversWithBrowserProfiles = {};
 
-  /// Browsers the user asked to start, by server and profile, waiting for the
-  /// server to report them running or failed.
-  final Map<String, Completer<ActiveBrowserSession>> _browserStarts = {};
+  /// Browser starts, profile switches and saves by request ID, waiting for
+  /// the server to report the browser running or failed.
+  final Map<String, _BrowserRequest> _browserRequests = {};
+  int _browserRequestCount = 0;
   final List<Completer<List<BrowserProfile>>> _browserProfileRequests = [];
   final Set<String> _serversWithClaudeBackgroundTasks = {};
   final Set<String> _serversWithClaudeAdditionalDirectories = {};
@@ -5447,6 +5449,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               } else {
                 _serversWithBrowserProfileDelete.remove(serverId);
               }
+              if (browserSessions is Map &&
+                  browserSessions['profiles'] == true) {
+                _serversWithBrowserProfiles.add(serverId);
+              } else {
+                _serversWithBrowserProfiles.remove(serverId);
+              }
               _captureCodexDriverSettings(msg, serverId);
               unawaited(
                 (() async {
@@ -7021,16 +7029,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'browser_session_error':
         case 'browser_runtime_install_progress':
           if (msg['type'] == 'browser_session_error') {
-            final start = _browserStarts.remove(
-              '$serverId\u0001${msg['profile']}',
+            _takeBrowserRequest(serverId, msg)?.completeError(
+              StateError(
+                msg['message'] as String? ?? 'The browser did not open.',
+              ),
             );
-            if (start != null && !start.isCompleted) {
-              start.completeError(
-                StateError(
-                  msg['message'] as String? ?? 'The browser did not open.',
-                ),
-              );
-            }
           }
           _browserFrameController.add({...msg, '_serverId': serverId});
           break;
@@ -7371,8 +7374,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeBrowserSessions.remove(browser.key);
     } else {
       _activeBrowserSessions[browser.key] = browser;
-      final start = _browserStarts.remove('$serverId\u0001${browser.profile}');
-      if (start != null && !start.isCompleted) start.complete(browser);
+      _takeBrowserRequest(serverId, msg)?.complete(browser);
     }
     notifyListeners();
   }
@@ -7543,10 +7545,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Opens [url] in [profile] for the active session, without the agent.
-  /// Completes once the computer reports the browser running.
+  /// Whether [serverId] (or the active session's server) runs several
+  /// browsers on one profile and switches and saves profiles from a browser.
+  bool serverSupportsBrowserProfiles(String? serverId) {
+    final id = serverId ?? activeSessionServerId;
+    return id != null && _serversWithBrowserProfiles.contains(id);
+  }
+
+  /// Opens a new browser at [url] on [profile] for the active session,
+  /// without the agent. Completes once the computer reports it running.
   Future<ActiveBrowserSession> startBrowserSession({
-    required String profile,
+    String profile = 'default',
     required String url,
   }) {
     final serverId = activeSessionServerId;
@@ -7554,30 +7563,83 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (serverId == null || sessionId == null) {
       return Future.error(StateError('Open a session first.'));
     }
-    final key = '$serverId\u0001$profile';
-    final start = Completer<ActiveBrowserSession>();
-    _browserStarts[key]?.completeError(
-      StateError('Replaced by a newer start.'),
-    );
-    _browserStarts[key] = start;
-    final sent = _connMgr.sendToServer(serverId, {
+    return _sendBrowserRequest(serverId, profile, {
       'type': 'browser_session_start',
       'sessionId': sessionId,
       'profile': profile,
       'url': url,
-    });
-    if (!sent) {
-      _browserStarts.remove(key);
+    }, 'The browser did not open within a minute.');
+  }
+
+  /// Moves [browser] onto the saved profile [to]. The browser keeps its page.
+  Future<ActiveBrowserSession> switchBrowserProfile(
+    ActiveBrowserSession browser,
+    String to,
+  ) => _sendBrowserRequest(browser.serverId, browser.profile, {
+    'type': 'browser_profile_switch',
+    'profile': browser.profile,
+    'to': to,
+  }, 'The browser did not switch profiles within a minute.');
+
+  /// Copies [browser]'s profile to a new profile [name] and moves the browser
+  /// onto it. Other browsers on the old profile restart for the copy.
+  Future<ActiveBrowserSession> saveBrowserProfileAs(
+    ActiveBrowserSession browser,
+    String name,
+  ) => _sendBrowserRequest(browser.serverId, browser.profile, {
+    'type': 'browser_profile_save',
+    'profile': browser.profile,
+    'name': name,
+  }, 'The profile was not saved within a minute.');
+
+  Future<ActiveBrowserSession> _sendBrowserRequest(
+    String serverId,
+    String profile,
+    Map<String, Object> message,
+    String timeoutMessage,
+  ) {
+    final requestId = 'browser-${++_browserRequestCount}';
+    final request = _BrowserRequest(serverId, profile);
+    _browserRequests[requestId] = request;
+    if (!_connMgr.sendToServer(serverId, {
+      ...message,
+      'requestId': requestId,
+    })) {
+      _browserRequests.remove(requestId);
       return Future.error(StateError('The computer is not connected.'));
     }
     // Chrome can take a while to launch on a busy computer.
-    return start.future.timeout(
+    return request.done.future.timeout(
       const Duration(seconds: 60),
       onTimeout: () {
-        if (_browserStarts[key] == start) _browserStarts.remove(key);
-        throw TimeoutException('The browser did not open within a minute.');
+        _browserRequests.remove(requestId);
+        throw TimeoutException(timeoutMessage);
       },
     );
+  }
+
+  /// The pending request a browser state or error from [serverId] answers.
+  /// Servers before browser profiles echo no request ID, so those match on
+  /// the profile.
+  Completer<ActiveBrowserSession>? _takeBrowserRequest(
+    String? serverId,
+    Map<String, dynamic> msg,
+  ) {
+    final requestId = msg['requestId'];
+    final key = requestId is String
+        ? requestId
+        : _serversWithBrowserProfiles.contains(serverId)
+        ? null
+        : _browserRequests.entries
+              .where(
+                (entry) =>
+                    entry.value.serverId == serverId &&
+                    entry.value.profile == msg['profile'],
+              )
+              .firstOrNull
+              ?.key;
+    final done = _browserRequests.remove(key)?.done;
+    return done == null || done.isCompleted ? null : done;
   }
 
   /// Closes the profile's browser on its computer. Sign-ins stay saved. The
@@ -18943,4 +19005,12 @@ class SecretOperationError implements Exception {
 
   @override
   String toString() => message;
+}
+
+class _BrowserRequest {
+  _BrowserRequest(this.serverId, this.profile);
+
+  final String serverId;
+  final String profile;
+  final done = Completer<ActiveBrowserSession>();
 }

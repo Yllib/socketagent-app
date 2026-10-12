@@ -13,7 +13,7 @@ import '../services/browser_keyboard.dart';
 import '../services/chat_provider.dart';
 import '../services/window_security_service.dart';
 import '../widgets/browser_prompts.dart';
-import '../widgets/start_browser_dialog.dart';
+import '../widgets/browser_profile_sheet.dart';
 import '../config/app_palette.dart';
 
 enum _BrowserClipboardAction { pasteIntoPage, sendToBrowser, copyToPhone }
@@ -1265,7 +1265,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
   }
 
   Future<void> _startBrowser() async {
-    final browser = await showStartBrowserDialog(context, _provider);
+    final browser = await openNewBrowser(context, _provider);
     if (browser != null && mounted) _switchTo(browser);
   }
 
@@ -1321,8 +1321,10 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
               child: ListView(
                 scrollDirection: Axis.horizontal,
                 children: [
-                  for (final browser in _sessionBrowsers(provider))
-                    _buildBrowserTab(browser),
+                  for (final (browser, label) in _tabLabels(
+                    _sessionBrowsers(provider),
+                  ))
+                    _buildBrowserTab(browser, label),
                 ],
               ),
             ),
@@ -1340,7 +1342,28 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
     );
   }
 
-  Widget _buildBrowserTab(ActiveBrowserSession browser) {
+  /// Each browser's tab label. Browsers sharing a label are numbered, as
+  /// several can run on one profile.
+  static List<(ActiveBrowserSession, String)> _tabLabels(
+    List<ActiveBrowserSession> browsers,
+  ) {
+    final counts = <String, int>{};
+    for (final browser in browsers) {
+      counts[browser.label] = (counts[browser.label] ?? 0) + 1;
+    }
+    final seen = <String, int>{};
+    return [
+      for (final browser in browsers)
+        (
+          browser,
+          counts[browser.label]! > 1
+              ? '${browser.label} ${seen[browser.label] = (seen[browser.label] ?? 0) + 1}'
+              : browser.label,
+        ),
+    ];
+  }
+
+  Widget _buildBrowserTab(ActiveBrowserSession browser, String label) {
     final current = browser.profile == widget.profile;
     final color = current ? context.palette.text : context.palette.textMuted;
     return InkWell(
@@ -1358,9 +1381,9 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(browser.label, style: TextStyle(fontSize: 12, color: color)),
+            Text(label, style: TextStyle(fontSize: 12, color: color)),
             IconButton(
-              tooltip: 'Close ${browser.label}',
+              tooltip: 'Close $label',
               iconSize: 14,
               visualDensity: VisualDensity.compact,
               color: color,
@@ -1370,6 +1393,47 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
           ],
         ),
       ),
+    );
+  }
+
+  /// The browser's label and the profile it runs on. Tapping it opens the
+  /// profile sheet on computers that switch and save profiles.
+  Widget _buildProfileLabel() {
+    return Consumer<ChatProvider>(
+      builder: (context, provider, _) {
+        final browser = _sessionBrowsers(
+          provider,
+        ).firstWhere((browser) => browser.profile == widget.profile);
+        final profiles = provider.serverSupportsBrowserProfiles(
+          widget.serverId,
+        );
+        final label = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(
+              child: Text(
+                browser.label,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 15),
+              ),
+            ),
+            if (browser.label != browser.browserProfile)
+              Text(
+                ' ${browser.browserProfile}',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: context.palette.textSecondary,
+                ),
+              ),
+            if (profiles) const Icon(Icons.arrow_drop_down, size: 20),
+          ],
+        );
+        if (!profiles) return label;
+        return InkWell(
+          onTap: () => showBrowserProfileSheet(context, provider, browser),
+          child: label,
+        );
+      },
     );
   }
 
@@ -1384,7 +1448,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(widget.label, style: const TextStyle(fontSize: 15)),
+            _buildProfileLabel(),
             Text(
               _title.isNotEmpty ? _title : _url,
               maxLines: 1,

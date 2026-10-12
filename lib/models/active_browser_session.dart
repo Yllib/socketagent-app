@@ -3,16 +3,22 @@ class ActiveBrowserSession {
     required this.serverId,
     required this.sessionId,
     required this.profile,
+    String? browserProfile,
     required this.label,
     required this.url,
     required this.width,
     required this.height,
     this.runtimeRequired = false,
-  });
+  }) : browserProfile = browserProfile ?? profile;
 
   final String serverId;
   final String sessionId;
+
+  /// The browser's ID. A profile's first browser is named after the profile.
   final String profile;
+
+  /// The saved profile the browser runs on, which holds its sign-ins.
+  final String browserProfile;
   final String label;
   final String url;
   final int width;
@@ -35,10 +41,14 @@ class ActiveBrowserSession {
       return null;
     }
     final label = payload['label']?.toString().trim() ?? '';
+    final browserProfile = payload['browserProfile'];
     return ActiveBrowserSession(
       serverId: serverId,
       sessionId: sessionId,
       profile: profile,
+      browserProfile: browserProfile is String && browserProfile.isNotEmpty
+          ? browserProfile
+          : null,
       label: label.isEmpty ? profile : label,
       url: url,
       width: (payload['width'] as num?)?.toInt() ?? 430,
@@ -54,27 +64,21 @@ class BrowserProfile {
     required this.profile,
     required this.label,
     required this.running,
-    this.sessionId,
   });
 
   final String profile;
   final String label;
   final bool running;
 
-  /// The chat session a running profile belongs to.
-  final String? sessionId;
-
   static BrowserProfile? fromPayload(Object? payload) {
     if (payload is! Map) return null;
     final profile = payload['profile'];
     if (profile is! String || profile.isEmpty) return null;
     final label = payload['label'];
-    final sessionId = payload['sessionId'];
     return BrowserProfile(
       profile: profile,
       label: label is String && label.isNotEmpty ? label : profile,
       running: payload['running'] == true,
-      sessionId: sessionId is String && sessionId.isNotEmpty ? sessionId : null,
     );
   }
 

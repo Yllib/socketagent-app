@@ -1,4 +1,4 @@
-import '../widgets/start_browser_dialog.dart';
+import '../widgets/browser_profile_sheet.dart';
 import '../widgets/extra_folders_dialog.dart';
 import '../widgets/light_backdrop.dart';
 import '../widgets/offline_watermark.dart';
@@ -447,8 +447,15 @@ class _ChatScreenState extends State<_ChatScreen> {
     );
   }
 
+  /// Shows the session's browser, or lets the user pick one of several.
+  /// With none open, starts one on the default profile.
   Future<void> _openActiveBrowser(List<ActiveBrowserSession> browsers) async {
-    if (browsers.isEmpty) return;
+    if (browsers.isEmpty) {
+      final provider = context.read<ChatProvider>();
+      final browser = await openNewBrowser(context, provider);
+      if (browser != null && mounted) await _openBrowserSession(browser);
+      return;
+    }
     if (browsers.length == 1) {
       await _openBrowserSession(browsers.single);
       return;
@@ -863,13 +870,6 @@ class _ChatScreenState extends State<_ChatScreen> {
             subtitle: 'Attach to your next message',
             icon: Icons.lock_outline,
           ),
-          if (provider.serverSupportsBrowserStart(null))
-            const AdaptiveSheetAction(
-              value: 'browser',
-              label: 'Browser',
-              subtitle: 'Open a browser on the computer',
-              icon: Icons.public,
-            ),
         ]),
       ],
     );
@@ -880,10 +880,6 @@ class _ChatScreenState extends State<_ChatScreen> {
         await provider.pickFiles();
       case 'secure':
         await _showSecureInputDialog(provider);
-      case 'browser':
-        if (!mounted) return;
-        final browser = await showStartBrowserDialog(context, provider);
-        if (browser != null && mounted) await _openBrowserSession(browser);
     }
   }
 
@@ -1964,7 +1960,8 @@ class _ChatScreenState extends State<_ChatScreen> {
           Icons.terminal,
           enabled: serverId != null,
         ),
-        if (provider.activeBrowserSessions.isNotEmpty)
+        if (provider.activeBrowserSessions.isNotEmpty ||
+            provider.serverSupportsBrowserStart(null))
           const SessionAction('open_browser', 'Browser', Icons.public),
       ],
       groups: [

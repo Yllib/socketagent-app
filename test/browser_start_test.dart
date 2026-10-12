@@ -6,41 +6,49 @@ import 'multi_client_prompt_test.dart' show withSession;
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a browser the user starts opens for their session', () async {
-    final request = Completer<Map<String, dynamic>>();
-    await withSession(
-      (provider, send) async {
-        // Let the key exchange finish; a start is not queued like a prompt.
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-        final starting = provider.startBrowserSession(
-          profile: 'work',
-          url: 'https://example.com',
-        );
-        final sent = await request.future.timeout(const Duration(seconds: 5));
-        expect(sent['sessionId'], 'shared-session');
-        expect(sent['url'], 'https://example.com');
-        await send({
-          'type': 'browser_session_state',
-          'profile': 'work',
-          'label': 'work',
-          'url': 'https://example.com/',
-          'width': 430,
-          'height': 860,
-          'sessionId': 'shared-session',
-          'active': true,
-        });
-        final browser = await starting.timeout(const Duration(seconds: 5));
-        expect(browser.profile, 'work');
-        expect(
-          provider.activeBrowserSessions.map((browser) => browser.profile),
-          ['work'],
-        );
-      },
-      onClientMessage: (event) {
-        if (event['type'] == 'browser_session_start') request.complete(event);
-      },
-    );
-  });
+  test(
+    'a browser the user starts opens on default for their session',
+    () async {
+      final request = Completer<Map<String, dynamic>>();
+      await withSession(
+        (provider, send) async {
+          // Let the key exchange finish; a start is not queued like a prompt.
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          final starting = provider.startBrowserSession(
+            url: 'https://example.com',
+          );
+          final sent = await request.future.timeout(const Duration(seconds: 5));
+          expect(sent['sessionId'], 'shared-session');
+          expect(sent['profile'], 'default');
+          expect(sent['url'], 'https://example.com');
+          // A second browser on default gets its own ID, so the reply is
+          // matched by the request it echoes.
+          await send({
+            'type': 'browser_session_state',
+            'profile': 'default~2',
+            'browserProfile': 'default',
+            'requestId': sent['requestId'],
+            'label': 'default',
+            'url': 'https://example.com/',
+            'width': 430,
+            'height': 860,
+            'sessionId': 'shared-session',
+            'active': true,
+          });
+          final browser = await starting.timeout(const Duration(seconds: 5));
+          expect(browser.profile, 'default~2');
+          expect(browser.browserProfile, 'default');
+          expect(
+            provider.activeBrowserSessions.map((browser) => browser.profile),
+            ['default~2'],
+          );
+        },
+        onClientMessage: (event) {
+          if (event['type'] == 'browser_session_start') request.complete(event);
+        },
+      );
+    },
+  );
 
   test('a browser that fails to start reports why', () async {
     final request = Completer<void>();
