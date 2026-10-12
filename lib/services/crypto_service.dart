@@ -28,6 +28,13 @@ class CryptoService {
     encryptedBinary: relay || isReady,
   );
 
+  /// The device's long-lived X25519 private key, for boxes to other peers
+  /// (approval tokens, rotation records). Never leaves the process.
+  PrivateKey get privateKey {
+    if (_secretKey == null) throw StateError('No key pair generated');
+    return _secretKey!;
+  }
+
   /// Our public key as base64 (for key exchange)
   String get publicKeyBase64 {
     if (_publicKey == null) throw StateError('No key pair generated');

@@ -1,5 +1,8 @@
 package com.socketagent.app
 
+import android.app.Activity
+import android.app.KeyguardManager
+import android.content.Context
 import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.content.ClipData
@@ -22,6 +25,37 @@ class MainActivity : FlutterActivity() {
     private var wasAssistIntent = false
     private var methodChannel: MethodChannel? = null
     private var pendingDeepLink: String? = null
+    private var pendingUnlock: MethodChannel.Result? = null
+    private val UNLOCK_REQUEST = 0x5A01
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        if (requestCode == UNLOCK_REQUEST) {
+            pendingUnlock?.success(resultCode == Activity.RESULT_OK)
+            pendingUnlock = null
+            return
+        }
+        super.onActivityResult(requestCode, resultCode, data)
+    }
+
+    /// Asks for the device's PIN, pattern, password or biometric before the
+    /// app reveals a secret. Resolves false when the user backs out, or
+    /// true straight away on a device with no lock screen set.
+    private fun confirmDeviceCredential(title: String, description: String, result: MethodChannel.Result) {
+        val keyguard = getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
+        if (!keyguard.isDeviceSecure) {
+            result.success(true)
+            return
+        }
+        @Suppress("DEPRECATION")
+        val intent = keyguard.createConfirmDeviceCredentialIntent(title, description)
+        if (intent == null) {
+            result.success(true)
+            return
+        }
+        pendingUnlock?.success(false)
+        pendingUnlock = result
+        startActivityForResult(intent, UNLOCK_REQUEST)
+    }
 
     override fun onResume() {
         super.onResume()
@@ -76,6 +110,13 @@ class MainActivity : FlutterActivity() {
                     pendingDeepLink = null
                 }
                 "getDistribution" -> result.success(BuildConfig.DISTRIBUTION)
+                "confirmDeviceCredential" -> {
+                    confirmDeviceCredential(
+                        call.argument<String>("title") ?: "Unlock",
+                        call.argument<String>("description") ?: "",
+                        result
+                    )
+                }
                 "openDownloadedFile" -> {
                     try {
                         val file = File(call.argument<String>("path") ?: "").canonicalFile

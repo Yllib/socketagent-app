@@ -56,6 +56,16 @@ import '../models/private_integration_auth.dart';
 import '../models/codex_goal.dart';
 import '../models/session_memory.dart';
 import '../models/push_delivery_capabilities.dart';
+import '../models/computer_issue.dart';
+import '../models/backend_config_file.dart';
+import '../models/account_vault.dart';
+import '../models/computer_access.dart';
+import '../models/device_registry.dart';
+import 'account_crypto.dart';
+import 'account_service.dart';
+import 'computer_links.dart';
+import 'device_auth.dart';
+import 'device_name.dart';
 import '../models/active_browser_session.dart';
 import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
@@ -647,6 +657,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, BackendInstallState> _backendInstallStates = {};
   final Map<String, Timer> _backendInstallAckTimers = {};
   final Map<String, List<Map<String, dynamic>>> _serverBackendHealth = {};
+  final Map<String, List<ComputerIssue>> _serverIssues = {};
   final Map<String, Map<String, dynamic>> _serverRuntimeInfo = {};
   final Map<String, ActiveBrowserSession> _activeBrowserSessions = {};
   final Map<String, PushDeliveryCapabilities> _serverPushCapabilities = {};
@@ -886,6 +897,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _serversWithBrowserStart = {};
   final Set<String> _serversWithBrowserProfileDelete = {};
   final Set<String> _serversWithBrowserProfiles = {};
+  final Set<String> _serversWithBackendConfig = {};
 
   /// Browser starts, profile switches and saves by request ID, waiting for
   /// the server to report the browser running or failed.
@@ -939,6 +951,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   _fileManagerOperationCompleters = {};
   final Map<String, Completer<Map<String, dynamic>>>
   _fileManagerTextCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>> _backendConfigCompleters =
+      {};
   int _sdkSessionsRequestSeq = 0;
   int _directoryRequestSeq = 0;
   Completer<Map<String, dynamic>>? _pendingVersionCheck;
@@ -1695,6 +1709,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// True when a Windows computer was installed without administrator rights.
   bool isLimitedWindowsInstall(String serverId) =>
       _serverRuntimeInfo[serverId]?['windowsElevated'] == false;
+
+  /// Problems on the computer to fix by hand. See [ComputerIssue].
+  List<ComputerIssue> issuesForServer(String serverId) =>
+      _serverIssues[serverId] ?? const [];
 
   /// See [backendWarningFor] for the rule.
   Map<String, dynamic>? backendWarningForServer(String serverId) =>
@@ -2532,6 +2550,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Initialize ConnectionManager with server configs (per-server relay)
     _connMgr.setSubscriberToken(_subscriberToken);
     _connMgr.onRouteChanged = _saveAutoRoute;
+    await _prepareDeviceIdentity();
     await _connMgr.setServers(_serverConfigs);
     await _restoreDownloads();
     _connMgr.connectAll();
@@ -2550,6 +2569,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_outgoingDisposed) return;
     if (!_settingsLoaded.isCompleted) _settingsLoaded.complete();
     notifyListeners();
+    unawaited(_initAccount());
 
     // These services do not gate the first usable screen. Transcript files and
     // native speech engines load on demand instead of competing with startup.
@@ -2566,24 +2586,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       try {
         for (final candidate in await WindowsLocalServer().discover()) {
           final identity = '${candidate.port}:${candidate.serverPubkey}';
-          if (seen.contains(identity)) continue;
-          if (_serverConfigs.any(
-            (c) =>
-                c.serverPubkey == candidate.serverPubkey &&
-                c.port == candidate.port &&
-                !c.useRelay,
-          )) {
-            seen.add(identity);
-            continue;
+          final plan = LocalServerPlan.of(_serverConfigs, candidate);
+          for (final id in plan.remove) {
+            await removeServer(id);
           }
-          final probe = await const ServerConnectionProbe().verify(
-            candidate,
-            subscriberToken: '',
-            timeout: const Duration(seconds: 3),
-          );
-          if (!probe.success) continue;
-          if (_outgoingDisposed) return;
-          await addServer(candidate.copyWith(id: ServerConfig.generateId()));
+          final replace = plan.replace;
+          final add = plan.add;
+          // A user who deleted this computer's entry doesn't get it back.
+          final next =
+              replace ?? (add != null && !seen.contains(identity) ? add : null);
+          if (next != null) {
+            final probe = await const ServerConnectionProbe().verify(
+              next,
+              subscriberToken: '',
+              timeout: const Duration(seconds: 3),
+            );
+            if (!probe.success) continue;
+            if (_outgoingDisposed) return;
+            if (replace != null) {
+              await updateServer(replace);
+            } else {
+              await addServer(next.copyWith(id: ServerConfig.generateId()));
+            }
+          }
           seen.add(identity);
         }
         if (seen.length !=
@@ -3069,6 +3094,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Connect the new server
     final ws = _connMgr.getConnection(config.id);
     ws?.connect();
+    account.syncSoon();
     notifyListeners();
   }
 
@@ -3118,6 +3144,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       defaultCwd: config.defaultCwd,
       systemPrompt: systemPromptEditable ? config.systemPrompt : null,
     );
+    account.syncSoon();
     notifyListeners();
   }
 
@@ -3153,6 +3180,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await _connMgr.setServers(_serverConfigs);
     await _registerPushNotifications();
     _rebuildSessionList();
+    _deviceRegistries.remove(serverId);
+    _computerLinks.remove(serverId);
+    _pendingDevices.removeWhere((p) => p.serverId == serverId);
+    account.syncSoon();
     notifyListeners();
   }
 
@@ -4633,6 +4664,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _cancelAtPeriodEnd = false;
     _connMgr.connectAll();
     await _registerPushNotifications();
+    account.syncSoon();
     notifyListeners();
   }
 
@@ -5105,6 +5137,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'file_manager_protected_result',
       'file_manager_operation_result',
       'file_manager_text_result',
+      'backend_config_list_result',
+      'backend_config_text_result',
+      'backend_config_write_result',
+      'device_list_result',
+      'device_approve_result',
+      'device_deny_result',
+      'device_remove_result',
+      'device_pending',
+      'device_pending_cleared',
+      'device_auth_result',
+      'link_room_info_result',
+      'computer_link_list_result',
+      'computer_link_result',
       'cwd_check',
       'sdk_session_list',
       'version_info',
@@ -5455,9 +5500,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               } else {
                 _serversWithBrowserProfiles.remove(serverId);
               }
+              if (msg['backendConfig'] is Map) {
+                _serversWithBackendConfig.add(serverId);
+              } else {
+                _serversWithBackendConfig.remove(serverId);
+              }
+              _captureDeviceCapabilities(msg, serverId);
               _captureCodexDriverSettings(msg, serverId);
               unawaited(
                 (() async {
+                  await _captureRotatedToken(serverId, msg);
                   await _captureRelayPairingFromCapabilities(serverId, msg);
                   await _captureDirectRouteFromCapabilities(serverId, msg);
                   if (_connMgr.statusOf(serverId) ==
@@ -5871,6 +5923,65 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
             break;
           }
+        case 'backend_config_list_result':
+        case 'backend_config_text_result':
+        case 'backend_config_write_result':
+          {
+            final requestId = msg['requestId'] as String? ?? '';
+            final completer = _backendConfigCompleters.remove(requestId);
+            if (completer == null || completer.isCompleted) break;
+            // A write conflict is a result, not a failure; the caller reads it.
+            if (msg['ok'] == true || msg['conflict'] == true) {
+              completer.complete(Map<String, dynamic>.from(msg));
+            } else {
+              completer.completeError(
+                Exception(msg['error'] as String? ?? 'Config request failed'),
+              );
+            }
+            break;
+          }
+        case 'device_list_result':
+          {
+            if (serverId != null) {
+              final registry = DeviceRegistry.fromJson(msg, serverId: serverId);
+              _deviceRegistries[serverId] = registry;
+              _removeRevokedDevicesOn(serverId, registry);
+              _mergePendingDevices(serverId, registry.pending);
+            }
+            _completeDeviceRequest(serverId, type, msg);
+            notifyListeners();
+            break;
+          }
+        case 'device_approve_result':
+        case 'device_deny_result':
+        case 'device_remove_result':
+        case 'link_room_info_result':
+        case 'computer_link_result':
+          _completeDeviceRequest(serverId, type, msg);
+          break;
+        case 'computer_link_list_result':
+          {
+            if (serverId != null) {
+              final links = _storeComputerLinks(serverId, msg);
+              unawaited(_refreshComputerLinkTickets(serverId, links));
+            }
+            _completeDeviceRequest(serverId, type, msg);
+            break;
+          }
+        case 'device_pending':
+          _handleDevicePending(msg, serverId);
+          break;
+        case 'device_pending_cleared':
+          _handleDevicePendingCleared(msg, serverId);
+          break;
+        case 'device_auth_result':
+          break;
+        case 'computer_access_request':
+          _handleComputerAccessRequest(msg);
+          break;
+        case 'computer_access_resolved':
+          _handleComputerAccessResolved(msg);
+          break;
         case 'recent_cwds':
           final cwds = (msg['cwds'] as List?)?.cast<String>() ?? [];
           final key = serverId ?? '';
@@ -7550,6 +7661,947 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool serverSupportsBrowserProfiles(String? serverId) {
     final id = serverId ?? activeSessionServerId;
     return id != null && _serversWithBrowserProfiles.contains(id);
+  }
+
+  /// Whether [serverId] lets the app edit Codex and Claude config files.
+  bool serverSupportsBackendConfig(String serverId) =>
+      _serversWithBackendConfig.contains(serverId);
+
+  Future<Map<String, dynamic>> _sendBackendConfigRequest(
+    String serverId,
+    Map<String, dynamic> msg,
+  ) {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<Map<String, dynamic>>();
+    _backendConfigCompleters[requestId] = completer;
+    _connMgr.sendToServer(serverId, {'requestId': requestId, ...msg});
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _backendConfigCompleters.remove(requestId);
+        throw TimeoutException('The computer did not answer');
+      },
+    );
+  }
+
+  /// Every config file the computer lets the app edit, existing or not.
+  Future<List<BackendConfigFile>> listBackendConfigFiles(
+    String serverId,
+  ) async {
+    final result = await _sendBackendConfigRequest(serverId, {
+      'type': 'backend_config_list',
+    });
+    final files = result['files'];
+    return [
+      if (files is List)
+        for (final raw in files) ?BackendConfigFile.fromPayload(raw),
+    ];
+  }
+
+  Future<BackendConfigText> readBackendConfigFile(
+    String serverId,
+    String id,
+  ) async {
+    final result = await _sendBackendConfigRequest(serverId, {
+      'type': 'backend_config_read',
+      'id': id,
+    });
+    return _backendConfigText(result);
+  }
+
+  /// Saves [content] over the version the editor loaded. Throws
+  /// [BackendConfigSaveConflict] when the file changed on the computer since;
+  /// nothing is written in that case.
+  Future<BackendConfigFile> writeBackendConfigFile(
+    String serverId, {
+    required String id,
+    required String content,
+    required String? expectedVersion,
+  }) async {
+    final result = await _sendBackendConfigRequest(serverId, {
+      'type': 'backend_config_write',
+      'id': id,
+      'content': content,
+      'expectedVersion': expectedVersion,
+    });
+    if (result['conflict'] == true) {
+      throw BackendConfigSaveConflict(_backendConfigText(result));
+    }
+    final file = BackendConfigFile.fromPayload(result['file']);
+    if (file == null) throw Exception('The computer sent no file details');
+    return file;
+  }
+
+  BackendConfigText _backendConfigText(Map<String, dynamic> result) {
+    final file = BackendConfigFile.fromPayload(result['file']);
+    if (file == null) throw Exception('The computer sent no file details');
+    final content = result['content'];
+    return BackendConfigText(
+      file: file,
+      content: content is String ? content : '',
+      truncated: result['truncated'] == true,
+    );
+  }
+
+  // ── Devices, account and computer links ──
+
+  /// The account vault: keys, sync, invites and rotation. Listeners on the
+  /// provider see its changes too.
+  final AccountService account = AccountService();
+  final CryptoService _deviceCrypto = CryptoService();
+  String _deviceName = '';
+  final String _devicePlatform = Platform.operatingSystem;
+  StreamSubscription<ServerDeviceAuthUpdate>? _deviceAuthSub;
+  final Map<String, DeviceAuthState> _deviceAuthStates = {};
+  final Map<String, DeviceRegistry> _deviceRegistries = {};
+  final Map<String, List<ComputerLink>> _computerLinks = {};
+  final List<PendingDevice> _pendingDevices = [];
+  final _pendingDeviceController = StreamController<PendingDevice>.broadcast();
+  final Set<String> _serversWithDeviceAuth = {};
+  final Set<String> _serversWithComputerLinks = {};
+  final Map<String, List<_DeviceRequestWaiter>> _deviceRequestCompleters = {};
+  int _deviceRequestSeq = 0;
+  final Set<String> _linkTicketRefreshes = {};
+
+  /// Where the device registry handshake stands for [serverId]. Waiting for
+  /// approval carries the six-digit code to match on another device.
+  DeviceAuthState deviceAuthFor(String serverId) =>
+      _deviceAuthStates[serverId] ?? _connMgr.deviceAuthOf(serverId);
+
+  /// Devices waiting for this device's approval on some computer.
+  List<PendingDevice> get pendingDevices => List.unmodifiable(_pendingDevices);
+
+  /// Fires once per new `device_pending` notice so the shell can prompt.
+  Stream<PendingDevice> get pendingDeviceEvents =>
+      _pendingDeviceController.stream;
+
+  DeviceRegistry? deviceRegistryFor(String serverId) =>
+      _deviceRegistries[serverId];
+
+  /// Outgoing links the source computer [serverId] reported.
+  List<ComputerLink> computerLinksFor(String serverId) =>
+      _computerLinks[serverId] ?? const [];
+
+  bool serverSupportsDeviceAuth(String serverId) =>
+      _serversWithDeviceAuth.contains(serverId);
+  bool serverSupportsComputerLinks(String serverId) =>
+      _serversWithComputerLinks.contains(serverId);
+
+  /// This device's X25519 public key, as every computer knows it.
+  String get devicePublicKey =>
+      _deviceCrypto.hasKeyPair ? _deviceCrypto.publicKeyBase64 : '';
+  String get deviceName => _deviceName;
+  String get devicePlatform => _devicePlatform;
+
+  /// The name and key this device uses in `device_auth`, before any socket
+  /// opens. Nothing here may stop startup.
+  Future<void> _prepareDeviceIdentity() async {
+    try {
+      _deviceName = await localDeviceName();
+    } catch (_) {
+      _deviceName = Platform.localHostname;
+    }
+    try {
+      await _deviceCrypto.ensureKeyPair();
+    } catch (error) {
+      debugPrint('[Devices] Device key unavailable: $error');
+    }
+    await _connMgr.setDeviceIdentity(
+      name: _deviceName,
+      platform: _devicePlatform,
+    );
+    _deviceAuthSub ??= _connMgr.deviceAuthStream.listen((update) {
+      _deviceAuthStates[update.serverId] = update.state;
+      notifyListeners();
+    });
+  }
+
+  Future<void> _initAccount() async {
+    account.readLocal = () => AccountLocalState(
+      computers: _serverConfigs,
+      subscriberToken: _subscriberToken,
+      subscriberEmail: _subscriberEmail,
+    );
+    account.applyMerged = _applyAccountVault;
+    account.relayHttpUrl = () => relayHttpUrl;
+    account.onDeviceJoined = _approveJoinedDevice;
+    account.onDeviceRemoved = _removeDeviceEverywhere;
+    account.deviceName = _deviceName;
+    account.devicePlatform = _devicePlatform;
+    account.devicePublicKey = devicePublicKey;
+    account.addListener(notifyListeners);
+    await account.load();
+    if (account.hasAccount) unawaited(account.sync());
+  }
+
+  /// Brings this device's computers and subscription in line with the
+  /// merged vault. Local-only fields (id, route, order) are kept.
+  Future<void> _applyAccountVault(AccountVault merged) async {
+    final byKey = {for (final c in _serverConfigs) VaultComputer.keyFor(c): c};
+    for (final computer in merged.computers) {
+      final existing = byKey[computer.key];
+      if (existing == null) {
+        final json = {
+          ...computer.fields,
+          'id': ServerConfig.generateId(),
+          'useRelay':
+              (computer.fields['relayUrl'] as String? ?? '').isNotEmpty &&
+              (computer.fields['pairingToken'] as String? ?? '').isNotEmpty,
+          'sortOrder': _serverConfigs.length,
+        };
+        json['host'] ??= '';
+        json['port'] ??= 8085;
+        json['token'] ??= '';
+        json['name'] ??= 'Computer';
+        try {
+          final config = ServerConfig.fromJson(json);
+          // Older builds uploaded another machine's 127.0.0.1 entry.
+          if (config.isLoopbackOnly) continue;
+          if (hasServerConnection(config)) continue;
+          await addServer(config);
+        } catch (error) {
+          debugPrint('[Account] Skipped a vault computer: $error');
+        }
+        continue;
+      }
+      if (computer.sameFieldsAs(VaultComputer.sharedFields(existing))) {
+        continue;
+      }
+      try {
+        final incoming = ServerConfig.fromJson({
+          ...existing.toJson(),
+          ...computer.fields,
+          'id': existing.id,
+          'useRelay': existing.useRelay,
+          'sortOrder': existing.sortOrder,
+        });
+        // Another machine's loopback entry for this computer must not
+        // replace the route this device actually uses.
+        if (incoming.isLoopbackOnly && !existing.isLoopbackOnly) continue;
+        await updateServer(incoming);
+      } catch (error) {
+        debugPrint('[Account] Skipped a vault update: $error');
+      }
+    }
+    final removed = {for (final t in merged.removedComputers) t.key};
+    for (final config in _serverConfigs.toList()) {
+      if (removed.contains(VaultComputer.keyFor(config))) {
+        await removeServer(config.id);
+      }
+    }
+    final subscription = merged.subscription;
+    if (subscription != null &&
+        subscription.token.isNotEmpty &&
+        subscription.token != _subscriberToken) {
+      await saveSubscriberToken(subscription.token, subscription.email);
+      unawaited(checkSubscriptionStatus());
+    }
+  }
+
+  /// A key the account vault lists as one of the user's devices and has
+  /// not revoked. Such devices are approved on computers without asking,
+  /// because the user already proved the account through Google.
+  bool _isAccountDevice(String publicKey) {
+    final vault = account.vault;
+    if (vault == null || vault.isRevoked(publicKey)) return false;
+    return vault.devices.any((d) => d.publicKey == publicKey);
+  }
+
+  /// A device joined the account. Computers that have no token in the
+  /// vault can't enroll it by token, so approve it here.
+  void _approveJoinedDevice(VaultDevice device) {
+    for (final config in _serverConfigs) {
+      if (!_serversWithDeviceAuth.contains(config.id)) continue;
+      if (_connMgr.statusOf(config.id) != ConnectionStatus.connected) continue;
+      _connMgr.sendToServer(config.id, {
+        'type': 'device_approve',
+        'publicKey': device.publicKey,
+        'name': device.name,
+      });
+    }
+  }
+
+  void _removeDeviceEverywhere(String publicKey) {
+    for (final config in _serverConfigs) {
+      if (!_serversWithDeviceAuth.contains(config.id)) continue;
+      if (_connMgr.statusOf(config.id) != ConnectionStatus.connected) continue;
+      _connMgr.sendToServer(config.id, {
+        'type': 'device_remove',
+        'publicKey': publicKey,
+      });
+    }
+  }
+
+  /// A fresh device list from [serverId]: remove any key the account has
+  /// revoked that the computer still lists, as a device that was offline
+  /// during the removal catches up here.
+  void _removeRevokedDevicesOn(String serverId, DeviceRegistry registry) {
+    final vault = account.vault;
+    if (vault == null) return;
+    for (final device in registry.phones) {
+      if (device.publicKey == registry.self) continue;
+      if (!vault.isRevoked(device.publicKey)) continue;
+      _connMgr.sendToServer(serverId, {
+        'type': 'device_remove',
+        'publicKey': device.publicKey,
+      });
+    }
+  }
+
+  void _captureDeviceCapabilities(Map<String, dynamic> msg, String serverId) {
+    final deviceAuth = msg['deviceAuth'];
+    if (deviceAuth is Map) {
+      final fresh = _serversWithDeviceAuth.add(serverId);
+      if (fresh || _deviceRegistries[serverId] == null) {
+        // Refresh this device's listing, then load the registry.
+        _connMgr.sendToServer(serverId, {
+          'type': 'device_auth',
+          'name': _deviceName,
+          'platform': _devicePlatform,
+        });
+        _connMgr.sendToServer(serverId, {'type': 'device_list'});
+      }
+    } else {
+      _serversWithDeviceAuth.remove(serverId);
+      _deviceRegistries.remove(serverId);
+    }
+    if (msg['computerLinks'] is Map) {
+      _serversWithComputerLinks.add(serverId);
+      _sendKnownComputers(serverId);
+      _connMgr.sendToServer(serverId, {'type': 'computer_link_list'});
+    } else {
+      _serversWithComputerLinks.remove(serverId);
+      _computerLinks.remove(serverId);
+    }
+  }
+
+  /// A computer rotated its AUTH_TOKEN (after a device was removed). The
+  /// socket is already open, so store the new token without reconnecting.
+  Future<void> _captureRotatedToken(
+    String serverId,
+    Map<String, dynamic> msg,
+  ) async {
+    final route = msg['directRoute'] ?? msg['direct'];
+    final token = route is Map ? route['token'] : null;
+    if (token is! String || token.isEmpty) return;
+    final index = _serverConfigs.indexWhere((c) => c.id == serverId);
+    if (index < 0 || _serverConfigs[index].token == token) return;
+    _serverConfigs[index] = _serverConfigs[index].copyWith(token: token);
+    await _saveServerConfigs();
+    await _connMgr.setServers(_serverConfigs);
+    account.syncSoon();
+    notifyListeners();
+  }
+
+  /// Tells [serverId] which computers this phone knows, so an agent there
+  /// can ask for access to one by name.
+  void _sendKnownComputers(String serverId) {
+    _connMgr.sendToServer(serverId, {
+      'type': 'known_computers',
+      'computers': [
+        for (final config in _serverConfigs)
+          if (config.serverPubkey.isNotEmpty)
+            {'name': config.name, 'serverPubkey': config.serverPubkey},
+      ],
+    });
+  }
+
+  /// Sends a device or link request and waits for its result. A computer
+  /// answers these in milliseconds, so a timeout usually means the socket
+  /// died without closing, for example right after the app resumes. Then
+  /// the app reconnects and sends once more. Pass [retry] false when a
+  /// timeout is an expected answer.
+  Future<Map<String, dynamic>> _deviceRequest(
+    String serverId,
+    Map<String, dynamic> msg,
+    String resultType, {
+    Duration timeout = const Duration(seconds: 12),
+    bool retry = true,
+  }) async {
+    try {
+      return await _deviceRequestOnce(serverId, msg, resultType, timeout);
+    } on TimeoutException {
+      if (!retry) rethrow;
+      debugPrint('[Devices] ${msg['type']} timed out; reconnecting $serverId');
+      if (!await _connMgr.reconnectAndWait(
+        serverId,
+        const Duration(seconds: 15),
+      )) {
+        rethrow;
+      }
+      return _deviceRequestOnce(serverId, msg, resultType, timeout);
+    }
+  }
+
+  Future<Map<String, dynamic>> _deviceRequestOnce(
+    String serverId,
+    Map<String, dynamic> msg,
+    String resultType,
+    Duration timeout,
+  ) {
+    final key = '$serverId::$resultType';
+    final requestId = 'dev_${++_deviceRequestSeq}';
+    final waiter = _DeviceRequestWaiter(requestId);
+    _deviceRequestCompleters.putIfAbsent(key, () => []).add(waiter);
+    if (!_connMgr.sendToServer(serverId, {'requestId': requestId, ...msg})) {
+      _deviceRequestCompleters[key]?.remove(waiter);
+      final name = _serverConfigs
+          .where((c) => c.id == serverId)
+          .firstOrNull
+          ?.name;
+      return Future.error(StateError('${name ?? 'The computer'} is offline'));
+    }
+    return waiter.completer.future.timeout(
+      timeout,
+      onTimeout: () {
+        _deviceRequestCompleters[key]?.remove(waiter);
+        throw TimeoutException('The computer did not answer');
+      },
+    );
+  }
+
+  /// Hands a result to the request that asked for it: by `requestId` when
+  /// the computer echoes one, otherwise to the oldest request of that type.
+  void _completeDeviceRequest(
+    String? serverId,
+    String resultType,
+    Map<String, dynamic> msg,
+  ) {
+    final waiting = _deviceRequestCompleters['$serverId::$resultType'];
+    if (waiting == null || waiting.isEmpty) return;
+    final requestId = msg['requestId'];
+    final index = requestId is String
+        ? waiting.indexWhere((w) => w.requestId == requestId)
+        : -1;
+    if (index < 0 && requestId is String && requestId.isNotEmpty) return;
+    final waiter = waiting.removeAt(index < 0 ? 0 : index);
+    if (!waiter.completer.isCompleted) waiter.completer.complete(msg);
+  }
+
+  /// Pending devices the computer reports in its list, for the ones that
+  /// arrived while this device was away. New ones prompt like a notice.
+  void _mergePendingDevices(String serverId, List<PendingDevice> pending) {
+    final known = {
+      for (final p in _pendingDevices)
+        if (p.serverId == serverId) p.publicKey,
+    };
+    _pendingDevices.removeWhere((p) => p.serverId == serverId);
+    for (final device in pending) {
+      if (device.publicKey == devicePublicKey) continue;
+      if (_isAccountDevice(device.publicKey)) {
+        unawaited(approveDevice(device).catchError((_) {}));
+        continue;
+      }
+      _pendingDevices.add(device);
+      if (!known.contains(device.publicKey)) {
+        _pendingDeviceController.add(device);
+      }
+    }
+  }
+
+  /// Asks [serverId] for its device registry.
+  Future<DeviceRegistry> loadDevices(String serverId) async {
+    final result = await _deviceRequest(serverId, {
+      'type': 'device_list',
+    }, 'device_list_result');
+    return DeviceRegistry.fromJson(result, serverId: serverId);
+  }
+
+  Future<void> approveDevice(PendingDevice pending) async {
+    final result = await _deviceRequest(pending.serverId, {
+      'type': 'device_approve',
+      'publicKey': pending.publicKey,
+      'name': pending.name,
+    }, 'device_approve_result');
+    if (result['ok'] == false) {
+      throw StateError(result['error'] as String? ?? 'Approval failed');
+    }
+    _pendingDevices.removeWhere(
+      (p) => p.serverId == pending.serverId && p.publicKey == pending.publicKey,
+    );
+    notifyListeners();
+    unawaited(loadDevices(pending.serverId).catchError((_) => _emptyRegistry));
+  }
+
+  Future<void> denyDevice(PendingDevice pending) async {
+    _pendingDevices.removeWhere(
+      (p) => p.serverId == pending.serverId && p.publicKey == pending.publicKey,
+    );
+    notifyListeners();
+    await _deviceRequest(pending.serverId, {
+      'type': 'device_deny',
+      'publicKey': pending.publicKey,
+    }, 'device_deny_result');
+  }
+
+  static const _emptyRegistry = DeviceRegistry(
+    mode: 'learning',
+    devices: [],
+    self: '',
+  );
+
+  /// Removes [publicKey] from [serverId]'s registry. The computer rotates
+  /// its AUTH_TOKEN for a device; a linked computer's key is just dropped.
+  Future<void> removeRegisteredDevice(String serverId, String publicKey) async {
+    final result = await _deviceRequest(serverId, {
+      'type': 'device_remove',
+      'publicKey': publicKey,
+    }, 'device_remove_result');
+    if (result['ok'] == false) {
+      throw StateError(result['error'] as String? ?? 'Remove failed');
+    }
+    await loadDevices(serverId).catchError((_) => _emptyRegistry);
+  }
+
+  /// `learning` becomes `enforced`: only listed devices may connect.
+  Future<DeviceRegistry> lockDevices(String serverId) async {
+    final result = await _deviceRequest(serverId, {
+      'type': 'device_lock',
+    }, 'device_list_result');
+    return DeviceRegistry.fromJson(result, serverId: serverId);
+  }
+
+  Future<List<ComputerLink>> loadComputerLinks(String sourceId) async {
+    final result = await _deviceRequest(sourceId, {
+      'type': 'computer_link_list',
+    }, 'computer_link_list_result');
+    return _storeComputerLinks(sourceId, result);
+  }
+
+  List<ComputerLink> _storeComputerLinks(
+    String sourceId,
+    Map<String, dynamic> msg,
+  ) {
+    final links = [
+      if (msg['links'] is List)
+        for (final raw in msg['links'] as List) ?ComputerLink.fromJson(raw),
+    ];
+    _computerLinks[sourceId] = links;
+    notifyListeners();
+    return links;
+  }
+
+  /// Lets agents on [sourceId] act on [targetId]. The target records the
+  /// grant and enforces it, the relay issues a ticket for the link room,
+  /// and the source stores where to connect. Both must be online.
+  Future<void> createComputerLink({
+    required String sourceId,
+    required String targetId,
+    required ComputerAccess access,
+    required LinkConfirm confirm,
+  }) async {
+    final source = _serverConfigs.where((c) => c.id == sourceId).firstOrNull;
+    final target = _serverConfigs.where((c) => c.id == targetId).firstOrNull;
+    if (source == null || target == null) {
+      throw StateError('Choose two computers');
+    }
+    if (source.serverPubkey.isEmpty || target.serverPubkey.isEmpty) {
+      throw StateError('Both computers need a relay pairing first');
+    }
+    if (source.serverPubkey == target.serverPubkey) {
+      throw StateError('A computer cannot link to itself');
+    }
+    final authorized = await _deviceRequest(targetId, {
+      'type': 'device_authorize',
+      'publicKey': source.serverPubkey,
+      'kind': 'computer',
+      'name': source.name,
+      'access': access.toJson(),
+      'confirm': confirm.wire,
+    }, 'device_approve_result');
+    if (authorized['ok'] == false) {
+      throw StateError(
+        authorized['error'] as String? ?? '${target.name} refused the link',
+      );
+    }
+    final room = await _deviceRequest(targetId, {
+      'type': 'link_room_info',
+    }, 'link_room_info_result');
+    if (room['ok'] == false) {
+      throw StateError(
+        room['error'] as String? ?? '${target.name} has no link room',
+      );
+    }
+    final relayUrl = room['relayUrl'] as String? ?? target.relayUrl;
+    final linkRoom = room['linkRoom'] as String? ?? '';
+    if (linkRoom.isEmpty) {
+      throw StateError('${target.name} has no link room');
+    }
+    final ticket = await _computerLinkTicket(relayUrl, linkRoom);
+    await _setComputerLink(
+      sourceId,
+      name: target.name,
+      targetPubkey: target.serverPubkey,
+      relayUrl: relayUrl,
+      linkRoom: linkRoom,
+      ticket: ticket,
+      access: access,
+      confirm: confirm,
+    );
+    unawaited(loadComputerLinks(sourceId).catchError((_) => <ComputerLink>[]));
+    unawaited(loadDevices(targetId).catchError((_) => _emptyRegistry));
+  }
+
+  /// Changes what agents on [sourcePubkey] may do on [targetPubkey]. The
+  /// target enforces the new settings right away. The source's copy, which
+  /// agents see in their Computers list, refreshes now if the source is
+  /// online and otherwise on its next connection.
+  Future<void> updateComputerLink({
+    required String sourcePubkey,
+    required String sourceName,
+    required String targetPubkey,
+    required ComputerAccess access,
+    required LinkConfirm confirm,
+  }) async {
+    final target = _configForKey(targetPubkey);
+    if (target == null) {
+      throw StateError('That computer is not one of this device\'s computers');
+    }
+    final authorized = await _deviceRequest(target.id, {
+      'type': 'device_authorize',
+      'publicKey': sourcePubkey,
+      'kind': 'computer',
+      'name': sourceName,
+      'access': access.toJson(),
+      'confirm': confirm.wire,
+    }, 'device_approve_result');
+    if (authorized['ok'] == false) {
+      throw StateError(
+        authorized['error'] as String? ?? '${target.name} refused the change',
+      );
+    }
+    unawaited(loadDevices(target.id).catchError((_) => _emptyRegistry));
+    final source = _configForKey(sourcePubkey);
+    if (source == null ||
+        _connMgr.statusOf(source.id) != ConnectionStatus.connected) {
+      return;
+    }
+    try {
+      await _deviceRequest(
+        source.id,
+        {'type': 'computer_link_refresh', 'targetPubkey': targetPubkey},
+        'computer_link_result',
+        timeout: const Duration(seconds: 15),
+      );
+    } catch (error) {
+      debugPrint('[Links] ${source.name} could not refresh: $error');
+    }
+  }
+
+  Future<ComputerLinkTicket> _computerLinkTicket(
+    String relayUrl,
+    String linkRoom,
+  ) async {
+    final httpUrl = _relayHttpUrlFromWs(relayUrl) ?? relayHttpUrl;
+    try {
+      return await requestComputerLinkTicket(
+        relayHttpUrl: httpUrl,
+        subscriberToken: _subscriberToken,
+        linkRoom: linkRoom,
+      );
+    } on ComputerLinkSubscriptionRequired {
+      throw StateError('Computer links need an active relay subscription');
+    }
+  }
+
+  Future<void> _setComputerLink(
+    String sourceId, {
+    required String name,
+    required String targetPubkey,
+    required String relayUrl,
+    required String linkRoom,
+    required ComputerLinkTicket ticket,
+    required ComputerAccess access,
+    required LinkConfirm confirm,
+  }) async {
+    final msg = {
+      'type': 'computer_link_set',
+      'name': name,
+      'targetPubkey': targetPubkey,
+      'relayUrl': relayUrl,
+      'linkRoom': linkRoom,
+      'ticket': ticket.ticket,
+      'ticketExpiresAt': ticket.expiresAt,
+      'access': access.toJson(),
+      'confirm': confirm.wire,
+    };
+    try {
+      final result = await _deviceRequest(
+        sourceId,
+        msg,
+        'computer_link_result',
+        timeout: const Duration(seconds: 8),
+      );
+      if (result['ok'] == false) {
+        throw StateError(result['error'] as String? ?? 'Link not stored');
+      }
+    } on TimeoutException {
+      // Older builds send no reply; the link list shows the result.
+    }
+  }
+
+  /// Drops the link from both ends. Either computer may be offline; the
+  /// other still forgets its side.
+  Future<void> removeComputerLink({
+    required String sourceId,
+    required String targetPubkey,
+  }) async {
+    final errors = <String>[];
+    final target = _serverConfigs
+        .where((c) => c.serverPubkey == targetPubkey)
+        .firstOrNull;
+    final source = _serverConfigs.where((c) => c.id == sourceId).firstOrNull;
+    if (target != null && source != null) {
+      try {
+        await _deviceRequest(target.id, {
+          'type': 'device_remove',
+          'publicKey': source.serverPubkey,
+        }, 'device_remove_result');
+      } catch (error) {
+        errors.add('${target.name}: ${_errorText(error)}');
+      }
+    }
+    try {
+      await _deviceRequest(
+        sourceId,
+        {'type': 'computer_link_remove', 'targetPubkey': targetPubkey},
+        'computer_link_result',
+        timeout: const Duration(seconds: 5),
+        retry: false,
+      );
+    } on TimeoutException {
+      // Older builds send no reply.
+    } catch (error) {
+      errors.add(_errorText(error));
+    }
+    _computerLinks[sourceId]?.removeWhere(
+      (l) => l.targetPubkey == targetPubkey,
+    );
+    notifyListeners();
+    unawaited(loadComputerLinks(sourceId).catchError((_) => <ComputerLink>[]));
+    if (target != null) {
+      unawaited(loadDevices(target.id).catchError((_) => _emptyRegistry));
+    }
+    if (errors.isNotEmpty) throw StateError(errors.join('. '));
+  }
+
+  /// Removes a grant from the target side when the source isn't one of
+  /// this phone's computers.
+  Future<void> revokeComputerGrant(String targetId, String sourcePubkey) async {
+    await removeRegisteredDevice(targetId, sourcePubkey);
+    final source = _serverConfigs
+        .where((c) => c.serverPubkey == sourcePubkey)
+        .firstOrNull;
+    final target = _serverConfigs.where((c) => c.id == targetId).firstOrNull;
+    if (source == null || target == null) return;
+    _connMgr.sendToServer(source.id, {
+      'type': 'computer_link_remove',
+      'targetPubkey': target.serverPubkey,
+    });
+    _computerLinks[source.id]?.removeWhere(
+      (l) => l.targetPubkey == target.serverPubkey,
+    );
+    notifyListeners();
+  }
+
+  static String _errorText(Object error) => switch (error) {
+    StateError(:final message) => message,
+    TimeoutException(:final message?) => message,
+    FormatException(:final message) => message,
+    _ => error.toString(),
+  };
+
+  /// Renews link tickets on [sourceId] that expire within 7 days. Runs once
+  /// per connection, only while this phone has an active subscription.
+  Future<void> _refreshComputerLinkTickets(
+    String sourceId,
+    List<ComputerLink> links,
+  ) async {
+    if (!_subscriptionActive && _subscriberToken.isEmpty) return;
+    if (!_linkTicketRefreshes.add(sourceId)) return;
+    try {
+      final now = DateTime.now();
+      for (final link in links) {
+        if (!link.needsTicketRefresh(now)) continue;
+        var relayUrl = link.relayUrl;
+        var linkRoom = link.linkRoom;
+        if (linkRoom.isEmpty) {
+          final target = _serverConfigs
+              .where((c) => c.serverPubkey == link.targetPubkey)
+              .firstOrNull;
+          if (target == null ||
+              _connMgr.statusOf(target.id) != ConnectionStatus.connected) {
+            continue;
+          }
+          final room = await _deviceRequest(target.id, {
+            'type': 'link_room_info',
+          }, 'link_room_info_result');
+          relayUrl = room['relayUrl'] as String? ?? target.relayUrl;
+          linkRoom = room['linkRoom'] as String? ?? '';
+          if (linkRoom.isEmpty) continue;
+        }
+        final ticket = await _computerLinkTicket(relayUrl, linkRoom);
+        await _setComputerLink(
+          sourceId,
+          name: link.name,
+          targetPubkey: link.targetPubkey,
+          relayUrl: relayUrl,
+          linkRoom: linkRoom,
+          ticket: ticket,
+          access: link.access,
+          confirm: link.confirm,
+        );
+      }
+    } catch (error) {
+      debugPrint('[Links] Ticket refresh failed: $error');
+    }
+  }
+
+  void _handleDevicePending(Map<String, dynamic> msg, String? serverId) {
+    if (serverId == null) return;
+    final pending = PendingDevice.fromJson(msg, serverId);
+    if (pending == null) return;
+    if (pending.publicKey == devicePublicKey) return;
+    if (_isAccountDevice(pending.publicKey)) {
+      unawaited(approveDevice(pending).catchError((_) {}));
+      return;
+    }
+    _pendingDevices.removeWhere(
+      (p) => p.serverId == serverId && p.publicKey == pending.publicKey,
+    );
+    _pendingDevices.add(pending);
+    _pendingDeviceController.add(pending);
+    notifyListeners();
+  }
+
+  void _handleDevicePendingCleared(Map<String, dynamic> msg, String? serverId) {
+    final publicKey = msg['publicKey'];
+    _pendingDevices.removeWhere(
+      (p) =>
+          p.serverId == serverId &&
+          (publicKey is! String || p.publicKey == publicKey),
+    );
+    notifyListeners();
+  }
+
+  // ── Computer access cards ──
+
+  void _handleComputerAccessRequest(Map<String, dynamic> msg) {
+    _closeLiveStreamsForParent(msg['parentToolUseId'] as String?);
+    final request = ComputerAccessRequest.fromJson(msg);
+    if (request == null) return;
+    final existingIdx = _messages.indexWhere(
+      (m) =>
+          m.type == MessageType.computerAccess &&
+          m.questionId == request.requestId,
+    );
+    if (existingIdx >= 0) {
+      applyTranscriptPosition(_messages[existingIdx], msg);
+      notifyListeners();
+      return;
+    }
+    final card = ChatMessage.computerAccess(request);
+    applyTranscriptPosition(card, msg);
+    _messages.add(card);
+    notifyListeners();
+  }
+
+  void _handleComputerAccessResolved(Map<String, dynamic> msg) {
+    final requestId = msg['requestId'] as String? ?? '';
+    final decision = msg['decision'] as String? ?? 'expired';
+    _setComputerAccessStatus(requestId, decision);
+  }
+
+  void _setComputerAccessStatus(String requestId, String status) {
+    final idx = _messages.indexWhere(
+      (m) => m.type == MessageType.computerAccess && m.questionId == requestId,
+    );
+    if (idx < 0) return;
+    _messages[idx].toolInput?['status'] = status;
+    _messages[idx].answered = status != 'pending';
+    notifyListeners();
+  }
+
+  /// Answers a `computer_access_request` card. For `once` and `chat` the
+  /// answer carries an approval token boxed from this device's key to the
+  /// target computer's key, so only the target can read it and the source
+  /// can't forge one. For `linked` the link is created first.
+  Future<void> answerComputerAccess(
+    String requestId,
+    String decision, {
+    ComputerAccess? access,
+    LinkConfirm confirm = LinkConfirm.ask,
+  }) async {
+    final idx = _messages.indexWhere(
+      (m) => m.type == MessageType.computerAccess && m.questionId == requestId,
+    );
+    if (idx < 0) return;
+    final request = ComputerAccessRequest.fromJson(_messages[idx].toolInput);
+    if (request == null) return;
+    final source = _computerAccessSource(request);
+    final sourceId = source?.id ?? '';
+    if (sourceId.isEmpty) {
+      throw StateError(
+        '${request.sourceName} is not one of this device\'s computers',
+      );
+    }
+    final answer = <String, dynamic>{
+      'type': 'computer_access_answer',
+      'requestId': requestId,
+      'sessionId': request.sessionId,
+      'decision': decision,
+    };
+    if (decision == 'once' || decision == 'chat') {
+      if (!_deviceCrypto.hasKeyPair || request.targetPublicKey.isEmpty) {
+        throw StateError('This device has no key to sign the approval');
+      }
+      answer['approval'] = ApprovalToken.seal(
+        deviceKey: _deviceCrypto.privateKey,
+        targetPublicKeyBase64: request.targetPublicKey,
+        payload: request.approvalPayload(
+          scope: decision,
+          sourceKey: request.sourcePublicKey.isNotEmpty
+              ? request.sourcePublicKey
+              : source?.serverPubkey ?? '',
+        ),
+      ).toJson();
+    } else if (decision == 'linked') {
+      final target = _serverConfigs
+          .where((c) => c.serverPubkey == request.targetPublicKey)
+          .firstOrNull;
+      if (target == null) {
+        throw StateError(
+          '${request.targetName} is not one of this device\'s computers',
+        );
+      }
+      await createComputerLink(
+        sourceId: sourceId,
+        targetId: target.id,
+        access: access ?? request.access,
+        confirm: confirm,
+      );
+    }
+    _connMgr.sendToServer(sourceId, answer);
+    _setComputerAccessStatus(requestId, decision);
+  }
+
+  /// The computer that raised [request]. Current servers name their key on
+  /// the card; for older ones this falls back to the computer on screen.
+  ServerConfig? _computerAccessSource(ComputerAccessRequest request) {
+    final activeId = _activeSessionServerId ?? _connMgr.activeServerId;
+    final active = _serverConfigs.where((c) => c.id == activeId).firstOrNull;
+    final key = request.sourcePublicKey;
+    if (key.isEmpty || active?.serverPubkey == key) return active;
+    return _configForKey(key);
+  }
+
+  /// A saved computer with [serverPubkey], preferring one that is connected.
+  ServerConfig? _configForKey(String serverPubkey) {
+    final matches = _serverConfigs.where((c) => c.serverPubkey == serverPubkey);
+    return matches
+            .where((c) => _connMgr.statusOf(c.id) == ConnectionStatus.connected)
+            .firstOrNull ??
+        matches.firstOrNull;
   }
 
   /// Opens a new browser at [url] on [profile] for the active session,
@@ -12297,6 +13349,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             loaded.add(qMsg);
           }
           break;
+        case 'computer_access':
+          final request = ComputerAccessRequest.fromJson({
+            if (entry['computerAccess'] is Map)
+              ...entry['computerAccess'] as Map,
+            if (entry['sessionId'] is String) 'sessionId': entry['sessionId'],
+            if (entry['questionId'] is String) 'requestId': entry['questionId'],
+          });
+          if (request == null) break;
+          final status =
+              entry['status'] as String? ??
+              entry['decision'] as String? ??
+              request.status;
+          final existingIdx = loaded.lastIndexWhere(
+            (m) =>
+                m.type == MessageType.computerAccess &&
+                m.questionId == request.requestId,
+          );
+          if (existingIdx >= 0) {
+            loaded[existingIdx].toolInput?['status'] = status;
+            loaded[existingIdx].answered = status != 'pending';
+          } else {
+            loaded.add(ChatMessage.computerAccess(request.withStatus(status)));
+          }
+          break;
         case 'secure_input':
           final requestId = entry['questionId'] as String? ?? '';
           final input = Map<String, dynamic>.from(
@@ -14660,6 +15736,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .whereType<Map>()
           .map((m) => Map<String, dynamic>.from(m))
           .toList();
+    }
+
+    final rawIssues = msg['issues'];
+    if (rawIssues is List) {
+      _serverIssues[serverId] = [
+        for (final raw in rawIssues) ?ComputerIssue.fromPayload(raw),
+      ];
     }
 
     final rawHealth = msg['backendHealth'];
@@ -18815,6 +19898,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void dispose() {
     if (_sessionCacheSaveTimer != null) unawaited(_saveSessionCache());
+    _deviceAuthSub?.cancel();
+    _pendingDeviceController.close();
+    account.dispose();
     _outgoingDisposed = true;
     _outgoingTimer?.cancel();
     for (final upload in _outgoingUploadCompleters.values) {
@@ -19013,4 +20099,12 @@ class _BrowserRequest {
   final String serverId;
   final String profile;
   final done = Completer<ActiveBrowserSession>();
+}
+
+/// One outstanding device or link request and the result it waits for.
+class _DeviceRequestWaiter {
+  _DeviceRequestWaiter(this.requestId);
+
+  final String requestId;
+  final Completer<Map<String, dynamic>> completer = Completer();
 }

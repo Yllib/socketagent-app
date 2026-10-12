@@ -5,6 +5,7 @@ import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/file_download_frame.dart';
 import 'crypto_service.dart';
+import 'device_auth.dart';
 import 'socket_frame_decoder.dart';
 import '../models/browser_frame_wire.dart';
 
@@ -108,6 +109,17 @@ class WebSocketService {
   bool _encryptionReady = false;
   bool _requireTrustedDirectKey = true;
 
+  // Device registry handshake (relay only). The computer may hold the peer
+  // after key exchange until this device proves it knows AUTH_TOKEN or
+  // another device approves it.
+  final DeviceAuthHandshake _deviceAuth = DeviceAuthHandshake();
+  final _deviceAuthController = StreamController<DeviceAuthState>.broadcast();
+  String _deviceName = '';
+  String _devicePlatform = '';
+  // Set once a handshake ended waiting for approval, so the next retry after
+  // the computer drops the held peer waits instead of knocking every 3 s.
+  bool _lastHandshakeAwaited = false;
+
   // Wire-format flag — flips to true once the server replies to our
   // client_capabilities announcement. Until then we keep the legacy
   // text-JSON envelope so older servers don't choke.
@@ -125,6 +137,23 @@ class WebSocketService {
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
   ConnectionStatus get status => _status;
   ConnectionMode get mode => _mode;
+
+  /// Where the device registry handshake stands on this lane.
+  Stream<DeviceAuthState> get deviceAuthStream => _deviceAuthController.stream;
+  DeviceAuthState get deviceAuth => _deviceAuth.state;
+
+  /// What `device_auth` says about this device. [token] is the computer's
+  /// AUTH_TOKEN when the app has it; it only ever leaves inside the box.
+  void setDeviceIdentity({
+    required String name,
+    required String platform,
+    required String token,
+  }) {
+    _deviceName = name;
+    _devicePlatform = platform;
+    _token = token;
+    _bulkLane?.setDeviceIdentity(name: name, platform: platform, token: token);
+  }
 
   /// Whether a retry is scheduled. False after an intentional [disconnect].
   bool get reconnecting => _reconnectTimer?.isActive ?? false;
@@ -333,6 +362,8 @@ class WebSocketService {
               _encryptionReady = false;
               _serverSupportsBinary = false;
               _serverSupportsUploadAcks = false;
+              _deviceAuth.reset();
+              _emitDeviceAuth();
               _setStatus(ConnectionStatus.disconnected);
               _scheduleReconnect();
             },
@@ -420,7 +451,7 @@ class WebSocketService {
 
       // Plaintext messages in relay mode (only during key exchange)
       if (raw['type'] == 'key_exchange_ack') {
-        _onEncryptionEstablished();
+        _onKeyExchangeAck(raw);
         return;
       }
 
@@ -452,7 +483,21 @@ class WebSocketService {
   void _routeDecryptedMessage(Map<String, dynamic> msg) {
     final t = msg['type'];
     if (t == 'key_exchange_ack') {
-      _onEncryptionEstablished();
+      _onKeyExchangeAck(msg);
+      return;
+    }
+    if (t == 'device_auth_result') {
+      switch (_deviceAuth.onAuthResult(msg)) {
+        case DeviceAuthAction.open:
+          _onEncryptionEstablished();
+        case DeviceAuthAction.wait:
+          _lastHandshakeAwaited = true;
+          _emitDeviceAuth();
+        case DeviceAuthAction.sendAuth:
+        case DeviceAuthAction.none:
+          break;
+      }
+      _messageController.add(msg);
       return;
     }
     if (t == 'server_capabilities') {
@@ -498,8 +543,43 @@ class WebSocketService {
     }
   }
 
+  /// The server's answer to our public key. Over the relay it may hold the
+  /// peer until `device_auth` passes; direct connections keep AUTH_TOKEN.
+  void _onKeyExchangeAck(Map<String, dynamic> msg) {
+    if (_mode != ConnectionMode.relay) {
+      _onEncryptionEstablished();
+      return;
+    }
+    if (_deviceAuth.onKeyExchangeAck(msg['device']) == DeviceAuthAction.open) {
+      _onEncryptionEstablished();
+      return;
+    }
+    // Held: the box works, but the peer is closed to everything except
+    // device_auth, so status stays connecting and application sends wait.
+    _encryptionReady = true;
+    _emitDeviceAuth();
+    _sendOnCurrentLane(
+      deviceAuthMessage(
+        token: _token,
+        name: _deviceName,
+        platform: _devicePlatform,
+      ),
+    );
+  }
+
+  void _emitDeviceAuth() {
+    if (_deviceAuthController.isClosed) return;
+    _deviceAuthController.add(_deviceAuth.state);
+  }
+
   void _onEncryptionEstablished() {
     _encryptionReady = true;
+    _lastHandshakeAwaited = false;
+    if (_mode == ConnectionMode.relay &&
+        _deviceAuth.state.phase != DeviceAuthPhase.approved) {
+      _deviceAuth.onKeyExchangeAck('approved');
+    }
+    _emitDeviceAuth();
     _setStatus(ConnectionStatus.connected);
     debugPrint(
       _mode == ConnectionMode.relay
@@ -548,7 +628,13 @@ class WebSocketService {
 
   void _scheduleReconnect() {
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), () {
+    // A device waiting for approval gets opened in place when another device
+    // approves it. Only after the computer drops the held peer (10 minutes)
+    // does a retry help, and a fast loop would just repeat the prompt.
+    final delay = _lastHandshakeAwaited
+        ? const Duration(seconds: 30)
+        : const Duration(seconds: 3);
+    _reconnectTimer = Timer(delay, () {
       if (_status != ConnectionStatus.connected) {
         connect();
       }
@@ -877,6 +963,9 @@ class WebSocketService {
     _serverSupportsUploadAcks = false;
     _uploadUsesBulkLane.clear();
     _downloadUsesBulkLane.clear();
+    _lastHandshakeAwaited = false;
+    _deviceAuth.reset();
+    _emitDeviceAuth();
     _setStatus(ConnectionStatus.disconnected);
   }
 
@@ -888,5 +977,6 @@ class WebSocketService {
     _bulkLane = null;
     _messageController.close();
     _statusController.close();
+    _deviceAuthController.close();
   }
 }

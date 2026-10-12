@@ -5,6 +5,7 @@ import '../models/server_config.dart';
 import 'local_route.dart';
 import 'websocket_service.dart';
 import 'crypto_service.dart';
+import 'device_auth.dart';
 
 /// A message from a server, tagged with which server sent it.
 class ServerMessage {
@@ -18,6 +19,13 @@ class ServerStatusUpdate {
   final String serverId;
   final ConnectionStatus status;
   ServerStatusUpdate(this.serverId, this.status);
+}
+
+/// Per-server device registry handshake update (control lane).
+class ServerDeviceAuthUpdate {
+  final String serverId;
+  final DeviceAuthState state;
+  ServerDeviceAuthUpdate(this.serverId, this.state);
 }
 
 ConnectionMode connectionModeForServerConfig(ServerConfig config) {
@@ -59,9 +67,12 @@ class ConnectionManager {
   final Map<String, CryptoService> _cryptoServices = {};
   final Map<String, StreamSubscription> _messageSubs = {};
   final Map<String, StreamSubscription> _statusSubs = {};
+  final Map<String, StreamSubscription> _deviceAuthSubs = {};
 
   String? activeServerId;
   String _subscriberToken = '';
+  String _deviceName = '';
+  String _devicePlatform = '';
 
   /// Called when auto routing moves a computer to another route or address,
   /// so the owner can save it. The manager has already switched the socket.
@@ -83,12 +94,38 @@ class ConnectionManager {
 
   final _messageController = StreamController<ServerMessage>.broadcast();
   final _statusController = StreamController<ServerStatusUpdate>.broadcast();
+  final _deviceAuthController =
+      StreamController<ServerDeviceAuthUpdate>.broadcast();
 
   /// Merged message stream from all connected servers.
   Stream<ServerMessage> get messages => _messageController.stream;
 
   /// Per-server status updates.
   Stream<ServerStatusUpdate> get statusStream => _statusController.stream;
+
+  /// Per-server device registry handshake updates.
+  Stream<ServerDeviceAuthUpdate> get deviceAuthStream =>
+      _deviceAuthController.stream;
+
+  /// Where the device registry handshake stands for [serverId].
+  DeviceAuthState deviceAuthOf(String serverId) =>
+      _connections[serverId]?.deviceAuth ?? DeviceAuthState.idle;
+
+  /// How this device introduces itself in `device_auth`.
+  Future<void> setDeviceIdentity({
+    required String name,
+    required String platform,
+  }) async {
+    _deviceName = name;
+    _devicePlatform = platform;
+    for (final config in _configs.values) {
+      _connections[config.id]?.setDeviceIdentity(
+        name: name,
+        platform: platform,
+        token: config.token,
+      );
+    }
+  }
 
   /// The active server's WebSocketService, or null if none.
   WebSocketService? get active =>
@@ -150,6 +187,11 @@ class ConnectionManager {
   /// Points [config]'s socket at the route its config selects.
   Future<void> _configureTransport(ServerConfig config) async {
     final ws = _connections[config.id]!;
+    ws.setDeviceIdentity(
+      name: _deviceName,
+      platform: _devicePlatform,
+      token: config.token,
+    );
     final selectedMode = connectionModeForServerConfig(config);
     // Transport selection is a security boundary. Apply it before touching
     // credentials so a relay-selected server can never retain or open a
@@ -238,13 +280,40 @@ class ConnectionManager {
       if (ws == null) continue;
       final live =
           ws.status != ConnectionStatus.disconnected || ws.reconnecting;
-      if (!live) continue;
-      if (config.autoRoute) {
-        _staleSockets.add(config.id);
-        unawaited(routeServer(config.id, force: true));
-      } else {
-        ws.connect(force: true);
-      }
+      if (live) reconnectServer(config.id);
+    }
+  }
+
+  /// Replaces [serverId]'s socket with a new one. For a socket that looks
+  /// connected but has stopped answering, or one left on an old network.
+  void reconnectServer(String serverId) {
+    final config = _configs[serverId];
+    final ws = _connections[serverId];
+    if (config == null || ws == null) return;
+    if (config.autoRoute) {
+      _staleSockets.add(serverId);
+      unawaited(routeServer(serverId, force: true));
+    } else {
+      ws.connect(force: true);
+    }
+  }
+
+  /// Reconnects [serverId] and completes true once the new socket is
+  /// connected, or false if that takes longer than [timeout]. Only a
+  /// connection made after this call counts, never the stale one.
+  Future<bool> reconnectAndWait(String serverId, Duration timeout) async {
+    final connected = statusStream
+        .firstWhere(
+          (u) =>
+              u.serverId == serverId && u.status == ConnectionStatus.connected,
+        )
+        .timeout(timeout);
+    reconnectServer(serverId);
+    try {
+      await connected;
+      return true;
+    } on TimeoutException {
+      return false;
     }
   }
 
@@ -434,6 +503,10 @@ class ConnectionManager {
       _messageController.add(ServerMessage(serverId, data));
     });
 
+    _deviceAuthSubs[serverId] = ws.deviceAuthStream.listen((state) {
+      _deviceAuthController.add(ServerDeviceAuthUpdate(serverId, state));
+    });
+
     _statusSubs[serverId] = ws.statusStream.listen((status) {
       _statusController.add(ServerStatusUpdate(serverId, status));
       // A dropped connection may mean the phone left or joined the
@@ -453,6 +526,8 @@ class ConnectionManager {
     _messageSubs.remove(id);
     _statusSubs[id]?.cancel();
     _statusSubs.remove(id);
+    _deviceAuthSubs[id]?.cancel();
+    _deviceAuthSubs.remove(id);
     _connections[id]?.dispose();
     _connections.remove(id);
     _configs.remove(id);
@@ -475,6 +550,9 @@ class ConnectionManager {
     for (final sub in _statusSubs.values) {
       sub.cancel();
     }
+    for (final sub in _deviceAuthSubs.values) {
+      sub.cancel();
+    }
     for (final ws in _connections.values) {
       ws.dispose();
     }
@@ -483,8 +561,10 @@ class ConnectionManager {
     _cryptoServices.clear();
     _messageSubs.clear();
     _statusSubs.clear();
+    _deviceAuthSubs.clear();
     _messageController.close();
     _statusController.close();
+    _deviceAuthController.close();
   }
 }
 

@@ -951,8 +951,8 @@ class _ServersScreenState extends State<ServersScreen> {
                 ),
               for (final entry in backendEntries)
                 FilledButton.icon(
-                  icon: const Icon(Icons.build, size: 18),
-                  label: Text('Repair ${_backendHealthTitle(entry)}'),
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: Text('Reinstall ${_backendHealthTitle(entry)}'),
                   onPressed: () {
                     final backend = entry['backend']?.toString() ?? 'codex';
                     Navigator.pop(dialogContext);

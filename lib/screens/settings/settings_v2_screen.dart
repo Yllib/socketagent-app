@@ -10,6 +10,7 @@ import '../../services/desktop_window_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../../models/computer_issue.dart';
 import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
 import '../../models/push_delivery_capabilities.dart';
@@ -33,9 +34,16 @@ import '../connect_computer_screen.dart';
 import '../pair_screen.dart';
 import '../protected_files_screen.dart';
 import '../paywall_screen.dart';
+import 'backend_config_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
 import 'voice_speech_screen.dart';
+import 'account_screen.dart';
+import 'computer_links_screen.dart';
+import 'devices_screen.dart';
+import '../../services/account_crypto.dart';
+import '../../services/device_auth.dart';
+import '../../widgets/device_approval_dialog.dart';
 import '../../config/app_palette.dart';
 import '../../widgets/light_backdrop.dart';
 
@@ -375,6 +383,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                 _SettingsGroup(
                   title: 'Account & Relay',
                   children: [
+                    _AccountTile(provider: provider),
                     _RelayTile(provider: provider),
                     const _SubscriptionTile(),
                   ],
@@ -568,6 +577,9 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     final backendWarnings = configs
         .where((c) => provider.backendWarningForServer(c.id) != null)
         .toList();
+    final issueServers = configs
+        .where((c) => provider.issuesForServer(c.id).isNotEmpty)
+        .toList();
     final missingPush = configs
         .where(
           (c) =>
@@ -588,6 +600,56 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           subtitle: 'Scan a pairing code or connect directly',
           severity: _AttentionSeverity.warning,
           onTap: () => _openConnectComputer(context),
+        ),
+      );
+    }
+    for (final pending in provider.pendingDevices) {
+      final computer = configs
+          .where((c) => c.id == pending.serverId)
+          .firstOrNull
+          ?.name;
+      items.add(
+        _AttentionItem(
+          icon: Icons.phonelink_ring,
+          title: '${pending.name} wants to use ${computer ?? 'a computer'}',
+          subtitle:
+              'Code ${formatFingerprintCode(pending.code)}. Tap to review',
+          severity: _AttentionSeverity.warning,
+          onTap: () => showDeviceApprovalDialog(context, pending),
+        ),
+      );
+    }
+    for (final config in configs) {
+      final auth = provider.deviceAuthFor(config.id);
+      if (!auth.awaitingApproval) continue;
+      items.add(
+        _AttentionItem(
+          icon: Icons.hourglass_top,
+          title: '${config.name} is waiting for approval',
+          subtitle:
+              'Allow this device from another device. '
+              'Code ${formatFingerprintCode(auth.code)}',
+          severity: _AttentionSeverity.info,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => SettingsV2ServerDetailScreen(serverId: config.id),
+            ),
+          ),
+        ),
+      );
+    }
+    if (provider.account.hasAccount &&
+        provider.account.googleEmail != null &&
+        !provider.account.signedInWithGoogle) {
+      items.add(
+        _AttentionItem(
+          icon: Icons.account_circle_outlined,
+          title: 'Signed out of Google',
+          subtitle: 'Sign in again to keep your account syncing',
+          severity: _AttentionSeverity.warning,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const AccountScreen()),
+          ),
         ),
       );
     }
@@ -631,6 +693,19 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           severity: _AttentionSeverity.error,
           onTap: () =>
               _openServerList(context, 'Backend Warnings', backendWarnings),
+        ),
+      );
+    }
+    if (issueServers.isNotEmpty) {
+      items.add(
+        _AttentionItem(
+          icon: Icons.warning_amber_outlined,
+          title:
+              '${issueServers.length} computer${issueServers.length == 1 ? '' : 's'} with config warnings',
+          subtitle: _serverNames(issueServers),
+          severity: _AttentionSeverity.warning,
+          onTap: () =>
+              _openServerList(context, 'Config Warnings', issueServers),
         ),
       );
     }
@@ -766,6 +841,7 @@ class _SettingsV2ServerDetailScreenState
         final status = provider.connMgr.statusOf(config.id);
         final connected = status == ConnectionStatus.connected;
         final health = provider.backendHealthForServer(config.id);
+        final issues = provider.issuesForServer(config.id);
         final plugins = provider.serverPlugins(config.id);
         final runtime = provider.serverRuntimeInfo(config.id);
         final pushRegistered = provider.isPushRegisteredForServer(config.id);
@@ -839,7 +915,12 @@ class _SettingsV2ServerDetailScreenState
                         : config.useRelay
                         ? (config.isRelayPaired ? 'Paired' : 'Not paired')
                         : '${config.host}:${config.port}',
-                    trailing: connected ? 'Connected' : _statusLabel(status),
+                    trailing: connected
+                        ? 'Connected'
+                        : _statusLabelFor(
+                            status,
+                            provider.deviceAuthFor(config.id),
+                          ),
                   ),
                   // Auto picks the route itself; the edit dialog changes it.
                   if (!config.autoRoute &&
@@ -889,6 +970,37 @@ class _SettingsV2ServerDetailScreenState
                   ),
                 ],
               ),
+              if (provider.serverSupportsDeviceAuth(config.id) ||
+                  provider.serverSupportsComputerLinks(config.id))
+                _SettingsGroup(
+                  title: 'Devices and links',
+                  children: [
+                    if (provider.serverSupportsDeviceAuth(config.id))
+                      _NavTile(
+                        icon: Icons.devices,
+                        title: 'Devices',
+                        subtitle: _devicesSubtitle(provider, config.id),
+                        trailing: Icons.chevron_right,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute<void>(
+                            builder: (_) => DevicesScreen(serverId: config.id),
+                          ),
+                        ),
+                      ),
+                    _NavTile(
+                      icon: Icons.link,
+                      title: 'Computer links',
+                      subtitle: _linksSubtitle(provider, config.id),
+                      trailing: Icons.chevron_right,
+                      onTap: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) =>
+                              ComputerLinksScreen(serverId: config.id),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               _SettingsGroup(
                 title: 'Version & Updates',
                 children: [
@@ -914,6 +1026,27 @@ class _SettingsV2ServerDetailScreenState
                     ),
                 ],
               ),
+              if (issues.isNotEmpty)
+                _SettingsGroup(
+                  title: 'Errors and warnings',
+                  children: [
+                    for (final issue in issues)
+                      _IssueTile(
+                        issue: issue,
+                        onEdit:
+                            connected &&
+                                issue.configFile != null &&
+                                provider.serverSupportsBackendConfig(config.id)
+                            ? () => openBackendConfigEditor(
+                                context,
+                                serverId: config.id,
+                                fileId: issue.configFile!,
+                                fileName: _fileName(issue.path),
+                              )
+                            : null,
+                      ),
+                  ],
+                ),
               _SettingsGroup(
                 title: 'Backends',
                 children: health.isEmpty
@@ -938,6 +1071,23 @@ class _SettingsV2ServerDetailScreenState
                             serverId: config.id,
                             entry: entry,
                             connected: connected,
+                          ),
+                        if (provider.serverSupportsBackendConfig(config.id))
+                          _NavTile(
+                            icon: Icons.edit_note,
+                            title: 'Config files',
+                            subtitle:
+                                'config.toml, AGENTS.md, settings.json, CLAUDE.md',
+                            trailing: Icons.chevron_right,
+                            onTap: connected
+                                ? () => Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => BackendConfigFilesScreen(
+                                        serverId: config.id,
+                                      ),
+                                    ),
+                                  )
+                                : null,
                           ),
                       ],
               ),
@@ -1577,7 +1727,11 @@ class _Overview extends StatelessWidget {
         )
         .length;
     final warnings = configs
-        .where((c) => provider.backendWarningForServer(c.id) != null)
+        .where(
+          (c) =>
+              provider.backendWarningForServer(c.id) != null ||
+              provider.issuesForServer(c.id).isNotEmpty,
+        )
         .length;
     final relayServers = configs.where((c) => c.useRelay).length;
 
@@ -1740,7 +1894,7 @@ class _ServerTile extends StatelessWidget {
           subtitle: Text(
             [
               _routeLabel(config),
-              _statusLabel(status),
+              _statusLabelFor(status, provider.deviceAuthFor(config.id)),
               if (!build.isEmpty) build.compactLabel,
               if (provider.isLimitedWindowsInstall(config.id))
                 'limited install',
@@ -1748,6 +1902,8 @@ class _ServerTile extends StatelessWidget {
               if (warning != null)
                 warning['label']?.toString().toLowerCase() ??
                     'backend ${warning['severity']}',
+              if (provider.issuesForServer(config.id).isNotEmpty)
+                'config warning',
               if (connected && push) 'notifications',
             ].join(' · '),
             maxLines: 2,
@@ -1807,7 +1963,10 @@ class _ServerHeader extends StatelessWidget {
                 Text(
                   [
                     _routeLabel(config),
-                    _statusLabel(status),
+                    _statusLabelFor(
+                      status,
+                      context.read<ChatProvider>().deviceAuthFor(config.id),
+                    ),
                     if (!build.isEmpty) build.compactLabel,
                   ].join(' · '),
                   style: TextStyle(
@@ -1897,7 +2056,7 @@ class _BackendDetailTile extends StatelessWidget {
           );
         }
 
-        void repair() {
+        void reinstall() {
           if (running) {
             showRunningOperation();
             return;
@@ -1976,27 +2135,27 @@ class _BackendDetailTile extends StatelessWidget {
               const SizedBox(width: 8),
               if (isAuthProblem)
                 OutlinedButton.icon(
-                  icon: const Icon(Icons.build, size: 18),
-                  label: const Text('Repair'),
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Reinstall'),
                   style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 10),
                     minimumSize: const Size(0, 40),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
                   ),
-                  onPressed: canRun ? repair : null,
+                  onPressed: canRun ? reinstall : null,
                 )
               else
                 FilledButton.icon(
-                  icon: const Icon(Icons.build, size: 18),
-                  label: const Text('Repair'),
+                  icon: const Icon(Icons.download_outlined, size: 18),
+                  label: const Text('Reinstall'),
                   style: FilledButton.styleFrom(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     minimumSize: const Size(0, 40),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
                   ),
-                  onPressed: canRun ? repair : null,
+                  onPressed: canRun ? reinstall : null,
                 ),
             ],
           ),
@@ -2434,7 +2593,7 @@ void showBackendOperationDialog(
                   : cancelled
                   ? '$backendName sign-in cancelled'
                   : '$backendName sign-in'
-            : '$backendName repair';
+            : '$backendName reinstall';
 
         return AlertDialog(
           title: Row(
@@ -2468,7 +2627,7 @@ void showBackendOperationDialog(
                         : state?.message ??
                               (isAuthOperation
                                   ? 'Starting sign-in...'
-                                  : 'Starting repair...'),
+                                  : 'Starting reinstall...'),
                   ),
                   if (showDeviceAuthCard) ...[
                     const SizedBox(height: 12),
@@ -2685,6 +2844,60 @@ void _submitClaudeAuthCode(
   final code = rawCode.trim();
   if (code.isEmpty || requestId == null || requestId.isEmpty) return;
   provider.submitAuthCode(code, serverId: serverId, authRequestId: requestId);
+}
+
+class _AccountTile extends StatelessWidget {
+  const _AccountTile({required this.provider});
+
+  final ChatProvider provider;
+
+  @override
+  Widget build(BuildContext context) {
+    final account = provider.account;
+    final String subtitle;
+    if (!account.hasAccount) {
+      subtitle = 'Sign in with Google to sync computers between devices';
+    } else if (account.lastError != null) {
+      subtitle = account.lastError!;
+    } else {
+      final count = account.devices.length;
+      subtitle =
+          '${account.googleEmail ?? 'Recovery key'} · '
+          '$count device${count == 1 ? '' : 's'}';
+    }
+    return _NavTile(
+      icon: account.hasAccount
+          ? Icons.account_circle
+          : Icons.account_circle_outlined,
+      title: 'Account',
+      subtitle: subtitle,
+      trailing: Icons.chevron_right,
+      onTap: () => Navigator.of(
+        context,
+      ).push(MaterialPageRoute<void>(builder: (_) => const AccountScreen())),
+    );
+  }
+}
+
+String _devicesSubtitle(ChatProvider provider, String serverId) {
+  final registry = provider.deviceRegistryFor(serverId);
+  final pending = provider.pendingDevices
+      .where((p) => p.serverId == serverId)
+      .length;
+  if (registry == null) return 'Devices allowed to connect';
+  final count = registry.phones.length;
+  return [
+    '$count device${count == 1 ? '' : 's'}',
+    registry.learning ? 'any device may join' : 'locked',
+    if (pending > 0) '$pending waiting',
+  ].join(' · ');
+}
+
+String _linksSubtitle(ChatProvider provider, String serverId) {
+  final grants = provider.deviceRegistryFor(serverId)?.computers.length ?? 0;
+  final links = provider.computerLinksFor(serverId).length;
+  if (grants == 0 && links == 0) return 'Let agents reach other computers';
+  return 'Controlled by $grants · controls $links';
 }
 
 class _RelayTile extends StatelessWidget {
@@ -3069,6 +3282,38 @@ class _LimitedInstallRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One of a computer's errors or warnings. Tapping opens the file to fix
+/// when the computer lets the app edit it.
+class _IssueTile extends StatelessWidget {
+  const _IssueTile({required this.issue, this.onEdit});
+
+  final ComputerIssue issue;
+  final VoidCallback? onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = issue.path;
+    return ListTile(
+      leading: Icon(
+        issue.error ? Icons.error_outline : Icons.warning_amber_outlined,
+        color: issue.error
+            ? context.palette.shade(Colors.red, 400)
+            : Colors.orange.shade700,
+      ),
+      title: Text(issue.message),
+      subtitle: path == null ? null : Text(path),
+      trailing: onEdit == null ? null : const Icon(Icons.chevron_right),
+      onTap: onEdit,
+    );
+  }
+}
+
+/// The last segment of a path from any computer, Windows or not.
+String _fileName(String? path) {
+  if (path == null || path.isEmpty) return 'Config file';
+  return path.split(RegExp(r'[\\/]')).lastWhere((part) => part.isNotEmpty);
 }
 
 class _DetailRow extends StatelessWidget {
@@ -4101,6 +4346,15 @@ class _AttentionItem {
 enum _AttentionSeverity { error, warning, info }
 
 enum _ChipTone { good, warning, info, neutral }
+
+/// The connection label, naming the approval code while another device has
+/// to let this one in.
+String _statusLabelFor(ConnectionStatus status, DeviceAuthState auth) {
+  if (status != ConnectionStatus.connected && auth.awaitingApproval) {
+    return 'Waiting for approval, code ${formatFingerprintCode(auth.code)}';
+  }
+  return _statusLabel(status);
+}
 
 String _statusLabel(ConnectionStatus status) {
   return switch (status) {

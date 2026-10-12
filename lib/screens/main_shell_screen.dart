@@ -8,6 +8,7 @@ import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
 import '../services/desktop_shortcuts.dart';
 import '../services/desktop_workspace_controller.dart';
+import '../widgets/device_approval_dialog.dart';
 import '../widgets/desktop_split_view.dart';
 import 'home_screen.dart';
 import '../services/connection_manager.dart';
@@ -38,6 +39,7 @@ class MainShellScreenState extends State<MainShellScreen>
   DesktopWorkspaceController? _desktopController;
   bool _desktopRouteVisible = true;
   StreamSubscription? _backendAuthRequiredSub;
+  StreamSubscription? _pendingDeviceSub;
   StreamSubscription? _backendAuthResolvedSub;
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
   _backendAuthSnackBar;
@@ -63,6 +65,10 @@ class MainShellScreenState extends State<MainShellScreen>
     _updateService.addListener(_onUpdateChange);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
+      _pendingDeviceSub = provider.pendingDeviceEvents.listen((pending) {
+        if (!mounted) return;
+        showDeviceApprovalDialog(context, pending);
+      });
       _backendAuthRequiredSub = provider.backendAuthRequiredEvents.listen((
         event,
       ) {
@@ -188,6 +194,7 @@ class MainShellScreenState extends State<MainShellScreen>
     _updateCheckTimer?.cancel();
     _scheduledTaskRefreshTimer?.cancel();
     _backendAuthRequiredSub?.cancel();
+    _pendingDeviceSub?.cancel();
     _backendAuthResolvedSub?.cancel();
     _updateService.removeListener(_onUpdateChange);
     _updateBannerDismissed.dispose();

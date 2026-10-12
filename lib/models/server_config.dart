@@ -46,6 +46,11 @@ class ServerConfig {
   bool get isRelayPaired =>
       relayUrl.isNotEmpty && pairingToken.isNotEmpty && serverPubkey.isNotEmpty;
 
+  /// Reachable only from the machine the server runs on. Discovery adds these
+  /// on Windows; another device can't use 127.0.0.1 to reach this computer.
+  bool get isLoopbackOnly =>
+      !isRelayPaired && (host == '127.0.0.1' || host == 'localhost');
+
   /// Stable identity for the physical SocketAgent server represented by this
   /// config. Older app versions could migrate/pair the same server more than
   /// once under different local IDs, which opened duplicate relay sockets and

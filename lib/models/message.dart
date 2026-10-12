@@ -1,6 +1,7 @@
 import '../util/format.dart';
 import 'message_attachment.dart';
 import 'traced_error.dart';
+import 'computer_access.dart';
 
 enum MessageSender { user, assistant, system }
 
@@ -46,6 +47,7 @@ enum MessageType {
   htmlPlan,
   workReview,
   runBoundary,
+  computerAccess,
 }
 
 class ChatMessage {
@@ -397,6 +399,21 @@ class ChatMessage {
         'scope': scope,
         'status': status,
       },
+    );
+  }
+
+  /// A `computer_access_request` card. The request lives in [toolInput]
+  /// and its `status` field tracks the decision.
+  factory ChatMessage.computerAccess(ComputerAccessRequest request) {
+    return ChatMessage(
+      id: 'computer_access_${request.requestId}',
+      sender: MessageSender.assistant,
+      type: MessageType.computerAccess,
+      timestamp: DateTime.now(),
+      questionId: request.requestId,
+      textContent: request.isLink ? request.reason : request.summary,
+      toolInput: request.toJson(),
+      answered: !request.pending,
     );
   }
 

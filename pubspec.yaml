@@ -48,6 +48,7 @@ dependencies:
   firebase_core: ^4.10.0
   firebase_messaging: ^16.3.0
   flutter_highlight: ^0.7.0
+  highlight: ^0.7.0
   pdfx: ^2.9.2
   xterm: ^4.0.0
   flutter_markdown_plus: ^1.0.7
@@ -63,6 +64,7 @@ dependencies:
   sodium: ^4.1.1+2
   desktop_drop: ^0.8.4
   pasteboard: ^0.5.0
+  google_sign_in: ^7.2.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

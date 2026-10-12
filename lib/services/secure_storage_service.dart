@@ -70,6 +70,21 @@ class SecureStorageService {
   Future<void> deleteElevenLabsApiKey() =>
       _storage.delete(key: 'elevenlabs_api_key');
 
+  // ────────── Account ──────────
+
+  /// The account's master key, last vault and version as one JSON record.
+  Future<String?> getAccountRecord() => _storage.read(key: 'account_record');
+  Future<void> setAccountRecord(String json) =>
+      _storage.write(key: 'account_record', value: json);
+  Future<void> deleteAccountRecord() => _storage.delete(key: 'account_record');
+
+  /// The desktop Google session: refresh token and email as one JSON record.
+  /// Android keeps its session inside the google_sign_in plugin instead.
+  Future<String?> getGoogleSession() => _storage.read(key: 'google_session');
+  Future<void> setGoogleSession(String json) =>
+      _storage.write(key: 'google_session', value: json);
+  Future<void> deleteGoogleSession() => _storage.delete(key: 'google_session');
+
   // ────────── NaCl Keys (E2E Encryption) ──────────
 
   /// NaCl secret key (base64) for relay E2E encryption
