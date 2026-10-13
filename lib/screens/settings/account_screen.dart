@@ -117,32 +117,47 @@ class _AccountScreenState extends State<AccountScreen> {
 
   Future<void> _removeDevice(AccountService account, VaultDevice device) =>
       _run(() async {
-        final confirmed = await showDialog<bool>(
+        final choice = await showDialog<_DeviceRemoval>(
           context: context,
           builder: (ctx) => AlertDialog(
             title: Text('Remove ${device.name}?'),
             content: Text(
-              '${device.name} stops syncing and every computer refuses its '
-              'key. The account gets a new key in your Google Drive. If '
-              '${device.name} is still signed in to your Google account it '
-              'can read that new key, so to cut it off completely also '
-              'remove it from your Google account (Google Account, '
-              'Security, Your devices).',
+              'Forget is for a device whose app is gone, such as after a '
+              'reinstall. It drops ${device.name} from the account and your '
+              'computers.\n\n'
+              'Remove is for a lost device or one someone else has. It also '
+              'gives the account a new key and gives every computer a new '
+              'pairing token. If ${device.name} is still signed in to your '
+              'Google account it can read the new account key, so also '
+              'remove it from your Google account (Google Account, Security, '
+              'Your devices).',
             ),
             actions: [
               TextButton(
-                onPressed: () => Navigator.of(ctx).pop(false),
+                onPressed: () => Navigator.of(ctx).pop(),
                 child: const Text('Cancel'),
               ),
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(_DeviceRemoval.forget),
+                child: const Text('Forget'),
+              ),
               FilledButton(
-                onPressed: () => Navigator.of(ctx).pop(true),
+                onPressed: account.signedInWithGoogle
+                    ? () => Navigator.of(ctx).pop(_DeviceRemoval.remove)
+                    : null,
                 child: const Text('Remove'),
               ),
             ],
           ),
         );
-        if (confirmed != true) return;
-        await account.removeDevice(device.publicKey);
+        switch (choice) {
+          case _DeviceRemoval.forget:
+            await account.forgetDevice(device.publicKey);
+          case _DeviceRemoval.remove:
+            await account.removeDevice(device.publicKey);
+          case null:
+            return;
+        }
       });
 
   Future<void> _signOut(AccountService account) => _run(() async {
@@ -353,7 +368,7 @@ class _AccountScreenState extends State<AccountScreen> {
               : IconButton(
                   tooltip: 'Remove',
                   icon: Icon(Icons.delete_outline, color: palette.danger),
-                  onPressed: _busy || !account.signedInWithGoogle
+                  onPressed: _busy
                       ? null
                       : () => _removeDevice(account, device),
                 ),
@@ -514,3 +529,5 @@ class _RecoveryKeyDialogState extends State<_RecoveryKeyDialog> {
     );
   }
 }
+
+enum _DeviceRemoval { forget, remove }

@@ -7921,13 +7921,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void _removeDeviceEverywhere(String publicKey) {
+  void _removeDeviceEverywhere(String publicKey, {required bool keepToken}) {
     for (final config in _serverConfigs) {
       if (!_serversWithDeviceAuth.contains(config.id)) continue;
       if (_connMgr.statusOf(config.id) != ConnectionStatus.connected) continue;
       _connMgr.sendToServer(config.id, {
         'type': 'device_remove',
         'publicKey': publicKey,
+        if (keepToken) 'keepToken': true,
       });
     }
   }
@@ -7944,6 +7945,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(serverId, {
         'type': 'device_remove',
         'publicKey': device.publicKey,
+        if (vault.isForgotten(device.publicKey)) 'keepToken': true,
       });
     }
   }

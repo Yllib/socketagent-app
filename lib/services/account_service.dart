@@ -62,7 +62,8 @@ class AccountService extends ChangeNotifier {
   void Function(VaultDevice device)? onDeviceJoined;
 
   /// This device is removing [publicKey]: send `device_remove` everywhere.
-  void Function(String publicKey)? onDeviceRemoved;
+  /// [keepToken] is set for Forget, which leaves pairing tokens alone.
+  void Function(String publicKey, {required bool keepToken})? onDeviceRemoved;
 
   String deviceName = '';
   String devicePlatform = '';
@@ -502,6 +503,36 @@ class AccountService extends ChangeNotifier {
     return jsonEncode(strip(a)) == jsonEncode(strip(b));
   }
 
+  /// Drops [publicKey] from the account and its computers without a new
+  /// account key or new pairing tokens. Meant for a device whose app is
+  /// gone, such as one reinstalled under a new key: nothing that holds the
+  /// old key or the tokens is left. A lost device that may still have the
+  /// app needs [removeDevice]. The change goes out with the next sync.
+  Future<void> forgetDevice(String publicKey) async {
+    final vault = _vault;
+    if (_keys == null || vault == null) {
+      throw StateError('No account on this device');
+    }
+    if (publicKey == devicePublicKey) {
+      throw StateError('Use Sign out to remove this device');
+    }
+    onDeviceRemoved?.call(publicKey, keepToken: true);
+    _vault = vault.copyWith(
+      devices: [
+        for (final d in vault.devices)
+          if (d.publicKey != publicKey) d,
+      ],
+      revokedDevices: [
+        for (final t in vault.revokedDevices)
+          if (t.key != publicKey) t,
+        VaultTombstone(key: publicKey, at: _now, forgotten: true),
+      ],
+    );
+    await _persist();
+    notifyListeners();
+    await sync();
+  }
+
   /// Removes [publicKey] from the account with a new master key: the vault
   /// moves to a new relay account, Drive gets the new key, and the old
   /// account is deleted. Other devices pick the key up from Drive on their
@@ -521,7 +552,7 @@ class AccountService extends ChangeNotifier {
     if (publicKey == devicePublicKey) {
       throw StateError('Use Sign out to remove this device');
     }
-    onDeviceRemoved?.call(publicKey);
+    onDeviceRemoved?.call(publicKey, keepToken: false);
     final client = AccountVaultClient(relay, client: _clientFactory());
     try {
       final remote = await client.get(keys);

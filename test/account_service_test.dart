@@ -201,7 +201,8 @@ class Device {
       }
     };
     service.onDeviceJoined = (device) => joined.add(device.name);
-    service.onDeviceRemoved = (key) => removedKeys.add(key);
+    service.onDeviceRemoved = (key, {required keepToken}) =>
+        (keepToken ? forgottenKeys : removedKeys).add(key);
   }
 
   final String name;
@@ -211,6 +212,7 @@ class Device {
   final List<AccountVault> applied = [];
   final List<String> joined = [];
   final List<String> removedKeys = [];
+  final List<String> forgottenKeys = [];
   String subscriberToken = '';
   int now = 1760300000000;
   late final AccountService service;
@@ -388,6 +390,39 @@ void main() {
       expect(b.service.vault!.removedComputers, isEmpty);
       await a.sync();
       expect(a.computers.map((c) => c.name).toSet(), {'Desk', 'Vm'});
+    },
+  );
+
+  test(
+    'forgetting a device keeps the account key and every other device agrees',
+    () async {
+      final cloud = FakeCloud();
+      final a = Device('Pixel', cloud);
+      await a.signIn();
+      final b = Device('Old Pixel', cloud);
+      await b.signIn();
+      final c = Device('Tablet', cloud);
+      await c.signIn();
+      await a.sync();
+      final account = a.service.accountId!;
+      final bKey = b.service.devicePublicKey;
+
+      a.now += 1000;
+      await a.service.forgetDevice(bKey);
+      expect(a.forgottenKeys, [bKey]);
+      expect(a.removedKeys, isEmpty);
+      expect(a.service.accountId, account, reason: 'no new account key');
+      expect(a.service.vault!.isForgotten(bKey), isTrue);
+
+      // Another device picks it up, still marked as a forget, so it drops the
+      // key from computers without new pairing tokens.
+      c.now += 2000;
+      expect(await c.sync(), AccountSyncOutcome.synced);
+      expect(c.service.vault!.isForgotten(bKey), isTrue);
+      expect(c.service.vault!.devices.map((d) => d.name).toSet(), {
+        'Pixel',
+        'Tablet',
+      });
     },
   );
 

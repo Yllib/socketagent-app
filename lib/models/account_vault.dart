@@ -86,6 +86,11 @@ class AccountVault {
 
   bool isRevoked(String publicKey) =>
       revokedDevices.any((t) => t.key == publicKey);
+
+  /// Revoked by Forget rather than Remove, so computers drop the key
+  /// without changing their pairing token.
+  bool isForgotten(String publicKey) =>
+      revokedDevices.any((t) => t.key == publicKey && t.forgotten);
 }
 
 /// A computer as shared between devices: [ServerConfig.toJson] minus the
@@ -187,18 +192,34 @@ class VaultDevice {
 /// Marks an item as removed at [at] (unix ms). An item written after that
 /// moment comes back; one written before stays gone.
 class VaultTombstone {
-  const VaultTombstone({required this.key, required this.at});
+  const VaultTombstone({
+    required this.key,
+    required this.at,
+    this.forgotten = false,
+  });
 
   final String key;
   final int at;
 
-  Map<String, Object?> toJson() => {'key': key, 'at': at};
+  /// For a device: forgotten because its app is gone, not removed because
+  /// it may still be in someone's hands.
+  final bool forgotten;
+
+  Map<String, Object?> toJson() => {
+    'key': key,
+    'at': at,
+    if (forgotten) 'forgotten': true,
+  };
 
   static VaultTombstone? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final key = raw['key'];
     if (key is! String || key.isEmpty) return null;
-    return VaultTombstone(key: key, at: (raw['at'] as num?)?.toInt() ?? 0);
+    return VaultTombstone(
+      key: key,
+      at: (raw['at'] as num?)?.toInt() ?? 0,
+      forgotten: raw['forgotten'] == true,
+    );
   }
 }
 
