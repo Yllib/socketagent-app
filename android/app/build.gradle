@@ -156,6 +156,8 @@ dependencies {
     moonshineOrt 'com.microsoft.onnxruntime:onnxruntime-android:1.28.0@aar'
     implementation files(moonshineOutput).builtBy(moonshineIsolatedOrt)
     implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.credentials:credentials:1.6.0'
+    implementation 'androidx.credentials:credentials-play-services-auth:1.6.0'
     implementation 'com.google.android.material:material:1.10.0'
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'androidx.work:work-runtime:2.9.1'

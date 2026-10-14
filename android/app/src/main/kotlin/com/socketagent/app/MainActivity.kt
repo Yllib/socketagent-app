@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.ActivityNotFoundException
 import android.content.ClipData
+import android.content.pm.PackageManager
 import android.os.Build
 import android.net.Uri
 import android.provider.Settings
@@ -110,6 +111,13 @@ class MainActivity : FlutterActivity() {
                     pendingDeepLink = null
                 }
                 "getDistribution" -> result.success(BuildConfig.DISTRIBUTION)
+                "canUseBrowserCredentials" -> {
+                    result.success(
+                        Build.VERSION.SDK_INT >= 34 &&
+                            checkSelfPermission("android.permission.CREDENTIAL_MANAGER_SET_ORIGIN") ==
+                                PackageManager.PERMISSION_GRANTED
+                    )
+                }
                 "confirmDeviceCredential" -> {
                     confirmDeviceCredential(
                         call.argument<String>("title") ?: "Unlock",

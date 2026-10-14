@@ -37,10 +37,8 @@ bool shouldResetExpiredOutlookBrowserState({
   required bool resetAttempted,
   required OutlookAuthPageProbe probe,
 }) {
-  if (resetAttempted) return false;
-  if (!pageIsApprovedMailbox) {
-    return probe.interactiveSignIn || probe.signingOut;
-  }
+  if (resetAttempted || probe.interactiveSignIn) return false;
+  if (!pageIsApprovedMailbox) return pageUrlIsSignOut && probe.signingOut;
   return pageUrlIsSignOut && probe.signingOut;
 }
 

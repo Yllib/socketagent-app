@@ -19,75 +19,87 @@ void main() {
     );
   });
 
-  test('resets only after the browser proves sign-in is no longer valid', () {
-    const interactive = OutlookAuthPageProbe(
-      interactiveSignIn: true,
-      signingOut: false,
-    );
-    const signedOut = OutlookAuthPageProbe(
-      interactiveSignIn: false,
-      signingOut: true,
-    );
-    const valid = OutlookAuthPageProbe(
-      interactiveSignIn: false,
-      signingOut: false,
-    );
+  test(
+    'preserves active password and MFA pages, resets confirmed sign-out',
+    () {
+      const interactive = OutlookAuthPageProbe(
+        interactiveSignIn: true,
+        signingOut: false,
+      );
+      const signedOut = OutlookAuthPageProbe(
+        interactiveSignIn: false,
+        signingOut: true,
+      );
+      const valid = OutlookAuthPageProbe(
+        interactiveSignIn: false,
+        signingOut: false,
+      );
 
-    expect(
-      shouldResetExpiredOutlookBrowserState(
-        pageIsApprovedMailbox: false,
-        pageUrlIsSignOut: false,
-        resetAttempted: false,
-        probe: interactive,
-      ),
-      isTrue,
-    );
-    expect(
-      shouldResetExpiredOutlookBrowserState(
-        pageIsApprovedMailbox: false,
-        pageUrlIsSignOut: true,
-        resetAttempted: false,
-        probe: signedOut,
-      ),
-      isTrue,
-    );
-    expect(
-      shouldResetExpiredOutlookBrowserState(
-        pageIsApprovedMailbox: false,
-        pageUrlIsSignOut: false,
-        resetAttempted: false,
-        probe: valid,
-      ),
-      isFalse,
-    );
-    expect(
-      shouldResetExpiredOutlookBrowserState(
-        pageIsApprovedMailbox: true,
-        pageUrlIsSignOut: false,
-        resetAttempted: false,
-        probe: interactive,
-      ),
-      isFalse,
-    );
-    expect(
-      shouldResetExpiredOutlookBrowserState(
-        pageIsApprovedMailbox: true,
-        pageUrlIsSignOut: true,
-        resetAttempted: false,
-        probe: signedOut,
-      ),
-      isTrue,
-    );
-    expect(
-      shouldResetExpiredOutlookBrowserState(
-        pageIsApprovedMailbox: false,
-        pageUrlIsSignOut: false,
-        resetAttempted: true,
-        probe: interactive,
-      ),
-      isFalse,
-    );
-  });
+      expect(
+        shouldResetExpiredOutlookBrowserState(
+          pageIsApprovedMailbox: false,
+          pageUrlIsSignOut: false,
+          resetAttempted: false,
+          probe: interactive,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldResetExpiredOutlookBrowserState(
+          pageIsApprovedMailbox: false,
+          pageUrlIsSignOut: false,
+          resetAttempted: false,
+          probe: signedOut,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldResetExpiredOutlookBrowserState(
+          pageIsApprovedMailbox: false,
+          pageUrlIsSignOut: true,
+          resetAttempted: false,
+          probe: signedOut,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldResetExpiredOutlookBrowserState(
+          pageIsApprovedMailbox: false,
+          pageUrlIsSignOut: false,
+          resetAttempted: false,
+          probe: valid,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldResetExpiredOutlookBrowserState(
+          pageIsApprovedMailbox: true,
+          pageUrlIsSignOut: false,
+          resetAttempted: false,
+          probe: interactive,
+        ),
+        isFalse,
+      );
+      expect(
+        shouldResetExpiredOutlookBrowserState(
+          pageIsApprovedMailbox: true,
+          pageUrlIsSignOut: true,
+          resetAttempted: false,
+          probe: signedOut,
+        ),
+        isTrue,
+      );
+      expect(
+        shouldResetExpiredOutlookBrowserState(
+          pageIsApprovedMailbox: false,
+          pageUrlIsSignOut: false,
+          resetAttempted: true,
+          probe: interactive,
+        ),
+        isFalse,
+      );
+    },
+  );
 
   test('recognizes common Outlook and Microsoft sign-out paths', () {
     expect(

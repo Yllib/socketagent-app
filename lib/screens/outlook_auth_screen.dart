@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../services/desktop_web_user_agent.dart';
+import '../services/browser_credential_permission.dart';
 import '../services/outlook_auth_session_state.dart';
 import '../services/window_security_service.dart';
 import '../config/app_palette.dart';
@@ -75,15 +78,37 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
           onNavigationRequest: (_) => NavigationDecision.navigate,
         ),
       );
-    unawaited(_loadDesktopSite());
+    unawaited(_loadSignInSite());
   }
 
-  Future<void> _loadDesktopSite() async {
+  Future<void> _loadSignInSite() async {
     String? currentUserAgent;
     try {
       currentUserAgent = await _controller.getUserAgent();
     } catch (_) {}
-    await _controller.setUserAgent(desktopWebUserAgent(currentUserAgent));
+    // Set once before loading. Changing it during an SSO redirect restarts the
+    // page load and can interrupt the browser's account-selection flow.
+    await _controller.setUserAgent(outlookWebUserAgent(currentUserAgent));
+    final platform = _controller.platform;
+    if (platform is AndroidWebViewController) {
+      final cookies = WebViewCookieManager().platform;
+      if (cookies is AndroidWebViewCookieManager) {
+        await cookies.setAcceptThirdPartyCookies(platform, true);
+      }
+      try {
+        if (await browserCredentialPermissionGranted() &&
+            await platform.isWebViewFeatureSupported(
+              WebViewFeatureType.webAuthentication,
+            )) {
+          await platform.setWebAuthenticationSupport(
+            WebAuthenticationSupport.forBrowser,
+          );
+        }
+      } on PlatformException {
+        // Keep ordinary sign-in available if this WebView lacks the feature.
+      }
+    }
+    if (!mounted) return;
     await _controller.loadRequest(Uri.parse(widget.startUrl));
   }
 
@@ -121,8 +146,8 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
       return;
     }
 
-    // Give silent SSO redirects time to leave transient Microsoft pages. A
-    // working browser session reaches Inbox and is never cleared.
+    // Clear only a confirmed sign-out page. Password and MFA pages represent
+    // an active sign-in and must retain their cookies.
     await Future<void>.delayed(const Duration(milliseconds: 500));
     if (!mounted || _resetAttempted || _resetInProgress || _ready) {
       return;
