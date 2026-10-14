@@ -18,9 +18,19 @@ class AccountLocalState {
     required this.computers,
     this.subscriberToken = '',
     this.subscriberEmail = '',
+    this.pinnedSessionIds = const {},
+    this.projects = const {},
+    this.sessionProjects = const {},
   });
 
   final List<ServerConfig> computers;
+  final Set<String> pinnedSessionIds;
+
+  /// Project names by project ID.
+  final Map<String, String> projects;
+
+  /// Project IDs by session ID.
+  final Map<String, String> sessionProjects;
   final String subscriberToken;
   final String subscriberEmail;
 }
@@ -465,11 +475,73 @@ class AccountService extends ChangeNotifier {
         updatedAt: now,
       );
     }
+    final pins = _diffLocal<VaultPin, bool>(
+      base.pinnedSessions,
+      base.unpinnedSessions,
+      {for (final id in local.pinnedSessionIds) id: true},
+      key: (p) => p.sessionId,
+      value: (_) => true,
+      make: (id, _) => VaultPin(sessionId: id, at: now),
+      now: now,
+    );
+    final projects = _diffLocal<VaultProject, String>(
+      base.projects,
+      base.removedProjects,
+      local.projects,
+      key: (p) => p.id,
+      value: (p) => p.name,
+      make: (id, name) => VaultProject(id: id, name: name, at: now),
+      now: now,
+    );
+    final members = _diffLocal<VaultProjectMember, String>(
+      base.projectMembers,
+      base.removedProjectMembers,
+      local.sessionProjects,
+      key: (m) => m.sessionId,
+      value: (m) => m.projectId,
+      make: (id, project) =>
+          VaultProjectMember(sessionId: id, projectId: project, at: now),
+      now: now,
+    );
     return base.copyWith(
       computers: computers.values.toList(),
       removedComputers: tombstones.values.toList(),
       subscription: subscription,
+      pinnedSessions: pins.items,
+      unpinnedSessions: pins.stones,
+      projects: projects.items,
+      removedProjects: projects.stones,
+      projectMembers: members.items,
+      removedProjectMembers: members.stones,
     );
+  }
+
+  /// Folds this device's [local] values into the vault's [items]: new or
+  /// changed values are stamped [now], and items missing locally get a
+  /// tombstone.
+  static ({List<T> items, List<VaultTombstone> stones}) _diffLocal<T, V>(
+    List<T> items,
+    List<VaultTombstone> stones,
+    Map<String, V> local, {
+    required String Function(T) key,
+    required V Function(T) value,
+    required T Function(String key, V value) make,
+    required int now,
+  }) {
+    final byKey = {for (final item in items) key(item): item};
+    final removed = {for (final t in stones) t.key: t};
+    for (final MapEntry(key: id, value: localValue) in local.entries) {
+      final existing = byKey[id];
+      if (existing != null && value(existing) == localValue) continue;
+      byKey[id] = make(id, localValue);
+      removed.remove(id);
+    }
+    for (final id in byKey.keys.toList()) {
+      if (local.containsKey(id)) continue;
+      byKey.remove(id);
+      removed[id] = VaultTombstone(key: id, at: now);
+    }
+    return (items: byKey.values.toList(), stones: removed.values.toList());
   }
 
   AccountVault _withSelf(AccountVault vault) {

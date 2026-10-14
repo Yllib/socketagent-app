@@ -178,9 +178,17 @@ class Device {
     service.readLocal = () => AccountLocalState(
       computers: computers,
       subscriberToken: subscriberToken,
+      pinnedSessionIds: pins,
+      projects: projects,
+      sessionProjects: members,
     );
     service.applyMerged = (vault) async {
       applied.add(vault);
+      pins = {for (final p in vault.pinnedSessions) p.sessionId};
+      projects = {for (final p in vault.projects) p.id: p.name};
+      members = {
+        for (final m in vault.projectMembers) m.sessionId: m.projectId,
+      };
       computers.removeWhere(
         (c) =>
             vault.removedComputers.any((t) => t.key == VaultComputer.keyFor(c)),
@@ -213,6 +221,9 @@ class Device {
   final List<String> joined = [];
   final List<String> removedKeys = [];
   final List<String> forgottenKeys = [];
+  Set<String> pins = {};
+  Map<String, String> projects = {};
+  Map<String, String> members = {};
   String subscriberToken = '';
   int now = 1760300000000;
   late final AccountService service;
@@ -390,6 +401,57 @@ void main() {
       expect(b.service.vault!.removedComputers, isEmpty);
       await a.sync();
       expect(a.computers.map((c) => c.name).toSet(), {'Desk', 'Vm'});
+    },
+  );
+
+  test('pins sync, and an unpin on one device sticks on the other', () async {
+    final cloud = FakeCloud();
+    final a = Device('Pixel', cloud);
+    await a.signIn();
+    final b = Device('Desktop', cloud);
+    await b.signIn();
+
+    a.now += 1000;
+    a.pins = {'chat-1', 'chat-2'};
+    await a.sync();
+    b.now += 2000;
+    await b.sync();
+    expect(b.pins, {'chat-1', 'chat-2'});
+
+    b.now += 1000;
+    b.pins = {'chat-2'};
+    await b.sync();
+    a.now += 3000;
+    await a.sync();
+    expect(a.pins, {'chat-2'}, reason: 'the unpin wins over the older pin');
+  });
+
+  test(
+    'projects sync, and a move on one device wins over an older one',
+    () async {
+      final cloud = FakeCloud();
+      final a = Device('Pixel', cloud);
+      await a.signIn();
+      final b = Device('Desktop', cloud);
+      await b.signIn();
+
+      a.now += 1000;
+      a.projects = {'p1': 'Site', 'p2': 'Infra'};
+      a.members = {'chat-1': 'p1'};
+      await a.sync();
+      b.now += 2000;
+      await b.sync();
+      expect(b.projects, {'p1': 'Site', 'p2': 'Infra'});
+      expect(b.members, {'chat-1': 'p1'});
+
+      b.now += 1000;
+      b.projects = {'p1': 'Website', 'p2': 'Infra'};
+      b.members = {'chat-1': 'p2'};
+      await b.sync();
+      a.now += 3000;
+      await a.sync();
+      expect(a.projects['p1'], 'Website');
+      expect(a.members, {'chat-1': 'p2'});
     },
   );
 

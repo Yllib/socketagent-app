@@ -118,7 +118,12 @@ void main() {
         provider.answerQuestion('resume_context_test', {
           'Compact before sending?': 'Keep full context',
         });
-        await Future<void>.delayed(const Duration(milliseconds: 100));
+        // The send goes through the outbox's async drain; under a full test
+        // run a fixed short wait can end before it does.
+        for (var i = 0; i < 40; i++) {
+          if (received.any((m) => m['type'] == 'answer')) break;
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
         final answer = received.singleWhere((m) => m['type'] == 'answer');
         expect(answer['sessionId'], 'shared-session');
         expect((await OutgoingQueue().load()).single.payload['answers'], {

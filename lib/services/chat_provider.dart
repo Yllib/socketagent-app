@@ -16,7 +16,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/widgets.dart';
-import 'package:flutter/foundation.dart' show listEquals;
+import 'package:flutter/foundation.dart' show listEquals, mapEquals, setEquals;
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:path_provider/path_provider.dart';
@@ -27,6 +27,7 @@ import 'resumable_http_download.dart';
 import 'file_open_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/session_projects.dart';
 import '../models/message.dart';
 import '../models/conversation_rewind_status.dart';
 import '../models/ai_response_report.dart';
@@ -644,6 +645,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Set<String> _pushDisabledServers = {};
   // Pinned sessions
   Set<String> _pinnedSessionIds = {};
+  SessionProjects _projects = SessionProjects();
   final Map<String, Session> _pendingArchivedSessions = {};
   final Map<String, DateTime> _archivedSessionTombstones = {};
   static const Duration _archiveTombstoneTtl = Duration(seconds: 30);
@@ -1163,12 +1165,55 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _pinnedSessionIds.add(sessionId);
     }
     _persistPinnedSessions();
+    account.syncSoon();
     notifyListeners();
   }
 
   void _persistPinnedSessions() {
     SharedPreferences.getInstance().then((prefs) {
       prefs.setStringList('pinned_sessions', _pinnedSessionIds.toList());
+    });
+  }
+
+  // Projects: the user's named groups of chats. Read them through
+  // [sessionProjects] and change them only through the methods below, which
+  // save and sync.
+  SessionProjects get sessionProjects => _projects;
+
+  /// Creates a project and returns its ID.
+  String createProject(String name) {
+    final id = _projects.create(name.trim());
+    _projectsChanged();
+    return id;
+  }
+
+  void renameProject(String id, String name) {
+    if (!_projects.names.containsKey(id)) return;
+    _projects.names[id] = name.trim();
+    _projectsChanged();
+  }
+
+  void deleteProject(String id) {
+    _projects.delete(id);
+    _projectsChanged();
+  }
+
+  /// Puts chats in a project, or ungroups them when [projectId] is null.
+  void setSessionProject(Iterable<String> sessionIds, String? projectId) {
+    _projects.assign(sessionIds, projectId);
+    _projectsChanged();
+  }
+
+  void _projectsChanged() {
+    _persistProjects();
+    account.syncSoon();
+    notifyListeners();
+  }
+
+  void _persistProjects() {
+    final encoded = jsonEncode(_projects.toJson());
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setString('session_projects', encoded);
     });
   }
 
@@ -2562,6 +2607,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _notifMutedSessions = (prefs.getStringList('notif_muted_sessions') ?? [])
         .toSet();
     _pinnedSessionIds = (prefs.getStringList('pinned_sessions') ?? []).toSet();
+    try {
+      _projects = SessionProjects.fromJson(
+        jsonDecode(prefs.getString('session_projects') ?? 'null'),
+      );
+    } on FormatException {
+      _projects = SessionProjects();
+    }
     _transcriptCache.limit =
         prefs.getInt(_transcriptCacheLimitKey) ??
         SessionTranscriptCache.defaultLimit;
@@ -7821,6 +7873,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       computers: _serverConfigs,
       subscriberToken: _subscriberToken,
       subscriberEmail: _subscriberEmail,
+      pinnedSessionIds: _pinnedSessionIds,
+      projects: _projects.names,
+      sessionProjects: _projects.members,
     );
     account.applyMerged = _applyAccountVault;
     account.relayHttpUrl = () => relayHttpUrl;
@@ -7895,6 +7950,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         subscription.token != _subscriberToken) {
       await saveSubscriberToken(subscription.token, subscription.email);
       unawaited(checkSubscriptionStatus());
+    }
+    final pins = {for (final p in merged.pinnedSessions) p.sessionId};
+    if (!setEquals(pins, _pinnedSessionIds)) {
+      _pinnedSessionIds = pins;
+      _persistPinnedSessions();
+      notifyListeners();
+    }
+    final names = {for (final p in merged.projects) p.id: p.name};
+    final members = {
+      for (final m in merged.projectMembers) m.sessionId: m.projectId,
+    };
+    if (!mapEquals(names, _projects.names) ||
+        !mapEquals(members, _projects.members)) {
+      _projects = SessionProjects(names: names, members: members);
+      _persistProjects();
+      notifyListeners();
     }
   }
 
@@ -12243,6 +12314,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (oldId.isEmpty || newId.isEmpty || oldId == newId) return;
 
     final pinChanged = moveSessionSetMember(_pinnedSessionIds, oldId, newId);
+    final projectChanged = moveSessionMapEntry(_projects.members, oldId, newId);
     final muteChanged = moveSessionSetMember(_notifMutedSessions, oldId, newId);
     final draftChanged = moveSessionMapEntry(_sessionDrafts, oldId, newId);
     moveSessionMapEntry(_sessionDisallowedTools, oldId, newId);
@@ -12273,6 +12345,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
 
     if (pinChanged) _persistPinnedSessions();
+    if (projectChanged) _persistProjects();
+    if (pinChanged || projectChanged) account.syncSoon();
     if (muteChanged) _persistMutedSessions();
     if (draftChanged) _persistDrafts();
   }

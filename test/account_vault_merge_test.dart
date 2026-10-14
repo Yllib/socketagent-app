@@ -98,11 +98,48 @@ void main() {
       ),
       devices: [device('p', 4)],
       revokedDevices: const [VaultTombstone(key: 'q', at: 5)],
+      pinnedSessions: const [VaultPin(sessionId: 's', at: 6)],
+      unpinnedSessions: const [VaultTombstone(key: 'u', at: 6)],
+      projects: const [VaultProject(id: 'p1', name: 'Site', at: 7)],
+      removedProjects: const [VaultTombstone(key: 'p0', at: 7)],
+      projectMembers: const [
+        VaultProjectMember(sessionId: 's', projectId: 'p1', at: 8),
+      ],
+      removedProjectMembers: const [VaultTombstone(key: 'u', at: 8)],
       preferences: const {'theme': 'dark'},
     );
     final restored = AccountVault.fromJson(vault.toJson());
     expect(restored.toJson(), vault.toJson());
-    expect(() => AccountVault.fromJson({'v': 2}), throwsFormatException);
+  });
+
+  test('reads format 1, writes 2 and refuses a newer one', () {
+    final old = AccountVault.fromJson({'v': 1, 'updatedAt': 3});
+    expect(old.updatedAt, 3);
+    expect(old.toJson()['v'], 2);
+    expect(
+      () => AccountVault.fromJson({'v': 3}),
+      throwsA(
+        isA<FormatException>().having(
+          (e) => e.message,
+          'message',
+          contains('Update the app'),
+        ),
+      ),
+    );
+    expect(() => AccountVault.fromJson({'v': 'x'}), throwsFormatException);
+  });
+
+  test('fields from a newer build survive a round trip and a merge', () {
+    final fromNewer = AccountVault.fromJson({
+      'v': 2,
+      'updatedAt': 5,
+      'folders': ['work'],
+    });
+    expect(fromNewer.toJson()['folders'], ['work']);
+    final local = AccountVault(updatedAt: 9, computers: [computer('x', 9)]);
+    final merged = mergeVaults(local, fromNewer);
+    expect(merged.toJson()['folders'], ['work']);
+    expect(merged.computers.single.key, 'x');
   });
 
   test('a computer shares every field except the device-local ones', () {

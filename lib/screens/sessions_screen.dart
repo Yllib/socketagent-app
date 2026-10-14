@@ -9,8 +9,10 @@ import '../widgets/session_switcher_dialog.dart';
 import '../services/session_teleport.dart';
 import '../services/websocket_service.dart';
 import '../models/message.dart';
+import '../models/session_folder_tree.dart';
 import '../models/session_grouping.dart';
 import '../models/session_list_filter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../util/format.dart';
 import '../widgets/extra_folders_dialog.dart';
 import '../widgets/adaptive_action_sheet.dart';
@@ -32,6 +34,7 @@ const _largeTranscriptBytes = 100 * 1024 * 1024;
 
 enum _SessionMenuAction {
   pin,
+  project,
   notifications,
   rename,
   fork,
@@ -84,6 +87,16 @@ class _SessionsTabState extends State<SessionsTab> {
   List<Map<String, dynamic>> _globalSearchResults = const [];
   bool _filtersChanged = false;
   StreamSubscription<DesktopShortcut>? _shortcutSub;
+  SessionListView _view = SessionListView.sessions;
+
+  /// Projects collapsed on this device.
+  final Set<String> _collapsedProjects = {};
+
+  /// Folders whose open state differs from the default: computers start
+  /// open, folders start closed.
+  final Set<String> _toggledFolders = {};
+  static const _collapsedProjectsKey = 'session_list_collapsed_projects';
+  static const _toggledFoldersKey = 'session_list_toggled_folders';
 
   @override
   void initState() {
@@ -101,8 +114,31 @@ class _SessionsTabState extends State<SessionsTab> {
         _selectedServerFilterIds.addAll(saved.computerIds);
         _connectedOnlyFilter = saved.connectedOnly;
         _backendFilter = saved.backend;
+        _view = saved.view;
       });
     });
+    SharedPreferences.getInstance().then((prefs) {
+      if (!mounted) return;
+      setState(() {
+        _collapsedProjects.addAll(
+          prefs.getStringList(_collapsedProjectsKey) ?? const [],
+        );
+        _toggledFolders.addAll(
+          prefs.getStringList(_toggledFoldersKey) ?? const [],
+        );
+      });
+    });
+  }
+
+  /// Opens or closes a project or folder and remembers it on this device.
+  void _toggleGroup(Set<String> set, String key, String prefsKey) {
+    setState(() {
+      if (!set.remove(key)) set.add(key);
+    });
+    final saved = set.toList();
+    SharedPreferences.getInstance().then(
+      (prefs) => prefs.setStringList(prefsKey, saved),
+    );
   }
 
   /// Call after any filter change, inside or after its setState.
@@ -112,6 +148,7 @@ class _SessionsTabState extends State<SessionsTab> {
       computerIds: {..._selectedServerFilterIds},
       connectedOnly: _connectedOnlyFilter,
       backend: _backendFilter,
+      view: _view,
     ).save();
   }
 
@@ -1719,6 +1756,29 @@ class _SessionsTabState extends State<SessionsTab> {
               ),
             ),
           ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _viewMenu(
+              child: Container(
+                height: 36,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outline,
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Center(
+                  child: Text(
+                    _view.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -1745,6 +1805,18 @@ class _SessionsTabState extends State<SessionsTab> {
               padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
               child: Row(
                 children: [
+                  _viewMenu(
+                    child: Chip(
+                      avatar: Icon(switch (_view) {
+                        SessionListView.sessions => Icons.view_list,
+                        SessionListView.projects =>
+                          Icons.folder_special_outlined,
+                        SessionListView.folders => Icons.folder_open,
+                      }, size: 18),
+                      label: Text(_view.label),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   ActionChip(
                     avatar: Icon(
                       _connectedOnlyFilter
@@ -1912,9 +1984,9 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   /// The sidebar's sections in display order. Ctrl+Tab follows this order.
-  List<({String title, List<SessionTreeNode> roots})> _sessionSections(
-    ChatProvider provider,
-  ) {
+  /// Project sections carry their project ID.
+  List<({String title, List<SessionTreeNode> roots, String? projectId})>
+  _sessionSections(ChatProvider provider) {
     final forest = filterSessionForest(
       buildSessionForest(provider.sessions),
       (session) => _matchesSessionFilters(provider, session),
@@ -1933,19 +2005,59 @@ class _SessionsTabState extends State<SessionsTab> {
 
     final working = take((node) => node.isRunning);
     working.sort(compareWorkingSessionTreesByStart);
+    // In the projects view a pinned chat in a project stays in its project,
+    // at the top, so Pinned holds only chats that aren't in one.
+    final byProject = _view == SessionListView.projects;
+    final projects = provider.sessionProjects;
+    bool isPinned(SessionTreeNode node) =>
+        node.sessions.any((session) => provider.isSessionPinned(session.id));
     final pinned = take(
       (node) =>
-          node.sessions.any((session) => provider.isSessionPinned(session.id)),
+          (!byProject || projects.projectOf(node.session.id) == null) &&
+          isPinned(node),
     );
-    final recent = take((node) => true)
-      ..sort(
-        (left, right) =>
-            sessionTreeLastActive(right).compareTo(sessionTreeLastActive(left)),
-      );
+    int newestFirst(SessionTreeNode left, SessionTreeNode right) =>
+        sessionTreeLastActive(right).compareTo(sessionTreeLastActive(left));
+    int pinnedThenNewest(SessionTreeNode left, SessionTreeNode right) {
+      final pin = (isPinned(left) ? 0 : 1) - (isPinned(right) ? 0 : 1);
+      return pin != 0 ? pin : newestFirst(left, right);
+    }
+
+    // Most recently worked on first; empty projects last, by name.
+    final latest = <String, DateTime>{};
+    for (final session in provider.sessions) {
+      final id = projects.projectOf(session.id);
+      if (id == null) continue;
+      final seen = latest[id];
+      if (seen == null || session.lastActive.isAfter(seen)) {
+        latest[id] = session.lastActive;
+      }
+    }
+    final projectOrder = projects.sorted
+      ..sort((a, b) {
+        final left = latest[a.id];
+        final right = latest[b.id];
+        if (left != null && right != null) return right.compareTo(left);
+        if (left != null || right != null) return left == null ? 1 : -1;
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+    final projectSections = [
+      if (byProject)
+        for (final project in projectOrder)
+          (
+            title: project.name,
+            roots: take(
+              (node) => projects.projectOf(node.session.id) == project.id,
+            )..sort(pinnedThenNewest),
+            projectId: project.id as String?,
+          ),
+    ];
+    final recent = take((node) => true)..sort(newestFirst);
     return [
-      (title: 'Working', roots: working),
-      (title: 'Pinned', roots: pinned),
-      (title: 'Recent', roots: recent),
+      (title: 'Working', roots: working, projectId: null),
+      ...projectSections,
+      (title: 'Pinned', roots: pinned, projectId: null),
+      (title: 'Recent', roots: recent, projectId: null),
     ];
   }
 
@@ -1954,7 +2066,11 @@ class _SessionsTabState extends State<SessionsTab> {
     ChatProvider provider,
   ) {
     final sections = _sessionSections(provider);
-    if (sections.every((section) => section.roots.isEmpty)) {
+    final empty = sections.every((section) => section.roots.isEmpty);
+    if (!empty && _view == SessionListView.folders) {
+      return _buildFolderList(context, provider, sections);
+    }
+    if (empty) {
       return Center(
         child: Text(
           provider.sessions.isEmpty
@@ -1971,16 +2087,45 @@ class _SessionsTabState extends State<SessionsTab> {
     }
 
     final children = <({Key key, Widget Function() build})>[];
-    void addSection(String title, List<SessionTreeNode> sectionRoots) {
-      if (sectionRoots.isEmpty) return;
+    void addSection(
+      String title,
+      List<SessionTreeNode> sectionRoots,
+      String? projectId,
+    ) {
+      // An empty project still shows, so a new one has somewhere to go.
+      if (sectionRoots.isEmpty && projectId == null) return;
       final sessionCount = sectionRoots.fold<int>(
         0,
         (total, node) => total + node.sessionCount,
       );
+      final collapsed =
+          projectId != null && _collapsedProjects.contains(projectId);
       children.add((
-        key: ValueKey('section-$title'),
-        build: () => _buildSessionSectionHeader(context, title, sessionCount),
+        key: ValueKey('section-${projectId ?? title}'),
+        build: () => projectId == null
+            ? _buildSessionSectionHeader(context, title, sessionCount)
+            : _buildGroupHeader(
+                context,
+                depth: 0,
+                open: !collapsed,
+                icon: Icons.folder_outlined,
+                label: title,
+                count: sessionCount,
+                running: sectionRoots.any((node) => node.isRunning),
+                onTap: () => _toggleGroup(
+                  _collapsedProjects,
+                  projectId,
+                  _collapsedProjectsKey,
+                ),
+                onMenu: () =>
+                    _showProjectMenu(context, provider, projectId, title),
+              ),
       ));
+      if (collapsed) return;
+      if (projectId != null) {
+        _addGroupSessions(context, children, sectionRoots, 1);
+        return;
+      }
       for (var i = 0; i < sectionRoots.length; i++) {
         final node = sectionRoots[i];
         children.add((
@@ -2001,9 +2146,96 @@ class _SessionsTabState extends State<SessionsTab> {
     }
 
     for (final section in sections) {
-      addSection(section.title, section.roots);
+      addSection(section.title, section.roots, section.projectId);
+    }
+    return _keyedList(children);
+  }
+
+  /// The folder view: computers, then working directories. Chats in a
+  /// folder follow its subfolders.
+  Widget _buildFolderList(
+    BuildContext context,
+    ChatProvider provider,
+    List<({String title, List<SessionTreeNode> roots, String? projectId})>
+    sections,
+  ) {
+    final folders = buildSessionFolders(
+      [for (final section in sections) ...section.roots],
+      [
+        for (final config in provider.serverConfigs)
+          (id: config.id, name: config.name),
+      ],
+    );
+    final children = <({Key key, Widget Function() build})>[];
+    void addFolder(SessionFolder folder, int depth) {
+      // Computers start open and folders closed; a toggle flips that.
+      final open = (depth == 0) != _toggledFolders.contains(folder.key);
+      children.add((
+        key: ValueKey('folder-${folder.key}'),
+        build: () => _treeGuides(
+          depth,
+          _buildGroupHeader(
+            context,
+            depth: depth,
+            open: open,
+            icon: depth == 0 ? Icons.computer : Icons.folder_outlined,
+            label: folder.label,
+            count: folder.sessionCount,
+            running: folder.isRunning,
+            onTap: () =>
+                _toggleGroup(_toggledFolders, folder.key, _toggledFoldersKey),
+          ),
+        ),
+      ));
+      if (!open) return;
+      for (final child in folder.folders) {
+        addFolder(child, depth + 1);
+      }
+      _addGroupSessions(context, children, folder.sessions, depth + 1);
     }
 
+    for (final folder in folders) {
+      addFolder(folder, 0);
+    }
+    return _keyedList(children);
+  }
+
+  /// Adds [roots] as the contents of a group at [levels] deep, with the
+  /// group's guide lines beside them.
+  void _addGroupSessions(
+    BuildContext context,
+    List<({Key key, Widget Function() build})> children,
+    List<SessionTreeNode> roots,
+    int levels,
+  ) {
+    for (var i = 0; i < roots.length; i++) {
+      final node = roots[i];
+      children.add((
+        key: ValueKey('session-${_sessionKey(node.session)}'),
+        build: () => _treeGuides(
+          levels,
+          _buildSessionTreeNode(context, node),
+          pad: true,
+        ),
+      ));
+      if (i != roots.length - 1) {
+        children.add((
+          key: ValueKey('divider-${_sessionKey(node.session)}'),
+          build: () => _treeGuides(
+            levels,
+            Divider(
+              height: 1,
+              indent: 48,
+              color: Theme.of(context).colorScheme.outlineVariant.withAlpha(80),
+            ),
+            pad: true,
+          ),
+        ));
+      }
+    }
+  }
+
+  Widget _keyedList(List<({Key key, Widget Function() build})> children) {
     final indices = {
       for (var i = 0; i < children.length; i++) children[i].key: i,
     };
@@ -2017,6 +2249,240 @@ class _SessionsTabState extends State<SessionsTab> {
       ),
     );
   }
+
+  /// Left edge of a group header's arrow at [depth].
+  static double _groupInset(int depth) => 8.0 + depth * 18;
+
+  /// Draws a vertical line under the arrow of each of the [levels] groups
+  /// that contain [child], so a group's contents read as inside it. With
+  /// [pad], [child] also moves right of the lines.
+  Widget _treeGuides(int levels, Widget child, {bool pad = false}) {
+    if (levels == 0) return child;
+    final color = Theme.of(context).colorScheme.outlineVariant;
+    return Stack(
+      children: [
+        Padding(
+          padding: EdgeInsets.only(left: pad ? _groupInset(levels) + 4 : 0),
+          child: child,
+        ),
+        for (var level = 0; level < levels; level++)
+          Positioned(
+            left: _groupInset(level) + 11,
+            top: 0,
+            bottom: 0,
+            child: Container(width: 2, color: color),
+          ),
+      ],
+    );
+  }
+
+  /// A project or folder row: the open/closed arrow at a fixed left edge,
+  /// then icon, name and count.
+  Widget _buildGroupHeader(
+    BuildContext context, {
+    required int depth,
+    required bool open,
+    required IconData icon,
+    required String label,
+    required int count,
+    required VoidCallback onTap,
+    bool running = false,
+    VoidCallback? onMenu,
+  }) {
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurface.withAlpha(150);
+    return InkWell(
+      onTap: onTap,
+      onLongPress: onMenu,
+      onSecondaryTapUp: onMenu == null ? null : (_) => onMenu(),
+      child: SizedBox(
+        height: 44,
+        child: Row(
+          children: [
+            SizedBox(width: _groupInset(depth)),
+            Icon(
+              open ? Icons.expand_more : Icons.chevron_right,
+              size: 24,
+              color: theme.colorScheme.onSurface,
+            ),
+            const SizedBox(width: 4),
+            Icon(
+              open && icon == Icons.folder_outlined ? Icons.folder_open : icon,
+              size: 18,
+              color: running ? theme.colorScheme.primary : muted,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: depth == 0 ? FontWeight.w700 : FontWeight.w600,
+                ),
+              ),
+            ),
+            Text('$count', style: TextStyle(fontSize: 12, color: muted)),
+            if (onMenu != null)
+              IconButton(
+                icon: const Icon(Icons.more_horiz, size: 18),
+                tooltip: 'Options',
+                visualDensity: VisualDensity.compact,
+                onPressed: onMenu,
+              )
+            else
+              const SizedBox(width: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showProjectMenu(
+    BuildContext context,
+    ChatProvider provider,
+    String projectId,
+    String name,
+  ) async {
+    final action = await showAdaptiveActionSheet<String>(
+      context: context,
+      title: name,
+      sections: [
+        const AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: 'rename',
+            label: 'Rename',
+            icon: Icons.edit_outlined,
+          ),
+        ]),
+        AdaptiveSheetSection([
+          AdaptiveSheetAction(
+            value: 'delete',
+            label: 'Delete project',
+            subtitle: 'Its sessions move to Recent',
+            icon: Icons.delete_outline,
+            iconColor: context.palette.shade(Colors.red, 300),
+            textColor: context.palette.shade(Colors.red, 300),
+          ),
+        ]),
+      ],
+    );
+    if (!context.mounted) return;
+    switch (action) {
+      case 'rename':
+        final renamed = await _askProjectName(context, initial: name);
+        if (renamed != null) provider.renameProject(projectId, renamed);
+      case 'delete':
+        provider.deleteProject(projectId);
+    }
+  }
+
+  /// Asks for a project name. Null when cancelled or left empty.
+  Future<String?> _askProjectName(
+    BuildContext context, {
+    String initial = '',
+  }) async {
+    final controller = TextEditingController(text: initial);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(initial.isEmpty ? 'New project' : 'Rename project'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: const InputDecoration(hintText: 'Project name'),
+          onSubmitted: (value) => Navigator.pop(ctx, value),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: Text(initial.isEmpty ? 'Create' : 'Save'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    final trimmed = name?.trim() ?? '';
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  /// Moves [sessions] into a project the user picks or creates.
+  Future<void> _moveToProject(
+    BuildContext context,
+    ChatProvider provider,
+    List<Session> sessions, {
+    Rect? anchor,
+  }) async {
+    if (sessions.isEmpty) return;
+    const newProject = '\u0000new';
+    const noProject = '\u0000none';
+    final projects = provider.sessionProjects;
+    final current = {for (final s in sessions) projects.projectOf(s.id)};
+    final choice = await showAdaptiveActionSheet<String>(
+      context: context,
+      anchor: anchor,
+      title: sessions.length == 1
+          ? 'Move to project'
+          : 'Move ${sessions.length} sessions to project',
+      sections: [
+        AdaptiveSheetSection([
+          for (final project in projects.sorted)
+            AdaptiveSheetAction(
+              value: project.id,
+              label: project.name,
+              icon: current.length == 1 && current.single == project.id
+                  ? Icons.check
+                  : Icons.folder_outlined,
+            ),
+          const AdaptiveSheetAction(
+            value: newProject,
+            label: 'New project',
+            icon: Icons.create_new_folder_outlined,
+          ),
+        ]),
+        if (current.any((id) => id != null))
+          const AdaptiveSheetSection([
+            AdaptiveSheetAction(
+              value: noProject,
+              label: 'Remove from project',
+              icon: Icons.folder_off_outlined,
+            ),
+          ]),
+      ],
+    );
+    if (choice == null || !context.mounted) return;
+    final ids = [for (final s in sessions) s.id];
+    if (choice == noProject) {
+      provider.setSessionProject(ids, null);
+    } else if (choice == newProject) {
+      final name = await _askProjectName(context);
+      if (name == null) return;
+      provider.setSessionProject(ids, provider.createProject(name));
+    } else {
+      provider.setSessionProject(ids, choice);
+    }
+  }
+
+  /// Switches between the projects and folders views.
+  Widget _viewMenu({required Widget child}) => PopupMenuButton<SessionListView>(
+    tooltip: 'Group sessions by',
+    initialValue: _view,
+    onSelected: (view) {
+      setState(() => _view = view);
+      _saveFilters();
+    },
+    itemBuilder: (_) => [
+      for (final view in SessionListView.values)
+        PopupMenuItem(value: view, child: Text(view.label)),
+    ],
+    child: child,
+  );
 
   Widget _buildGlobalSearchResults(
     BuildContext context,
@@ -2156,7 +2622,9 @@ class _SessionsTabState extends State<SessionsTab> {
             session,
             provider.isSessionPinned(session.id),
             provider.isNotifEnabled(session.id),
+            provider.sessionProjects.projectOf(session.id),
           ),
+        for (final project in provider.sessionProjects.sorted) project,
       ],
       builder: (context, selection, _) {
         final provider = context.read<ChatProvider>();
@@ -2193,6 +2661,20 @@ class _SessionsTabState extends State<SessionsTab> {
                       icon: const Icon(Icons.select_all),
                       tooltip: 'Select all visible',
                       onPressed: () => _selectAllVisible(provider),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.drive_file_move_outline),
+                      tooltip: 'Move to project',
+                      onPressed: _selectedSessions(provider).isEmpty
+                          ? null
+                          : () async {
+                              await _moveToProject(
+                                context,
+                                provider,
+                                _selectedSessions(provider),
+                              );
+                              if (mounted) _exitSelection();
+                            },
                     ),
                     IconButton(
                       icon: const Icon(Icons.archive_outlined),
@@ -2466,6 +2948,15 @@ class _SessionsTabState extends State<SessionsTab> {
             iconColor: isPinned ? theme.colorScheme.primary : null,
           ),
           AdaptiveSheetAction(
+            value: _SessionMenuAction.project,
+            label: 'Move to project',
+            subtitle: switch (provider.sessionProjects.projectOf(session.id)) {
+              final id? => provider.sessionProjects.names[id],
+              null => null,
+            },
+            icon: Icons.drive_file_move_outline,
+          ),
+          AdaptiveSheetAction(
             value: _SessionMenuAction.notifications,
             label: notifEnabled
                 ? 'Turn notifications off'
@@ -2535,6 +3026,8 @@ class _SessionsTabState extends State<SessionsTab> {
     switch (action) {
       case _SessionMenuAction.pin:
         provider.toggleSessionPin(session.id);
+      case _SessionMenuAction.project:
+        await _moveToProject(context, provider, [session], anchor: anchor);
       case _SessionMenuAction.notifications:
         provider.toggleSessionNotifications(session.id);
       case _SessionMenuAction.rename:
