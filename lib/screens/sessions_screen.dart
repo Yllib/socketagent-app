@@ -61,6 +61,16 @@ enum _SessionToolsAction {
   instructions,
 }
 
+/// A run of chats in the session list. Project sections carry their project
+/// ID. In the projects view a project with a running chat moves into Working
+/// whole, marked [working].
+typedef _SessionSection = ({
+  String title,
+  List<SessionTreeNode> roots,
+  String? projectId,
+  bool working,
+});
+
 class SessionsTab extends StatefulWidget {
   const SessionsTab({super.key, this.sidebar = false});
 
@@ -83,14 +93,26 @@ class _SessionsTabState extends State<SessionsTab> {
   bool _selectionMode = false;
   Timer? _globalSearchDebounce;
   int _globalSearchGeneration = 0;
-  bool _globalSearchLoading = false;
   List<Map<String, dynamic>> _globalSearchResults = const [];
+
+  /// Computers the current search is still waiting on, by server ID.
+  final Set<String> _globalSearchWaiting = {};
+
+  /// Computers that never answered the current search.
+  final Set<String> _globalSearchSilent = {};
+
+  /// Computers skipped because their server is too old to search.
+  final Set<String> _globalSearchOutdated = {};
   bool _filtersChanged = false;
   StreamSubscription<DesktopShortcut>? _shortcutSub;
   SessionListView _view = SessionListView.sessions;
 
   /// Projects collapsed on this device.
   final Set<String> _collapsedProjects = {};
+
+  /// Projects opened inside Working. They start collapsed there, showing only
+  /// their running chats, and this isn't saved.
+  final Set<String> _expandedWorkingProjects = {};
 
   /// Folders whose open state differs from the default: computers start
   /// open, folders start closed.
@@ -232,10 +254,7 @@ class _SessionsTabState extends State<SessionsTab> {
     setState(() => _searchQuery = value);
     _globalSearchDebounce?.cancel();
     if (value.trim().isEmpty) {
-      setState(() {
-        _globalSearchLoading = false;
-        _globalSearchResults = const [];
-      });
+      setState(_resetGlobalSearch);
       return;
     }
     _globalSearchDebounce = Timer(
@@ -244,61 +263,107 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
+  /// Drops the current search and its results. Call inside setState.
+  void _resetGlobalSearch() {
+    _globalSearchDebounce?.cancel();
+    _globalSearchGeneration++;
+    _globalSearchResults = const [];
+    _globalSearchWaiting.clear();
+    _globalSearchSilent.clear();
+    _globalSearchOutdated.clear();
+  }
+
+  /// Searches every connected computer. Each computer's results show as soon
+  /// as it answers, so a slow or silent one doesn't hold back the rest. The
+  /// previous results stay up until the first answer arrives.
   Future<void> _runGlobalSearch(String query) async {
     final provider = context.read<ChatProvider>();
     final generation = ++_globalSearchGeneration;
-    setState(() => _globalSearchLoading = true);
     final connected = provider.serverConfigs.where(
       (server) =>
           provider.connMgr.statusOf(server.id) == ConnectionStatus.connected,
     );
-    final batches = await Future.wait(
-      connected.map((server) async {
+    final searchable = connected
+        .where((server) => provider.serverSupportsSessionSearch(server.id))
+        .toList();
+    setState(() {
+      _globalSearchWaiting
+        ..clear()
+        ..addAll(searchable.map((server) => server.id));
+      _globalSearchSilent.clear();
+      _globalSearchOutdated
+        ..clear()
+        ..addAll(
+          connected
+              .map((server) => server.id)
+              .where((id) => !_globalSearchWaiting.contains(id)),
+        );
+      if (searchable.isEmpty) _globalSearchResults = const [];
+    });
+    final found = <String, Map<String, dynamic>>{};
+    await Future.wait(
+      searchable.map((server) async {
+        SdkSessionPage? page;
         try {
           final computerMatches = server.name.toLowerCase().contains(
             query.toLowerCase(),
           );
-          final page = await provider.requestSdkSessions(
+          page = await provider.requestSdkSessions(
             '',
             serverId: server.id,
             all: true,
             query: computerMatches ? '' : query,
             limit: 500,
           );
-          return page.sessions
-              .map(
-                (session) => <String, dynamic>{
-                  ...session,
-                  '_serverId': server.id,
-                  '_serverName': server.name,
-                },
-              )
-              .toList();
-        } catch (_) {
-          return <Map<String, dynamic>>[];
+        } catch (_) {}
+        if (!mounted || generation != _globalSearchGeneration) return;
+        for (final session in page?.sessions ?? const []) {
+          final key = [
+            server.id,
+            session['backend'] ?? 'claude',
+            session['sessionId'],
+          ].join(':');
+          found[key] = {
+            ...session,
+            '_serverId': server.id,
+            '_serverName': server.name,
+          };
         }
+        setState(() {
+          _globalSearchWaiting.remove(server.id);
+          if (page == null || page.timedOut) {
+            _globalSearchSilent.add(server.id);
+          }
+          _globalSearchResults = found.values.toList()
+            ..sort(
+              (left, right) => (right['lastActive']?.toString() ?? '')
+                  .compareTo(left['lastActive']?.toString() ?? ''),
+            );
+        });
       }),
     );
-    if (!mounted || generation != _globalSearchGeneration) return;
-    final deduped = <String, Map<String, dynamic>>{};
-    for (final session in batches.expand((batch) => batch)) {
-      final key = [
-        session['_serverId'],
-        session['backend'] ?? 'claude',
-        session['sessionId'],
-      ].join(':');
-      deduped[key] = session;
-    }
-    final results = deduped.values.toList()
-      ..sort(
-        (left, right) => (right['lastActive']?.toString() ?? '').compareTo(
-          left['lastActive']?.toString() ?? '',
-        ),
-      );
-    setState(() {
-      _globalSearchResults = results;
-      _globalSearchLoading = false;
-    });
+  }
+
+  /// One line each for computers the search is still waiting on, never heard
+  /// from, or skipped. Computers hidden by the computer filter are left out.
+  List<String> _globalSearchStatus(ChatProvider provider) {
+    String names(Set<String> ids) => provider.serverConfigs
+        .where(
+          (server) =>
+              ids.contains(server.id) &&
+              _matchesComputerFilter(provider, server.id),
+        )
+        .map((server) => server.name)
+        .join(', ');
+    final waiting = names(_globalSearchWaiting);
+    final silent = names(_globalSearchSilent);
+    final outdated = names(_globalSearchOutdated);
+    return [
+      if (waiting.isNotEmpty) 'Searching $waiting',
+      if (silent.isNotEmpty) "$silent didn't answer",
+      if (outdated.isNotEmpty)
+        '$outdated ${outdated.contains(', ') ? 'need' : 'needs'} a server update to search',
+    ];
   }
 
   Future<bool> _requireSubscription({String? serverId}) async {
@@ -1867,10 +1932,7 @@ class _SessionsTabState extends State<SessionsTab> {
                           if (!_searchOpen) {
                             _searchQuery = '';
                             _searchController.clear();
-                            _globalSearchDebounce?.cancel();
-                            _globalSearchGeneration++;
-                            _globalSearchLoading = false;
-                            _globalSearchResults = const [];
+                            _resetGlobalSearch();
                           }
                         });
                       },
@@ -1886,10 +1948,7 @@ class _SessionsTabState extends State<SessionsTab> {
                           _backendFilter = null;
                           _searchQuery = '';
                           _searchController.clear();
-                          _globalSearchDebounce?.cancel();
-                          _globalSearchGeneration++;
-                          _globalSearchLoading = false;
-                          _globalSearchResults = const [];
+                          _resetGlobalSearch();
                         });
                         _saveFilters();
                       },
@@ -1916,10 +1975,7 @@ class _SessionsTabState extends State<SessionsTab> {
                             setState(() {
                               _searchQuery = '';
                               _searchController.clear();
-                              _globalSearchDebounce?.cancel();
-                              _globalSearchGeneration++;
-                              _globalSearchLoading = false;
-                              _globalSearchResults = const [];
+                              _resetGlobalSearch();
                             });
                           },
                         ),
@@ -1984,9 +2040,7 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   /// The sidebar's sections in display order. Ctrl+Tab follows this order.
-  /// Project sections carry their project ID.
-  List<({String title, List<SessionTreeNode> roots, String? projectId})>
-  _sessionSections(ChatProvider provider) {
+  List<_SessionSection> _sessionSections(ChatProvider provider) {
     final forest = filterSessionForest(
       buildSessionForest(provider.sessions),
       (session) => _matchesSessionFilters(provider, session),
@@ -2003,12 +2057,18 @@ class _SessionsTabState extends State<SessionsTab> {
       return result;
     }
 
-    final working = take((node) => node.isRunning);
-    working.sort(compareWorkingSessionTreesByStart);
-    // In the projects view a pinned chat in a project stays in its project,
-    // at the top, so Pinned holds only chats that aren't in one.
     final byProject = _view == SessionListView.projects;
     final projects = provider.sessionProjects;
+    String? projectOf(SessionTreeNode node) =>
+        byProject ? projects.projectOf(node.session.id) : null;
+    final workingProjects = {
+      for (final node in forest)
+        if (node.isRunning) ?projectOf(node),
+    };
+    final working = take((node) => node.isRunning && projectOf(node) == null)
+      ..sort(compareWorkingSessionTreesByStart);
+    // In the projects view a pinned chat in a project stays in its project,
+    // at the top, so Pinned holds only chats that aren't in one.
     bool isPinned(SessionTreeNode node) =>
         node.sessions.any((session) => provider.isSessionPinned(session.id));
     final pinned = take(
@@ -2041,7 +2101,7 @@ class _SessionsTabState extends State<SessionsTab> {
         if (left != null || right != null) return left == null ? 1 : -1;
         return a.name.toLowerCase().compareTo(b.name.toLowerCase());
       });
-    final projectSections = [
+    final projectSections = <_SessionSection>[
       if (byProject)
         for (final project in projectOrder)
           (
@@ -2049,15 +2109,17 @@ class _SessionsTabState extends State<SessionsTab> {
             roots: take(
               (node) => projects.projectOf(node.session.id) == project.id,
             )..sort(pinnedThenNewest),
-            projectId: project.id as String?,
+            projectId: project.id,
+            working: workingProjects.contains(project.id),
           ),
     ];
     final recent = take((node) => true)..sort(newestFirst);
     return [
-      (title: 'Working', roots: working, projectId: null),
-      ...projectSections,
-      (title: 'Pinned', roots: pinned, projectId: null),
-      (title: 'Recent', roots: recent, projectId: null),
+      (title: 'Working', roots: working, projectId: null, working: true),
+      ...projectSections.where((section) => section.working),
+      ...projectSections.where((section) => !section.working),
+      (title: 'Pinned', roots: pinned, projectId: null, working: false),
+      (title: 'Recent', roots: recent, projectId: null, working: false),
     ];
   }
 
@@ -2086,67 +2148,110 @@ class _SessionsTabState extends State<SessionsTab> {
       );
     }
 
+    // Projects in Working sit under its heading. The rest get a Projects
+    // heading when something comes before them.
+    String groupOf(_SessionSection section) => section.working
+        ? 'Working'
+        : section.projectId != null
+        ? 'Projects'
+        : section.title;
+    final groupCounts = <String, int>{};
+    for (final section in sections) {
+      // Working counts only running chats.
+      final counted = section.working
+          ? section.roots.where((node) => node.isRunning)
+          : section.roots;
+      final group = groupOf(section);
+      groupCounts[group] =
+          (groupCounts[group] ?? 0) +
+          counted.fold(0, (n, node) => n + node.sessionCount);
+    }
+
     final children = <({Key key, Widget Function() build})>[];
-    void addSection(
-      String title,
-      List<SessionTreeNode> sectionRoots,
-      String? projectId,
-    ) {
+    String? shownGroup;
+    void addSection(_SessionSection section) {
+      final (:title, roots: sectionRoots, :projectId, :working) = section;
       // An empty project still shows, so a new one has somewhere to go.
       if (sectionRoots.isEmpty && projectId == null) return;
-      final sessionCount = sectionRoots.fold<int>(
-        0,
-        (total, node) => total + node.sessionCount,
-      );
-      final collapsed =
-          projectId != null && _collapsedProjects.contains(projectId);
+      final group = groupOf(section);
+      if (group != shownGroup) {
+        if (group != 'Projects' || shownGroup != null) {
+          children.add((
+            key: ValueKey('section-$group'),
+            build: () => _buildSessionSectionHeader(
+              context,
+              group,
+              groupCounts[group] ?? 0,
+            ),
+          ));
+        }
+        shownGroup = group;
+      }
+      if (projectId == null) {
+        for (var i = 0; i < sectionRoots.length; i++) {
+          final node = sectionRoots[i];
+          children.add((
+            key: ValueKey('session-${_sessionKey(node.session)}'),
+            build: () => _buildSessionTreeNode(context, node),
+          ));
+          if (i != sectionRoots.length - 1) {
+            children.add((
+              key: ValueKey('divider-${_sessionKey(node.session)}'),
+              build: () => Divider(
+                height: 1,
+                indent: 48,
+                color: Theme.of(
+                  context,
+                ).colorScheme.outlineVariant.withAlpha(80),
+              ),
+            ));
+          }
+        }
+        return;
+      }
+      // A project in Working opens on its own and, closed, still shows its
+      // running chats.
+      final open = working
+          ? _expandedWorkingProjects.contains(projectId)
+          : !_collapsedProjects.contains(projectId);
       children.add((
-        key: ValueKey('section-${projectId ?? title}'),
-        build: () => projectId == null
-            ? _buildSessionSectionHeader(context, title, sessionCount)
-            : _buildGroupHeader(
-                context,
-                depth: 0,
-                open: !collapsed,
-                icon: Icons.folder_outlined,
-                label: title,
-                count: sessionCount,
-                running: sectionRoots.any((node) => node.isRunning),
-                onTap: () => _toggleGroup(
+        key: ValueKey('project-$projectId'),
+        build: () => _buildGroupHeader(
+          context,
+          depth: 0,
+          open: open,
+          icon: Icons.folder_outlined,
+          label: title,
+          count: sectionRoots.fold(0, (n, node) => n + node.sessionCount),
+          running: working,
+          onTap: working
+              ? () => setState(() {
+                  if (!_expandedWorkingProjects.remove(projectId)) {
+                    _expandedWorkingProjects.add(projectId);
+                  }
+                })
+              : () => _toggleGroup(
                   _collapsedProjects,
                   projectId,
                   _collapsedProjectsKey,
                 ),
-                onMenu: () =>
-                    _showProjectMenu(context, provider, projectId, title),
-              ),
+          onMenu: () => _showProjectMenu(context, provider, projectId, title),
+        ),
       ));
-      if (collapsed) return;
-      if (projectId != null) {
+      if (open) {
         _addGroupSessions(context, children, sectionRoots, 1);
-        return;
-      }
-      for (var i = 0; i < sectionRoots.length; i++) {
-        final node = sectionRoots[i];
-        children.add((
-          key: ValueKey('session-${_sessionKey(node.session)}'),
-          build: () => _buildSessionTreeNode(context, node),
-        ));
-        if (i != sectionRoots.length - 1) {
-          children.add((
-            key: ValueKey('divider-${_sessionKey(node.session)}'),
-            build: () => Divider(
-              height: 1,
-              indent: 48,
-              color: Theme.of(context).colorScheme.outlineVariant.withAlpha(80),
-            ),
-          ));
-        }
+      } else if (working) {
+        _addGroupSessions(
+          context,
+          children,
+          sectionRoots.where((node) => node.isRunning).toList(),
+          1,
+        );
       }
     }
 
     for (final section in sections) {
-      addSection(section.title, section.roots, section.projectId);
+      addSection(section);
     }
     return _keyedList(children);
   }
@@ -2156,8 +2261,7 @@ class _SessionsTabState extends State<SessionsTab> {
   Widget _buildFolderList(
     BuildContext context,
     ChatProvider provider,
-    List<({String title, List<SessionTreeNode> roots, String? projectId})>
-    sections,
+    List<_SessionSection> sections,
   ) {
     final folders = buildSessionFolders(
       [for (final section in sections) ...section.roots],
@@ -2501,20 +2605,31 @@ class _SessionsTabState extends State<SessionsTab> {
       }
       return true;
     }).toList();
-    if (_globalSearchLoading && visible.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final status = _globalSearchStatus(provider);
+    final statusStyle = TextStyle(color: Theme.of(context).colorScheme.outline);
     if (visible.isEmpty) {
       return Center(
         child: Text(
-          'No matching sessions on connected computers',
-          style: TextStyle(color: Theme.of(context).colorScheme.outline),
+          [
+            if (_globalSearchWaiting.isEmpty)
+              'No matching sessions on connected computers',
+            ...status,
+          ].join('\n'),
+          textAlign: TextAlign.center,
+          style: statusStyle,
         ),
       );
     }
     return Column(
       children: [
-        if (_globalSearchLoading) const LinearProgressIndicator(minHeight: 2),
+        if (status.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(status.join('\n'), style: statusStyle),
+            ),
+          ),
         Expanded(
           child: ListView.separated(
             padding: const EdgeInsets.only(bottom: 80),
@@ -2700,10 +2815,7 @@ class _SessionsTabState extends State<SessionsTab> {
                         _searchOpen = false;
                         _searchQuery = '';
                         _searchController.clear();
-                        _globalSearchDebounce?.cancel();
-                        _globalSearchGeneration++;
-                        _globalSearchLoading = false;
-                        _globalSearchResults = const [];
+                        _resetGlobalSearch();
                       }),
                     ),
                     IconButton(

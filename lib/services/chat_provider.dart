@@ -114,11 +114,29 @@ class SdkSessionPage {
     required this.sessions,
     required this.total,
     required this.hasMore,
+    this.timedOut = false,
   });
 
   final List<Map<String, dynamic>> sessions;
   final int total;
   final bool hasMore;
+
+  /// The computer never answered. Old servers ignore requests they don't know.
+  final bool timedOut;
+}
+
+/// Whether a server at [version] can search all of its chats. Servers before
+/// 1.1.10 answer that search with an error, and servers before 1.1.0 report
+/// no version, so the app would wait out the timeout on them.
+bool serverVersionSupportsSessionSearch(String? version) {
+  final match = RegExp(r'^(\d+)\.(\d+)\.(\d+)').firstMatch(version ?? '');
+  if (match == null) return false;
+  final [major, minor, patch] = [
+    for (var i = 1; i <= 3; i++) int.parse(match.group(i)!),
+  ];
+  if (major != 1) return major > 1;
+  if (minor != 1) return minor > 1;
+  return patch >= 10;
 }
 
 enum SessionTransferStage {
@@ -1750,6 +1768,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serverBackendHealth[serverId] ?? const <Map<String, dynamic>>[];
   Map<String, dynamic> serverRuntimeInfo(String serverId) =>
       Map.unmodifiable(_serverRuntimeInfo[serverId] ?? const {});
+
+  /// Whether the computer's server can search all of its chats.
+  bool serverSupportsSessionSearch(String serverId) =>
+      serverVersionSupportsSessionSearch(
+        _serverRuntimeInfo[serverId]?['version']?.toString(),
+      );
 
   /// True when a Windows computer was installed without administrator rights.
   bool isLimitedWindowsInstall(String serverId) =>
@@ -17477,8 +17501,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         all || recursive
             ? const Duration(seconds: 30)
             : const Duration(seconds: 8),
-        onTimeout: () =>
-            const SdkSessionPage(sessions: [], total: 0, hasMore: false),
+        onTimeout: () => const SdkSessionPage(
+          sessions: [],
+          total: 0,
+          hasMore: false,
+          timedOut: true,
+        ),
       );
     } finally {
       _sdkSessionCompleters.remove(requestId);
