@@ -1,3 +1,4 @@
+import '../widgets/composer_editor_screen.dart';
 import '../widgets/browser_profile_sheet.dart';
 import '../widgets/extra_folders_dialog.dart';
 import '../widgets/light_backdrop.dart';
@@ -3943,6 +3944,19 @@ class _ChatScreenState extends State<_ChatScreen> {
     );
   }
 
+  /// Opens the full-screen editor on the composer's draft.
+  void _openFullEditor(ChatProvider provider) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        fullscreenDialog: true,
+        builder: (_) => ComposerEditorScreen(
+          controller: _textController,
+          onSend: () => _sendMessage(provider),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInputBar(ChatProvider provider) {
     final theme = Theme.of(context);
 
@@ -4113,29 +4127,50 @@ class _ChatScreenState extends State<_ChatScreen> {
                 ),
               ),
               Expanded(
-                child: TextField(
-                  controller: _textController,
-                  focusNode: _focusNode,
-                  decoration: InputDecoration(
-                    hintText: provider.promptSuggestions.isNotEmpty
-                        ? provider.promptSuggestions.first
-                        : 'Type a message...',
-                    hintMaxLines: 2,
-                    filled: true,
-                    fillColor: theme.colorScheme.surfaceContainerHighest,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(24),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 14,
-                    ),
-                    isDense: true,
-                  ),
-                  maxLines: 5,
-                  minLines: 1,
-                  textInputAction: TextInputAction.newline,
+                // Grows to about 40% of the space the keyboard leaves, then
+                // scrolls. Past three lines an expand button opens the
+                // full-screen editor on the same draft.
+                child: ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: _textController,
+                  builder: (context, value, _) {
+                    final media = MediaQuery.of(context);
+                    final visible = media.size.height - media.viewInsets.bottom;
+                    final maxLines = (visible * 0.4 / 22).floor().clamp(5, 30);
+                    final long =
+                        '\n'.allMatches(value.text).length >= 2 ||
+                        value.text.length > 160;
+                    return TextField(
+                      controller: _textController,
+                      focusNode: _focusNode,
+                      decoration: InputDecoration(
+                        hintText: provider.promptSuggestions.isNotEmpty
+                            ? provider.promptSuggestions.first
+                            : 'Type a message...',
+                        hintMaxLines: 2,
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 14,
+                        ),
+                        isDense: true,
+                        suffixIcon: long
+                            ? IconButton(
+                                icon: const Icon(Icons.open_in_full, size: 20),
+                                tooltip: 'Edit full screen',
+                                onPressed: () => _openFullEditor(provider),
+                              )
+                            : null,
+                      ),
+                      maxLines: maxLines,
+                      minLines: 1,
+                      textInputAction: TextInputAction.newline,
+                    );
+                  },
                 ),
               ),
               const SizedBox(width: 4),
