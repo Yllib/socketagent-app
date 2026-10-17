@@ -14,32 +14,42 @@ class ComputerFilterOption {
   final bool connected;
 }
 
-class ComputerFilterSelection {
-  const ComputerFilterSelection(this.ids, this.connectedOnly);
+/// The session list's backend and computer filters, as picked in
+/// [SessionFilterDialog].
+class SessionFilterSelection {
+  const SessionFilterSelection(this.ids, this.connectedOnly, [this.backend]);
+
+  /// Selected computers. Empty means every computer.
   final Set<String> ids;
   final bool connectedOnly;
+
+  /// 'claude' or 'codex', or null for both.
+  final String? backend;
 
   bool includes(String id, {required bool connected}) =>
       (ids.isEmpty || ids.contains(id)) && (!connectedOnly || connected);
 }
 
-class ComputerFilterDialog extends StatefulWidget {
-  const ComputerFilterDialog({
+/// Picks the backend and computers the session list shows. Pops with the new
+/// [SessionFilterSelection] on Apply, or null on Cancel.
+class SessionFilterDialog extends StatefulWidget {
+  const SessionFilterDialog({
     super.key,
     required this.computers,
     required this.selection,
   });
 
   final List<ComputerFilterOption> computers;
-  final ComputerFilterSelection selection;
+  final SessionFilterSelection selection;
 
   @override
-  State<ComputerFilterDialog> createState() => _ComputerFilterDialogState();
+  State<SessionFilterDialog> createState() => _SessionFilterDialogState();
 }
 
-class _ComputerFilterDialogState extends State<ComputerFilterDialog> {
+class _SessionFilterDialogState extends State<SessionFilterDialog> {
   late final _ids = {...widget.selection.ids};
   late bool _connectedOnly = widget.selection.connectedOnly;
+  late String _backend = widget.selection.backend ?? 'all';
 
   @override
   Widget build(BuildContext context) {
@@ -52,16 +62,31 @@ class _ComputerFilterDialogState extends State<ComputerFilterDialog> {
       });
     return AlertDialog(
       backgroundColor: Theme.of(context).colorScheme.surface,
-      title: const Text('Filter by computer'),
+      title: const Text('Filters'),
       contentPadding: const EdgeInsets.symmetric(vertical: 12),
       content: SizedBox(
         width: 440,
-        height: (computers.length * 64.0 + 112).clamp(
-          112,
+        height: (computers.length * 64.0 + 180).clamp(
+          180,
           MediaQuery.sizeOf(context).height * .6,
         ),
         child: ListView(
           children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(24, 0, 24, 8),
+              child: SegmentedButton<String>(
+                showSelectedIcon: false,
+                segments: const [
+                  ButtonSegment(value: 'all', label: Text('All')),
+                  ButtonSegment(value: 'claude', label: Text('Claude')),
+                  ButtonSegment(value: 'codex', label: Text('Codex')),
+                ],
+                selected: {_backend},
+                onSelectionChanged: (value) =>
+                    setState(() => _backend = value.first),
+              ),
+            ),
+            const Divider(),
             CheckboxListTile(
               title: const Text('All computers'),
               value: _ids.isEmpty,
@@ -100,7 +125,11 @@ class _ComputerFilterDialogState extends State<ComputerFilterDialog> {
         TextButton(
           onPressed: () => Navigator.pop(
             context,
-            ComputerFilterSelection({..._ids}, _connectedOnly),
+            SessionFilterSelection(
+              {..._ids},
+              _connectedOnly,
+              _backend == 'all' ? null : _backend,
+            ),
           ),
           child: const Text('Apply'),
         ),

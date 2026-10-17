@@ -1,4 +1,4 @@
-import 'package:app/widgets/computer_filter_dialog.dart';
+import 'package:app/widgets/session_filter_dialog.dart';
 import 'package:app/widgets/session_backend_watermark.dart';
 import 'package:app/widgets/session_compaction_notice.dart';
 import 'package:flutter/material.dart';
@@ -24,18 +24,18 @@ Widget notice(int count, {String server = 'a', VoidCallback? onStart}) => app(
 
 void main() {
   testWidgets(
-    'computer picker sorts by count, accepts several computers and applies together',
+    'filters pick a backend and several computers, sorted by count, and apply together',
     (tester) async {
-      ComputerFilterSelection? result;
+      SessionFilterSelection? result;
       await tester.pumpWidget(
         app(
           Builder(
             builder: (context) => TextButton(
               onPressed: () async {
-                result = await showDialog<ComputerFilterSelection>(
+                result = await showDialog<SessionFilterSelection>(
                   context: context,
-                  builder: (_) => const ComputerFilterDialog(
-                    selection: ComputerFilterSelection({}, false),
+                  builder: (_) => const SessionFilterDialog(
+                    selection: SessionFilterSelection({}, false),
                     computers: [
                       ComputerFilterOption(
                         id: 'few',
@@ -78,15 +78,18 @@ void main() {
       await tester.pump();
       await tester.tap(find.text('Middle'));
       await tester.pump();
+      await tester.tap(find.text('Codex'));
+      await tester.pump();
       expect(result, isNull);
       await tester.tap(find.text('Apply'));
       await tester.pumpAndSettle();
       expect(result!.ids, {'many', 'middle'});
+      expect(result!.backend, 'codex');
       expect(result!.includes('many', connected: true), isTrue);
       expect(result!.includes('middle', connected: true), isTrue);
       expect(result!.includes('few', connected: true), isFalse);
       expect(
-        const ComputerFilterSelection(
+        const SessionFilterSelection(
           {},
           true,
         ).includes('few', connected: false),

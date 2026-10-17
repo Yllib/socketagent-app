@@ -17,7 +17,7 @@ import '../util/format.dart';
 import '../widgets/extra_folders_dialog.dart';
 import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/transfer_history_dialog.dart';
-import '../widgets/computer_filter_dialog.dart';
+import '../widgets/session_filter_dialog.dart';
 import '../widgets/session_backend_watermark.dart';
 import '../widgets/session_compaction_notice.dart';
 import '../widgets/folder_browser_screen.dart';
@@ -1688,27 +1688,28 @@ class _SessionsTabState extends State<SessionsTab> {
     return parts.last;
   }
 
-  String _backendLabelForFilter(String? backend) {
-    if (backend == null) return 'All backends';
-    return _backendLabel(backend);
-  }
-
-  String _serverFilterLabel(ChatProvider provider) {
+  /// What the backend and computer filters narrow the list to, or null when
+  /// they show everything.
+  String? _filterSummary(ChatProvider provider) {
     final selected = _selectedServerFilterIds;
-    final label = selected.isEmpty
-        ? 'All computers'
-        : selected.length == 1
-        ? provider.serverConfigs
-                  .where((c) => selected.contains(c.id))
-                  .firstOrNull
-                  ?.name ??
-              'All computers'
-        : '${selected.length} computers';
-    return _connectedOnlyFilter ? '$label · Connected' : label;
+    final parts = [
+      if (_backendFilter == 'claude') 'Claude',
+      if (_backendFilter == 'codex') 'Codex',
+      if (selected.length == 1)
+        provider.serverConfigs
+                .where((c) => selected.contains(c.id))
+                .firstOrNull
+                ?.name ??
+            '1 computer'
+      else if (selected.length > 1)
+        '${selected.length} computers',
+      if (_connectedOnlyFilter) 'Connected',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   bool _matchesComputerFilter(ChatProvider provider, String serverId) =>
-      ComputerFilterSelection(
+      SessionFilterSelection(
         _selectedServerFilterIds,
         _connectedOnlyFilter,
       ).includes(
@@ -1731,17 +1732,14 @@ class _SessionsTabState extends State<SessionsTab> {
         backend.toLowerCase().contains(query);
   }
 
-  Future<void> _showServerFilterSheet(
-    BuildContext context,
-    ChatProvider provider,
-  ) async {
+  Future<void> _showFilters(BuildContext context, ChatProvider provider) async {
     final counts = <String, int>{};
     for (final session in provider.sessions) {
       counts.update(session.serverId, (count) => count + 1, ifAbsent: () => 1);
     }
-    final selected = await showDialog<ComputerFilterSelection>(
+    final selected = await showDialog<SessionFilterSelection>(
       context: context,
-      builder: (_) => ComputerFilterDialog(
+      builder: (_) => SessionFilterDialog(
         computers: [
           for (final config in provider.serverConfigs)
             ComputerFilterOption(
@@ -1753,9 +1751,11 @@ class _SessionsTabState extends State<SessionsTab> {
                   ConnectionStatus.connected,
             ),
         ],
-        selection: ComputerFilterSelection({
-          ..._selectedServerFilterIds,
-        }, _connectedOnlyFilter),
+        selection: SessionFilterSelection(
+          {..._selectedServerFilterIds},
+          _connectedOnlyFilter,
+          _backendFilter,
+        ),
       ),
     );
     if (selected == null || !mounted) return;
@@ -1764,86 +1764,90 @@ class _SessionsTabState extends State<SessionsTab> {
         ..clear()
         ..addAll(selected.ids);
       _connectedOnlyFilter = selected.connectedOnly;
+      _backendFilter = selected.backend;
     });
     _saveFilters();
   }
 
-  Widget _desktopFilters(BuildContext context, ChatProvider provider) {
+  void _clearFilters() {
+    setState(() {
+      _selectedServerFilterIds.clear();
+      _connectedOnlyFilter = false;
+      _backendFilter = null;
+    });
+    _saveFilters();
+  }
+
+  /// View menu, Filters button with a reset X, and on phones the search
+  /// toggle. Fits one row on a narrow phone without scrolling.
+  Widget _filterRow(BuildContext context, ChatProvider provider) {
+    final colors = Theme.of(context).colorScheme;
+    final summary = _filterSummary(provider);
+    const compact = VisualDensity.compact;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
       child: Row(
         children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: () => _showServerFilterSheet(context, provider),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
+          _viewMenu(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(switch (_view) {
+                    SessionListView.sessions => Icons.view_list,
+                    SessionListView.projects => Icons.folder_special_outlined,
+                    SessionListView.folders => Icons.folder_open,
+                  }, size: 18),
+                  const SizedBox(width: 6),
+                  Text(_view.label),
+                  const Icon(Icons.arrow_drop_down, size: 18),
+                ],
               ),
-              child: Text(
-                _serverFilterLabel(provider),
+            ),
+          ),
+          Flexible(
+            child: TextButton.icon(
+              key: const ValueKey('session-filters'),
+              onPressed: () => _showFilters(context, provider),
+              style: TextButton.styleFrom(
+                visualDensity: compact,
+                foregroundColor: summary == null
+                    ? colors.onSurface
+                    : colors.primary,
+              ),
+              icon: const Icon(Icons.filter_list, size: 18),
+              label: Text(
+                summary ?? 'Filters',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12),
               ),
             ),
           ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: PopupMenuButton<String>(
-              tooltip: 'Backend filter',
-              initialValue: _backendFilter ?? 'all',
-              onSelected: (value) {
-                setState(() => _backendFilter = value == 'all' ? null : value);
-                _saveFilters();
+          if (summary != null)
+            IconButton(
+              key: const ValueKey('clear-session-filters'),
+              tooltip: 'Clear filters',
+              visualDensity: compact,
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: _clearFilters,
+            ),
+          const Spacer(),
+          if (!widget.sidebar)
+            IconButton(
+              icon: Icon(_searchOpen ? Icons.search_off : Icons.search),
+              tooltip: _searchOpen ? 'Hide search' : 'Search sessions',
+              onPressed: () {
+                setState(() {
+                  _searchOpen = !_searchOpen;
+                  if (!_searchOpen) {
+                    _searchQuery = '';
+                    _searchController.clear();
+                    _resetGlobalSearch();
+                  }
+                });
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'all', child: Text('All backends')),
-                PopupMenuItem(value: 'codex', child: Text('Codex')),
-                PopupMenuItem(value: 'claude', child: Text('Claude')),
-              ],
-              child: Container(
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Center(
-                  child: Text(
-                    _backendLabelForFilter(_backendFilter),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-              ),
             ),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: _viewMenu(
-              child: Container(
-                height: 36,
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Center(
-                  child: Text(
-                    _view.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -1851,111 +1855,12 @@ class _SessionsTabState extends State<SessionsTab> {
 
   Widget _buildFilterChipBar(BuildContext context, ChatProvider provider) {
     final theme = Theme.of(context);
-    final activeFilters =
-        _selectedServerFilterIds.isNotEmpty ||
-        _connectedOnlyFilter ||
-        _backendFilter != null ||
-        _searchQuery.trim().isNotEmpty;
-
     return Material(
       color: theme.colorScheme.surface,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (widget.sidebar)
-            _desktopFilters(context, provider)
-          else
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-              child: Row(
-                children: [
-                  _viewMenu(
-                    child: Chip(
-                      avatar: Icon(switch (_view) {
-                        SessionListView.sessions => Icons.view_list,
-                        SessionListView.projects =>
-                          Icons.folder_special_outlined,
-                        SessionListView.folders => Icons.folder_open,
-                      }, size: 18),
-                      label: Text(_view.label),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  ActionChip(
-                    avatar: Icon(
-                      _connectedOnlyFilter
-                          ? Icons.cloud_done
-                          : _selectedServerFilterIds.isEmpty
-                          ? Icons.all_inbox
-                          : Icons.dns,
-                      size: 18,
-                    ),
-                    label: Text(_serverFilterLabel(provider)),
-                    onPressed: () => _showServerFilterSheet(context, provider),
-                  ),
-                  const SizedBox(width: 8),
-                  PopupMenuButton<String>(
-                    tooltip: 'Backend filter',
-                    initialValue: _backendFilter ?? 'all',
-                    onSelected: (value) {
-                      setState(() {
-                        _backendFilter = value == 'all' ? null : value;
-                      });
-                      _saveFilters();
-                    },
-                    itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'all', child: Text('All backends')),
-                      PopupMenuItem(value: 'codex', child: Text('Codex')),
-                      PopupMenuItem(value: 'claude', child: Text('Claude')),
-                    ],
-                    child: Chip(
-                      avatar: Icon(
-                        _backendFilter == 'codex'
-                            ? Icons.code
-                            : _backendFilter == 'claude'
-                            ? Icons.psychology_alt
-                            : Icons.hub,
-                        size: 18,
-                      ),
-                      label: Text(_backendLabelForFilter(_backendFilter)),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  if (!widget.sidebar)
-                    IconButton(
-                      icon: Icon(_searchOpen ? Icons.search_off : Icons.search),
-                      tooltip: _searchOpen ? 'Hide search' : 'Search sessions',
-                      onPressed: () {
-                        setState(() {
-                          _searchOpen = !_searchOpen;
-                          if (!_searchOpen) {
-                            _searchQuery = '';
-                            _searchController.clear();
-                            _resetGlobalSearch();
-                          }
-                        });
-                      },
-                    ),
-                  if (activeFilters)
-                    IconButton(
-                      icon: const Icon(Icons.clear_all),
-                      tooltip: 'Clear filters',
-                      onPressed: () {
-                        setState(() {
-                          _selectedServerFilterIds.clear();
-                          _connectedOnlyFilter = false;
-                          _backendFilter = null;
-                          _searchQuery = '';
-                          _searchController.clear();
-                          _resetGlobalSearch();
-                        });
-                        _saveFilters();
-                      },
-                    ),
-                ],
-              ),
-            ),
+          _filterRow(context, provider),
           if (_searchOpen || widget.sidebar)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
