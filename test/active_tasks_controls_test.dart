@@ -18,7 +18,7 @@ void main() {
   });
 
   testWidgets(
-    'confirmation cannot dismiss a reopened item or stop another session',
+    'a reopened item is not dismissed and another session is not stopped',
     (tester) async {
       final provider = ChatProvider();
       var status = 'completed';
@@ -52,12 +52,26 @@ void main() {
       );
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip('Dismiss finished item'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      expect(find.text('Dismissing 3'), findsOneWidget);
       update(() => status = 'running');
       await tester.pump();
-      await tester.tap(find.text('Dismiss'));
-      await tester.pump(const Duration(milliseconds: 300));
+      await tester.pump(const Duration(seconds: 3));
       expect(find.text('Work'), findsOneWidget);
+      // Switching sessions cancels a countdown.
+      update(() => status = 'completed');
+      await tester.pump();
+      await tester.tap(find.byTooltip('Dismiss finished item'));
+      await tester.pump();
+      update(() => session = 'second');
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 3));
+      expect(find.text('Work'), findsOneWidget);
+      update(() {
+        status = 'running';
+        session = 'first';
+      });
+      await tester.pump();
       await tester.tap(find.byTooltip('Stop running work'));
       await tester.pump(const Duration(milliseconds: 300));
       update(() => session = 'second');
@@ -134,10 +148,15 @@ void main() {
       await pump('completed');
       expect(find.byTooltip('Stop running work'), findsNothing);
       await tester.tap(find.byTooltip('Dismiss finished item'));
-      await tester.pumpAndSettle();
-      expect(find.text('Dismiss finished item?'), findsOneWidget);
-      await tester.tap(find.text('Dismiss'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.text('Dismissing 3'), findsOneWidget);
+      await tester.tap(find.text('Cancel'));
+      await tester.pump(const Duration(seconds: 4));
+      expect(find.text('Example work'), findsOneWidget);
+      await tester.tap(find.byTooltip('Dismiss finished item'));
+      await tester.pump(const Duration(seconds: 3));
+      await tester.pump();
       expect(find.text('Example work'), findsNothing);
       await pump('running');
       expect(find.text('Example work'), findsOneWidget);
@@ -176,10 +195,50 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byTooltip('Dismiss finished item'), findsNWidgets(2));
     await tester.tap(find.byTooltip('Dismiss finished item').first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Dismiss'));
-    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
     expect(find.text('Finished agent'), findsNothing);
     expect(find.text('Finished workflow'), findsOneWidget);
+  });
+
+  testWidgets('Clear done counts down every finished item together', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    await tester.pumpWidget(
+      ChangeNotifierProvider<ChatProvider>(
+        create: (_) => provider,
+        child: MaterialApp(
+          home: Scaffold(
+            body: ActiveTasksPane(
+              sourceServerId: 'server',
+              sessionId: 'clear',
+              backgroundTasks: const {
+                'a': {'summary': 'Done one', 'status': 'completed'},
+                'b': {'summary': 'Done two', 'status': 'failed'},
+                'c': {'summary': 'Still going', 'status': 'running'},
+              },
+              subagentTasks: const {},
+              workflowTasks: const {},
+              messages: const [],
+            ),
+          ),
+        ),
+      ),
+    );
+    // A running row's spinner never settles.
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.text('Clear 2 done'));
+    await tester.pump();
+    expect(find.text('Dismissing 3'), findsNWidgets(2));
+    await tester.tap(find.text('Cancel all'));
+    await tester.pump(const Duration(seconds: 4));
+    expect(find.text('Done one'), findsOneWidget);
+    await tester.tap(find.text('Clear 2 done'));
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump();
+    expect(find.text('Done one'), findsNothing);
+    expect(find.text('Done two'), findsNothing);
+    expect(find.text('Still going'), findsOneWidget);
   });
 }

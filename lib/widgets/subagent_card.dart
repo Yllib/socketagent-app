@@ -26,8 +26,11 @@ class SubAgentCard extends StatefulWidget {
   final ValueChanged<String>? onReadAloud;
 
   /// Moves this running subagent to the background, by its tool use id.
-  /// Null hides the menu.
   final ValueChanged<String>? onBackgroundTask;
+
+  /// Stops this running subagent, by its tool use id. The menu hides when
+  /// neither callback applies.
+  final ValueChanged<String>? onStopTask;
 
   const SubAgentCard({
     super.key,
@@ -39,6 +42,7 @@ class SubAgentCard extends StatefulWidget {
     this.sourceServerId,
     this.onReadAloud,
     this.onBackgroundTask,
+    this.onStopTask,
   });
 
   @override
@@ -226,12 +230,20 @@ class _SubAgentCardState extends State<SubAgentCard> {
                     ),
                   ),
                   if (widget.isRunning) ...[
-                    if (widget.onBackgroundTask case final onBackground?
-                        when !widget.message.isBackgrounded &&
-                            (widget.message.toolUseId ?? '').isNotEmpty)
+                    if ((widget.message.toolUseId ?? '') case final toolUseId
+                        when toolUseId.isNotEmpty &&
+                            ((widget.onBackgroundTask != null &&
+                                    !widget.message.isBackgrounded) ||
+                                widget.onStopTask != null))
                       RunningTaskMenu(
-                        onBackground: () =>
-                            onBackground(widget.message.toolUseId!),
+                        onBackground:
+                            widget.onBackgroundTask != null &&
+                                !widget.message.isBackgrounded
+                            ? () => widget.onBackgroundTask!(toolUseId)
+                            : null,
+                        onStop: widget.onStopTask != null
+                            ? () => widget.onStopTask!(toolUseId)
+                            : null,
                       ),
                     if (widget.message.toolElapsedSeconds > 0)
                       Padding(

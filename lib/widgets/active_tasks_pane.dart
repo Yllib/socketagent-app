@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/message.dart';
+import '../models/message_reconciliation.dart';
 import '../services/chat_provider.dart';
 import 'tool_output_block.dart';
 import 'message_bubble.dart';
 import 'speak_card.dart';
 import 'file_card.dart';
 import 'reminder_card.dart';
+import 'dismiss_countdown.dart';
 import 'dismissible_panel_items.dart';
 import '../config/app_palette.dart';
 
@@ -60,23 +62,33 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
   ChatMessage? _indexedLastMessage;
   bool _confirming = false;
 
-  Future<void> _confirmAction(
-    _TaskEntry entry,
-    VoidCallback action, {
-    required bool stop,
-  }) async {
+  // Finished items dismiss after a countdown the user can cancel. [_dismiss]
+  // is the current session's dismissal from DismissiblePanelItems.
+  late final _countdown = DismissCountdown<String>(
+    onChanged: () {
+      if (mounted) setState(() {});
+    },
+    onExpire: (ids) => ids.forEach(_dismiss ?? (_) {}),
+  );
+  ValueChanged<String>? _dismiss;
+
+  @override
+  void dispose() {
+    _countdown.dispose();
+    super.dispose();
+  }
+
+  Future<void> _confirmStop(_TaskEntry entry) async {
     if (_confirming) return;
     _confirming = true;
     final scope = (widget.sourceServerId, widget.sessionId);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(stop ? 'Stop running work?' : 'Dismiss finished item?'),
+        title: const Text('Stop running work?'),
         content: SingleChildScrollView(
           child: Text(
-            stop
-                ? 'Stop "${entry.description}"? This interrupts the running work.'
-                : 'Dismiss "${entry.description}" from this panel? Its history is kept.',
+            'Stop "${entry.description}"? This interrupts the running work.',
           ),
         ),
         actions: [
@@ -86,7 +98,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           ),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(stop ? 'Stop' : 'Dismiss'),
+            child: const Text('Stop'),
           ),
         ],
       ),
@@ -98,10 +110,9 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
         scope == (widget.sourceServerId, widget.sessionId) &&
         current != null &&
         current.description == entry.description &&
-        (stop
-            ? current.stoppable && !isFinishedPanelItem(current.status)
-            : isFinishedPanelItem(current.status))) {
-      action();
+        current.stoppable &&
+        !isFinishedPanelItem(current.status)) {
+      widget.onStopTask?.call(entry.id);
     }
   }
 
@@ -114,6 +125,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
   @override
   void didUpdateWidget(ActiveTasksPane oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.sourceServerId != widget.sourceServerId ||
+        oldWidget.sessionId != widget.sessionId) {
+      _countdown.cancelAll();
+    }
     _reindexMessages();
   }
 
@@ -203,7 +218,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
           subagentType: e.value['subagentType'] as String?,
           status: status,
           scrollToolUseId: toolUseId,
-          stoppable: false,
+          // Claude stops a subagent by its tool use id through stop_task.
+          // Codex has no per-agent stop.
+          stoppable:
+              isActiveSubagentStatus(status) && e.value['source'] != 'codex',
           childMessages: children,
           resultOutput: resultOutput,
         ),
@@ -248,10 +266,19 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
 
   Widget _buildPane(Set<String> dismissed, ValueChanged<String> dismiss) {
     if (widget.hidingNotice != null) return widget.hidingNotice!;
+    _dismiss = dismiss;
     final entries = _entries
         .where((e) => !dismissed.contains(e.itemId))
         .toList();
     if (entries.isEmpty) return const SizedBox.shrink();
+    final finished = [
+      for (final e in entries)
+        if (isFinishedPanelItem(e.status)) e.itemId,
+    ];
+    final clearable = finished
+        .where((id) => _countdown.remaining(id) == null)
+        .toList();
+    final dismissing = finished.length - clearable.length;
 
     final provider = context.read<ChatProvider>();
     final paneCollapsed = provider.taskPaneCollapsed;
@@ -369,6 +396,21 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                           ),
                         ),
                       ),
+                      if (dismissing > 1)
+                        _headerButton(
+                          'Cancel all',
+                          const ValueKey('cancel-dismiss-all'),
+                          _countdown.cancelAll,
+                        )
+                      else if (clearable.length > 1)
+                        _headerButton(
+                          'Clear ${clearable.length} done',
+                          const ValueKey('clear-done'),
+                          () {
+                            provider.taskPaneCollapsed = false;
+                            _countdown.start(clearable);
+                          },
+                        ),
                       Icon(
                         paneCollapsed ? Icons.expand_less : Icons.expand_more,
                         size: 16,
@@ -405,7 +447,7 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                     padding: EdgeInsets.zero,
                     itemCount: entries.length,
                     itemBuilder: (context, index) =>
-                        _buildEntry(entries[index], dismiss),
+                        _buildEntry(entries[index]),
                   ),
                 ),
             ],
@@ -415,8 +457,22 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
     );
   }
 
-  Widget _buildEntry(_TaskEntry entry, ValueChanged<String> dismiss) {
+  Widget _headerButton(String label, Key key, VoidCallback onPressed) =>
+      TextButton(
+        key: key,
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          minimumSize: const Size(0, 24),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+        ),
+        child: Text(label, style: const TextStyle(fontSize: 11)),
+      );
+
+  Widget _buildEntry(_TaskEntry entry) {
     final isExpanded = _expandedIds.contains(entry.id);
+    final remaining = _countdown.remaining(entry.itemId);
     final isCompleted = isFinishedPanelItem(entry.status);
     final terminalColor = entry.status == 'failed'
         ? context.palette.red
@@ -448,129 +504,138 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
         children: [
           // Entry header row
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            child: Row(
-              children: [
-                // Expand/collapse chevron
-                if (hasContent)
-                  GestureDetector(
-                    onTap: () => setState(() {
-                      if (isExpanded) {
-                        _expandedIds.remove(entry.id);
-                        _userCollapsedIds.add(entry.id);
-                      } else {
-                        _expandedIds.add(entry.id);
-                        _userCollapsedIds.remove(entry.id);
-                      }
-                    }),
-                    child: Icon(
-                      isExpanded ? Icons.expand_less : Icons.expand_more,
-                      size: 16,
-                      color: context.palette.shade(Colors.blue, 300),
-                    ),
-                  )
-                else
-                  const SizedBox(width: 16),
-                const SizedBox(width: 4),
-                // Status icon
-                if (isCompleted)
-                  Icon(
-                    entry.status == 'failed'
-                        ? Icons.error
-                        : entry.status == 'stopped'
-                        ? Icons.stop_circle
-                        : Icons.check_circle,
-                    size: 13,
-                    color: terminalColor,
-                  )
-                else
-                  Icon(
-                    entry.kind == 'monitor'
-                        ? Icons.monitor_heart_outlined
-                        : entry.kind == 'subagent'
-                        ? Icons.account_tree
-                        : entry.kind == 'workflow'
-                        ? Icons.hub_outlined
-                        : Icons.terminal,
-                    size: 13,
-                    color: entry.kind == 'monitor'
-                        ? context.palette.blue
-                        : context.palette.shade(Colors.blue, 300),
-                  ),
-                const SizedBox(width: 6),
-                // Subagent type badge
-                if (entry.subagentType != null &&
-                    entry.subagentType!.isNotEmpty) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.blue.shade800.withAlpha(100),
-                      borderRadius: BorderRadius.circular(3),
-                    ),
-                    child: Text(
-                      entry.subagentType!,
-                      style: TextStyle(
-                        fontSize: 9,
-                        color: context.palette.shade(Colors.blue, 200),
-                        fontWeight: FontWeight.w500,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            child: DismissingFrame(
+              active: remaining != null,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+                child: Row(
+                  children: [
+                    // Expand/collapse chevron
+                    if (hasContent)
+                      GestureDetector(
+                        onTap: () => setState(() {
+                          if (isExpanded) {
+                            _expandedIds.remove(entry.id);
+                            _userCollapsedIds.add(entry.id);
+                          } else {
+                            _expandedIds.add(entry.id);
+                            _userCollapsedIds.remove(entry.id);
+                          }
+                        }),
+                        child: Icon(
+                          isExpanded ? Icons.expand_less : Icons.expand_more,
+                          size: 16,
+                          color: context.palette.shade(Colors.blue, 300),
+                        ),
+                      )
+                    else
+                      const SizedBox(width: 16),
+                    const SizedBox(width: 4),
+                    // Status icon
+                    if (isCompleted)
+                      Icon(
+                        entry.status == 'failed'
+                            ? Icons.error
+                            : entry.status == 'stopped'
+                            ? Icons.stop_circle
+                            : Icons.check_circle,
+                        size: 13,
+                        color: terminalColor,
+                      )
+                    else
+                      Icon(
+                        entry.kind == 'monitor'
+                            ? Icons.monitor_heart_outlined
+                            : entry.kind == 'subagent'
+                            ? Icons.account_tree
+                            : entry.kind == 'workflow'
+                            ? Icons.hub_outlined
+                            : Icons.terminal,
+                        size: 13,
+                        color: entry.kind == 'monitor'
+                            ? context.palette.blue
+                            : context.palette.shade(Colors.blue, 300),
+                      ),
+                    const SizedBox(width: 6),
+                    // Subagent type badge
+                    if (entry.subagentType != null &&
+                        entry.subagentType!.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 1,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade800.withAlpha(100),
+                          borderRadius: BorderRadius.circular(3),
+                        ),
+                        child: Text(
+                          entry.subagentType!,
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: context.palette.shade(Colors.blue, 200),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                    ],
+                    // Description — tap to scroll to task in chat
+                    Expanded(
+                      child: GestureDetector(
+                        onTap: () =>
+                            widget.onScrollToTask?.call(entry.scrollToolUseId),
+                        child: Text(
+                          entry.description,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: isCompleted
+                                ? terminalColor
+                                : context.palette.shade(Colors.blue, 100),
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(width: 5),
-                ],
-                // Description — tap to scroll to task in chat
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () =>
-                        widget.onScrollToTask?.call(entry.scrollToolUseId),
-                    child: Text(
-                      entry.description,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isCompleted
-                            ? terminalColor
-                            : context.palette.shade(Colors.blue, 100),
+                    if (remaining != null)
+                      DismissingControls(
+                        remaining: remaining,
+                        onCancel: () => _countdown.cancel([entry.itemId]),
+                      )
+                    else if (isCompleted ||
+                        (entry.stoppable && widget.onStopTask != null))
+                      IconButton(
+                        tooltip: isCompleted
+                            ? 'Dismiss finished item'
+                            : 'Stop running work',
+                        onPressed: isCompleted
+                            ? () => _countdown.start([entry.itemId])
+                            : () => _confirmStop(entry),
+                        padding: EdgeInsets.zero,
+                        style: IconButton.styleFrom(
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          minimumSize: const Size(24, 24),
+                          maximumSize: const Size(24, 24),
+                        ),
+                        constraints: const BoxConstraints.tightFor(
+                          width: 24,
+                          height: 24,
+                        ),
+                        icon: Icon(
+                          isCompleted
+                              ? Icons.close
+                              : Icons.stop_circle_outlined,
+                          size: isCompleted ? 14 : 16,
+                          color: isCompleted
+                              ? context.palette.textMuted
+                              : context.palette.shade(Colors.red, 300),
+                        ),
                       ),
-                    ),
-                  ),
+                  ],
                 ),
-                if (isCompleted ||
-                    (entry.stoppable && widget.onStopTask != null))
-                  IconButton(
-                    tooltip: isCompleted
-                        ? 'Dismiss finished item'
-                        : 'Stop running work',
-                    onPressed: () => _confirmAction(
-                      entry,
-                      isCompleted
-                          ? () => dismiss(entry.itemId)
-                          : () => widget.onStopTask?.call(entry.id),
-                      stop: !isCompleted,
-                    ),
-                    padding: EdgeInsets.zero,
-                    style: IconButton.styleFrom(
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      minimumSize: const Size(24, 24),
-                      maximumSize: const Size(24, 24),
-                    ),
-                    constraints: const BoxConstraints.tightFor(
-                      width: 24,
-                      height: 24,
-                    ),
-                    icon: Icon(
-                      isCompleted ? Icons.close : Icons.stop_circle_outlined,
-                      size: isCompleted ? 14 : 16,
-                      color: isCompleted
-                          ? context.palette.textMuted
-                          : context.palette.shade(Colors.red, 300),
-                    ),
-                  ),
-              ],
+              ),
             ),
           ),
           // Expanded content

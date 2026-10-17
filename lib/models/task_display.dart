@@ -20,9 +20,15 @@ bool taskSnapshotsEqual(
   List<Map<String, dynamic>> right,
 ) => jsonEncode(left) == jsonEncode(right);
 
+/// Tasks still shown: not dismissed on this device ([dismissedKeys]) or on
+/// the server (`dismissed: true`).
 List<Map<String, dynamic>> visibleTasks(
   List<Map<String, dynamic>> tasks,
   Set<String> dismissedKeys,
 ) => tasks
-    .where((task) => !dismissedKeys.contains(taskDisplayKey(task)))
+    .where(
+      (task) =>
+          task['dismissed'] != true &&
+          !dismissedKeys.contains(taskDisplayKey(task)),
+    )
     .toList();

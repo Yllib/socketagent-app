@@ -91,7 +91,7 @@ class ChatView extends StatefulWidget {
   final Widget? tasksHidingNotice;
   final Widget? codexPlanHidingNotice;
   final VoidCallback? onDismissCodexPlan;
-  final void Function(Map<String, dynamic> todo)? onDismissTodo;
+  final void Function(List<String> keys)? onDismissTasks;
   final void Function(String uuid, {bool rewindFiles})? onRewindConversation;
   final void Function(String uuid)? onBranch;
   final void Function(String messageId)? onRetractQueuedMessage;
@@ -148,7 +148,7 @@ class ChatView extends StatefulWidget {
     this.tasksHidingNotice,
     this.codexPlanHidingNotice,
     this.onDismissCodexPlan,
-    this.onDismissTodo,
+    this.onDismissTasks,
     this.onRewindConversation,
     this.onBranch,
     this.onRetractQueuedMessage,
@@ -1414,7 +1414,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               todos: widget.todos,
               hidingNotice: widget.tasksHidingNotice,
               onDismiss: widget.onDismissTodos,
-              onDismissTodo: widget.onDismissTodo,
+              onDismissTasks: widget.onDismissTasks,
             ),
           if (activeCodexPlan != null && widget.showCodexPlan)
             CodexPlanCard(
@@ -1870,6 +1870,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             sourceServerId: widget.serverId,
             onReadAloud: widget.onReadAloud,
             onBackgroundTask: widget.onBackgroundTask,
+            // Codex has no per-agent stop.
+            onStopTask: widget.subagentTasks[toolUseId]?['source'] == 'codex'
+                ? null
+                : widget.onStopTask,
           );
         }
         // Backgrounded bash — register key for scroll-to

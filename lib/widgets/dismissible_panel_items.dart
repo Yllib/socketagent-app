@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -18,21 +17,13 @@ class DismissiblePanelItems extends StatefulWidget {
     super.key,
     required this.scope,
     required this.items,
-    this.builder,
-    this.undoBuilder,
-  }) : assert((builder == null) != (undoBuilder == null));
+    required this.builder,
+  });
 
   final List<String>? scope;
   final Map<String, String> items;
-  final Widget Function(Set<String> dismissed, ValueChanged<String> dismiss)?
+  final Widget Function(Set<String> dismissed, ValueChanged<String> dismiss)
   builder;
-  final Widget Function(
-    Set<String> dismissed,
-    ValueChanged<String> dismiss,
-    Set<String> undoable,
-    ValueChanged<String> undo,
-  )?
-  undoBuilder;
 
   @override
   State<DismissiblePanelItems> createState() => _DismissiblePanelItemsState();
@@ -40,7 +31,6 @@ class DismissiblePanelItems extends StatefulWidget {
 
 class _DismissiblePanelItemsState extends State<DismissiblePanelItems> {
   final Set<String> _dismissed = {};
-  final Map<String, Timer> _undoTimers = {};
   SharedPreferences? _preferences;
   String? get _key => widget.scope == null
       ? null
@@ -57,7 +47,6 @@ class _DismissiblePanelItemsState extends State<DismissiblePanelItems> {
   void didUpdateWidget(DismissiblePanelItems oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (jsonEncode(oldWidget.scope) != jsonEncode(widget.scope)) {
-      _cancelUndoTimers();
       _dismissed.clear();
       _preferences = null;
       _load();
@@ -85,9 +74,6 @@ class _DismissiblePanelItemsState extends State<DismissiblePanelItems> {
     _dismissed.removeWhere(
       (id) => !isFinishedPanelItem(widget.items[id] ?? ''),
     );
-    for (final id in _undoTimers.keys.toList()) {
-      if (!_dismissed.contains(id)) _undoTimers.remove(id)?.cancel();
-    }
     return count != _dismissed.length;
   }
 
@@ -98,38 +84,8 @@ class _DismissiblePanelItemsState extends State<DismissiblePanelItems> {
 
   void _dismiss(String id) {
     if (!isFinishedPanelItem(widget.items[id] ?? '')) return;
-    setState(() {
-      _dismissed.add(id);
-      if (widget.undoBuilder != null) {
-        _undoTimers.remove(id)?.cancel();
-        _undoTimers[id] = Timer(const Duration(seconds: 5), () {
-          if (mounted) setState(() => _undoTimers.remove(id));
-        });
-      }
-    });
+    setState(() => _dismissed.add(id));
     _save();
-  }
-
-  void _undo(String id) {
-    if (!_undoTimers.containsKey(id)) return;
-    setState(() {
-      _undoTimers.remove(id)?.cancel();
-      _dismissed.remove(id);
-    });
-    _save();
-  }
-
-  void _cancelUndoTimers() {
-    for (final timer in _undoTimers.values) {
-      timer.cancel();
-    }
-    _undoTimers.clear();
-  }
-
-  @override
-  void dispose() {
-    _cancelUndoTimers();
-    super.dispose();
   }
 
   @override
@@ -139,20 +95,9 @@ class _DismissiblePanelItemsState extends State<DismissiblePanelItems> {
       if (mounted && generation == _generation) _dismiss(id);
     }
 
-    void undo(String id) {
-      if (mounted && generation == _generation) _undo(id);
-    }
-
     return KeyedSubtree(
       key: ValueKey(_key),
-      child:
-          widget.undoBuilder?.call(
-            Set.unmodifiable(_dismissed),
-            dismiss,
-            Set.unmodifiable(_undoTimers.keys),
-            undo,
-          ) ??
-          widget.builder!(Set.unmodifiable(_dismissed), dismiss),
+      child: widget.builder(Set.unmodifiable(_dismissed), dismiss),
     );
   }
 }

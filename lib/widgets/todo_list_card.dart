@@ -7,14 +7,16 @@ class TodoListCard extends StatelessWidget {
   final List<Map<String, dynamic>> todos;
   final VoidCallback? onDismiss;
   final Widget? hidingNotice;
-  final void Function(Map<String, dynamic> todo)? onDismissTodo;
+
+  /// Dismisses completed tasks by [taskDisplayKey].
+  final void Function(List<String> keys)? onDismissTasks;
 
   const TodoListCard({
     super.key,
     required this.todos,
     this.onDismiss,
     this.hidingNotice,
-    this.onDismissTodo,
+    this.onDismissTasks,
   });
 
   @override
@@ -25,6 +27,7 @@ class TodoListCard extends StatelessWidget {
       icon: Icons.checklist,
       accent: context.palette.blue,
       onDismiss: onDismiss,
+      onDismissItems: onDismissTasks,
       hidingNotice: hidingNotice,
       entries: [
         for (final todo in todos)
@@ -36,10 +39,7 @@ class TodoListCard extends StatelessWidget {
                 '',
             status: todo['status'] as String? ?? 'pending',
             strikeCompleted: true,
-            dismissKey: ValueKey('dismiss-task-${taskDisplayKey(todo)}'),
-            onDismiss: taskCanBeDismissed(todo) && onDismissTodo != null
-                ? () => onDismissTodo!(todo)
-                : null,
+            dismissId: taskCanBeDismissed(todo) ? taskDisplayKey(todo) : null,
           ),
       ],
     );

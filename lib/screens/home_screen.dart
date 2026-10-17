@@ -1640,7 +1640,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                               SessionPanel.codexPlan,
                               true,
                             ),
-                            onDismissTodo: provider.dismissTodo,
+                            onDismissTasks: provider.dismissTasks,
                             onRewindConversation: provider.rewindConversation,
                             codexRewind:
                                 provider.activeSessionBackend == 'codex',

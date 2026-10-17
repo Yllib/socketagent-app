@@ -41,46 +41,15 @@ class CodexPlanCard extends StatelessWidget {
         for (final (index, step) in steps.indexed)
           ids[index]: step['status']?.toString() ?? 'pending',
       },
-      undoBuilder: (dismissed, dismiss, undoable, undo) {
+      builder: (dismissed, dismiss) {
         final visible = [
           for (final (index, step) in steps.indexed)
-            if (!dismissed.contains(ids[index]) ||
-                undoable.contains(ids[index]))
+            if (!dismissed.contains(ids[index]))
               ProgressPanelEntry(
                 text: step['step'] as String? ?? '',
                 status: step['status'] as String? ?? 'pending',
-                dismissKey: ValueKey('dismiss-plan-step-${ids[index]}'),
                 itemLabel: 'plan step',
-                confirmDismiss: false,
-                onDismiss: step['status'] == 'completed'
-                    ? () => dismiss(ids[index])
-                    : null,
-                replacement: undoable.contains(ids[index])
-                    ? Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 4,
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Step dismissed…',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: context.palette.textSecondary,
-                                ),
-                              ),
-                            ),
-                            TextButton(
-                              key: ValueKey('undo-plan-step-${ids[index]}'),
-                              onPressed: () => undo(ids[index]),
-                              child: const Text('Undo'),
-                            ),
-                          ],
-                        ),
-                      )
-                    : null,
+                dismissId: step['status'] == 'completed' ? ids[index] : null,
               ),
         ];
         if (visible.isEmpty) return const SizedBox.shrink();
@@ -98,6 +67,7 @@ class CodexPlanCard extends StatelessWidget {
                 (msg.toolInput?['explanation'] as String? ?? msg.textContent)
                     .trim(),
             onDismiss: onDismiss,
+            onDismissItems: (ids) => ids.forEach(dismiss),
             hidingNotice: hidingNotice,
             dismissTooltip: 'Hide Codex plan',
             entries: visible,

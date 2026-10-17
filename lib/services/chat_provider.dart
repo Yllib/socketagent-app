@@ -926,6 +926,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final List<Completer<List<BrowserProfile>>> _browserProfileRequests = [];
   final Set<String> _serversWithClaudeBackgroundTasks = {};
   final Set<String> _serversWithClaudeAdditionalDirectories = {};
+  // Servers that store task dismissals for every device (dismiss_tasks).
+  final Set<String> _serversWithTaskDismissals = {};
   final Map<String, CodexGoal?> _codexGoals = {};
   final Set<String> _loadedCodexGoals = {};
   final Set<String> _loadingCodexGoals = {};
@@ -5537,6 +5539,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               _serverSessionMemoryVersions[serverId] = sessionMemory is Map
                   ? (sessionMemory['version'] as num?)?.toInt() ?? 0
                   : 0;
+              if (msg['taskDismissals'] is Map) {
+                _serversWithTaskDismissals.add(serverId);
+              } else {
+                _serversWithTaskDismissals.remove(serverId);
+              }
               if (msg['claudeAdditionalDirectories'] is Map) {
                 _serversWithClaudeAdditionalDirectories.add(serverId);
               } else {
@@ -6833,6 +6840,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           // Reconcile background tasks — remove any not reported by server
           _backgroundTasks.removeWhere((id, _) => !serverTaskIds.contains(id));
+          if (msg['backgroundTaskIds'] is List) {
+            _settleTasksMissingFromServer(serverTaskIds);
+          }
           // Update session model from heartbeat
           final sessionModels = msg['sessionModels'] as Map<String, dynamic>?;
           if (sessionModels != null && _activeSessionId != null) {
@@ -9725,6 +9735,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'subagentType': subagentType,
         'status': inferredStatus,
         'toolUseId': toolUseId,
+        if (previous?['source'] == null && _activeSessionBackend != null)
+          'source': _activeSessionBackend,
         if (toolMsg.isBackgrounded) 'taskId': toolMsg.backgroundTaskId,
         if (toolMsg.isBackgrounded) 'isBackgrounded': true,
         if (input['agentId'] != null) 'agentId': input['agentId'],
@@ -9965,6 +9977,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// The pane's one-line label for a Bash card: its description, else the
+  /// first command before any && or ;.
+  String _bashSummaryFromCard(ChatMessage card) {
+    final desc = card.toolInput?['description'] as String?;
+    if (desc != null && desc.isNotEmpty) return desc;
+    final cmd = card.toolInput?['command'] as String?;
+    if (cmd != null && cmd.isNotEmpty) {
+      return cmd.split(RegExp(r'\s*&&\s*|\s*;\s*')).first;
+    }
+    return 'Bash command (backgrounded)';
+  }
+
   /// Handle bash command moved to background (timeout)
   void _handleBashBackgrounded(Map<String, dynamic> msg) {
     final toolUseId = msg['toolUseId'] as String? ?? '';
@@ -9972,23 +9996,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Find the tool card and extract command info, then mark as backgrounded
     String summary = 'Bash command (backgrounded)';
-    for (int i = _messages.length - 1; i >= 0; i--) {
-      final m = _messages[i];
-      if (m.type == MessageType.toolCall && m.toolUseId == toolUseId) {
-        m.isBackgrounded = true;
-        m.backgroundTaskId = taskId;
-        m.toolStreaming = true; // keep streaming
-        // Pull description or command for the pane summary
-        final desc = m.toolInput?['description'] as String?;
-        final cmd = m.toolInput?['command'] as String?;
-        if (desc != null && desc.isNotEmpty) {
-          summary = desc;
-        } else if (cmd != null && cmd.isNotEmpty) {
-          // Take first segment before && or ;
-          summary = cmd.split(RegExp(r'\s*&&\s*|\s*;\s*')).first;
-        }
-        break;
-      }
+    final card = _toolCardFor(toolUseId);
+    if (card != null) {
+      card.isBackgrounded = true;
+      card.backgroundTaskId = taskId;
+      card.toolStreaming = true; // keep streaming
+      summary = _bashSummaryFromCard(card);
     }
 
     // Add to background tasks bar
@@ -10686,10 +10699,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
     if (replace && source != null) {
+      // The snapshot is scoped to this session, whose rows all belong to one
+      // backend. Rows rebuilt from history carry no source, so match those too.
       final settledIds = _subagentTasks.entries
           .where(
             (entry) =>
-                entry.value['source'] == source &&
+                (entry.value['source'] == source ||
+                    entry.value['source'] == null) &&
                 isActiveSubagentStatus(entry.value['status']) &&
                 !incomingIds.contains(entry.key),
           )
@@ -10926,7 +10942,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           card.toolInput?['prompt'] = prompt;
         }
       }
-    } else if (taskId.isNotEmpty) {
+    } else if (taskId.isNotEmpty && msg['isBackgrounded'] != false) {
+      // A foreground command is registered too, with isBackgrounded false.
+      // Its card already shows it; a pane row would outlive the turn and keep
+      // the card spinning. It gets a row if a task_updated backgrounds it.
       _backgroundTasks[taskId] = {
         'status': 'running',
         'summary': description,
@@ -11086,6 +11105,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           state['summary'] = patch['description'].toString();
         }
       }
+    } else if (taskId.isNotEmpty &&
+        !terminal &&
+        patch['isBackgrounded'] == true &&
+        !(toolUseId != null && _subagentTasks.containsKey(toolUseId))) {
+      // A foreground command moved to the background (Ctrl+B, or the app's
+      // "Run in background"). It had no row while in the foreground.
+      final card = toolUseId != null ? _toolCardFor(toolUseId) : null;
+      if (card != null) {
+        card.isBackgrounded = true;
+        card.backgroundTaskId = taskId;
+        card.toolStreaming = true;
+      }
+      _backgroundTasks[taskId] = {
+        'status': 'running',
+        'summary':
+            patch['description']?.toString() ??
+            (card != null
+                ? _bashSummaryFromCard(card)
+                : 'Bash command (backgrounded)'),
+        'source': 'claude_sdk',
+        'originToolUseId': ?toolUseId,
+      };
     }
     notifyListeners();
   }
@@ -11204,6 +11245,41 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// The heartbeat lists every task the server still runs. A backgrounded
+  /// subagent or workflow missing from it died with its server process (a
+  /// restart, usually), since a normal end always arrives as its own event.
+  /// Foreground subagents are not listed, so they are left alone.
+  void _settleTasksMissingFromServer(Set<String> serverTaskIds) {
+    for (final entry in _subagentTasks.entries) {
+      final state = entry.value;
+      final taskId = state['taskId']?.toString() ?? '';
+      if (state['isBackgrounded'] != true ||
+          !isActiveSubagentStatus(state['status']) ||
+          serverTaskIds.contains(entry.key) ||
+          (taskId.isNotEmpty && serverTaskIds.contains(taskId))) {
+        continue;
+      }
+      state['status'] = 'stopped';
+      state['terminalStatus'] = 'stopped';
+      state['isBackgrounded'] = false;
+      final card = _toolCardFor(entry.key);
+      if (card != null) {
+        card.toolStreaming = false;
+        card.isBackgrounded = false;
+        card.toolInput?['_task_status'] = 'stopped';
+      }
+    }
+    for (final entry in _workflowTasks.entries) {
+      final state = entry.value;
+      if (!isActiveSubagentStatus(state['status']) ||
+          serverTaskIds.contains(entry.key)) {
+        continue;
+      }
+      state['status'] = 'stopped';
+      _applyWorkflowToCard(state);
+    }
+  }
+
   void _handleTaskNotification(Map<String, dynamic> msg) {
     final taskId = msg['taskId'] as String? ?? '';
     final status = msg['status'] as String? ?? 'completed';
@@ -11214,12 +11290,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       taskId,
       originToolUseId,
     );
+    // "cancelled" means the backend dropped the tool call before it ran, so
+    // the task it would have started is over, not running.
+    final taskStatus = status == 'cancelled' ? 'stopped' : status;
     final terminal =
-        status == 'completed' || status == 'failed' || status == 'stopped';
+        taskStatus == 'completed' ||
+        taskStatus == 'failed' ||
+        taskStatus == 'stopped';
     final workflow = _workflowForTask(taskId, originToolUseId);
     if (workflow != null) {
       final state = workflow.value;
-      state['status'] = terminal ? status : 'running';
+      state['status'] = terminal ? taskStatus : 'running';
       if (summary.isNotEmpty) state['summary'] = summary;
       if (msg['usage'] is Map) {
         state['usage'] = Map<String, dynamic>.from(msg['usage'] as Map);
@@ -11233,10 +11314,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (subagentToolUseId != null &&
         _subagentTasks.containsKey(subagentToolUseId)) {
       final state = _subagentTasks[subagentToolUseId]!;
-      state['status'] = terminal ? status : 'running';
-      state['terminalStatus'] = terminal ? status : null;
-      state['taskId'] = taskId;
-      state['agentId'] = taskId;
+      state['status'] = terminal ? taskStatus : 'running';
+      state['terminalStatus'] = terminal ? taskStatus : null;
+      if (taskId.isNotEmpty) {
+        state['taskId'] = taskId;
+        state['agentId'] = taskId;
+      }
       state['isBackgrounded'] = !terminal;
       if (summary.isNotEmpty) state['summary'] = summary;
       if (msg['subagentType'] != null) {
@@ -11249,8 +11332,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (card != null) {
         card.toolStreaming = !terminal;
         card.isBackgrounded = !terminal;
-        card.backgroundTaskId = taskId;
-        card.toolInput?['_task_status'] = status;
+        if (taskId.isNotEmpty) card.backgroundTaskId = taskId;
+        card.toolInput?['_task_status'] = taskStatus;
         if (summary.isNotEmpty) card.toolInput?['_task_summary'] = summary;
         if (msg['usage'] is Map) {
           card.toolInput?['_task_usage'] = Map<String, dynamic>.from(
@@ -11291,7 +11374,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           m.toolStreaming = false;
         }
       }
-    } else {
+    } else if (taskId.isNotEmpty) {
       // For "started" notifications, try to find the originating tool card for better info
       String enrichedSummary = summary;
       String? resolvedOriginToolUseId = originToolUseId;
@@ -13082,7 +13165,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 status == 'pending' ||
                 status == 'running' ||
                 status == 'paused';
-            if (active) {
+            // A foreground command's card is enough; only backgrounded work
+            // gets a pane row.
+            if (active && entry['isBackgrounded'] != false) {
               historyBackgroundTasks[taskId] = {
                 'status': status,
                 'summary': description.isNotEmpty
@@ -13808,6 +13893,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           else
             'terminalStatus': ?restoredStatus,
           'toolUseId': m.toolUseId!,
+          if (previous?['source'] == null && _activeSessionBackend != null)
+            'source': _activeSessionBackend,
           'isBackgrounded': m.isBackgrounded,
           if (m.backgroundTaskId != null) 'taskId': m.backgroundTaskId,
           if (m.toolInput?['agentId'] != null)
@@ -18356,12 +18443,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (changed) _persistDismissedTasks();
   }
 
-  void dismissTodo(Map<String, dynamic> todo) {
-    if (!taskCanBeDismissed(todo)) return;
-    if (_dismissedTodoKeys.add(taskDisplayKey(todo))) {
-      _persistDismissedTasks();
-      notifyListeners();
+  /// Hides completed tasks by [taskDisplayKey]. Servers that support it hide
+  /// them on every device; this device also remembers them locally.
+  void dismissTasks(Iterable<String> keys) {
+    final completed = {
+      for (final todo in _todos)
+        if (taskCanBeDismissed(todo)) taskDisplayKey(todo),
+    };
+    final added = [
+      for (final key in keys)
+        if (completed.contains(key) && _dismissedTodoKeys.add(key)) key,
+    ];
+    if (added.isEmpty) return;
+    _persistDismissedTasks();
+    final sessionId = _activeSessionId;
+    final serverId = _activeSessionServerId;
+    if (sessionId != null &&
+        serverId != null &&
+        _serversWithTaskDismissals.contains(serverId)) {
+      _sendSessionSetting(sessionId, {'type': 'dismiss_tasks', 'keys': added});
     }
+    notifyListeners();
   }
 
   void dismissTodos() {

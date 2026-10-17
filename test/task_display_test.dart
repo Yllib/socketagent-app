@@ -21,6 +21,14 @@ void main() {
       visibleTasks(tasks, {'claude_tasks:17'}).single['content'],
       'Legacy task',
     );
+    expect(
+      visibleTasks([
+        {...tasks.first, 'dismissed': true},
+        tasks.last,
+      ], {}).single['content'],
+      'Legacy task',
+      reason: 'the server marks tasks dismissed on another device',
+    );
     expect(taskCanBeDismissed(tasks.first), true);
     expect(taskCanBeDismissed(tasks.last), false);
     expect(
@@ -49,15 +57,12 @@ void main() {
         'status': 'completed',
       },
     );
-    Map<String, dynamic>? dismissed;
+    final dismissed = <List<String>>[];
 
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: TodoListCard(
-            todos: tasks,
-            onDismissTodo: (task) => dismissed = task,
-          ),
+          body: TodoListCard(todos: tasks, onDismissTasks: dismissed.add),
         ),
       ),
     );
@@ -77,18 +82,56 @@ void main() {
     await tester.tap(
       find.byKey(const ValueKey('dismiss-task-claude_tasks:19')),
     );
-    await tester.pumpAndSettle();
-    expect(dismissed, isNull);
-    expect(find.text('Dismiss completed task?'), findsOneWidget);
-    await tester.tap(find.text('Cancel'));
-    await tester.pumpAndSettle();
-    expect(dismissed, isNull);
-    await tester.tap(
-      find.byKey(const ValueKey('dismiss-task-claude_tasks:19')),
+    await tester.pump();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Dismissing 3'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
+    expect(dismissed, [
+      ['claude_tasks:19'],
+    ]);
+
+    // The parent still passes every task, so all 20 count as done.
+    await tester.tap(find.text('Clear 20 done'));
+    await tester.pump(const Duration(seconds: 3));
+    expect(dismissed.last, hasLength(20), reason: 'one call for the batch');
+  });
+
+  testWidgets('a task reopened during the countdown is not dismissed', (
+    tester,
+  ) async {
+    var status = 'completed';
+    final dismissed = <List<String>>[];
+    late StateSetter update;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (_, setState) {
+              update = setState;
+              return TodoListCard(
+                todos: [
+                  {
+                    'id': '1',
+                    'source': 'claude_tasks',
+                    'content': 'Task',
+                    'status': status,
+                  },
+                ],
+                onDismissTasks: dismissed.add,
+              );
+            },
+          ),
+        ),
+      ),
     );
+    await tester.tap(find.byTooltip('Expand tasks'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Dismiss'));
-    await tester.pumpAndSettle();
-    expect(dismissed?['id'], '19');
+    await tester.tap(find.byTooltip('Dismiss completed task'));
+    await tester.pump(const Duration(seconds: 1));
+    update(() => status = 'in_progress');
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 3));
+    expect(dismissed, isEmpty);
+    expect(find.text('Task'), findsOneWidget);
   });
 }

@@ -159,38 +159,4 @@ void main() {
     await tester.pump(PendingPanelHides.delay);
     expect(committed, isFalse);
   });
-
-  testWidgets('a task that becomes active during confirmation is not removed', (
-    tester,
-  ) async {
-    var status = 'completed';
-    var removed = false;
-    late StateSetter update;
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: StatefulBuilder(
-            builder: (_, setState) {
-              update = setState;
-              return ProgressPanelRow(
-                entry: ProgressPanelEntry(
-                  text: 'Task',
-                  status: status,
-                  dismissKey: const ValueKey('task'),
-                  onDismiss: () => removed = true,
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-    await tester.tap(find.byTooltip('Dismiss completed task'));
-    await tester.pumpAndSettle();
-    update(() => status = 'in_progress');
-    await tester.pump();
-    await tester.tap(find.text('Dismiss'));
-    await tester.pumpAndSettle();
-    expect(removed, isFalse);
-  });
 }

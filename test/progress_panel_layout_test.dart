@@ -24,7 +24,7 @@ void main() {
                       {'content': 'Completed task', 'status': 'completed'},
                     ],
                     onDismiss: () {},
-                    onDismissTodo: (_) {},
+                    onDismissTasks: (_) {},
                   ),
                   CodexPlanCard(
                     msg: ChatMessage.codexPlan(

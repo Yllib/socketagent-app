@@ -1,25 +1,26 @@
 import 'package:flutter/material.dart';
 import '../config/app_palette.dart';
+import 'dismiss_countdown.dart';
 
 class ProgressPanelEntry {
   const ProgressPanelEntry({
     required this.text,
     required this.status,
-    this.onDismiss,
-    this.dismissKey,
+    this.dismissId,
     this.strikeCompleted = false,
     this.itemLabel = 'task',
-    this.confirmDismiss = true,
-    this.replacement,
   });
   final String text;
   final String status;
-  final VoidCallback? onDismiss;
-  final Key? dismissKey;
+
+  /// Set on completed entries the user may dismiss. Passed back through
+  /// [ProgressPanel.onDismissItems].
+  final String? dismissId;
   final bool strikeCompleted;
   final String itemLabel;
-  final bool confirmDismiss;
-  final Widget? replacement;
+
+  Key get dismissButtonKey =>
+      ValueKey('dismiss-${itemLabel.replaceAll(' ', '-')}-$dismissId');
 }
 
 /// Shared geometry and typography for task lists and agent plans.
@@ -32,6 +33,7 @@ class ProgressPanel extends StatefulWidget {
     required this.entries,
     this.explanation = '',
     this.onDismiss,
+    this.onDismissItems,
     this.dismissTooltip,
     this.hidingNotice,
     this.completedCount,
@@ -42,7 +44,13 @@ class ProgressPanel extends StatefulWidget {
   final Color accent;
   final List<ProgressPanelEntry> entries;
   final String explanation;
+
+  /// Hides the whole panel.
   final VoidCallback? onDismiss;
+
+  /// Removes entries by [ProgressPanelEntry.dismissId], after a countdown the
+  /// user can cancel.
+  final void Function(List<String> ids)? onDismissItems;
   final String? dismissTooltip;
   final Widget? hidingNotice;
   final int? completedCount;
@@ -55,12 +63,46 @@ class ProgressPanel extends StatefulWidget {
 class _ProgressPanelState extends State<ProgressPanel> {
   bool _expanded = false;
   final _scrollController = ScrollController();
+  late final _countdown = DismissCountdown<String>(
+    onChanged: () {
+      if (mounted) setState(() {});
+    },
+    onExpire: _expire,
+  );
+
+  /// Dismisses what is still completed when the countdown ends; a task the
+  /// agent reopened meanwhile stays.
+  void _expire(List<String> ids) {
+    final still = _dismissibleIds.toSet();
+    final valid = ids.where(still.contains).toList();
+    if (mounted && valid.isNotEmpty) widget.onDismissItems?.call(valid);
+  }
+
+  Iterable<String> get _dismissibleIds => widget.onDismissItems == null
+      ? const []
+      : widget.entries
+            .where((e) => e.dismissId != null && e.status == 'completed')
+            .map((e) => e.dismissId!);
 
   @override
   void dispose() {
+    _countdown.dispose();
     _scrollController.dispose();
     super.dispose();
   }
+
+  Widget _headerButton(String label, Key key, VoidCallback onPressed) =>
+      TextButton(
+        key: key,
+        onPressed: onPressed,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          minimumSize: const Size(0, 24),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          visualDensity: VisualDensity.compact,
+        ),
+        child: Text(label, style: const TextStyle(fontSize: 11)),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -72,6 +114,12 @@ class _ProgressPanelState extends State<ProgressPanel> {
     final active = widget.entries
         .where((e) => e.status == 'in_progress' || e.status == 'inProgress')
         .firstOrNull;
+    final clearable = _dismissibleIds
+        .where((id) => _countdown.remaining(id) == null)
+        .toList();
+    final dismissing = _dismissibleIds
+        .where((id) => _countdown.remaining(id) != null)
+        .length;
     final radius = BorderRadius.circular(_expanded ? 12 : 8);
     final progress = total == 0 ? 0.0 : completed / total;
     return Container(
@@ -123,6 +171,21 @@ class _ProgressPanelState extends State<ProgressPanel> {
                           ),
                         ),
                       ),
+                      if (dismissing > 1)
+                        _headerButton(
+                          'Cancel all',
+                          const ValueKey('cancel-dismiss-all'),
+                          _countdown.cancelAll,
+                        )
+                      else if (clearable.length > 1)
+                        _headerButton(
+                          'Clear ${clearable.length} done',
+                          const ValueKey('clear-done'),
+                          () {
+                            setState(() => _expanded = true);
+                            _countdown.start(clearable);
+                          },
+                        ),
                       SizedBox(
                         width: 24,
                         height: 24,
@@ -204,8 +267,18 @@ class _ProgressPanelState extends State<ProgressPanel> {
                         ),
                       for (final (index, entry) in widget.entries.indexed)
                         ProgressPanelRow(
-                          key: ValueKey((index, entry.dismissKey, entry.text)),
+                          key: ValueKey((index, entry.dismissId, entry.text)),
                           entry: entry,
+                          remaining: entry.dismissId == null
+                              ? null
+                              : _countdown.remaining(entry.dismissId!),
+                          onDismiss:
+                              entry.dismissId != null &&
+                                  entry.status == 'completed' &&
+                                  widget.onDismissItems != null
+                              ? () => _countdown.start([entry.dismissId!])
+                              : null,
+                          onCancel: () => _countdown.cancel([entry.dismissId!]),
                         ),
                     ],
                   ),
@@ -220,57 +293,22 @@ class _ProgressPanelState extends State<ProgressPanel> {
   }
 }
 
-class ProgressPanelRow extends StatefulWidget {
-  const ProgressPanelRow({super.key, required this.entry});
+/// One entry. While [remaining] is set the row counts down to dismissal.
+class ProgressPanelRow extends StatelessWidget {
+  const ProgressPanelRow({
+    super.key,
+    required this.entry,
+    this.remaining,
+    this.onDismiss,
+    this.onCancel,
+  });
   final ProgressPanelEntry entry;
-
-  @override
-  State<ProgressPanelRow> createState() => _ProgressPanelRowState();
-}
-
-class _ProgressPanelRowState extends State<ProgressPanelRow> {
-  bool _confirming = false;
-  ProgressPanelEntry get entry => widget.entry;
-
-  Future<void> _confirmDismiss() async {
-    if (_confirming || entry.onDismiss == null) return;
-    _confirming = true;
-    final targetKey = entry.dismissKey;
-    final targetText = entry.text;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Dismiss completed ${entry.itemLabel}?'),
-        content: SingleChildScrollView(
-          child: Text(
-            'Dismiss "$targetText" from this list? Its history and completed work are kept.',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Dismiss'),
-          ),
-        ],
-      ),
-    );
-    if (!mounted) return;
-    _confirming = false;
-    if (confirmed == true &&
-        entry.status == 'completed' &&
-        entry.dismissKey == targetKey &&
-        entry.text == targetText) {
-      entry.onDismiss?.call();
-    }
-  }
+  final int? remaining;
+  final VoidCallback? onDismiss;
+  final VoidCallback? onCancel;
 
   @override
   Widget build(BuildContext context) {
-    if (entry.replacement != null) return entry.replacement!;
     final completed = entry.status == 'completed';
     final active =
         entry.status == 'in_progress' || entry.status == 'inProgress';
@@ -284,58 +322,66 @@ class _ProgressPanelRowState extends State<ProgressPanelRow> {
         : active
         ? context.palette.yellow
         : context.palette.textMuted;
+    final remaining = this.remaining;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 24),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Icon(icon, size: 16, color: color),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                entry.text,
-                style: TextStyle(
-                  fontSize: 12,
-                  height: 1.4,
-                  color: completed
-                      ? context.palette.textSecondary
-                      : context.palette.text,
-                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
-                  decoration: completed && entry.strikeCompleted
-                      ? TextDecoration.lineThrough
-                      : null,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      child: DismissingFrame(
+        active: remaining != null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 24),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Icon(icon, size: 16, color: color),
                 ),
-              ),
-            ),
-            SizedBox(
-              width: 24,
-              height: 24,
-              child: entry.onDismiss == null
-                  ? null
-                  : IconButton(
-                      key: entry.dismissKey,
-                      tooltip: 'Dismiss completed ${entry.itemLabel}',
-                      onPressed: entry.confirmDismiss
-                          ? _confirmDismiss
-                          : entry.onDismiss,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints.tightFor(
-                        width: 24,
-                        height: 24,
-                      ),
-                      icon: Icon(
-                        Icons.close,
-                        size: 14,
-                        color: context.palette.textMuted,
-                      ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    entry.text,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.4,
+                      color: completed
+                          ? context.palette.textSecondary
+                          : context.palette.text,
+                      fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                      decoration: completed && entry.strikeCompleted
+                          ? TextDecoration.lineThrough
+                          : null,
                     ),
+                  ),
+                ),
+                if (remaining != null && onCancel != null)
+                  DismissingControls(remaining: remaining, onCancel: onCancel!)
+                else
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: onDismiss == null
+                        ? null
+                        : IconButton(
+                            key: entry.dismissButtonKey,
+                            tooltip: 'Dismiss completed ${entry.itemLabel}',
+                            onPressed: onDismiss,
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints.tightFor(
+                              width: 24,
+                              height: 24,
+                            ),
+                            icon: Icon(
+                              Icons.close,
+                              size: 14,
+                              color: context.palette.textMuted,
+                            ),
+                          ),
+                  ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
