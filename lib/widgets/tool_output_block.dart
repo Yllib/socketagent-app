@@ -158,6 +158,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   bool _expanded = false;
   // Showing the command's full output instead of what the agent saw.
   bool _showFullOutput = false;
+  // Drives the output pane's draggable scrollbar. A block shows one output
+  // pane at a time, so one controller is enough.
+  final _outputScroll = ScrollController();
   String? _cachedImageData;
   Uint8List? _cachedImageBytes;
   MemoryImage? _cachedImageProvider;
@@ -203,6 +206,12 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   void initState() {
     super.initState();
     _expanded = widget.expanded ?? false;
+  }
+
+  @override
+  void dispose() {
+    _outputScroll.dispose();
+    super.dispose();
   }
 
   void _toggleExpanded() {
@@ -899,6 +908,8 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
   }) {
     final structured = text == null ? null : decodeJsonDocument(text);
     final pane = Container(
+      // Full width, so the whole pane scrolls and not just the text's width.
+      width: double.infinity,
       constraints: const BoxConstraints(maxHeight: 300),
       decoration: BoxDecoration(
         border: Border(
@@ -906,21 +917,32 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         ),
       ),
       child: ScrollPassthrough(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
-          child: structured != null
-              ? StructuredDataView(value: structured, accent: _toolAccent)
-              : SelectableText(
-                  text ?? '',
-                  style: GoogleFonts.jetBrainsMono(
-                    fontSize: 11,
-                    color: muted
-                        ? context.palette.textMuted
-                        : context.palette.text,
-                    height: 1.4,
-                    fontStyle: muted ? FontStyle.italic : FontStyle.normal,
+        child: RawScrollbar(
+          controller: _outputScroll,
+          thumbVisibility: true,
+          interactive: true,
+          thickness: 10,
+          radius: const Radius.circular(5),
+          thumbColor: context.palette.textMuted.withAlpha(140),
+          // Starts below the copy button so the thumb never sits under it.
+          padding: const EdgeInsets.only(top: 36, bottom: 4, right: 2),
+          child: SingleChildScrollView(
+            controller: _outputScroll,
+            padding: const EdgeInsets.fromLTRB(12, 12, 20, 12),
+            child: structured != null
+                ? StructuredDataView(value: structured, accent: _toolAccent)
+                : SelectableText(
+                    text ?? '',
+                    style: GoogleFonts.jetBrainsMono(
+                      fontSize: 11,
+                      color: muted
+                          ? context.palette.textMuted
+                          : context.palette.text,
+                      height: 1.4,
+                      fontStyle: muted ? FontStyle.italic : FontStyle.normal,
+                    ),
                   ),
-                ),
+          ),
         ),
       ),
     );
