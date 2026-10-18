@@ -6562,6 +6562,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'session_memory_error':
           _handleSessionMemoryError(msg, serverId);
           break;
+        case 'model_changed':
+          final content = msg['content'] as String? ?? '';
+          if (content.isNotEmpty) {
+            _messages.add(_modelChangeMessage(content));
+            notifyListeners();
+          }
+          break;
         case 'permission_mode_changed':
           final mode = msg['permissionMode'] as String?;
           if (mode != null && mode.isNotEmpty && mode != _permissionMode) {
@@ -11877,7 +11884,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void setModel(String? model) {
-    _connMgr.send({'type': 'set_model', 'model': ?model});
+    // Naming the session lets the server change it even when this connection
+    // is attached elsewhere, and report an error instead of dropping it.
+    _connMgr.send({
+      'type': 'set_model',
+      'model': ?model,
+      'sessionId': ?_activeSessionId,
+    });
     if (model != null) _sessionModel = model;
     _normalizeEffortForSelectedModel();
     notifyListeners();
@@ -11892,6 +11905,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _permissionMode = mode;
     }
     notifyListeners();
+  }
+
+  /// Card for a model change the server recorded, live or from history.
+  ChatMessage _modelChangeMessage(String content) {
+    return ChatMessage(
+      id: 'model_${DateTime.now().microsecondsSinceEpoch}',
+      sender: MessageSender.system,
+      type: MessageType.taskNotification,
+      timestamp: DateTime.now(),
+      textContent: content,
+      toolName: 'model_change',
+    );
   }
 
   ChatMessage _permissionModeMessage(String mode) {
@@ -13218,6 +13243,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               }
             }
           }
+          break;
+        case 'model_change':
+          if (content.isNotEmpty) loaded.add(_modelChangeMessage(content));
           break;
         case 'permission_mode':
           final mode = entry['permissionMode'] as String?;

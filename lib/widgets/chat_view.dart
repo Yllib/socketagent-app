@@ -2078,6 +2078,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final isUploaded = status == 'uploaded';
     final isTodoUpdate = status == 'todos_updated';
     final isPermissionMode = status == 'permission_mode';
+    final isModelChange = status == 'model_change';
     final originToolUseId = msg.originToolUseId ?? msg.parentToolUseId;
     final slashCommandId = originToolUseId ?? msg.toolUseId ?? '';
     final isSlashCommand = slashCommandId.startsWith('codex_slash_');
@@ -2112,6 +2113,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       bgColor = theme.colorScheme.tertiaryContainer.withAlpha(70);
     } else if (isPermissionMode) {
       icon = Icons.shield_outlined;
+      color = context.palette.shade(Colors.cyan, 300);
+      bgColor = Colors.cyan.shade900.withAlpha(40);
+    } else if (isModelChange) {
+      icon = Icons.smart_toy_outlined;
       color = context.palette.shade(Colors.cyan, 300);
       bgColor = Colors.cyan.shade900.withAlpha(40);
     } else if (isCancelled) {
@@ -2189,6 +2194,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                   ? 'COMMAND'
                   : isPermissionMode
                   ? 'PERMISSION'
+                  : isModelChange
+                  ? 'MODEL'
                   : status.toUpperCase(),
               style: TextStyle(
                 color: color,
