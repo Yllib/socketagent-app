@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/raw_event.dart';
 import 'scroll_passthrough.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 /// Card for a single SdkItem — either a message group or standalone event
 class RawEventCard extends StatefulWidget {
@@ -90,13 +91,10 @@ class _RawEventCardState extends State<RawEventCard> {
                   if (!g.complete)
                     Padding(
                       padding: EdgeInsets.only(left: 6),
-                      child: SizedBox(
-                        width: 10,
-                        height: 10,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 1.5,
-                          color: context.palette.textFaint,
-                        ),
+                      child: RunningIndicator(
+                        size: 10,
+                        strokeWidth: 1.5,
+                        color: context.palette.textFaint,
                       ),
                     ),
                   const SizedBox(width: 4),
@@ -172,13 +170,10 @@ class _RawEventCardState extends State<RawEventCard> {
               ),
               if (!b.complete) ...[
                 const SizedBox(width: 6),
-                SizedBox(
-                  width: 8,
-                  height: 8,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 1.5,
-                    color: context.palette.textFaint,
-                  ),
+                RunningIndicator(
+                  size: 8,
+                  strokeWidth: 1.5,
+                  color: context.palette.textFaint,
                 ),
               ],
             ],

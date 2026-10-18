@@ -11,6 +11,7 @@ import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
 import 'zoomable_image.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 bool _isStructuredToolContent(dynamic value) {
   if (value is List) {
@@ -482,13 +483,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                           ),
                         ),
                       ),
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: accentColor,
-                      ),
+                    RunningIndicator(
+                      size: 14,
+                      strokeWidth: 2,
+                      color: accentColor,
                     ),
                   ],
                 ],
@@ -601,13 +599,10 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: context.palette.textMuted,
-                    ),
+                  RunningIndicator(
+                    size: 14,
+                    strokeWidth: 2,
+                    color: context.palette.textMuted,
                   ),
                   const SizedBox(width: 8),
                   Text(

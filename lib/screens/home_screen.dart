@@ -60,6 +60,7 @@ import 'session_analytics_screen.dart';
 import 'session_memory_screen.dart';
 import '../widgets/session_backend_watermark.dart';
 import '../config/app_palette.dart';
+import '../widgets/second_ticker.dart';
 
 /// One row of the context dialog, optionally opening onto its own rows.
 ///
@@ -1573,7 +1574,8 @@ class _ChatScreenState extends State<_ChatScreen> {
                                 setState(() => _followLatest = follow);
                               }
                             },
-                            processingElapsed: provider.currentPromptElapsed,
+                            processingStartedAt:
+                                provider.currentPromptStartedAt,
                             isCompacting: provider.isCompacting,
                             // Offline with nothing cached shows the empty
                             // transcript instead of a spinner that never ends.
@@ -3753,13 +3755,10 @@ class _ChatScreenState extends State<_ChatScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Theme.of(context).colorScheme.onSecondaryContainer,
-            ),
+          RunningIndicator(
+            size: 14,
+            strokeWidth: 2,
+            color: Theme.of(context).colorScheme.onSecondaryContainer,
           ),
           const SizedBox(width: 8),
           Text(
@@ -3784,13 +3783,10 @@ class _ChatScreenState extends State<_ChatScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: colors.onSecondaryContainer,
-            ),
+          RunningIndicator(
+            size: 14,
+            strokeWidth: 2,
+            color: colors.onSecondaryContainer,
           ),
           const SizedBox(width: 8),
           Flexible(
@@ -3817,13 +3813,10 @@ class _ChatScreenState extends State<_ChatScreen> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          SizedBox(
-            width: 14,
-            height: 14,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: Theme.of(context).colorScheme.onTertiaryContainer,
-            ),
+          RunningIndicator(
+            size: 14,
+            strokeWidth: 2,
+            color: Theme.of(context).colorScheme.onTertiaryContainer,
           ),
           const SizedBox(width: 8),
           Text(

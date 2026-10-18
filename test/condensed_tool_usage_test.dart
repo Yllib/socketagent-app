@@ -40,15 +40,11 @@ void main() {
       final text = _text('reply', MessageSender.assistant, 'partial', 0);
       final thinking = ChatMessage.thinking()..thinkingTokens = 12;
       final messages = [text, thinking];
-      List<CondensedChatRow> render({
-        bool processing = false,
-        int second = 0,
-      }) => cache.render(
+      List<CondensedChatRow> render({bool processing = false}) => cache.render(
         messages,
         messageKey: _key,
         enabled: true,
         isProcessing: processing,
-        now: DateTime(2026, 1, 1, 12, 1, second),
       );
       final first = render();
       expect(identical(render(), first), isTrue);
@@ -63,7 +59,17 @@ void main() {
       expect(identical(updated, first), isFalse);
       expect((updated.last as CondensedWorkRow).metrics.thinkingTokens, 30);
       final live = render(processing: true);
-      expect(identical(render(processing: true, second: 1), live), isFalse);
+      expect(identical(live, updated), isFalse);
+      // The clock is not an input; the live header ticks on its own.
+      expect(identical(render(processing: true), live), isTrue);
+      final liveMetrics = (live.last as CondensedWorkRow).metrics;
+      expect(liveMetrics.liveSince, thinking.timestamp);
+      expect(
+        liveMetrics.elapsedAt(
+          thinking.timestamp.add(const Duration(minutes: 2)),
+        ),
+        const Duration(minutes: 2),
+      );
       messages.insert(0, _text('older', MessageSender.user, 'earlier', 0));
       expect(render(), hasLength(3));
     },

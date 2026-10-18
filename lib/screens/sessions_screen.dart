@@ -28,6 +28,7 @@ import 'onboarding_screen.dart';
 import 'session_browser_screen.dart';
 import '../config/app_palette.dart';
 import '../widgets/light_backdrop.dart';
+import '../widgets/second_ticker.dart';
 
 /// Teleport asks before sending a transcript at least this large, uncompressed.
 const _largeTranscriptBytes = 100 * 1024 * 1024;
@@ -4394,13 +4395,10 @@ class _SessionsTabState extends State<SessionsTab> {
                                   MaterialTapTargetSize.shrinkWrap,
                             )
                           : showBusy
-                          ? SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: theme.colorScheme.primary,
-                              ),
+                          ? RunningIndicator(
+                              size: 20,
+                              strokeWidth: 2,
+                              color: theme.colorScheme.primary,
                             )
                           : Icon(
                               delegated

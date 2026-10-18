@@ -12,14 +12,13 @@ class CondensedChatRowsCache {
     required String Function(ChatMessage) messageKey,
     required bool enabled,
     required bool isProcessing,
-    DateTime? now,
   }) {
     final entries = messages.toList(growable: false);
-    final time = now ?? DateTime.now();
+    // The clock is not an input. A live row's header ticks its own elapsed
+    // label from [CondensedWorkMetrics.liveSince].
     final inputs = <Object?>[
       enabled,
       isProcessing,
-      if (enabled && isProcessing) time.millisecondsSinceEpoch ~/ 1000,
       for (final message in entries)
         (
           message,
@@ -41,7 +40,6 @@ class CondensedChatRowsCache {
       messageKey: messageKey,
       enabled: enabled,
       isProcessing: isProcessing,
-      now: time,
     );
   }
 }
@@ -78,6 +76,7 @@ class CondensedWorkMetrics {
     required this.thinkingTokens,
     required this.thinkingDuration,
     required this.elapsed,
+    this.liveSince,
     required this.subagents,
     required this.failures,
     required this.internalEvents,
@@ -87,10 +86,22 @@ class CondensedWorkMetrics {
   final int thinkingBlocks;
   final int thinkingTokens;
   final Duration thinkingDuration;
+
+  /// Elapsed time when the rows were built. Use [elapsedAt] for live rows.
   final Duration elapsed;
+
+  /// Start of a row that is still running, for a label that keeps counting.
+  final DateTime? liveSince;
   final int subagents;
   final int failures;
   final int internalEvents;
+
+  Duration elapsedAt(DateTime now) {
+    final since = liveSince;
+    if (since == null) return elapsed;
+    final span = now.difference(since);
+    return span.isNegative ? Duration.zero : span;
+  }
 
   factory CondensedWorkMetrics.fromMessages(
     List<ChatMessage> messages, {
@@ -149,6 +160,9 @@ class CondensedWorkMetrics {
     }
 
     return CondensedWorkMetrics(
+      liveSince: liveNow != null && messages.isNotEmpty
+          ? messages.first.timestamp
+          : null,
       toolUses: toolUses.length,
       thinkingBlocks: thinkingBlocks,
       thinkingTokens: thinkingTokens,

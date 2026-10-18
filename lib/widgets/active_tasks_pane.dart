@@ -12,6 +12,7 @@ import 'reminder_card.dart';
 import 'dismiss_countdown.dart';
 import 'dismissible_panel_items.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 class ActiveTasksPane extends StatefulWidget {
   final Map<String, Map<String, dynamic>> backgroundTasks;
@@ -348,13 +349,10 @@ class _ActiveTasksPaneState extends State<ActiveTasksPane> {
                             e.status == 'pending' ||
                             e.status == 'paused',
                       ))
-                        SizedBox(
-                          width: 10,
-                          height: 10,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 1.5,
-                            color: context.palette.shade(Colors.blue, 300),
-                          ),
+                        RunningIndicator(
+                          size: 10,
+                          strokeWidth: 1.5,
+                          color: context.palette.shade(Colors.blue, 300),
                         )
                       else
                         Icon(

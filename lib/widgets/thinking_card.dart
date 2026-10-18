@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../models/message.dart';
 import 'scroll_passthrough.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 class ThinkingCard extends StatefulWidget {
   final ChatMessage message;
@@ -84,13 +85,10 @@ class _ThinkingCardState extends State<ThinkingCard> {
                       if (isStreaming)
                         Padding(
                           padding: EdgeInsets.only(right: 8),
-                          child: SizedBox(
-                            width: 12,
-                            height: 12,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 1.5,
-                              color: context.palette.mauve,
-                            ),
+                          child: RunningIndicator(
+                            size: 12,
+                            strokeWidth: 1.5,
+                            color: context.palette.mauve,
                           ),
                         ),
                       if (hasText && details.isNotEmpty)

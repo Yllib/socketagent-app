@@ -10,6 +10,7 @@ import '../services/desktop_shortcuts.dart';
 import '../services/desktop_workspace_controller.dart';
 import '../widgets/device_approval_dialog.dart';
 import '../widgets/desktop_split_view.dart';
+import '../widgets/pause_while_hidden.dart';
 import 'home_screen.dart';
 import '../services/connection_manager.dart';
 import '../services/update_service.dart';
@@ -440,12 +441,18 @@ class MainShellScreenState extends State<MainShellScreen>
               child: IndexedStack(
                 index: _currentIndex,
                 children: [
+                  // The desktop tab holds the open chat beside the sidebar,
+                  // so it keeps listening while covered.
                   if (Platform.isWindows)
                     _desktopSessions()
                   else
-                    const SessionsTab(),
-                  const ScheduledTasksScreen(),
-                  SettingsV2Screen(updateService: _updateService),
+                    const PauseWhileHidden<ChatProvider>(child: SessionsTab()),
+                  const PauseWhileHidden<ChatProvider>(
+                    child: ScheduledTasksScreen(),
+                  ),
+                  PauseWhileHidden<ChatProvider>(
+                    child: SettingsV2Screen(updateService: _updateService),
+                  ),
                 ],
               ),
             ),
@@ -453,9 +460,9 @@ class MainShellScreenState extends State<MainShellScreen>
         ),
         bottomNavigationBar: Platform.isWindows
             ? null
-            : Consumer<ChatProvider>(
-                builder: (context, provider, _) {
-                  final unreadTasks = provider.unreadScheduledTaskCount;
+            : Selector<ChatProvider, int>(
+                selector: (_, provider) => provider.unreadScheduledTaskCount,
+                builder: (context, unreadTasks, _) {
                   return NavigationBar(
                     selectedIndex: _currentIndex,
                     onDestinationSelected: _onTabChanged,

@@ -1740,12 +1740,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   bool get isProcessing => _isProcessing;
-  Duration? get currentPromptElapsed {
-    final startedAt = _currentPromptStartedAt;
-    if (!_isProcessing || startedAt == null) return null;
-    final elapsed = DateTime.now().difference(startedAt);
-    return elapsed.isNegative ? Duration.zero : elapsed;
-  }
+
+  /// When the running prompt started. The chat's status row ticks its own
+  /// elapsed label from this, so the provider does not notify every second.
+  DateTime? get currentPromptStartedAt =>
+      _isProcessing ? _currentPromptStartedAt : null;
 
   bool get isCompacting => _isCompacting;
   bool get requiresAction => _requiresAction;
@@ -1817,12 +1816,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (replace || _currentPromptStartedAt == null) {
       _currentPromptStartedAt = effectiveStartedAt;
     }
+    // Only a safety net that clears the start time if processing ends
+    // without an explicit stop. The elapsed label ticks on its own.
     _promptRuntimeTimer ??= Timer.periodic(const Duration(seconds: 1), (_) {
       if (!_isProcessing || _currentPromptStartedAt == null) {
         _stopPromptRuntime();
-        return;
       }
-      notifyListeners();
     });
     _markSessionRunning(
       _activeSessionId,
@@ -9320,7 +9319,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _currentStreamingMessage = existing;
         _currentStreamingStreamId = streamId;
         if (existing.textContent.trim().isNotEmpty &&
-            !_messages.contains(existing)) {
+            !_hasLiveMessage(existing)) {
           _messages.add(existing);
         }
         notifyListeners();
@@ -9332,7 +9331,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         positionedMessage ??
         _streamingMessagesByKey[streamKey] ??
         _assistantMessagesByStreamKey[streamKey];
-    if (streamMessage != null && !_messages.contains(streamMessage)) {
+    if (streamMessage != null && !_hasLiveMessage(streamMessage)) {
       final reconciled = _findReplayedAssistantMessage(
         content,
         parentToolUseId: parentToolUseId,
@@ -9403,11 +9402,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     // Only add to the message list once there's visible content
     if (streamMessage.textContent.trim().isNotEmpty &&
-        !_messages.contains(streamMessage)) {
+        !_hasLiveMessage(streamMessage)) {
       _messages.add(streamMessage);
     }
 
     notifyListeners();
+  }
+
+  /// Whether [message] is in the transcript. Searches from the end because
+  /// a streaming message is almost always one of the last rows, which keeps
+  /// the check off the full transcript on every delta.
+  bool _hasLiveMessage(ChatMessage message) {
+    for (var i = _messages.length - 1; i >= 0; i--) {
+      if (identical(_messages[i], message)) return true;
+    }
+    return false;
   }
 
   void _closeThinkingMessage() {

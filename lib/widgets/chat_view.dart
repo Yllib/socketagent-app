@@ -44,6 +44,7 @@ import 'socketagent_tool_card.dart';
 import '../models/composer_attachment.dart';
 import '../config/app_palette.dart';
 import 'light_backdrop.dart';
+import 'second_ticker.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -56,7 +57,7 @@ class ChatView extends StatefulWidget {
   final bool followLatest;
   final bool condensedToolUsage;
   final ValueChanged<bool>? onFollowLatestChanged;
-  final Duration? processingElapsed;
+  final DateTime? processingStartedAt;
   final bool isCompacting;
   final bool isLoadingHistory;
   final bool isLoadingMore;
@@ -121,7 +122,7 @@ class ChatView extends StatefulWidget {
     this.followLatest = true,
     this.condensedToolUsage = false,
     this.onFollowLatestChanged,
-    this.processingElapsed,
+    this.processingStartedAt,
     this.isCompacting = false,
     this.isLoadingHistory = false,
     this.isLoadingMore = false,
@@ -1605,64 +1606,73 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }) {
     final theme = Theme.of(context);
     final summary = _condensedSummary(row.metrics);
-    final details = _condensedDetails(row.metrics);
-    return Semantics(
-      button: true,
-      expanded: expanded,
-      label: '$summary. $details',
-      child: InkWell(
-        key: key,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-          child: Row(
-            children: [
-              Icon(
-                expanded ? Icons.expand_more : Icons.chevron_right,
-                size: 19,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                Icons.view_stream_outlined,
-                size: 16,
-                color: theme.colorScheme.primary,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      summary,
-                      key: summaryKey,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if (details.isNotEmpty)
+    Widget header(BuildContext context) {
+      final details = _condensedDetails(row.metrics, DateTime.now());
+      return Semantics(
+        button: true,
+        expanded: expanded,
+        label: '$summary. $details',
+        child: InkWell(
+          key: key,
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+            child: Row(
+              children: [
+                Icon(
+                  expanded ? Icons.expand_more : Icons.chevron_right,
+                  size: 19,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Icon(
+                  Icons.view_stream_outlined,
+                  size: 16,
+                  color: theme.colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        details,
+                        summary,
+                        key: summaryKey,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          color: theme.colorScheme.onSurfaceVariant,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    if (row.messages.isNotEmpty)
-                      MessageTimestamp(timestamp: row.messages.first.timestamp),
-                  ],
+                      if (details.isNotEmpty)
+                        Text(
+                          details,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      if (row.messages.isNotEmpty)
+                        MessageTimestamp(
+                          timestamp: row.messages.first.timestamp,
+                        ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
-      ),
-    );
+      );
+    }
+
+    // A live row's elapsed label ticks once a second on its own.
+    return row.metrics.liveSince == null
+        ? header(context)
+        : EverySecond(builder: header);
   }
 
   /// Copy of an expanded group's header, pinned over the top of the viewport
@@ -1723,13 +1733,14 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     return parts.join(' · ');
   }
 
-  String _condensedDetails(CondensedWorkMetrics metrics) {
+  String _condensedDetails(CondensedWorkMetrics metrics, DateTime now) {
     final parts = <String>[];
-    if (metrics.elapsed > Duration.zero) {
+    final elapsed = metrics.elapsedAt(now);
+    if (elapsed > Duration.zero) {
       parts.add(
-        metrics.elapsed < const Duration(seconds: 1)
+        elapsed < const Duration(seconds: 1)
             ? '<1s elapsed'
-            : '${_formatElapsed(metrics.elapsed)} elapsed',
+            : '${_formatElapsed(elapsed)} elapsed',
       );
     }
     if (metrics.thinkingDuration >= const Duration(seconds: 1)) {
@@ -1988,11 +1999,23 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   Widget _buildThinkingIndicator(BuildContext context) {
     if (!widget.isProcessing) return _buildWaitingOnAgentRow(context);
     final theme = Theme.of(context);
-    final elapsed = widget.processingElapsed;
+    final startedAt = widget.processingStartedAt;
     final labelBase = widget.isCompacting ? 'Compacting context' : 'Working';
-    final label = elapsed == null
-        ? '$labelBase...'
-        : '$labelBase - ${_formatElapsed(elapsed)}';
+    Widget label(BuildContext context) {
+      final elapsed = startedAt == null
+          ? null
+          : DateTime.now().difference(startedAt);
+      return Text(
+        elapsed == null
+            ? '$labelBase...'
+            : '$labelBase - ${_formatElapsed(elapsed)}',
+        style: TextStyle(
+          color: theme.colorScheme.onSurface.withAlpha(178),
+          fontSize: 14,
+          fontStyle: FontStyle.italic,
+        ),
+      );
+    }
 
     return Align(
       alignment: Alignment.centerLeft,
@@ -2011,23 +2034,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: theme.colorScheme.primary,
-              ),
-            ),
+            RunningIndicator(size: 16, color: theme.colorScheme.primary),
             const SizedBox(width: 10),
-            Text(
-              label,
-              style: TextStyle(
-                color: theme.colorScheme.onSurface.withAlpha(178),
-                fontSize: 14,
-                fontStyle: FontStyle.italic,
-              ),
-            ),
+            // Only the label rebuilds each second, not the chat.
+            startedAt == null ? label(context) : EverySecond(builder: label),
           ],
         ),
       ),
@@ -2057,7 +2067,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   String _formatElapsed(Duration duration) {
-    final totalSeconds = duration.inSeconds;
+    // A server start time can be slightly ahead of this device's clock.
+    final totalSeconds = duration.isNegative ? 0 : duration.inSeconds;
     final hours = totalSeconds ~/ 3600;
     final minutes = (totalSeconds % 3600) ~/ 60;
     final seconds = totalSeconds % 60;

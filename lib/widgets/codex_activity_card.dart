@@ -8,6 +8,7 @@ import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
 import 'tool_output_block.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 class CodexActivityCard extends StatefulWidget {
   final ChatMessage message;
@@ -300,14 +301,7 @@ class _CodexActivityCardState extends State<CodexActivityCard> {
                     ),
                   ),
                   if (isStreaming)
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: _accent,
-                      ),
-                    )
+                    RunningIndicator(size: 14, strokeWidth: 2, color: _accent)
                   else if (_hasDetails)
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,

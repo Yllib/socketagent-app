@@ -1,5 +1,6 @@
 import 'package:app/models/message.dart';
 import 'package:app/widgets/subagent_card.dart';
+import 'package:app/widgets/second_ticker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -34,7 +35,7 @@ void main() {
       find.text('Checking task events  •  12s · 640 tokens'),
       findsOneWidget,
     );
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(RunningIndicator), findsOneWidget);
   });
 
   testWidgets('failed subagent renders a terminal failed card', (tester) async {
@@ -61,7 +62,7 @@ void main() {
 
     expect(find.text('Failed'), findsOneWidget);
     expect(find.text('Agent failed'), findsOneWidget);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(RunningIndicator), findsNothing);
   });
 
   testWidgets('delegated response expands from preview to full result', (

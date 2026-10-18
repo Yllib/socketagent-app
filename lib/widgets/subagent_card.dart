@@ -15,6 +15,7 @@ import 'inline_chat_images.dart';
 import 'markdown_blocks.dart';
 import 'message_timestamp.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 class SubAgentCard extends StatefulWidget {
   final ChatMessage message;
@@ -256,13 +257,10 @@ class _SubAgentCardState extends State<SubAgentCard> {
                           ),
                         ),
                       ),
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: context.palette.blue,
-                      ),
+                    RunningIndicator(
+                      size: 14,
+                      strokeWidth: 2,
+                      color: context.palette.blue,
                     ),
                   ] else if (hasExpandableContent)
                     Icon(

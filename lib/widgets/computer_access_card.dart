@@ -6,6 +6,7 @@ import '../models/computer_access.dart';
 import '../models/device_registry.dart';
 import '../models/message.dart';
 import '../services/chat_provider.dart';
+import 'second_ticker.dart';
 
 /// A `computer_access_request` card. An agent on one computer wants to act
 /// on another; this device signs the answer so the source can't forge it.
@@ -58,10 +59,23 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
   Widget build(BuildContext context) {
     final request = _request;
     if (request == null) return const SizedBox.shrink();
-    final palette = context.palette;
-    final theme = Theme.of(context);
     final status =
         widget.message.toolInput?['status'] as String? ?? request.status;
+    // A pending request counts down to its expiry once a second.
+    return status == 'pending'
+        ? EverySecond(
+            builder: (context) => _buildCard(context, request, status),
+          )
+        : _buildCard(context, request, status);
+  }
+
+  Widget _buildCard(
+    BuildContext context,
+    ComputerAccessRequest request,
+    String status,
+  ) {
+    final palette = context.palette;
+    final theme = Theme.of(context);
     final now = DateTime.now();
     final expired =
         status == 'expired' || (status == 'pending' && request.isExpired(now));

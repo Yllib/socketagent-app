@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/message.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 class WorkflowCard extends StatefulWidget {
   final ChatMessage message;
@@ -90,13 +91,10 @@ class _WorkflowCardState extends State<WorkflowCard> {
                 child: Row(
                   children: [
                     _active
-                        ? SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: _statusColor,
-                            ),
+                        ? RunningIndicator(
+                            size: 18,
+                            strokeWidth: 2,
+                            color: _statusColor,
                           )
                         : Icon(
                             _text('status') == 'completed'
@@ -291,11 +289,7 @@ class _WorkflowCardState extends State<WorkflowCard> {
       dense: true,
       visualDensity: VisualDensity.compact,
       leading: active
-          ? SizedBox(
-              width: 13,
-              height: 13,
-              child: CircularProgressIndicator(strokeWidth: 1.5, color: color),
-            )
+          ? RunningIndicator(size: 13, strokeWidth: 1.5, color: color)
           : Icon(
               status == 'completed' ? Icons.check_circle : Icons.error_outline,
               color: color,

@@ -5,6 +5,7 @@ import '../models/message.dart';
 import 'scroll_passthrough.dart';
 import 'structured_data_view.dart';
 import '../config/app_palette.dart';
+import 'second_ticker.dart';
 
 class SocketAgentToolCard extends StatefulWidget {
   final ChatMessage message;
@@ -132,14 +133,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
                     ),
                   ),
                   if (widget.message.toolStreaming)
-                    SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: accent,
-                      ),
-                    )
+                    RunningIndicator(size: 14, strokeWidth: 2, color: accent)
                   else
                     Icon(
                       _expanded ? Icons.expand_less : Icons.expand_more,
