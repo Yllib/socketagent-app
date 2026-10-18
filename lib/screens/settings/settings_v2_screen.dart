@@ -1307,6 +1307,25 @@ class _SettingsV2ServerDetailScreenState
                           )
                         : null,
                   ),
+                  if (provider.serverSentFileRetentionDays(config.id)
+                      case final days?)
+                    _NavTile(
+                      icon: Icons.delete_sweep_outlined,
+                      title: 'Keep sent files',
+                      subtitle: days == 0
+                          ? 'Forever'
+                          : days == 1
+                          ? '1 day'
+                          : '$days days',
+                      trailing: connected ? Icons.edit_outlined : null,
+                      onTap: connected
+                          ? () => _showSentFileRetentionDialog(
+                              provider,
+                              config,
+                              days,
+                            )
+                          : null,
+                    ),
                 ],
               ),
             ],
@@ -1384,6 +1403,56 @@ class _SettingsV2ServerDetailScreenState
       config.id,
       selected == -1 ? null : selected,
     );
+  }
+
+  Future<void> _showSentFileRetentionDialog(
+    ChatProvider provider,
+    ServerConfig config,
+    int current,
+  ) async {
+    final controller = TextEditingController(text: '$current');
+    String? error;
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Keep sent files'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Days',
+              helperText: '0 keeps them forever',
+              errorText: error,
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final value = int.tryParse(controller.text.trim());
+                if (value == null || value < 0 || value > 3650) {
+                  setDialogState(() {
+                    error = 'Enter a whole number from 0 to 3650';
+                  });
+                  return;
+                }
+                Navigator.pop(dialogContext, value);
+              },
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (!mounted || selected == null) return;
+    provider.setServerSentFileRetentionDays(config.id, selected);
   }
 
   Future<void> _registerPush(ChatProvider provider, ServerConfig config) async {

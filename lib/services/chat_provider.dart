@@ -823,6 +823,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, bool> _sessionClaudeAutoCompact = {};
   final Map<String, int> _sessionClaudeAutoCompactWindows = {};
   final Map<String, int> _serverClaudeAutoCompactWindows = {};
+  // Days each server keeps SendFile snapshots; 0 keeps them forever. Absent
+  // for servers too old to report it.
+  final Map<String, int> _serverSentFileRetentionDays = {};
   final Set<String> _locallyClearedSessions = {};
   // Background tasks: taskId → {status, summary, outputFile}
   final Map<String, Map<String, dynamic>> _backgroundTasks = {};
@@ -15997,6 +16000,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serverClaudeAutoCompactWindows.remove(serverId);
     }
 
+    final sentFileRetention = msg['sentFileRetentionDays'];
+    if (sentFileRetention is num) {
+      _serverSentFileRetentionDays[serverId] = sentFileRetention.toInt();
+    }
+
     final rawModes = msg['codexCollaborationModes'];
     if (rawModes is List) {
       _serverCodexCollaborationModes[serverId] = rawModes
@@ -16086,11 +16094,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? systemPrompt,
     int? claudeAutoCompactWindow,
     bool includeClaudeAutoCompactWindow = false,
+    int? sentFileRetentionDays,
   }) {
     final msg = <String, dynamic>{
       'type': 'set_server_settings',
       'defaultCwd': ?defaultCwd,
       'systemPrompt': ?systemPrompt,
+      'sentFileRetentionDays': ?sentFileRetentionDays,
       if (includeClaudeAutoCompactWindow)
         'claudeAutoCompactWindow': claudeAutoCompactWindow,
     };
@@ -18344,6 +18354,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'set_claude_auto_compact_window',
       if (window == null) 'clearOverride': true else 'window': window,
     });
+    notifyListeners();
+  }
+
+  int? serverSentFileRetentionDays(String? serverId) {
+    if (serverId == null) return null;
+    return _serverSentFileRetentionDays[serverId];
+  }
+
+  void setServerSentFileRetentionDays(String serverId, int days) {
+    _serverSentFileRetentionDays[serverId] = days;
+    _sendServerSettings(serverId, sentFileRetentionDays: days);
     notifyListeners();
   }
 
