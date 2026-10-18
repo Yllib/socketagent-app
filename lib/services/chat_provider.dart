@@ -5436,6 +5436,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'tool_stderr':
           _handleToolStderr(msg);
           break;
+        case 'full_output':
+          _handleFullOutput(msg);
+          break;
         case 'question':
           _handleQuestion(msg);
           break;
@@ -9706,6 +9709,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final pendingStream = _toolEventReconciler.takeStream(toolUseId);
     if (pendingResult != null) {
       toolMsg.toolOutput = pendingResult.output;
+      toolMsg.fullOutputBytes = pendingResult.fullOutputBytes;
       if (pendingResult.subagentStatus != null) {
         toolMsg.toolInput?['_task_status'] = subagentDisplayStatus(
           pendingResult.subagentStatus,
@@ -9771,6 +9775,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final toolUseId = msg['toolUseId'] as String? ?? '';
     final output = msg['output'] as String? ?? '';
     final backgroundPending = msg['backgroundPending'] == true;
+    final fullOutputBytes = (msg['fullOutputBytes'] as num?)?.toInt();
 
     if (_suppressedToolUseIds.remove(toolUseId)) return;
 
@@ -9783,6 +9788,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     if (toolCallIdx >= 0) {
       _messages[toolCallIdx].toolOutput = output;
+      _messages[toolCallIdx].fullOutputBytes = fullOutputBytes;
       _messages[toolCallIdx].toolStreaming = backgroundPending;
       _messages[toolCallIdx].isBackgrounded = backgroundPending;
       if (backgroundPending) {
@@ -9812,8 +9818,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         subagentStatus: msg['subagentStatus'] as String?,
         parentToolUseId: msg['parentToolUseId'] as String?,
         backgroundPending: backgroundPending,
+        fullOutputBytes: fullOutputBytes,
       );
     }
+    notifyListeners();
+  }
+
+  /// Asks the server for a command's stored full output; see [ChatMessage.fullOutputBytes].
+  void requestFullOutput(ChatMessage message) {
+    final sessionId = _activeSessionId;
+    final toolUseId = message.toolUseId;
+    if (sessionId == null || toolUseId == null || message.fullOutputLoading) {
+      return;
+    }
+    message.fullOutputLoading = true;
+    _ws.send({
+      'type': 'get_full_output',
+      'sessionId': sessionId,
+      'toolUseId': toolUseId,
+    });
+    notifyListeners();
+  }
+
+  void _handleFullOutput(Map<String, dynamic> msg) {
+    if (msg['sessionId'] != _activeSessionId) return;
+    final toolUseId = msg['toolUseId'] as String?;
+    final idx = _messages.lastIndexWhere(
+      (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
+    );
+    if (idx < 0) return;
+    _messages[idx].fullOutputLoading = false;
+    // An empty string marks a request that found nothing stored.
+    _messages[idx].fullOutput = msg['content'] as String? ?? '';
     notifyListeners();
   }
 
@@ -9823,6 +9859,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final content = msg['content'] as String? ?? '';
     final done = msg['done'] == true;
     final chunkIndex = msg['chunkIndex'] as int? ?? 0;
+    final fullOutputBytes = (msg['fullOutputBytes'] as num?)?.toInt();
 
     final toolCallIdx = _messages.lastIndexWhere(
       (m) => m.type == MessageType.toolCall && m.toolUseId == toolUseId,
@@ -9837,6 +9874,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _messages[toolCallIdx].toolOutput =
           (_messages[toolCallIdx].toolOutput ?? '') + content;
       _messages[toolCallIdx].toolStreaming = !done;
+      if (done) _messages[toolCallIdx].fullOutputBytes = fullOutputBytes;
 
       // Mark subagent task as completed when final chunk arrives
       if (done && _subagentTasks.containsKey(toolUseId)) {
@@ -13411,6 +13449,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final orphanResult = _toolEventReconciler.takeResult(toolUseId);
           if (orphanResult != null) {
             toolCallMsg.toolOutput = orphanResult.output;
+            toolCallMsg.fullOutputBytes = orphanResult.fullOutputBytes;
             if (orphanResult.subagentStatus != null) {
               toolCallMsg.toolInput?['_task_status'] = subagentDisplayStatus(
                 orphanResult.subagentStatus,
@@ -13429,6 +13468,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (skippedToolUseIds.contains(toolUseId)) break;
           final output = entry['toolOutput'] as String? ?? '';
           final backgroundPending = entry['backgroundPending'] == true;
+          final fullOutputBytes = (entry['fullOutputBytes'] as num?)?.toInt();
           // Skip TodoWrite boilerplate results
           if (output.startsWith('Todos have been modified successfully')) break;
           final idx = loaded.lastIndexWhere(
@@ -13436,6 +13476,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
           if (idx >= 0) {
             loaded[idx].toolOutput = output;
+            loaded[idx].fullOutputBytes = fullOutputBytes;
             if (entry['subagentStatus'] != null) {
               loaded[idx].toolInput?['_task_status'] = subagentDisplayStatus(
                 entry['subagentStatus'],
@@ -13456,6 +13497,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 : -1;
             if (existingIdx >= 0) {
               _messages[existingIdx].toolOutput = output;
+              _messages[existingIdx].fullOutputBytes = fullOutputBytes;
               if (entry['subagentStatus'] != null) {
                 _messages[existingIdx].toolInput?['_task_status'] =
                     subagentDisplayStatus(entry['subagentStatus']);
@@ -13472,6 +13514,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 subagentStatus: entry['subagentStatus'] as String?,
                 parentToolUseId: entry['parentToolUseId'] as String?,
                 backgroundPending: backgroundPending,
+                fullOutputBytes: fullOutputBytes,
               );
             }
           }

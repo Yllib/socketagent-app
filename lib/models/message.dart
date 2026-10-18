@@ -73,6 +73,11 @@ class ChatMessage {
   bool isBackgrounded;
   String? backgroundTaskId;
   double toolElapsedSeconds;
+  // Size of a command's full output when the agent saw less of it. The text
+  // loads on request into [fullOutput]; null content means none was stored.
+  int? fullOutputBytes;
+  String? fullOutput;
+  bool fullOutputLoading = false;
 
   // Thinking fields. When extended thinking is redacted the server never sends
   // any thinking text, so this running token estimate is all we can show.

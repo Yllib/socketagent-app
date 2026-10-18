@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:provider/provider.dart';
 import '../models/message.dart';
+import '../services/chat_provider.dart';
 import '../util/line_diff.dart';
 import 'bash_command_view.dart';
 import 'copy_button.dart';
@@ -154,6 +156,8 @@ class ToolOutputBlock extends StatefulWidget {
 
 class _ToolOutputBlockState extends State<ToolOutputBlock> {
   bool _expanded = false;
+  // Showing the command's full output instead of what the agent saw.
+  bool _showFullOutput = false;
   String? _cachedImageData;
   Uint8List? _cachedImageBytes;
   MemoryImage? _cachedImageProvider;
@@ -525,10 +529,14 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                 ],
               ),
             ),
-            if (hasOutput)
+            if (_showFullOutput && widget.message.fullOutputBytes != null)
+              _buildFullOutput()
+            else if (hasOutput)
               _buildOutputContainer(output)
             else if (gotResult && !isStreaming)
               _buildOutputContainer('(no output)', muted: true),
+            if (widget.message.fullOutputBytes != null && !isStreaming)
+              _buildFullOutputToggle(),
           ],
           // Diff view for Edit tool
           if (_isEditTool && editDiff != null && _expanded)
@@ -828,7 +836,67 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     );
   }
 
-  Widget _buildOutputContainer(String? text, {bool muted = false}) {
+  /// Switches between the agent's output and the stored full output, which
+  /// loads from the server the first time.
+  Widget _buildFullOutputToggle() {
+    final message = widget.message;
+    final kb = ((message.fullOutputBytes ?? 0) / 1024).ceil();
+    return InkWell(
+      onTap: () {
+        if (!_showFullOutput && message.fullOutput == null) {
+          context.read<ChatProvider>().requestFullOutput(message);
+        }
+        setState(() => _showFullOutput = !_showFullOutput);
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          border: Border(
+            top: BorderSide(color: context.palette.border, width: 1),
+          ),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Text(
+          _showFullOutput ? 'Agent output' : 'Full output, $kb KB',
+          style: GoogleFonts.jetBrainsMono(
+            fontSize: 11,
+            color: context.palette.blue,
+          ),
+        ),
+      ),
+    );
+  }
+
+  // Laying out megabytes of text stalls the UI; copy still takes all of it.
+  static const _fullOutputDisplayChars = 256 * 1024;
+
+  Widget _buildFullOutput() {
+    final message = widget.message;
+    final full = message.fullOutput;
+    if (full == null) {
+      return _buildOutputContainer('Loading...', muted: true);
+    }
+    if (full.isEmpty) {
+      return _buildOutputContainer(
+        '(full output no longer stored)',
+        muted: true,
+      );
+    }
+    if (full.length <= _fullOutputDisplayChars) {
+      return _buildOutputContainer(full);
+    }
+    final shown = full.substring(full.length - _fullOutputDisplayChars);
+    final hiddenKb = ((full.length - shown.length) / 1024).ceil();
+    return _buildOutputContainer(
+      '[first $hiddenKb KB not shown, Copy takes all]\n$shown',
+      copyText: full,
+    );
+  }
+
+  Widget _buildOutputContainer(
+    String? text, {
+    bool muted = false,
+    String? copyText,
+  }) {
     final structured = text == null ? null : decodeJsonDocument(text);
     final pane = Container(
       constraints: const BoxConstraints(maxHeight: 300),
@@ -856,7 +924,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         ),
       ),
     );
-    return muted ? pane : _withCopyButton(text ?? '', pane);
+    return muted ? pane : _withCopyButton(copyText ?? text ?? '', pane);
   }
 
   Widget _buildStructuredInputContainer(Map<String, dynamic> input) {
