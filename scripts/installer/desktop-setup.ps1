@@ -1,9 +1,13 @@
 #Requires -Version 5.1
 param(
-    [ValidateSet('Detect', 'Link', 'Start', 'Install', 'Quit')][string]$Action = 'Detect',
+    [ValidateSet('Fetch', 'Detect', 'Link', 'Start', 'Install', 'Quit')][string]$Action = 'Detect',
     [string]$ResultFile,
     [string]$InstallDirectory,
-    [string]$DesktopDirectory
+    [string]$DesktopDirectory,
+    # For Fetch: a local SocketAgent-windows-x64.zip to install instead of the
+    # latest release, and the folder to unpack it into.
+    [string]$Package,
+    [string]$PackageDirectory
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -41,7 +45,50 @@ public static class SetupWindow {
     }
 }
 
+# Downloads the newest released app build, checks it against the SHA-256 GitHub
+# publishes for it, and unpacks it for setup to install. The installer carries
+# no app files, so it only needs rebuilding (and signing) when setup changes.
+function Get-DesktopPackage {
+    $zip = $Package
+    $version = ''
+    if (!$zip) {
+        # Windows PowerShell 5.1 can default to TLS 1.0, which GitHub refuses.
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        Write-Output 'PHASE:Finding the latest SocketAgent Desktop release'
+        $releases = Invoke-RestMethod -UseBasicParsing -Headers @{ Accept = 'application/vnd.github+json' } 'https://api.github.com/repos/Yllib/socketagent/releases?per_page=30'
+        $asset = $null
+        # Android-only releases carry no desktop build, so take the newest that does.
+        foreach ($release in $releases) {
+            if ($release.draft -or $release.prerelease) { continue }
+            $asset = @($release.assets | Where-Object { $_.name -eq 'SocketAgent-windows-x64.zip' -and $_.state -eq 'uploaded' -and $_.digest -match '^sha256:[0-9a-fA-F]{64}$' }) | Select-Object -First 1
+            if ($asset) { $version = $release.tag_name -replace '^v', ''; break }
+        }
+        if (!$asset) { throw 'No SocketAgent Desktop release is available to download. Check your internet connection and retry.' }
+        $zip = Join-Path $env:TEMP "socketagent-desktop-$version.zip"
+        Write-Output "PHASE:Downloading SocketAgent Desktop $version"
+        Invoke-WebRequest -UseBasicParsing $asset.browser_download_url -OutFile $zip
+        if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash -ine $asset.digest.Substring(7)) {
+            Remove-Item -LiteralPath $zip -Force
+            throw 'The download did not match the published release. Retry setup.'
+        }
+    }
+    Write-Output 'PHASE:Unpacking SocketAgent Desktop'
+    if (Test-Path -LiteralPath $PackageDirectory) { Remove-Item -LiteralPath $PackageDirectory -Recurse -Force }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [IO.Compression.ZipFile]::ExtractToDirectory($zip, $PackageDirectory)
+    if (!$Package) { Remove-Item -LiteralPath $zip -Force }
+    $exe = Join-Path $PackageDirectory 'socketagent.exe'
+    if (!(Test-Path -LiteralPath $exe)) { throw 'The SocketAgent Desktop package is missing socketagent.exe.' }
+    if (!$version) { $version = (Get-Item -LiteralPath $exe).VersionInfo.ProductVersion -replace '\+.*$', '' }
+    if ($ResultFile) { [IO.File]::WriteAllText($ResultFile, "[package]`r`nversion=$version`r`n", [Text.Encoding]::Unicode) }
+}
+
 try {
+    if ($Action -eq 'Fetch') {
+        if (!$PackageDirectory) { throw 'Fetch needs -PackageDirectory.' }
+        Get-DesktopPackage
+        exit 0
+    }
     if ($Action -eq 'Quit') {
         Stop-Desktop $DesktopDirectory
         # Retire the preview's old shortcut names only when they target this app.
@@ -77,9 +124,8 @@ try {
         }
         $env:SOCKETAGENT_UNATTENDED = '1'
         $env:SOCKETAGENT_INSTALL_DIR = $destination
-        $support = Join-Path $PSScriptRoot 'server-support'
-        Expand-Archive -LiteralPath (Join-Path $PSScriptRoot 'server-support.zip') -DestinationPath $support -Force
-        $env:SOCKETAGENT_INSTALLER_SUPPORT = $support
+        # Server setup runs from the clone, so server fixes reach new installs
+        # without a new signed installer.
         $logFolder = Join-Path $env:LOCALAPPDATA 'SocketAgent/setup-logs'
         New-Item -ItemType Directory -Force $logFolder | Out-Null
         $logFile = Join-Path $logFolder ('server-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.log')

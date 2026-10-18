@@ -53,6 +53,6 @@ Copy-Item "$PSScriptRoot/install-windows-app.ps1" $release -Force
 Copy-Item "$PSScriptRoot/install-windows-app.cmd" $release -Force
 Copy-Item "$PSScriptRoot/WINDOWS-README.txt" "$release/README.txt" -Force
 Remove-Item "$release/socketagent.exp", "$release/socketagent.lib" -ErrorAction SilentlyContinue
+# The desktop installer downloads this zip from the GitHub release, so it is
+# the only artifact an app release needs (see build-windows-installer.ps1).
 Compress-Archive -Path "$release/*" -DestinationPath "$packageDir/SocketAgent-windows-x64.zip" -Force
-
-& "$PSScriptRoot/build-windows-installer.ps1"

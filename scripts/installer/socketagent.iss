@@ -1,5 +1,8 @@
-#ifndef ReleaseDir
-  #error ReleaseDir is required
+; The installer carries setup only. It downloads the app build from the newest
+; GitHub release that has one (or installs /PACKAGE=<zip>), so app releases
+; reuse the same signed installer. Rebuild it only when setup itself changes.
+#ifndef OutputDir
+  #error OutputDir is required
 #endif
 #ifndef SupportDir
   #error SupportDir is required
@@ -25,7 +28,7 @@ DisableWelcomePage=no
 WizardStyle=modern
 SetupIconFile=..\..\windows\runner\resources\app_icon.ico
 UninstallDisplayIcon={app}\socketagent.exe
-OutputDir={#ReleaseDir}\..\..\..\packages
+OutputDir={#OutputDir}
 OutputBaseFilename=SocketAgent-Desktop-Setup
 Compression=lzma2
 SolidCompression=yes
@@ -40,8 +43,8 @@ Name: desktopicon; Description: "Create a desktop shortcut"; Flags: unchecked
 Source: "desktop-setup.ps1"; Flags: dontcopy
 Source: "server-discovery.ps1"; Flags: dontcopy
 Source: "{#SupportDir}\server-bootstrap.ps1"; Flags: dontcopy
-Source: "{#SupportDir}\server-support.zip"; Flags: dontcopy
-Source: "{#ReleaseDir}\*"; DestDir: "{app}"; Excludes: "install-windows-app.ps1,install-windows-app.cmd,README.txt,*.lib,*.exp"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Unpacked by FetchPackage before installation starts.
+Source: "{tmp}\package\*"; DestDir: "{app}"; Excludes: "install-windows-app.ps1,install-windows-app.cmd,README.txt,*.lib,*.exp"; Flags: external ignoreversion recursesubdirs createallsubdirs
 Source: "desktop-setup.ps1"; DestDir: "{app}\.installer"; Flags: ignoreversion
 
 [Icons]
@@ -66,9 +69,11 @@ var
   ServerChoice: TNewCheckBox;
   FolderEdit: TNewEdit;
   BrowseButton, RefreshButton: TNewButton;
-  Progress: TOutputMarqueeProgressWizardPage;
+  // ActiveProgress is whichever page helper output (PHASE: lines) updates.
+  Progress, DownloadProgress, ActiveProgress: TOutputMarqueeProgressWizardPage;
   ServerStatus, ServerDirectory, ServerTask, LastError, ProgressTitle: String;
   ServerReady, Detecting: Boolean;
+  PackageVersion: String;
 
 function IsAppUpdate: Boolean;
 begin
@@ -88,7 +93,7 @@ end;
 procedure OnSetupOutput(const S: String; const Error, FirstLine: Boolean);
 begin
   if Pos('PHASE:', S) = 1 then
-    Progress.SetText(ProgressTitle, Copy(S, 7, Length(S)))
+    ActiveProgress.SetText(ProgressTitle, Copy(S, 7, Length(S)))
   else if Pos('ERROR:', S) = 1 then
     LastError := Copy(S, 7, Length(S));
 end;
@@ -106,6 +111,37 @@ begin
   Result := ExecAndLogOutput(PowerShell, Params, '', SW_HIDE, ewWaitUntilTerminated, Code, @OnSetupOutput);
   Result := Result and (Code = 0);
   if not Result and (LastError = '') then LastError := 'Server setup did not finish. You can retry or continue without a local server.';
+end;
+
+// Downloads and unpacks the app build into {tmp}\package. Runs before the
+// running app is asked to quit, so a failed download leaves it untouched.
+function FetchPackage: Boolean;
+var
+  Code: Integer;
+  Params, ResultFile: String;
+begin
+  LastError := '';
+  ResultFile := ExpandConstant('{tmp}\package.ini');
+  Params := '-NoProfile -ExecutionPolicy Bypass -File ' + Quote(ExpandConstant('{tmp}\desktop-setup.ps1')) +
+    ' -Action Fetch -ResultFile ' + Quote(ResultFile) + ' -PackageDirectory ' + Quote(ExpandConstant('{tmp}\package'));
+  if ExpandConstant('{param:PACKAGE|}') <> '' then
+    Params := Params + ' -Package ' + Quote(ExpandConstant('{param:PACKAGE|}'));
+  ProgressTitle := 'Downloading SocketAgent Desktop';
+  ActiveProgress := DownloadProgress;
+  DownloadProgress.SetText(ProgressTitle, 'Getting the latest version...');
+  DownloadProgress.Show;
+  DownloadProgress.Animate;
+  try
+    Result := ExecAndLogOutput(PowerShell, Params, '', SW_HIDE, ewWaitUntilTerminated, Code, @OnSetupOutput);
+  finally
+    DownloadProgress.Hide;
+    ActiveProgress := Progress;
+  end;
+  Result := Result and (Code = 0);
+  if Result then
+    PackageVersion := GetIniString('package', 'version', '', ResultFile)
+  else if LastError = '' then
+    LastError := 'SocketAgent Desktop could not be downloaded. Check your internet connection and retry.';
 end;
 
 procedure ChoiceChanged(Sender: TObject);
@@ -182,7 +218,6 @@ begin
   ExtractTemporaryFile('desktop-setup.ps1');
   ExtractTemporaryFile('server-discovery.ps1');
   ExtractTemporaryFile('server-bootstrap.ps1');
-  ExtractTemporaryFile('server-support.zip');
   ServerPage := CreateCustomPage(wpSelectDir, 'Server on this computer', 'Choose whether to connect to a local server.');
   StatusText := TNewStaticText.Create(ServerPage);
   StatusText.Parent := ServerPage.Surface;
@@ -219,6 +254,8 @@ begin
   RefreshButton.Caption := 'Check again';
   RefreshButton.OnClick := @RefreshClicked;
   Progress := CreateOutputMarqueeProgressPage('Local server', 'Setting up your connection');
+  DownloadProgress := CreateOutputMarqueeProgressPage('SocketAgent Desktop', 'Getting the app');
+  ActiveProgress := Progress;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
@@ -250,7 +287,8 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
-  if not RunHelper('Quit', '') then Result := LastError;
+  if not FetchPackage then Result := LastError
+  else if not RunHelper('Quit', '') then Result := LastError;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -259,6 +297,9 @@ var
   OK: Boolean;
   Response: Integer;
 begin
+  // AppVersion is the installer's own version, so show the app's instead.
+  if (CurStep = ssPostInstall) and (PackageVersion <> '') then
+    RegWriteStringValue(HKA, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{C263DA8E-E125-44CA-A90D-1D9BE02EF926}_is1', 'DisplayVersion', PackageVersion);
   if (CurStep <> ssPostInstall) or IsAppUpdate then Exit;
   // Silent installation never adds a server unless explicitly requested.
   if WizardSilent then begin

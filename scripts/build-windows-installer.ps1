@@ -1,6 +1,16 @@
-param([string]$SupportDirectory = (Join-Path (Split-Path $PSScriptRoot -Parent) 'build/installer-input'))
+# Compiles the SocketAgent Desktop installer into $OutputDirectory. It carries
+# setup only and downloads the app at install time (see installer/socketagent.iss),
+# so it does not need a Flutter build.
+param(
+    [string]$SupportDirectory,
+    [string]$OutputDirectory,
+    [Parameter(Mandatory)][string]$Version
+)
 $ErrorActionPreference = 'Stop'
+# Windows PowerShell leaves $PSScriptRoot empty in parameter defaults under -File.
 $root = Split-Path $PSScriptRoot -Parent
+if (!$SupportDirectory) { $SupportDirectory = Join-Path $root 'build/installer-input' }
+if (!$OutputDirectory) { $OutputDirectory = Join-Path $root 'build/windows/packages' }
 & "$PSScriptRoot/installer/test-server-discovery.ps1"
 $compiler = Join-Path $env:LOCALAPPDATA 'Programs/Inno Setup 6/ISCC.exe'
 if (!(Test-Path $compiler)) {
@@ -11,11 +21,9 @@ if (!(Test-Path $compiler)) {
     $process = Start-Process $download -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CURRENTUSER' -Wait -PassThru
     if ($process.ExitCode -ne 0 -or !(Test-Path $compiler)) { throw 'Inno Setup compiler installation failed' }
 }
-$versionLine = Get-Content (Join-Path $root 'pubspec.yaml') | Where-Object { $_ -match '^version:' } | Select-Object -First 1
-$version = ($versionLine -replace '^version:\s*', '') -replace '\+.*$', ''
-$release = Join-Path $root 'build/windows/x64/runner/Release'
-foreach ($file in @('server-bootstrap.ps1', 'server-support.zip')) {
-    if (!(Test-Path (Join-Path $SupportDirectory $file))) { throw "Missing installer input: $file. Run build-app.sh --windows from the server checkout." }
+if (!(Test-Path (Join-Path $SupportDirectory 'server-bootstrap.ps1'))) {
+    throw 'Missing installer input: server-bootstrap.ps1. Run build-windows-desktop-installer.sh from the server checkout.'
 }
-& $compiler "/DReleaseDir=$release" "/DSupportDir=$SupportDirectory" "/DAppVersion=$version" (Join-Path $PSScriptRoot 'installer/socketagent.iss')
+New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
+& $compiler /Q "/DOutputDir=$OutputDirectory" "/DSupportDir=$SupportDirectory" "/DAppVersion=$Version" (Join-Path $PSScriptRoot 'installer/socketagent.iss')
 if ($LASTEXITCODE) { throw 'Windows installer compilation failed' }
