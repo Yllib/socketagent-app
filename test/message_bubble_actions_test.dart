@@ -105,8 +105,9 @@ void main() {
     );
 
     expect(find.byType(SelectionArea), findsOneWidget);
-    final markdown = tester.widget<MarkdownBody>(find.byType(MarkdownBody));
-    expect(markdown.selectable, isFalse);
+    final blocks = tester.widgetList<MarkdownBody>(find.byType(MarkdownBody));
+    expect(blocks, isNotEmpty);
+    expect(blocks.every((block) => !block.selectable), isTrue);
     expect(find.byType(SelectableText), findsNothing);
   });
 
@@ -146,7 +147,7 @@ void main() {
     region.selectAll(SelectionChangedCause.keyboard);
     await tester.pump();
     Actions.invoke(
-      tester.element(find.byType(MarkdownBody)),
+      tester.element(find.byType(MarkdownBody).first),
       CopySelectionTextIntent.copy,
     );
     await tester.pump();

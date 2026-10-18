@@ -182,8 +182,11 @@ void main() {
         findsOneWidget,
       );
       expect(tester.takeException(), isNull);
-      final markdown = tester.widget<MarkdownBody>(find.byType(MarkdownBody));
-      expect(markdown.data, contains('socketagent-compare'));
+      final blocks = tester.widgetList<MarkdownBody>(find.byType(MarkdownBody));
+      expect(
+        blocks.any((block) => block.data.contains('socketagent-compare')),
+        isTrue,
+      );
     },
   );
 }

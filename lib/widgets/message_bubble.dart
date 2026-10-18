@@ -1,3 +1,4 @@
+import '../util/markdown_block_split.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -141,6 +142,62 @@ class MessageBubble extends StatelessWidget {
     bool hasActions,
     bool hasMessageActions,
   ) {
+    // Built once per bubble and shared by every markdown block.
+    final markdownStyle = MarkdownStyleSheet(
+      p: TextStyle(color: textColor, fontSize: 15, height: 1.4),
+      h1: TextStyle(
+        color: textColor,
+        fontSize: 22,
+        fontWeight: FontWeight.bold,
+        height: 1.4,
+      ),
+      h2: TextStyle(
+        color: textColor,
+        fontSize: 19,
+        fontWeight: FontWeight.bold,
+        height: 1.4,
+      ),
+      h3: TextStyle(
+        color: textColor,
+        fontSize: 16,
+        fontWeight: FontWeight.bold,
+        height: 1.4,
+      ),
+      strong: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+      em: TextStyle(color: textColor, fontStyle: FontStyle.italic),
+      code: _codeStyle(theme.palette),
+      codeblockDecoration: BoxDecoration(
+        color: context.palette.panel,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: context.palette.border, width: 1),
+      ),
+      codeblockPadding: const EdgeInsets.all(12),
+      codeblockAlign: WrapAlignment.start,
+      blockquoteDecoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: theme.colorScheme.primary, width: 3),
+        ),
+      ),
+      blockquotePadding: const EdgeInsets.only(left: 12),
+      a: TextStyle(
+        color: context.palette.blue,
+        decoration: TextDecoration.underline,
+      ),
+      listBullet: TextStyle(color: textColor, fontSize: 15),
+      tableHead: TextStyle(color: textColor, fontWeight: FontWeight.bold),
+      tableBody: TextStyle(color: textColor),
+      tableBorder: TableBorder.all(color: textColor.withAlpha(51), width: 1),
+      tableCellsPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      horizontalRuleDecoration: BoxDecoration(
+        border: Border(
+          top: BorderSide(color: textColor.withAlpha(51), width: 1),
+        ),
+      ),
+    );
+    final markdownBuilders = <String, MarkdownElementBuilder>{
+      'socketagent-compare': ChatCompareBuilder(sourceServerId),
+      'pre': CodeBlockBuilder(style: _codeStyle(theme.palette)),
+    };
     return Stack(
       clipBehavior: Clip.none,
       children: [
@@ -216,111 +273,29 @@ class MessageBubble extends StatelessWidget {
                       // SelectableText per block. One selection area around
                       // ordinary rich text lets selection span paragraphs,
                       // lists, headings, and code blocks as one message.
-                      child: MarkdownBody(
-                        data: message.textContent,
-                        selectable: false,
-                        inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
-                        imageBuilder: (uri, title, alt) =>
-                            buildChatMarkdownImage(
-                              uri,
-                              title,
-                              alt,
-                              sourceServerId,
-                            ),
-                        blockSyntaxes: const [ChatCompareSyntax()],
-                        builders: {
-                          'socketagent-compare': ChatCompareBuilder(
-                            sourceServerId,
-                          ),
-                          'pre': CodeBlockBuilder(
-                            style: _codeStyle(theme.palette),
-                          ),
-                        },
-                        onTapLink: (text, href, title) {
-                          SocketAgentLinkRouter.open(
-                            context,
-                            href,
-                            sourceServerId: sourceServerId,
-                          );
-                        },
-                        styleSheet: MarkdownStyleSheet(
-                          p: TextStyle(
-                            color: textColor,
-                            fontSize: 15,
-                            height: 1.4,
-                          ),
-                          h1: TextStyle(
-                            color: textColor,
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                            height: 1.4,
-                          ),
-                          h2: TextStyle(
-                            color: textColor,
-                            fontSize: 19,
-                            fontWeight: FontWeight.bold,
-                            height: 1.4,
-                          ),
-                          h3: TextStyle(
-                            color: textColor,
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            height: 1.4,
-                          ),
-                          strong: TextStyle(
-                            color: textColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          em: TextStyle(
-                            color: textColor,
-                            fontStyle: FontStyle.italic,
-                          ),
-                          code: _codeStyle(theme.palette),
-                          codeblockDecoration: BoxDecoration(
-                            color: context.palette.panel,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                              color: context.palette.border,
-                              width: 1,
-                            ),
-                          ),
-                          codeblockPadding: const EdgeInsets.all(12),
-                          codeblockAlign: WrapAlignment.start,
-                          blockquoteDecoration: BoxDecoration(
-                            border: Border(
-                              left: BorderSide(
-                                color: theme.colorScheme.primary,
-                                width: 3,
+                      child: _MarkdownBlocks(
+                        text: message.textContent,
+                        buildBlock: (block) => MarkdownBody(
+                          data: block,
+                          selectable: false,
+                          inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
+                          imageBuilder: (uri, title, alt) =>
+                              buildChatMarkdownImage(
+                                uri,
+                                title,
+                                alt,
+                                sourceServerId,
                               ),
-                            ),
-                          ),
-                          blockquotePadding: const EdgeInsets.only(left: 12),
-                          a: TextStyle(
-                            color: context.palette.blue,
-                            decoration: TextDecoration.underline,
-                          ),
-                          listBullet: TextStyle(color: textColor, fontSize: 15),
-                          tableHead: TextStyle(
-                            color: textColor,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          tableBody: TextStyle(color: textColor),
-                          tableBorder: TableBorder.all(
-                            color: textColor.withAlpha(51),
-                            width: 1,
-                          ),
-                          tableCellsPadding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          horizontalRuleDecoration: BoxDecoration(
-                            border: Border(
-                              top: BorderSide(
-                                color: textColor.withAlpha(51),
-                                width: 1,
-                              ),
-                            ),
-                          ),
+                          blockSyntaxes: const [ChatCompareSyntax()],
+                          builders: markdownBuilders,
+                          onTapLink: (text, href, title) {
+                            SocketAgentLinkRouter.open(
+                              context,
+                              href,
+                              sourceServerId: sourceServerId,
+                            );
+                          },
+                          styleSheet: markdownStyle,
                         ),
                       ),
                     ),
@@ -812,6 +787,32 @@ class _RewindButtonState extends State<_RewindButton> {
           color: _pressed ? Colors.white : light,
         ),
       ),
+    );
+  }
+}
+
+/// Renders markdown as one widget per top-level block, with the spacing
+/// MarkdownBody puts between its own blocks. Blocks keep their position as
+/// a streamed reply grows, so unchanged blocks skip re-parsing.
+class _MarkdownBlocks extends StatelessWidget {
+  const _MarkdownBlocks({required this.text, required this.buildBlock});
+
+  final String text;
+  final Widget Function(String block) buildBlock;
+
+  @override
+  Widget build(BuildContext context) {
+    final blocks = splitMarkdownBlocks(text);
+    if (blocks.length <= 1) return buildBlock(text);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < blocks.length; i++) ...[
+          if (i > 0) const SizedBox(height: 8),
+          KeyedSubtree(key: ValueKey<int>(i), child: buildBlock(blocks[i])),
+        ],
+      ],
     );
   }
 }
