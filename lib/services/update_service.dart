@@ -90,7 +90,7 @@ class UpdateService extends ChangeNotifier {
   bool get isDownloading => _isDownloading;
   bool get isOpeningInstaller => _isOpeningInstaller;
   // A verified installer is only actionable while it targets a newer version.
-  // Installation leaves the downloaded file in app storage,
+  // The Windows installer stays in app storage for the next update,
   // so file existence alone must never keep the UI in "ready to install".
   bool get hasDownloadedUpdate => updateAvailable && _hasDownloadedUpdate;
   String? get downloadedUpdatePath => _downloadedUpdatePath;
@@ -349,9 +349,7 @@ class UpdateService extends ChangeNotifier {
       final updateDir = await _updatesDirectory();
       if (!await updateDir.exists()) await updateDir.create(recursive: true);
 
-      final installerPath = await _installerPathForVersion(
-        _updateInfo!.latestVersion,
-      );
+      final installerPath = await _installerPath(_updateInfo!);
       final installerFile = File(installerPath);
       final partFile = File('$installerPath.part');
 
@@ -551,13 +549,16 @@ class UpdateService extends ChangeNotifier {
       _downloadedUpdatePath = null;
       return;
     }
-    final path = await _installerPathForVersion(info.latestVersion);
+    final path = await _installerPath(info);
     final file = File(path);
     if (!info.updateAvailable) {
       // A successful installation leaves the installer behind. Once the running
-      // package has caught up, clear both the stale action state and its files.
-      await _deleteIfExists(file);
-      await _deleteIfExists(File('$path.part'));
+      // package has caught up, clear the stale action state. An APK is spent,
+      // but the Windows installer is kept for the next update to reuse.
+      if (!isDesktopUpdate) {
+        await _deleteIfExists(file);
+        await _deleteIfExists(File('$path.part'));
+      }
       _hasDownloadedUpdate = false;
       _downloadedUpdatePath = null;
       _downloadProgress = null;
@@ -583,9 +584,7 @@ class UpdateService extends ChangeNotifier {
       _downloadProgress = null;
       return;
     }
-    final partFile = File(
-      '${await _installerPathForVersion(info.latestVersion)}.part',
-    );
+    final partFile = File('${await _installerPath(info)}.part');
     if (!await partFile.exists()) {
       _downloadProgress = null;
       return;
@@ -607,10 +606,15 @@ class UpdateService extends ChangeNotifier {
     return Directory('${dir.path}/updates');
   }
 
-  Future<String> _installerPathForVersion(String version) async {
+  /// Where the update for [info] is saved. Each APK is new, so it is named
+  /// for its version. Releases reattach the same Windows installer, which
+  /// fetches the app itself, so it is named for its SHA-256 and downloads
+  /// again only when the installer is rebuilt.
+  Future<String> _installerPath(UpdateInfo info) async {
     final updateDir = await _updatesDirectory();
-    final extension = isDesktopUpdate ? 'exe' : 'apk';
-    return '${updateDir.path}/socketagent-$version.$extension';
+    return isDesktopUpdate
+        ? '${updateDir.path}/socketagent-setup-${info.sha256}.exe'
+        : '${updateDir.path}/socketagent-${info.latestVersion}.apk';
   }
 
   static String _normalizeSha256(String value) {

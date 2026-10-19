@@ -16,6 +16,8 @@ void main() {
   late List<Map<String, Object?>> releases;
   late List<String> launched;
   late UpdateService service;
+  String installerPath() =>
+      '${directory.path}/socketagent-setup-${sha256.convert(bytes)}.exe';
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('socketagent-update-');
@@ -69,7 +71,7 @@ void main() {
   test(
     'uses the latest completed Windows asset, verifies it, and launches upgrade mode',
     () async {
-      final file = File('${directory.path}/socketagent-1.0.259.exe');
+      final file = File(installerPath());
       await file.writeAsBytes(bytes);
       final result = await service.checkForUpdate();
       expect(result?.latestVersion, '1.0.259');
@@ -86,7 +88,7 @@ void main() {
   );
 
   test('rechecks installer integrity immediately before execution', () async {
-    final file = File('${directory.path}/socketagent-1.0.259.exe');
+    final file = File(installerPath());
     await file.writeAsBytes(bytes);
     await service.checkForUpdate();
     await file.writeAsString('modified after download');
@@ -108,8 +110,25 @@ void main() {
     },
   );
 
-  test('an installed version clears the leftover installer action', () async {
-    await File('${directory.path}/socketagent-1.0.259.exe').writeAsBytes(bytes);
+  test(
+    'an installed version clears the action but keeps the installer',
+    () async {
+      await File(installerPath()).writeAsBytes(bytes);
+      PackageInfo.setMockInitialValues(
+        appName: 'SocketAgent',
+        packageName: 'socketagent',
+        version: '1.0.259',
+        buildNumber: '261',
+        buildSignature: '',
+      );
+      expect((await service.checkForUpdate())?.updateAvailable, isFalse);
+      expect(service.hasDownloadedUpdate, isFalse);
+      expect(File(installerPath()).existsSync(), isTrue);
+    },
+  );
+
+  test('a later release with the same installer reuses the saved copy', () async {
+    await File(installerPath()).writeAsBytes(bytes);
     PackageInfo.setMockInitialValues(
       appName: 'SocketAgent',
       packageName: 'socketagent',
@@ -117,7 +136,20 @@ void main() {
       buildNumber: '261',
       buildSignature: '',
     );
-    expect((await service.checkForUpdate())?.updateAvailable, isFalse);
-    expect(service.hasDownloadedUpdate, isFalse);
+    final asset = (releases.last['assets'] as List).first as Map;
+    releases.insert(0, {
+      'tag_name': 'v1.0.261',
+      'assets': [
+        {
+          ...asset,
+          'browser_download_url':
+              'https://github.com/Yllib/socketagent/releases/download/v1.0.261/SocketAgent-Desktop-Setup.exe',
+        },
+      ],
+    });
+    expect((await service.checkForUpdate())?.latestVersion, '1.0.261');
+    expect(service.hasDownloadedUpdate, isTrue);
+    await service.installDownloaded();
+    expect(launched.first, installerPath());
   });
 }
