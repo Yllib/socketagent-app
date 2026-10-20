@@ -996,7 +996,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription? _speechResultSub;
   StreamSubscription? _speechStatusSub;
   Timer? _foregroundResumeTimer;
-  DateTime? _backgroundedAt;
+  /// When the OS paused the app. Only a paused app can lose its sockets
+  /// silently, so only then does coming back reconnect and resync.
+  DateTime? _suspendedAt;
 
   List<ChatMessage> get messages => _messages;
   List<Session> get sessions => _sessions;
@@ -2395,29 +2397,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final resumed = state == AppLifecycleState.resumed;
     _appInForeground = resumed;
+    if (state == AppLifecycleState.paused) _suspendedAt ??= DateTime.now();
     if (resumed) {
       _syncOngoingSessionNotifications();
+      // A desktop window losing focus, or the Android notification shade,
+      // only makes the app inactive. It keeps running and its sockets stay
+      // live, so coming back from that needs no reconnect.
+      final suspendedAt = _suspendedAt;
+      _suspendedAt = null;
+      if (suspendedAt == null) return;
       _connMgr.refreshRoutes();
       requestServerSettings();
-      _resumeActiveSessionAfterForeground();
+      _resumeActiveSessionAfterSuspend(DateTime.now().difference(suspendedAt));
     } else {
       if (_sessionCacheSaveTimer != null) unawaited(_saveSessionCache());
-      _backgroundedAt ??= DateTime.now();
       _syncOngoingSessionNotifications();
     }
   }
 
-  void _resumeActiveSessionAfterForeground() {
+  void _resumeActiveSessionAfterSuspend(Duration wasAwayFor) {
     _foregroundResumeTimer?.cancel();
     _foregroundResumeTimer = Timer(const Duration(milliseconds: 250), () {
       final sessionId = _activeSessionId;
       final serverId = _connMgr.activeServerId;
       if (sessionId == null || serverId == null) return;
-
-      final wasAwayFor = _backgroundedAt == null
-          ? Duration.zero
-          : DateTime.now().difference(_backgroundedAt!);
-      _backgroundedAt = null;
 
       final ws = _connMgr.getConnection(serverId);
       if (ws == null) return;

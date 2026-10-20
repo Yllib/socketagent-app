@@ -209,8 +209,12 @@ class MainShellScreenState extends State<MainShellScreen>
       // Returning from Android's package installer must re-read the running
       // version immediately so a completed install is not shown as pending.
       unawaited(_checkForAppUpdate(force: _updateService.hasDownloadedUpdate));
-      if (_currentIndex == 1) _startScheduledTaskRefresh();
-    } else {
+      if (_currentIndex == 1 && _scheduledTaskRefreshTimer == null) {
+        _startScheduledTaskRefresh();
+      }
+    } else if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      // A window that only lost focus is still on screen, so keep polling.
       _scheduledTaskRefreshTimer?.cancel();
       _scheduledTaskRefreshTimer = null;
     }
