@@ -14,7 +14,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// Losing focus on the desktop, or pulling down the Android notification
 /// shade, only makes the app inactive. Its sockets stay live, so coming back
-/// must not reconnect. Only an app the OS paused can have lost them.
+/// must not reconnect. Only an app the OS paused can have lost them, and
+/// after a long stretch out of focus the app only checks that its socket
+/// still answers.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -28,6 +30,24 @@ void main() {
       expect(connections(), before);
     });
   });
+
+  for (final answers in [true, false]) {
+    test('after a long stretch out of focus a socket that '
+        '${answers ? 'answers is kept' : 'stays silent reconnects'}', () async {
+      await withConnectionCount(answerStatus: answers, (
+        provider,
+        connections,
+      ) async {
+        provider.idleConnectionCheckAfter = const Duration(milliseconds: 200);
+        final before = connections();
+        provider.didChangeAppLifecycleState(AppLifecycleState.inactive);
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        provider.didChangeAppLifecycleState(AppLifecycleState.resumed);
+        await Future<void>.delayed(const Duration(seconds: 6));
+        expect(connections(), answers ? before : greaterThan(before));
+      });
+    });
+  }
 
   test('an app the OS paused reconnects when it comes back', () async {
     await withConnectionCount((provider, connections) async {
@@ -44,8 +64,10 @@ void main() {
 }
 
 Future<void> withConnectionCount(
-  Future<void> Function(ChatProvider provider, int Function() connections) body,
-) async {
+  Future<void> Function(ChatProvider provider, int Function() connections)
+  body, {
+  bool answerStatus = true,
+}) async {
   final cache = await Directory.systemTemp.createTemp('lifecycle-test-');
   final local = await WindowsLocalServer().discover();
   SharedPreferences.setMockInitialValues({
@@ -73,11 +95,34 @@ Future<void> withConnectionCount(
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   final sockets = <WebSocket>[];
   final firstConnection = Completer<void>();
+  final box = Box(myPrivateKey: serverKey, theirPublicKey: clientKey.publicKey);
   server.listen((request) async {
     final socket = await WebSocketTransformer.upgrade(request);
     sockets.add(socket);
     socket.add(jsonEncode({'type': 'key_exchange_ack'}));
-    socket.listen((_) {});
+    socket.listen((raw) {
+      if (!answerStatus || raw is! String) return;
+      final envelope = jsonDecode(raw) as Map<String, dynamic>;
+      if (envelope['n'] is! String) return;
+      final message = jsonDecode(
+        utf8.decode(
+          box.decrypt(
+            ByteList(base64Decode(envelope['c'] as String)),
+            nonce: base64Decode(envelope['n'] as String),
+          ),
+        ),
+      );
+      if (message is! Map || message['type'] != 'get_status_sync') return;
+      final reply = box.encrypt(
+        Uint8List.fromList(utf8.encode(jsonEncode({'type': 'status_sync'}))),
+      );
+      socket.add(
+        jsonEncode({
+          'n': base64Encode(reply.nonce),
+          'c': base64Encode(reply.cipherText),
+        }),
+      );
+    });
     if (!firstConnection.isCompleted) firstConnection.complete();
   });
 

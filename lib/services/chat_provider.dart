@@ -996,9 +996,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription? _speechResultSub;
   StreamSubscription? _speechStatusSub;
   Timer? _foregroundResumeTimer;
+
   /// When the OS paused the app. Only a paused app can lose its sockets
   /// silently, so only then does coming back reconnect and resync.
   DateTime? _suspendedAt;
+
+  /// When the app stopped being the resumed one, such as a desktop window
+  /// losing focus.
+  DateTime? _inactiveSince;
+
+  /// How long the app must have been out of focus before coming back checks
+  /// that its socket still answers.
+  @visibleForTesting
+  Duration idleConnectionCheckAfter = const Duration(seconds: 30);
 
   List<ChatMessage> get messages => _messages;
   List<Session> get sessions => _sessions;
@@ -2398,20 +2408,63 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final resumed = state == AppLifecycleState.resumed;
     _appInForeground = resumed;
     if (state == AppLifecycleState.paused) _suspendedAt ??= DateTime.now();
+    if (!resumed) _inactiveSince ??= DateTime.now();
     if (resumed) {
       _syncOngoingSessionNotifications();
+      final suspendedAt = _suspendedAt;
+      final inactiveSince = _inactiveSince;
+      _suspendedAt = null;
+      _inactiveSince = null;
       // A desktop window losing focus, or the Android notification shade,
       // only makes the app inactive. It keeps running and its sockets stay
-      // live, so coming back from that needs no reconnect.
-      final suspendedAt = _suspendedAt;
-      _suspendedAt = null;
-      if (suspendedAt == null) return;
+      // live, so coming back from that needs no reconnect. After a long
+      // stretch, only check that the socket still answers.
+      if (suspendedAt == null) {
+        if (inactiveSince != null &&
+            DateTime.now().difference(inactiveSince) >=
+                idleConnectionCheckAfter) {
+          unawaited(_checkConnectionAfterIdle());
+        }
+        return;
+      }
       _connMgr.refreshRoutes();
       requestServerSettings();
       _resumeActiveSessionAfterSuspend(DateTime.now().difference(suspendedAt));
     } else {
       if (_sessionCacheSaveTimer != null) unawaited(_saveSessionCache());
       _syncOngoingSessionNotifications();
+    }
+  }
+
+  /// A socket can die without noticing until a ping goes unanswered, up to
+  /// 40 seconds later. Ask the server for its status: a reply proves the
+  /// socket is live and changes nothing on screen, and silence reconnects.
+  Future<void> _checkConnectionAfterIdle() async {
+    final serverId = _connMgr.activeServerId;
+    final ws = serverId == null ? null : _connMgr.getConnection(serverId);
+    // A socket that already knows it is down is reconnecting on its own.
+    if (serverId == null ||
+        ws == null ||
+        ws.status != ConnectionStatus.connected) {
+      return;
+    }
+    final answered = Completer<void>();
+    final subscription = ws.messages.listen((message) {
+      if (message['type'] == 'status_sync' && !answered.isCompleted) {
+        answered.complete();
+      }
+    });
+    _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
+    try {
+      await answered.future.timeout(const Duration(seconds: 5));
+    } on TimeoutException {
+      if (identical(_connMgr.getConnection(serverId), ws) &&
+          ws.status == ConnectionStatus.connected) {
+        debugPrint('[Connection] No answer after idle, reconnecting');
+        ws.connect(force: true);
+      }
+    } finally {
+      await subscription.cancel();
     }
   }
 
