@@ -6626,7 +6626,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'model_changed':
           final content = msg['content'] as String? ?? '';
           if (content.isNotEmpty) {
-            _messages.add(_modelChangeMessage(content));
+            _messages.add(
+              _modelChangeMessage(content, notice: msg['notice'] as String?),
+            );
             notifyListeners();
           }
           break;
@@ -12014,14 +12016,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Card for a model change the server recorded, live or from history.
-  ChatMessage _modelChangeMessage(String content) {
+  /// [notice] marks a server warning: `refusal` when safeguards flagged a
+  /// turn, `old_model` when a turn ran on an older model.
+  ChatMessage _modelChangeMessage(String content, {String? notice}) {
     return ChatMessage(
       id: 'model_${DateTime.now().microsecondsSinceEpoch}',
       sender: MessageSender.system,
       type: MessageType.taskNotification,
       timestamp: DateTime.now(),
       textContent: content,
-      toolName: 'model_change',
+      toolName: switch (notice) {
+        'refusal' => 'model_refusal',
+        'old_model' => 'model_old',
+        _ => 'model_change',
+      },
     );
   }
 
@@ -13351,7 +13359,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           }
           break;
         case 'model_change':
-          if (content.isNotEmpty) loaded.add(_modelChangeMessage(content));
+          if (content.isNotEmpty) {
+            loaded.add(
+              _modelChangeMessage(
+                content,
+                notice: entry['modelNotice'] as String?,
+              ),
+            );
+          }
           break;
         case 'permission_mode':
           final mode = entry['permissionMode'] as String?;

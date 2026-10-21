@@ -17,6 +17,7 @@ import 'tool_output_block.dart';
 import 'speak_card.dart';
 import 'file_card.dart';
 import 'question_card.dart';
+import 'refusal_card.dart';
 import 'email_preview_card.dart';
 import 'todo_list_card.dart';
 import 'reminder_card.dart';
@@ -2090,6 +2091,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final isTodoUpdate = status == 'todos_updated';
     final isPermissionMode = status == 'permission_mode';
     final isModelChange = status == 'model_change';
+    final isOldModel = status == 'model_old';
     final originToolUseId = msg.originToolUseId ?? msg.parentToolUseId;
     final slashCommandId = originToolUseId ?? msg.toolUseId ?? '';
     final isSlashCommand = slashCommandId.startsWith('codex_slash_');
@@ -2100,6 +2102,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
     if (status == 'manual') {
       return NotificationReceiptCard(message: msg);
+    }
+    if (status == 'model_refusal') {
+      return RefusalCard(message: msg.textContent);
     }
 
     // Background bash completion — render as a ToolOutputBlock mirroring the original card
@@ -2126,6 +2131,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       icon = Icons.shield_outlined;
       color = context.palette.shade(Colors.cyan, 300);
       bgColor = Colors.cyan.shade900.withAlpha(40);
+    } else if (isOldModel) {
+      icon = Icons.warning_amber_rounded;
+      color = context.palette.shade(Colors.amber, 300);
+      bgColor = Colors.amber.shade900.withAlpha(50);
     } else if (isModelChange) {
       icon = Icons.smart_toy_outlined;
       color = context.palette.shade(Colors.cyan, 300);
@@ -2207,6 +2216,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                   ? 'PERMISSION'
                   : isModelChange
                   ? 'MODEL'
+                  : isOldModel
+                  ? 'OLD MODEL'
                   : status.toUpperCase(),
               style: TextStyle(
                 color: color,
