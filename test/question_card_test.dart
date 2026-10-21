@@ -80,4 +80,35 @@ void main() {
     expect(find.text('Yes'), findsOneWidget);
     expect(find.text('Submit'), findsNothing);
   });
+
+  testWidgets('a tool approval renders its markdown', (tester) async {
+    const question =
+        '**Bash: Clear the log**\n\nDangerous rm\n\n```bash\nrm -f "\$log/x"\n```';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: QuestionCard(
+            message: ChatMessage.question(
+              questionId: 'approval-1',
+              questions: [
+                QuestionItem(
+                  question: question,
+                  header: 'Tool approval',
+                  options: [
+                    QuestionOption(label: 'Approve'),
+                    QuestionOption(label: 'Decline'),
+                  ],
+                ),
+              ],
+            ),
+            onAnswer: (_, _) {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('Bash: Clear the log'), findsOneWidget);
+    expect(find.textContaining('rm -f "\$log/x"'), findsOneWidget);
+    expect(find.textContaining('**'), findsNothing);
+  });
 }

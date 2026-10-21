@@ -161,79 +161,12 @@ class _QuestionCardState extends State<QuestionCard> {
               ),
             ),
             padding: const EdgeInsets.all(12),
-            child: ScrollPassthrough(
-              child: Scrollbar(
-                child: SingleChildScrollView(
-                  child: MarkdownBody(
-                    imageBuilder: (uri, title, alt) => buildChatMarkdownImage(
-                      uri,
-                      title,
-                      alt,
-                      widget.sourceServerId,
-                    ),
-                    blockSyntaxes: const [ChatCompareSyntax()],
-                    builders: {
-                      'socketagent-compare': ChatCompareBuilder(
-                        widget.sourceServerId,
-                      ),
-                      'pre': CodeBlockBuilder(
-                        style: const TextStyle(fontSize: 12),
-                        background: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                      ),
-                    },
-                    data: question.question,
-                    inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
-                    onTapLink: (text, href, title) {
-                      SocketAgentLinkRouter.open(
-                        context,
-                        href,
-                        sourceServerId: widget.sourceServerId,
-                      );
-                    },
-                    styleSheet: MarkdownStyleSheet(
-                      p: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                      h1: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                      h2: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                      h3: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                      code: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context).colorScheme.primary,
-                        backgroundColor: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                      ),
-                      codeblockDecoration: BoxDecoration(
-                        color: Theme.of(
-                          context,
-                        ).colorScheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      listBullet: TextStyle(
-                        fontSize: 13,
-                        color: Theme.of(context).colorScheme.onSurface,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
+            child: _scrollingMarkdown(context, question.question),
+          )
+        else if (question.header == 'Tool approval')
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 400),
+            child: _scrollingMarkdown(context, question.question),
           )
         else
           Text(question.question, style: const TextStyle(fontSize: 14)),
@@ -277,6 +210,76 @@ class _QuestionCardState extends State<QuestionCard> {
         ],
         const SizedBox(height: 8),
       ],
+    );
+  }
+
+  /// Question text rendered as markdown, scrolling inside its parent's
+  /// height limit. Plan reviews and tool approvals carry markdown.
+  Widget _scrollingMarkdown(BuildContext context, String data) {
+    return ScrollPassthrough(
+      child: Scrollbar(
+        child: SingleChildScrollView(
+          child: MarkdownBody(
+            imageBuilder: (uri, title, alt) =>
+                buildChatMarkdownImage(uri, title, alt, widget.sourceServerId),
+            blockSyntaxes: const [ChatCompareSyntax()],
+            builders: {
+              'socketagent-compare': ChatCompareBuilder(widget.sourceServerId),
+              'pre': CodeBlockBuilder(
+                style: const TextStyle(fontSize: 12),
+                background: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest,
+              ),
+            },
+            data: data,
+            inlineSyntaxes: SocketAgentLinkRouter.inlineSyntaxes,
+            onTapLink: (text, href, title) {
+              SocketAgentLinkRouter.open(
+                context,
+                href,
+                sourceServerId: widget.sourceServerId,
+              );
+            },
+            styleSheet: MarkdownStyleSheet(
+              p: TextStyle(
+                fontSize: 13,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              h1: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              h2: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              h3: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              code: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.primary,
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest,
+              ),
+              codeblockDecoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              listBullet: TextStyle(
+                fontSize: 13,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
