@@ -391,8 +391,19 @@ class _SessionsTabState extends State<SessionsTab> {
       sdkSession: sdkSession,
     );
     if (_openingSessionKey != null) return;
-    setState(() => _openingSessionKey = openKey);
     final provider = context.read<ChatProvider>();
+    // The open session is already loaded; resuming it again would clear the
+    // chat and refetch its history.
+    if (sessionId != null &&
+        !sdkSession &&
+        sessionId == provider.activeSessionId &&
+        (serverId == null ||
+            serverId.isEmpty ||
+            serverId == provider.activeSessionServerId)) {
+      await openConversation(context);
+      return;
+    }
+    setState(() => _openingSessionKey = openKey);
     var accessServerId = serverId;
     try {
       if (sessionId != null) {
