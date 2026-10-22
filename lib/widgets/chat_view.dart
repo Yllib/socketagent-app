@@ -48,6 +48,7 @@ import '../config/app_palette.dart';
 import 'light_backdrop.dart';
 import 'second_ticker.dart';
 import 'chat_scroll_controller.dart';
+import 'chat_scrollbar.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -65,6 +66,10 @@ class ChatView extends StatefulWidget {
   final bool isLoadingHistory;
   final bool isLoadingMore;
   final bool hasMoreHistory;
+
+  /// History entries before the oldest loaded one. The scrollbar counts them
+  /// as track above the loaded rows, so the thumb covers the conversation.
+  final int olderHistoryCount;
   final int historyWindowRevision;
   final String? targetEntryId;
   final int? targetSessionSeq;
@@ -130,6 +135,7 @@ class ChatView extends StatefulWidget {
     this.isLoadingHistory = false,
     this.isLoadingMore = false,
     this.hasMoreHistory = false,
+    this.olderHistoryCount = 0,
     this.historyWindowRevision = 0,
     this.targetEntryId,
     this.targetSessionSeq,
@@ -219,6 +225,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   /// True from asking for an older page until that page has been laid out.
   bool _olderHistoryRequested = false;
   bool _olderHistoryCheckScheduled = false;
+
+  /// Row over the whole conversation the scrollbar thumb is being dragged
+  /// to, while it is held.
+  double? _thumbSeekRow;
 
   static const _centerSliverKey = ValueKey<String>('chat-window-center');
 
@@ -732,6 +742,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       // The page is part of this frame's layout; the post-frame check
       // below measures the distance only after it has been placed.
       _olderHistoryRequested = false;
+      if (_thumbSeekRow != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && _thumbSeekRow != null) _seekRow(_thumbSeekRow!);
+        });
+      }
     }
 
     final activeRowKeys = {for (final row in _renderRows()) row.rowKey};
@@ -765,6 +780,32 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final distanceFromOldestLoaded = position.pixels - position.minScrollExtent;
     if (distanceFromOldestLoaded > position.viewportDimension * 1.25) return;
     _requestOlderHistory();
+  }
+
+  /// The thumb is over [row], counted over the whole conversation. A row in
+  /// loaded history is scrolled to; one above it means the top of what is
+  /// loaded plus another page, and the thumb keeps asking as pages land.
+  void _seekRow(double row) {
+    _thumbSeekRow = row;
+    final loadedRow = row - widget.olderHistoryCount;
+    if (loadedRow >= 0) {
+      _scroll.scrollToRow(loadedRow);
+      return;
+    }
+    _scroll.endRowScroll();
+    if (_scroll.hasClients) {
+      final position = _scroll.position;
+      if (position.hasContentDimensions &&
+          position.pixels != position.minScrollExtent) {
+        position.jumpTo(position.minScrollExtent);
+      }
+    }
+    _requestOlderHistory();
+  }
+
+  void _endSeekRow() {
+    _thumbSeekRow = null;
+    _scroll.endRowScroll();
   }
 
   /// One older page at a time: never while a page is loading, and never
@@ -908,6 +949,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       for (var index = 0; index < window.length; index++)
         _messageSliverKey(window[index].rowKey): index,
     };
+    final windowCount = window.length + (_showsStatusRow ? 1 : 0);
+    _scroll.sliverRowCounts = [older.length, windowCount];
 
     return ColoredBox(
       key: const ValueKey('chat-surface'),
@@ -954,21 +997,13 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                       // Own layer, so the pinned header appearing or
                       // disappearing never repaints the transcript.
                       RepaintBoundary(
-                        child: RawScrollbar(
-                          key: const ValueKey('chat-scrollbar'),
-                          controller: _scroll,
-                          thumbVisibility: true,
-                          trackVisibility: false,
-                          interactive: true,
-                          thickness: 3,
-                          minThumbLength: 56,
-                          radius: const Radius.circular(2),
-                          mainAxisMargin: 4,
-                          crossAxisMargin: 0,
-                          scrollbarOrientation: ScrollbarOrientation.right,
-                          thumbColor: Theme.of(
+                        // Desktop would add its own scrollbar; the chat
+                        // paints one below that covers the whole
+                        // conversation.
+                        child: ScrollConfiguration(
+                          behavior: ScrollConfiguration.of(
                             context,
-                          ).colorScheme.onSurfaceVariant.withAlpha(145),
+                          ).copyWith(scrollbars: false),
                           child: NotificationListener<ScrollMetricsNotification>(
                             onNotification: _handleScrollMetricsNotification,
                             child: NotificationListener<ScrollNotification>(
@@ -1026,9 +1061,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                                             context,
                                           );
                                         },
-                                        childCount:
-                                            window.length +
-                                            (_showsStatusRow ? 1 : 0),
+                                        childCount: windowCount,
                                         findChildIndexCallback: (key) =>
                                             windowIndexByKey[key],
                                       ),
@@ -1050,6 +1083,19 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                             builder: (context, pinned, _) => pinned == null
                                 ? const SizedBox.shrink()
                                 : _buildPinnedCondensedHeader(pinned),
+                          ),
+                        ),
+                      ),
+                      Positioned.fill(
+                        child: RepaintBoundary(
+                          child: ChatScrollbar(
+                            controller: _scroll,
+                            olderRowCount: widget.olderHistoryCount,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant.withAlpha(145),
+                            onSeekRow: _seekRow,
+                            onSeekEnd: _endSeekRow,
                           ),
                         ),
                       ),

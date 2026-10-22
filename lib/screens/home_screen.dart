@@ -1571,6 +1571,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                                 !provider.activeSessionOffline,
                             isLoadingMore: provider.isLoadingMore,
                             hasMoreHistory: provider.hasMoreHistory,
+                            olderHistoryCount: provider.olderHistoryCount,
                             historyWindowRevision:
                                 provider.historyWindowRevision,
                             targetEntryId: _findTargetId == null

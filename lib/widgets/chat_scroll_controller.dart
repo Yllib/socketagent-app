@@ -26,6 +26,11 @@ import 'package:flutter/widgets.dart';
 ///
 /// [revealAfterLayout] wins over both modes for a single layout pass.
 ///
+/// [viewportRows] reports where the viewport sits in rows rather than pixels.
+/// Rows are laid out lazily and vary a lot in height, so pixel extents are
+/// estimates that swing as rows build; row positions do not. [scrollToRow]
+/// goes the other way, for the scrollbar thumb.
+///
 /// Corrections happen inside the viewport's layout, through
 /// [ScrollPosition.correctPixels], so the viewport never paints a frame at a
 /// stale offset and then jumps.
@@ -41,13 +46,38 @@ class ChatScrollController extends ScrollController {
   static const double _leaveEndDistance = 1;
 
   final ValueNotifier<bool> _following;
+  final ValueNotifier<ChatViewportRows?> _viewportRows = ValueNotifier(null);
   _Anchor? _anchor;
   ({RenderBox row, double inset, double? top})? _pendingReveal;
   bool _followJumpScheduled = false;
 
+  /// Row counts of the list slivers, in sliver order, set by the view on
+  /// each build. Needed to number the rows of an upward-growing sliver,
+  /// which holds them newest first, and to know which laid-out row is the
+  /// last one.
+  List<int> sliverRowCounts = const [];
+
+  /// Rows placed by the last layout pass, for [scrollToRow].
+  List<_LaidOutRow> _lastRows = const [];
+  double? _rowTarget;
+  bool _rowTargetRetryScheduled = false;
+
+  /// Running mean of every row height measured so far. Each row counts once
+  /// and updates in place if it changes height. The entries die with their
+  /// render boxes.
+  final Expando<double> _measuredExtent = Expando();
+  double _measuredExtentSum = 0;
+  int _measuredExtentCount = 0;
+
   ValueListenable<bool> get followingListenable => _following;
 
   bool get following => _following.value;
+
+  /// Where the viewport sits in the loaded rows, updated by every layout.
+  ValueListenable<ChatViewportRows?> get viewportRows => _viewportRows;
+
+  double get _meanExtent =>
+      _measuredExtentCount == 0 ? 0 : _measuredExtentSum / _measuredExtentCount;
 
   /// Switches to FOLLOW. The next layout pins the viewport to the end; if no
   /// layout is pending, a post-frame jump gets there instead.
@@ -70,6 +100,56 @@ class ChatScrollController extends ScrollController {
 
   /// Switches to HOLD without moving.
   void hold() => _following.value = false;
+
+  /// Puts [row] (a fractional index into the loaded rows) at the top of the
+  /// viewport. A row that is not laid out yet is reached by estimate from
+  /// the nearest row that is, then refined after each layout until it is
+  /// exact or [endRowScroll] is called. Each step is a jump, so it leaves
+  /// FOLLOW like any other move and resumes it on landing at the end.
+  void scrollToRow(double row) {
+    _rowTarget = row;
+    _stepTowardRowTarget();
+  }
+
+  void endRowScroll() => _rowTarget = null;
+
+  void _stepTowardRowTarget() {
+    final target = _rowTarget;
+    if (target == null || !hasClients) return;
+    final position = this.position;
+    if (!position.hasContentDimensions) return;
+    final rows = _lastRows;
+    if (rows.isEmpty) return;
+    final index = target.floor();
+    _LaidOutRow? exact;
+    _LaidOutRow? nearest;
+    for (final row in rows) {
+      if (row.index == index) exact = row;
+      if (nearest == null ||
+          (row.index - target).abs() < (nearest.index - target).abs()) {
+        nearest = row;
+      }
+    }
+    final double pixels;
+    if (target <= 0) {
+      // The very top, header and all.
+      pixels = position.minScrollExtent;
+    } else if (exact != null) {
+      pixels = exact.top + (target - index) * exact.extent;
+    } else {
+      pixels = nearest!.top + (target - nearest.index) * _meanExtent;
+    }
+    final clamped = pixels
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    if ((position.pixels - clamped).abs() >= 0.5) position.jumpTo(clamped);
+    if (target <= 0 || exact != null || _rowTargetRetryScheduled) return;
+    _rowTargetRetryScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rowTargetRetryScheduled = false;
+      _stepTowardRowTarget();
+    });
+  }
 
   /// During the next layout pass, moves the viewport so [row]'s top edge sits
   /// [inset] pixels below the viewport's top edge. The offset is corrected in
@@ -106,6 +186,11 @@ class ChatScrollController extends ScrollController {
   ) {
     _anchor = null;
     _pendingReveal = null;
+    _lastRows = const [];
+    _rowTarget = null;
+    _measuredExtentSum = 0;
+    _measuredExtentCount = 0;
+    _viewportRows.value = null;
     return _ChatScrollPosition(
       this,
       physics: physics,
@@ -118,6 +203,7 @@ class ChatScrollController extends ScrollController {
   @override
   void dispose() {
     _following.dispose();
+    _viewportRows.dispose();
     super.dispose();
   }
 
@@ -163,7 +249,49 @@ class ChatScrollController extends ScrollController {
     final corrected = (position.pixels - clamped).abs() >= 0.5;
     if (corrected) position.correctPixels(clamped);
     _anchor = _captureAnchor(rows, position.pixels);
+    _lastRows = rows;
+    _viewportRows.value = _locateViewport(
+      rows,
+      position.pixels,
+      position.viewportDimension,
+      sliverRowCounts.fold(0, (sum, count) => sum + count),
+    );
     return corrected;
+  }
+
+  /// The viewport's top edge and height in row units. The top is the index
+  /// of the row under it plus how far into that row it is; the height is
+  /// the viewport over the mean row height, so it does not change with the
+  /// rows that happen to be on screen.
+  ChatViewportRows? _locateViewport(
+    List<_LaidOutRow> rows,
+    double pixels,
+    double viewportDimension,
+    int count,
+  ) {
+    if (rows.isEmpty || count == 0) return null;
+    final mean = _meanExtent;
+    _LaidOutRow? under;
+    for (final row in rows) {
+      if (row.top + row.extent <= pixels) continue;
+      if (under == null || row.index < under.index) under = row;
+    }
+    final top = under == null
+        ? count.toDouble()
+        : under.index + ((pixels - under.top) / under.extent).clamp(0.0, 1.0);
+    return (
+      top: top,
+      height: mean > 0 ? viewportDimension / mean : count.toDouble(),
+      count: count,
+    );
+  }
+
+  static RenderSliverMultiBoxAdaptor? _multiBoxOf(RenderSliver sliver) {
+    RenderSliver? inner = sliver;
+    while (inner is RenderSliverEdgeInsetsPadding) {
+      inner = inner.child;
+    }
+    return inner is RenderSliverMultiBoxAdaptor ? inner : null;
   }
 
   /// A move the controller did not make. Leaving the end hands the viewport
@@ -198,16 +326,24 @@ class ChatScrollController extends ScrollController {
     return chosen == null ? null : _Anchor(chosen.box, chosen.edge);
   }
 
-  /// Every row laid out in this pass, with its scroll-space position.
-  static List<_LaidOutRow> _laidOutRows(RenderViewport viewport) {
+  /// Every row laid out in this pass, with its scroll-space position and its
+  /// index in the loaded rows. Slivers are numbered in order; a sliver that
+  /// grows upward holds its rows newest first.
+  List<_LaidOutRow> _laidOutRows(RenderViewport viewport) {
     final rows = <_LaidOutRow>[];
-    var sliver = viewport.firstChild;
-    while (sliver != null) {
-      RenderSliver? inner = sliver;
-      while (inner is RenderSliverEdgeInsetsPadding) {
-        inner = inner.child;
-      }
-      if (inner is RenderSliverMultiBoxAdaptor && inner.geometry != null) {
+    var base = 0;
+    var sliverNumber = 0;
+    for (
+      var sliver = viewport.firstChild;
+      sliver != null;
+      sliver = viewport.childAfter(sliver)
+    ) {
+      final inner = _multiBoxOf(sliver);
+      if (inner == null) continue;
+      // Without a count the sliver is numbered as it is laid out, which is
+      // right for a forward sliver and all the plain list has.
+      final count = sliverRowCounts.elementAtOrNull(sliverNumber++) ?? -1;
+      if (inner.geometry != null) {
         final preceding = inner.constraints.precedingScrollExtent;
         final reverse =
             inner.constraints.growthDirection == GrowthDirection.reverse;
@@ -216,31 +352,56 @@ class ChatScrollController extends ScrollController {
           final next = inner.childAfter(row);
           final offset = inner.childScrollOffset(row);
           if (offset != null) {
+            final sliverIndex = inner.indexOf(row);
             // Rows are laid out back to back, so the next row's offset is
-            // this row's end. The last laid-out row ends where the sliver's
-            // own extent says it does.
+            // this row's end. Without a next row the sliver's own extent
+            // says where the row ends, but only when it is the last row;
+            // otherwise that extent is an estimate for rows not built yet
+            // and the row's height is taken from the mean instead.
             final nextOffset = next == null
                 ? null
                 : inner.childScrollOffset(next);
-            final extent =
-                (nextOffset ?? inner.geometry!.scrollExtent) - offset;
+            final measured = nextOffset != null
+                ? nextOffset - offset
+                : sliverIndex == count - 1
+                ? inner.geometry!.scrollExtent - offset
+                : null;
+            if (measured != null) _recordExtent(row, measured);
+            final extent = measured ?? _measuredExtent[row] ?? _meanExtent;
             // In a reverse sliver the near edge is the row's bottom and the
             // scroll-space coordinate runs the other way.
             final edge = reverse ? -(preceding + offset) : preceding + offset;
             rows.add(
               _LaidOutRow(
                 box: row,
+                index:
+                    base +
+                    (reverse && count >= 0
+                        ? count - 1 - sliverIndex
+                        : sliverIndex),
                 edge: edge,
                 top: reverse ? edge - extent : edge,
+                extent: extent,
               ),
             );
           }
           row = next;
         }
       }
-      sliver = viewport.childAfter(sliver);
+      if (count > 0) base += count;
     }
     return rows;
+  }
+
+  void _recordExtent(RenderBox row, double extent) {
+    final previous = _measuredExtent[row];
+    if (previous == null) {
+      _measuredExtentCount++;
+      _measuredExtentSum += extent;
+    } else {
+      _measuredExtentSum += extent - previous;
+    }
+    _measuredExtent[row] = extent;
   }
 
   /// Total extent of the center sliver and everything after it.
@@ -276,15 +437,28 @@ class ChatScrollController extends ScrollController {
   }
 }
 
+/// The viewport's place in the loaded rows: [top] is a fractional index into
+/// them, [height] is the viewport in rows, [count] is how many are loaded.
+typedef ChatViewportRows = ({double top, double height, int count});
+
 /// A row placed by the layout pass that just finished. [edge] is the scroll
 /// offset of the edge nearest the center sliver; [top] is the offset at which
-/// the row's top meets the viewport's top.
+/// the row's top meets the viewport's top; [extent] is measured, or the mean
+/// row height when the row's end is not known yet.
 class _LaidOutRow {
-  const _LaidOutRow({required this.box, required this.edge, required this.top});
+  const _LaidOutRow({
+    required this.box,
+    required this.index,
+    required this.edge,
+    required this.top,
+    required this.extent,
+  });
 
   final RenderBox box;
+  final int index;
   final double edge;
   final double top;
+  final double extent;
 }
 
 class _Anchor {

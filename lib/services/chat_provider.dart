@@ -2005,6 +2005,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   bool get isLoadingMore => _isLoadingMore;
   int get historyWindowRevision => _historyWindowRevision;
   bool get hasMoreHistory => _historyOffset > 0;
+
+  /// History entries before the oldest loaded one.
+  int get olderHistoryCount => _historyOffset;
   NotificationTranscriptFocus? get notificationTranscriptFocus {
     final focus = _notificationTranscriptFocus;
     if (focus == null || focus.sessionId != _activeSessionId) return null;

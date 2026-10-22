@@ -435,52 +435,6 @@ void main() {
     },
   );
 
-  testWidgets('chat has a slim always-visible interactive scrollbar', (
-    WidgetTester tester,
-  ) async {
-    final key = GlobalKey<_HistoryHarnessState>();
-    await tester.pumpWidget(
-      MaterialApp(
-        home: _HistoryHarness(
-          key: key,
-          initiallyLoadingHistory: false,
-          messageCount: 120,
-        ),
-      ),
-    );
-    await tester.pump();
-
-    final scrollbar = tester.widget<RawScrollbar>(
-      find.byKey(const ValueKey('chat-scrollbar')),
-    );
-    expect(scrollbar.thumbVisibility, isTrue);
-    expect(scrollbar.trackVisibility, isFalse);
-    expect(scrollbar.interactive, isTrue);
-    expect(scrollbar.thickness, 3);
-    expect(scrollbar.minThumbLength, 56);
-    expect(scrollbar.scrollbarOrientation, ScrollbarOrientation.right);
-
-    // RawScrollbar expands an interactive thumb to Flutter's minimum touch
-    // target without widening the three-pixel painted thumb. Verify that
-    // dragging the thumb moves the view and takes it out of FOLLOW. The thumb
-    // sits at the bottom of the track while the view follows and cannot be
-    // hit until it has faded in. Its recognizer has no touch slop, so a small
-    // first move lets it claim the pointer before the list's own drag can, as
-    // a real touch sequence does.
-    await tester.pump(const Duration(milliseconds: 400));
-    expect(key.currentState!.followLatest, isTrue);
-    final rect = tester.getRect(find.byKey(const ValueKey('chat-scrollbar')));
-    final gesture = await tester.startGesture(
-      Offset(rect.right - 2, rect.bottom - 4 - scrollbar.minThumbLength / 2),
-    );
-    await gesture.moveBy(const Offset(0, -2));
-    await gesture.moveBy(const Offset(0, -10));
-    await tester.pump();
-    expect(key.currentState!.followLatest, isFalse);
-    await gesture.up();
-    await tester.pump();
-  });
-
   testWidgets('FOLLOW and HOLD are explicit, deterministic viewport modes', (
     WidgetTester tester,
   ) async {
