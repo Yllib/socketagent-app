@@ -126,6 +126,7 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
                 request.reason,
                 style: TextStyle(color: palette.textSecondary),
               ),
+            if (request.hasAction) _actionSummary(request, palette),
             const SizedBox(height: 6),
             if (pending) ...[
               Wrap(
@@ -186,24 +187,8 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
                 'Asked for ${request.access.label}',
                 style: TextStyle(color: palette.textMuted),
               ),
-          ] else ...[
-            Text(
-              request.actionLabel,
-              style: TextStyle(color: palette.textSecondary),
-            ),
-            if (request.summary.isNotEmpty)
-              Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: SelectableText(
-                  request.summary,
-                  style: TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12.5,
-                    color: palette.text,
-                  ),
-                ),
-              ),
-          ],
+          ] else
+            _actionSummary(request, palette),
           const SizedBox(height: 8),
           if (pending)
             Row(
@@ -214,9 +199,20 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
                     runSpacing: 4,
                     children: request.isLink
                         ? [
-                            FilledButton(
+                            if (request.hasAction)
+                              FilledButton(
+                                onPressed: _busy
+                                    ? null
+                                    : () => _answer('action'),
+                                child: const Text('Allow'),
+                              ),
+                            OutlinedButton(
+                              onPressed: _busy ? null : () => _answer('today'),
+                              child: const Text('Allow for today'),
+                            ),
+                            OutlinedButton(
                               onPressed: _busy ? null : () => _answer('linked'),
-                              child: const Text('Allow'),
+                              child: const Text('Allow permanently'),
                             ),
                             TextButton(
                               onPressed: _busy ? null : () => _answer('deny'),
@@ -261,6 +257,37 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
     );
   }
 
+  /// What the agent wants to do, and the exact request when the card has one.
+  static Widget _actionSummary(
+    ComputerAccessRequest request,
+    AppPalette palette,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Text(
+            request.actionLabel,
+            style: TextStyle(color: palette.textSecondary),
+          ),
+        ),
+        if (request.summary.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: SelectableText(
+              request.summary,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12.5,
+                color: palette.text,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
   static String _expiresIn(ComputerAccessRequest request, DateTime now) {
     final left = DateTime.fromMillisecondsSinceEpoch(
       request.expiresAt,
@@ -272,9 +299,10 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
   static String _statusLabel(String status, bool expired) {
     if (expired) return 'Expired';
     return switch (status) {
-      'once' => 'Allowed once',
+      'once' || 'action' => 'Allowed once',
       'chat' => 'Allowed for this chat',
       'deny' => 'Denied',
+      'today' => 'Linked until midnight',
       'linked' => 'Linked',
       _ => status,
     };

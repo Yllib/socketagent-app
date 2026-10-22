@@ -249,6 +249,8 @@ class _DeviceRow extends StatelessWidget {
       if (device.platform.isNotEmpty) device.platform,
       if (device.isComputer && device.access != null)
         '${device.access!.label} · ${device.confirm?.label.toLowerCase()}',
+      if (device.expiresAt case final ends?)
+        linkExpiryLabel(ends, DateTime.now()),
       if (device.lastSeenAt case final seen?) 'seen ${_ago(seen)}',
       if (device.via.isNotEmpty) 'via ${device.via}',
     ].join(' · ');

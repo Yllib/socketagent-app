@@ -34,23 +34,37 @@ class ComputerAccessRequest {
   final String targetName;
   final String targetPublicKey;
 
-  // kind approval
+  // kind approval, and kind link when a specific request is waiting
   final String action;
   final String summary;
-  final String challengeId;
   final String digest;
+
+  // kind approval
+  final String challengeId;
 
   /// Unix ms.
   final int expiresAt;
 
-  // kind link
+  // kind link: the boxes to start with, existing access plus what is asked
   final ComputerAccess access;
   final String reason;
 
-  /// `pending`, `once`, `chat`, `deny`, `linked` or `expired`.
+  /// `pending`, `once`, `chat`, `action`, `today`, `linked`, `deny` or
+  /// `expired`.
   final String status;
 
   bool get isLink => kind == 'link';
+
+  /// A link card for one waiting request, which `action` can allow alone.
+  bool get hasAction => action.isNotEmpty && digest.isNotEmpty;
+
+  /// Whether [granted] includes the box the card's request needs, matching
+  /// the target's `accessFor`.
+  bool accessCoversAction(ComputerAccess granted) => switch (action) {
+    'run_command' => granted.commands,
+    'sessions_list' || 'transcript_read' || 'transcript_search' => granted.read,
+    _ => action.startsWith('agent_') && granted.agents,
+  };
   bool get pending => status == 'pending';
 
   static ComputerAccessRequest? fromJson(Object? raw) {
@@ -123,8 +137,8 @@ class ComputerAccessRequest {
   String get actionLabel => switch (action) {
     'run_command' => 'Run a command',
     'sessions_list' => 'List sessions',
-    'transcript' => 'Read a transcript',
-    'search' => 'Search transcripts',
+    'transcript_read' => 'Read a transcript',
+    'transcript_search' => 'Search transcripts',
     'agent_start' => 'Start an agent',
     'agent_message' => 'Message an agent',
     'agent_stop' => 'Stop an agent',

@@ -43,7 +43,6 @@ class ComputerAccess {
   }
 }
 
-/// When the target asks the user before acting for a linked computer.
 /// Whether a linked computer's actions need the user's approval. An approval
 /// card can allow one action or the rest of that chat.
 enum LinkConfirm {
@@ -72,6 +71,7 @@ class RegisteredDevice {
     required this.via,
     this.access,
     this.confirm,
+    this.expiresAt,
     this.online = false,
   });
 
@@ -86,6 +86,9 @@ class RegisteredDevice {
   final String via;
   final ComputerAccess? access;
   final LinkConfirm? confirm;
+
+  /// When a computer link ends. Null lasts until removed.
+  final DateTime? expiresAt;
   final bool online;
 
   bool get isComputer => kind == 'computer';
@@ -107,6 +110,7 @@ class RegisteredDevice {
           ? ComputerAccess.fromJson(raw['access'])
           : null,
       confirm: kind == 'computer' ? LinkConfirm.fromWire(raw['confirm']) : null,
+      expiresAt: _time(raw['expiresAt']),
       online: raw['online'] == true,
     );
   }
@@ -209,6 +213,7 @@ class ComputerLink {
     required this.access,
     required this.confirm,
     required this.ticketExpiresAt,
+    this.expiresAt,
     this.relayUrl = '',
     this.linkRoom = '',
   });
@@ -220,6 +225,9 @@ class ComputerLink {
   final LinkConfirm confirm;
   final DateTime? ticketExpiresAt;
 
+  /// When the link ends. Null lasts until removed.
+  final DateTime? expiresAt;
+
   /// Present when the source includes them; otherwise the app asks the
   /// target for `link_room_info` when it refreshes the ticket.
   final String relayUrl;
@@ -230,6 +238,7 @@ class ComputerLink {
     final target = raw['targetPubkey'];
     if (target is! String || target.isEmpty) return null;
     final expires = raw['ticketExpiresAt'];
+    final ends = raw['expiresAt'];
     return ComputerLink(
       name: raw['name'] as String? ?? '',
       targetPubkey: target,
@@ -241,6 +250,9 @@ class ComputerLink {
           : expires is String
           ? DateTime.tryParse(expires)
           : null,
+      expiresAt: ends is num
+          ? DateTime.fromMillisecondsSinceEpoch(ends.toInt())
+          : null,
       relayUrl: raw['relayUrl'] as String? ?? '',
       linkRoom: raw['linkRoom'] as String? ?? '',
     );
@@ -251,4 +263,25 @@ class ComputerLink {
     final expires = ticketExpiresAt;
     return expires == null || expires.difference(now) < const Duration(days: 7);
   }
+}
+
+/// The next local midnight, when an "Allow for today" link ends.
+DateTime nextLocalMidnight(DateTime now) =>
+    DateTime(now.year, now.month, now.day + 1);
+
+/// "until midnight", "until 14:30" or "until 2026-10-23 14:30" for a link
+/// that ends at [expiresAt].
+String linkExpiryLabel(DateTime expiresAt, DateTime now) {
+  final local = expiresAt.toLocal();
+  if (local == nextLocalMidnight(now)) return 'until midnight';
+  final time =
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  if (local.year == now.year &&
+      local.month == now.month &&
+      local.day == now.day) {
+    return 'until $time';
+  }
+  final date =
+      '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  return 'until $date $time';
 }

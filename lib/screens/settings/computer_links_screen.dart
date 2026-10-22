@@ -94,6 +94,7 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
     required String targetName,
     required ComputerAccess access,
     required LinkConfirm confirm,
+    DateTime? expiresAt,
   }) async {
     final choice = await showDialog<_LinkChoice>(
       context: context,
@@ -113,6 +114,7 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
         targetPubkey: targetPubkey,
         access: choice.access,
         confirm: choice.confirm,
+        expiresAt: expiresAt,
       );
     } catch (error) {
       if (mounted) setState(() => _error = _text(error));
@@ -205,7 +207,12 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                   leading: const Icon(Icons.dns_outlined),
                   title: Text(grant.name.isEmpty ? 'Computer' : grant.name),
                   subtitle: Text(
-                    '${grant.access?.label} · ${grant.confirm?.label.toLowerCase()}',
+                    [
+                      '${grant.access?.label}',
+                      '${grant.confirm?.label.toLowerCase()}',
+                      if (grant.expiresAt case final ends?)
+                        linkExpiryLabel(ends, DateTime.now()),
+                    ].join(' · '),
                   ),
                   onTap: connected
                       ? () => _edit(
@@ -218,6 +225,7 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                           targetName: config.name,
                           access: grant.access ?? const ComputerAccess(),
                           confirm: grant.confirm ?? LinkConfirm.ask,
+                          expiresAt: grant.expiresAt,
                         )
                       : null,
                   trailing: IconButton(
@@ -264,6 +272,8 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                         link.online ? 'online' : 'offline',
                         link.access.label,
                         link.confirm.label.toLowerCase(),
+                        if (link.expiresAt case final ends?)
+                          linkExpiryLabel(ends, DateTime.now()),
                         if (link.ticketExpiresAt case final at?)
                           'ticket until ${at.year}-${at.month.toString().padLeft(2, '0')}-${at.day.toString().padLeft(2, '0')}',
                       ].join(' · '),
@@ -276,6 +286,7 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                       targetName: link.name.isEmpty ? 'Computer' : link.name,
                       access: link.access,
                       confirm: link.confirm,
+                      expiresAt: link.expiresAt,
                     ),
                     trailing: IconButton(
                       tooltip: 'Remove',

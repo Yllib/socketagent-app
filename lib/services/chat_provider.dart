@@ -8358,15 +8358,63 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return links;
   }
 
-  /// Lets agents on [sourceId] act on [targetId]. The target records the
-  /// grant and enforces it, the relay issues a ticket for the link room,
-  /// and the source stores where to connect. Both must be online.
+  /// Lets agents on [sourceId] act on [targetId], until [expiresAt] when
+  /// given. The target records the grant and enforces it, the relay issues
+  /// a ticket for the link room, and the source stores where to connect.
+  /// Both must be online.
   Future<void> createComputerLink({
     required String sourceId,
     required String targetId,
     required ComputerAccess access,
     required LinkConfirm confirm,
+    DateTime? expiresAt,
   }) async {
+    final (source, target) = _linkPair(sourceId, targetId);
+    await _authorizeComputer(target, source, {
+      'access': access.toJson(),
+      'confirm': confirm.wire,
+      if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
+    });
+    await _connectComputerLink(
+      source,
+      target,
+      access: access,
+      confirm: confirm,
+      expiresAt: expiresAt,
+    );
+  }
+
+  /// Lets agents on [sourceId] make the one request whose one-time digest is
+  /// [digest] on [targetId]. An existing link keeps its settings. Without
+  /// one, the source gets a link with no access that ends with the grant.
+  Future<void> allowOneComputerAction({
+    required String sourceId,
+    required String targetId,
+    required String digest,
+  }) async {
+    final (source, target) = _linkPair(sourceId, targetId);
+    await _authorizeComputer(target, source, {
+      'access': const ComputerAccess(
+        read: false,
+        agents: false,
+        commands: false,
+      ).toJson(),
+      'confirm': LinkConfirm.ask.wire,
+      'oneTime': {'digest': digest},
+    });
+    final links = await loadComputerLinks(sourceId);
+    if (links.any((link) => link.targetPubkey == target.serverPubkey)) return;
+    await _connectComputerLink(
+      source,
+      target,
+      access: const ComputerAccess(read: false, agents: false, commands: false),
+      confirm: LinkConfirm.ask,
+      // The target's grant lasts 15 minutes.
+      expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+    );
+  }
+
+  (ServerConfig, ServerConfig) _linkPair(String sourceId, String targetId) {
     final source = _serverConfigs.where((c) => c.id == sourceId).firstOrNull;
     final target = _serverConfigs.where((c) => c.id == targetId).firstOrNull;
     if (source == null || target == null) {
@@ -8378,19 +8426,39 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (source.serverPubkey == target.serverPubkey) {
       throw StateError('A computer cannot link to itself');
     }
-    final authorized = await _deviceRequest(targetId, {
+    return (source, target);
+  }
+
+  /// Sends `device_authorize` for [source]'s key to [target] with [fields].
+  Future<void> _authorizeComputer(
+    ServerConfig target,
+    ServerConfig source,
+    Map<String, Object> fields,
+  ) async {
+    final authorized = await _deviceRequest(target.id, {
       'type': 'device_authorize',
       'publicKey': source.serverPubkey,
       'kind': 'computer',
       'name': source.name,
-      'access': access.toJson(),
-      'confirm': confirm.wire,
+      ...fields,
     }, 'device_approve_result');
     if (authorized['ok'] == false) {
       throw StateError(
         authorized['error'] as String? ?? '${target.name} refused the link',
       );
     }
+  }
+
+  /// Gets a ticket for [target]'s link room and stores the link on [source].
+  Future<void> _connectComputerLink(
+    ServerConfig source,
+    ServerConfig target, {
+    required ComputerAccess access,
+    required LinkConfirm confirm,
+    DateTime? expiresAt,
+  }) async {
+    final sourceId = source.id;
+    final targetId = target.id;
     final room = await _deviceRequest(targetId, {
       'type': 'link_room_info',
     }, 'link_room_info_result');
@@ -8414,6 +8482,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       ticket: ticket,
       access: access,
       confirm: confirm,
+      expiresAt: expiresAt,
     );
     unawaited(loadComputerLinks(sourceId).catchError((_) => <ComputerLink>[]));
     unawaited(loadDevices(targetId).catchError((_) => _emptyRegistry));
@@ -8422,13 +8491,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Changes what agents on [sourcePubkey] may do on [targetPubkey]. The
   /// target enforces the new settings right away. The source's copy, which
   /// agents see in their Computers list, refreshes now if the source is
-  /// online and otherwise on its next connection.
+  /// online and otherwise on its next connection. Pass the link's current
+  /// [expiresAt] to keep it; null makes the link last until removed.
   Future<void> updateComputerLink({
     required String sourcePubkey,
     required String sourceName,
     required String targetPubkey,
     required ComputerAccess access,
     required LinkConfirm confirm,
+    DateTime? expiresAt,
   }) async {
     final target = _configForKey(targetPubkey);
     if (target == null) {
@@ -8441,6 +8512,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'name': sourceName,
       'access': access.toJson(),
       'confirm': confirm.wire,
+      if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
     }, 'device_approve_result');
     if (authorized['ok'] == false) {
       throw StateError(
@@ -8490,6 +8562,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required ComputerLinkTicket ticket,
     required ComputerAccess access,
     required LinkConfirm confirm,
+    DateTime? expiresAt,
   }) async {
     final msg = {
       'type': 'computer_link_set',
@@ -8501,6 +8574,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'ticketExpiresAt': ticket.expiresAt,
       'access': access.toJson(),
       'confirm': confirm.wire,
+      if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
     };
     try {
       final result = await _deviceRequest(
@@ -8627,6 +8701,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ticket: ticket,
           access: link.access,
           confirm: link.confirm,
+          expiresAt: link.expiresAt,
         );
       }
     } catch (error) {
@@ -8702,7 +8777,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Answers a `computer_access_request` card. For `once` and `chat` the
   /// answer carries an approval token boxed from this device's key to the
   /// target computer's key, so only the target can read it and the source
-  /// can't forge one. For `linked` the link is created first.
+  /// can't forge one. On a link card, `action` allows the one request the
+  /// card shows, `today` links until local midnight and `linked` links until
+  /// removed. Both links also allow the card's request when their boxes
+  /// cover it, so it runs without a second card.
   Future<void> answerComputerAccess(
     String requestId,
     String decision, {
@@ -8742,7 +8820,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               : source?.serverPubkey ?? '',
         ),
       ).toJson();
-    } else if (decision == 'linked') {
+    } else if (decision == 'action' ||
+        decision == 'today' ||
+        decision == 'linked') {
       final target = _serverConfigs
           .where((c) => c.serverPubkey == request.targetPublicKey)
           .firstOrNull;
@@ -8751,12 +8831,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           '${request.targetName} is not one of this device\'s computers',
         );
       }
-      await createComputerLink(
-        sourceId: sourceId,
-        targetId: target.id,
-        access: access ?? request.access,
-        confirm: confirm,
-      );
+      final granted = access ?? request.access;
+      if (decision != 'action') {
+        await createComputerLink(
+          sourceId: sourceId,
+          targetId: target.id,
+          access: granted,
+          confirm: confirm,
+          expiresAt: decision == 'today'
+              ? nextLocalMidnight(DateTime.now())
+              : null,
+        );
+      }
+      // A new link runs the card's request without a second card, unless
+      // the user unchecked the box it needs.
+      if (request.hasAction &&
+          (decision == 'action' || request.accessCoversAction(granted))) {
+        await allowOneComputerAction(
+          sourceId: sourceId,
+          targetId: target.id,
+          digest: request.digest,
+        );
+      }
     }
     _connMgr.sendToServer(sourceId, answer);
     _setComputerAccessStatus(requestId, decision);

@@ -1,6 +1,8 @@
 import 'package:app/models/computer_access.dart';
 import 'package:app/models/device_registry.dart';
 import 'package:app/models/message.dart';
+import 'package:app/widgets/computer_access_card.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -126,5 +128,100 @@ void main() {
       link(now.add(const Duration(days: 8))).needsTicketRefresh(now),
       isFalse,
     );
+  });
+
+  test('a link card knows which box its request needs', () {
+    final request = ComputerAccessRequest.fromJson({
+      ...approval,
+      'kind': 'link',
+    })!;
+    expect(request.hasAction, isTrue);
+    const commandsOnly = ComputerAccess(
+      read: false,
+      agents: false,
+      commands: true,
+    );
+    const readOnly = ComputerAccess(read: true, agents: false, commands: false);
+    expect(request.accessCoversAction(commandsOnly), isTrue);
+    expect(request.accessCoversAction(readOnly), isFalse);
+    final start = ComputerAccessRequest.fromJson({
+      ...approval,
+      'kind': 'link',
+      'action': 'agent_start',
+    })!;
+    expect(start.accessCoversAction(commandsOnly), isFalse);
+    expect(start.accessCoversAction(const ComputerAccess()), isTrue);
+  });
+
+  test('a link ends at the next local midnight and says so', () {
+    final now = DateTime(2026, 10, 22, 15, 4);
+    final midnight = nextLocalMidnight(now);
+    expect(midnight, DateTime(2026, 10, 23));
+    expect(linkExpiryLabel(midnight, now), 'until midnight');
+    expect(linkExpiryLabel(DateTime(2026, 10, 22, 15, 19), now), 'until 15:19');
+    expect(
+      linkExpiryLabel(DateTime(2026, 10, 25, 9, 0), now),
+      'until 2026-10-25 09:00',
+    );
+    final link = ComputerLink.fromJson({
+      'name': 'Arcade',
+      'targetPubkey': 'B',
+      'expiresAt': midnight.millisecondsSinceEpoch,
+    })!;
+    expect(link.expiresAt, midnight);
+  });
+
+  group('link card buttons', () {
+    Future<void> pumpCard(WidgetTester tester, Map<String, Object?> raw) {
+      final request = ComputerAccessRequest.fromJson({
+        ...raw,
+        'expiresAt': DateTime.now()
+            .add(const Duration(minutes: 5))
+            .millisecondsSinceEpoch,
+      })!;
+      return tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ComputerAccessCard(
+              message: ChatMessage.computerAccess(request),
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets('a waiting request can be allowed alone', (tester) async {
+      await pumpCard(tester, {
+        ...approval,
+        'kind': 'link',
+        'access': {'read': false, 'agents': false, 'commands': true},
+        'reason': 'Arcade is not linked to this computer.',
+      });
+      expect(find.text('cd ~/proj && npm test'), findsOneWidget);
+      for (final label in [
+        'Allow',
+        'Allow for today',
+        'Allow permanently',
+        'Deny',
+      ]) {
+        expect(find.text(label), findsOneWidget);
+      }
+    });
+
+    testWidgets('a plain link request has no one-action button', (
+      tester,
+    ) async {
+      await pumpCard(tester, {
+        'requestId': 'req2',
+        'sessionId': 's1',
+        'kind': 'link',
+        'source': {'name': 'Dev VM', 'publicKey': 'A'},
+        'target': {'name': 'Desktop', 'publicKey': 'B'},
+        'access': {'read': true, 'agents': true, 'commands': true},
+      });
+      expect(find.text('Allow'), findsNothing);
+      expect(find.text('Allow for today'), findsOneWidget);
+      expect(find.text('Allow permanently'), findsOneWidget);
+    });
   });
 }
