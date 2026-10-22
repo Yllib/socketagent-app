@@ -1324,133 +1324,42 @@ class _ChatScreenState extends State<_ChatScreen> {
                       onPressed: widget.onToggleSidebar,
                     )
                   : null,
-              title: GestureDetector(
-                onLongPress: () {
-                  provider.toggleRawMode();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        provider.rawMode ? 'Raw mode ON' : 'Raw mode OFF',
-                      ),
-                      duration: const Duration(seconds: 1),
+              title: _withBackendWatermark(
+                provider.activeSessionBackend,
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            _sessionHeaderTitle(provider, isPlan: isPlan),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600,
+                              color: sessionTheme?.textColor,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  );
-                },
-                child: _withBackendWatermark(
-                  provider.activeSessionBackend,
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _sessionHeaderTitle(provider, isPlan: isPlan),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: sessionTheme?.textColor,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 1),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    _activeComputerName(provider),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color:
-                                          (sessionTheme?.textColor ??
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface)
-                                              .withAlpha(178),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          if (provider.lastUsage != null)
-                            _buildUsageIndicator(provider.lastUsage!),
-                          _buildConnectionIndicator(provider.connectionStatus),
-                        ],
-                      ),
-                      const SizedBox(height: 1),
-                      Row(
-                        children: [
-                          if (provider.activeSessionId != null ||
-                              provider.isPendingNewSession)
-                            GestureDetector(
-                              onTap: () => _showPermissionModePicker(provider),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _permissionModeIcon(displayPermMode),
-                                    size: 11,
-                                    color:
-                                        (sessionTheme?.textColor ??
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface)
-                                            .withAlpha(178),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Text(
-                                    _permissionModeLabel(
-                                      displayPermMode,
-                                      backend: provider.activeSessionBackend,
-                                    ),
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color:
-                                          (sessionTheme?.textColor ??
-                                                  Theme.of(
-                                                    context,
-                                                  ).colorScheme.onSurface)
-                                              .withAlpha(178),
-                                    ),
-                                  ),
-                                  Icon(
-                                    Icons.arrow_drop_down,
-                                    size: 14,
-                                    color:
-                                        (sessionTheme?.textColor ??
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface)
-                                            .withAlpha(128),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          if (provider.activeSessionCwd != null)
-                            Expanded(
-                              child: Tooltip(
-                                message: provider.activeSessionCwd!,
+                    const SizedBox(height: 1),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
                                 child: Text(
-                                  _compactCwd(provider.activeSessionCwd!),
-                                  textAlign: TextAlign.right,
+                                  _activeComputerName(provider),
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 11,
-                                    fontFamily: 'monospace',
                                     color:
                                         (sessionTheme?.textColor ??
                                                 Theme.of(
@@ -1460,11 +1369,89 @@ class _ChatScreenState extends State<_ChatScreen> {
                                   ),
                                 ),
                               ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        if (provider.lastUsage != null)
+                          _buildUsageIndicator(provider.lastUsage!),
+                        _buildConnectionIndicator(provider.connectionStatus),
+                      ],
+                    ),
+                    const SizedBox(height: 1),
+                    Row(
+                      children: [
+                        if (provider.activeSessionId != null ||
+                            provider.isPendingNewSession)
+                          GestureDetector(
+                            onTap: () => _showPermissionModePicker(provider),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _permissionModeIcon(displayPermMode),
+                                  size: 11,
+                                  color:
+                                      (sessionTheme?.textColor ??
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface)
+                                          .withAlpha(178),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _permissionModeLabel(
+                                    displayPermMode,
+                                    backend: provider.activeSessionBackend,
+                                  ),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color:
+                                        (sessionTheme?.textColor ??
+                                                Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurface)
+                                            .withAlpha(178),
+                                  ),
+                                ),
+                                Icon(
+                                  Icons.arrow_drop_down,
+                                  size: 14,
+                                  color:
+                                      (sessionTheme?.textColor ??
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface)
+                                          .withAlpha(128),
+                                ),
+                              ],
                             ),
-                        ],
-                      ),
-                    ],
-                  ),
+                          ),
+                        if (provider.activeSessionCwd != null)
+                          Expanded(
+                            child: Tooltip(
+                              message: provider.activeSessionCwd!,
+                              child: Text(
+                                _compactCwd(provider.activeSessionCwd!),
+                                textAlign: TextAlign.right,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontFamily: 'monospace',
+                                  color:
+                                      (sessionTheme?.textColor ??
+                                              Theme.of(
+                                                context,
+                                              ).colorScheme.onSurface)
+                                          .withAlpha(178),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -1791,11 +1778,18 @@ class _ChatScreenState extends State<_ChatScreen> {
             if (provider.activeSessionBackend != 'codex')
               _buildThinkingChip(provider),
             if (provider.rawMode)
-              _buildChipBody(
-                Icons.code,
-                'RAW',
-                iconColor: context.palette.shade(Colors.orange, 300),
-                labelColor: context.palette.shade(Colors.orange, 300),
+              Tooltip(
+                message: 'Turn off raw events',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: provider.toggleRawMode,
+                  child: _buildChipBody(
+                    Icons.code,
+                    'RAW',
+                    iconColor: context.palette.shade(Colors.orange, 300),
+                    labelColor: context.palette.shade(Colors.orange, 300),
+                  ),
+                ),
               ),
             _buildFollowLatestChip(),
             _buildSessionMoreChip(provider),
@@ -2121,6 +2115,16 @@ class _ChatScreenState extends State<_ChatScreen> {
                   ? 'Hidden. Tap to show'
                   : 'Agents and background work. Tap to hide',
             ),
+            SessionAction(
+              'raw_mode',
+              'Raw events',
+              Icons.code,
+              selected: provider.rawMode,
+              enabled: hasSession,
+              subtitle: provider.rawMode
+                  ? 'Showing SDK events. Tap to return to chat'
+                  : 'Show the SDK event stream instead of the chat',
+            ),
             if (codex)
               SessionAction(
                 'codex_fast_mode',
@@ -2310,6 +2314,9 @@ class _ChatScreenState extends State<_ChatScreen> {
         break;
       case 'codex_fast_mode':
         provider.setCodexFastMode(!provider.codexFastMode);
+        break;
+      case 'raw_mode':
+        provider.toggleRawMode();
         break;
       case 'claude_auto_compact':
         provider.setClaudeAutoCompactEnabled(
