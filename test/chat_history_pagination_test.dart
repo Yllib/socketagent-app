@@ -142,14 +142,12 @@ void main() {
       await tester.pump();
 
       expect(key.currentState!.loadMoreCalls, 1);
-      final pixelsBefore = position.pixels;
       final anchorBefore = _topVisibleMessage(tester);
       key.currentState!.resetScrollUpdateNotifications();
 
       key.currentState!.completeLoad(prependCount: 20, hasMoreAfter: true);
       await tester.pumpAndSettle();
 
-      expect(position.pixels, greaterThan(pixelsBefore));
       expect(
         _messageTop(tester, anchorBefore.id),
         closeTo(anchorBefore.top, 0.5),
@@ -321,7 +319,7 @@ void main() {
 
       key.currentState!.holdViewport();
       await tester.pump();
-      final list = find.byType(ListView).first;
+      final list = find.byType(CustomScrollView).first;
       final position = tester
           .state<ScrollableState>(find.byType(Scrollable).first)
           .position;
@@ -329,7 +327,6 @@ void main() {
       await tester.pump();
 
       final gesture = await tester.startGesture(tester.getCenter(list));
-      final ownedPixels = position.pixels;
       final anchorBefore = _topVisibleMessage(tester);
 
       // This is the session-entry race: cached chat is visible, the reader
@@ -339,7 +336,6 @@ void main() {
       await tester.pump();
 
       expect(key.currentState!.followLatest, isFalse);
-      expect(position.pixels, greaterThan(ownedPixels));
       expect(
         _messageTop(tester, anchorBefore.id),
         closeTo(anchorBefore.top, 0.5),
@@ -370,7 +366,7 @@ void main() {
       );
       await tester.pump();
 
-      final list = find.byType(ListView).first;
+      final list = find.byType(CustomScrollView).first;
       final position = tester
           .state<ScrollableState>(find.byType(Scrollable).first)
           .position;
@@ -410,7 +406,7 @@ void main() {
       await tester.pump();
       await tester.pump();
 
-      final list = find.byType(ListView).first;
+      final list = find.byType(CustomScrollView).first;
       final gesture = await tester.startGesture(tester.getCenter(list));
       await gesture.moveBy(const Offset(0, 180));
       await tester.pump();
@@ -465,14 +461,20 @@ void main() {
     expect(scrollbar.scrollbarOrientation, ScrollbarOrientation.right);
 
     // RawScrollbar expands an interactive thumb to Flutter's minimum touch
-    // target without widening the three-pixel painted thumb. Verify that a
-    // pointer drag in the scrollbar edge also claims viewport ownership.
+    // target without widening the three-pixel painted thumb. Verify that
+    // dragging the thumb moves the view and takes it out of FOLLOW. The thumb
+    // sits at the bottom of the track while the view follows and cannot be
+    // hit until it has faded in. Its recognizer has no touch slop, so a small
+    // first move lets it claim the pointer before the list's own drag can, as
+    // a real touch sequence does.
+    await tester.pump(const Duration(milliseconds: 400));
     expect(key.currentState!.followLatest, isTrue);
     final rect = tester.getRect(find.byKey(const ValueKey('chat-scrollbar')));
     final gesture = await tester.startGesture(
-      Offset(rect.right - 2, rect.center.dy),
+      Offset(rect.right - 2, rect.bottom - 4 - scrollbar.minThumbLength / 2),
     );
-    await gesture.moveBy(const Offset(0, -12));
+    await gesture.moveBy(const Offset(0, -2));
+    await gesture.moveBy(const Offset(0, -10));
     await tester.pump();
     expect(key.currentState!.followLatest, isFalse);
     await gesture.up();
@@ -512,7 +514,7 @@ void main() {
     await tester.pump();
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
 
-    final list = find.byType(ListView).first;
+    final list = find.byType(CustomScrollView).first;
     await tester.drag(list, const Offset(0, 160));
     await tester.pumpAndSettle();
     expect(position.pixels, lessThan(position.maxScrollExtent));
@@ -545,7 +547,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final list = find.byType(ListView).first;
+    final list = find.byType(CustomScrollView).first;
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
@@ -598,20 +600,24 @@ void main() {
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
-    position.jumpTo(position.maxScrollExtent * 0.4);
+    expect(key.currentState!.followLatest, isTrue);
+    final endBefore = position.maxScrollExtent;
 
     key.currentState!.appendStreamingText(40);
     for (var frame = 0; frame < 14; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
+    expect(position.maxScrollExtent, greaterThan(endBefore + 100));
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
 
-    position.jumpTo(position.maxScrollExtent * 0.5);
+    final endWhileStreaming = position.maxScrollExtent;
     key.currentState!.finishStreamingText(20);
     for (var frame = 0; frame < 14; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
+    expect(position.maxScrollExtent, isNot(closeTo(endWhileStreaming, 0.5)));
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
+    expect(key.currentState!.followLatest, isTrue);
   });
 
   testWidgets('FOLLOW settles at the real bottom after a large card batch', (
@@ -632,12 +638,13 @@ void main() {
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
-    position.jumpTo(position.maxScrollExtent * 0.35);
+    final endBefore = position.maxScrollExtent;
     key.currentState!.appendVariableHeightCards(24);
     for (var frame = 0; frame < 16; frame++) {
       await tester.pump(const Duration(milliseconds: 16));
     }
 
+    expect(position.maxScrollExtent, greaterThan(endBefore + 600));
     expect(position.pixels, closeTo(position.maxScrollExtent, 0.5));
     expect(
       find.byWidgetPredicate(
@@ -735,6 +742,7 @@ void main() {
         .position;
     position.jumpTo(position.maxScrollExtent * 0.6);
     await tester.pump();
+    expect(key.currentState!.followLatest, isFalse);
     key.currentState!.beginHistoryLoad();
     await tester.pump();
 
@@ -909,15 +917,8 @@ void main() {
     ColoredBox surface() => tester.widget<ColoredBox>(
       find.byKey(const ValueKey('chat-scroll-surface')),
     );
-    ListView messageList() =>
-        tester.widget<ListView>(find.byType(ListView).first);
-
     expect(surface().color.a, 1.0);
-    expect(
-      (messageList().childrenDelegate as SliverChildBuilderDelegate)
-          .addRepaintBoundaries,
-      isTrue,
-    );
+    expect(_windowDelegate(tester).addRepaintBoundaries, isTrue);
 
     key.currentState!.appendStreamingText(40);
     await tester.pump();
@@ -947,19 +948,14 @@ void main() {
     final retainedKey = ValueKey<String>(
       'message-row:server:session-1:text:${retainedMessage.id}::',
     );
-    final delegate =
-        tester.widget<ListView>(find.byType(ListView).first).childrenDelegate
-            as SliverChildBuilderDelegate;
+    final delegate = _windowDelegate(tester);
     expect(delegate.findChildIndexCallback, isNotNull);
-    expect(delegate.findChildIndexCallback!(retainedKey), 6);
+    expect(delegate.findChildIndexCallback!(retainedKey), 5);
 
     key.currentState!.insertRecoveredToolRows(beforeIndex: 6);
     await tester.pump();
 
-    final updatedDelegate =
-        tester.widget<ListView>(find.byType(ListView).first).childrenDelegate
-            as SliverChildBuilderDelegate;
-    expect(updatedDelegate.findChildIndexCallback!(retainedKey), 6);
+    expect(_windowDelegate(tester).findChildIndexCallback!(retainedKey), 5);
     expect(
       find.byWidgetPredicate(
         (widget) =>
@@ -999,7 +995,10 @@ void main() {
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
     final beforeDrag = position.pixels;
-    await tester.drag(find.byType(ListView).first, const Offset(0, 160));
+    await tester.drag(
+      find.byType(CustomScrollView).first,
+      const Offset(0, 160),
+    );
     await tester.pumpAndSettle();
     expect(position.pixels, isNot(closeTo(beforeDrag, 0.5)));
     expect(tester.takeException(), isNull);
@@ -1023,7 +1022,7 @@ void main() {
     key.currentState!.holdViewport();
     await tester.pump();
 
-    final list = find.byType(ListView).first;
+    final list = find.byType(CustomScrollView).first;
     final position = tester
         .state<ScrollableState>(find.byType(Scrollable).first)
         .position;
@@ -1044,6 +1043,10 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     await drivenScroll;
+    // The jump to the top asked for an older page; land it so the loading
+    // bar stops animating and the view can settle later.
+    key.currentState!.completeLoad(prependCount: 0);
+    await tester.pump();
 
     final beforeDrag = position.pixels;
     final dragDelta = position.pixels <= position.minScrollExtent + 1
@@ -1069,6 +1072,19 @@ void main() {
     );
     expect(tester.takeException(), isNull);
   });
+}
+
+/// The delegate of the sliver holding the rows from the center onward.
+SliverChildBuilderDelegate _windowDelegate(WidgetTester tester) {
+  final list = tester.widget<SliverList>(
+    find.byWidgetPredicate((widget) {
+      final key = widget.key;
+      return widget is SliverList &&
+          key is ValueKey<String> &&
+          key.value.startsWith('chat-window:');
+    }),
+  );
+  return list.delegate as SliverChildBuilderDelegate;
 }
 
 ({String id, double top}) _topVisibleMessage(WidgetTester tester) {
@@ -1233,8 +1249,10 @@ class _HistoryHarnessState extends State<_HistoryHarness> {
     });
   }
 
+  /// Mirrors the home screen: sending a prompt turns follow back on.
   void sendUserPrompt(String text) {
     setState(() {
+      followLatest = true;
       messages = [
         ...messages,
         ChatMessage(

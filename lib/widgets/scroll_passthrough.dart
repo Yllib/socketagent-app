@@ -1,7 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 /// Wraps a scrollable child so that overscroll at its extents
-/// is forwarded to the nearest parent Scrollable (e.g. the chat ListView).
+/// is forwarded to the nearest parent Scrollable (e.g. the chat list).
 /// This prevents inner scroll views from "eating" scroll events when
 /// the user has scrolled to the top or bottom of the card content.
 class ScrollPassthrough extends StatelessWidget {

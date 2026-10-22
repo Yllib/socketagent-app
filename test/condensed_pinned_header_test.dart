@@ -94,7 +94,13 @@ void main() {
   ) async {
     final position = await _pumpExpandedGroup(tester);
     final viewportTop = tester.getTopLeft(find.byType(Scrollable).first).dy;
-    final cardTop = tester.getTopLeft(_card).dy + _cardMargin - viewportTop;
+    // The card's top edge in scroll space; the view starts above the list's
+    // top padding, not at zero.
+    final cardTop =
+        position.pixels +
+        tester.getTopLeft(_card).dy +
+        _cardMargin -
+        viewportTop;
 
     // The card's top edge is still on screen: nothing pinned.
     position.jumpTo(cardTop - 2);
@@ -127,7 +133,13 @@ void main() {
   ) async {
     final position = await _pumpExpandedGroup(tester, trailingReplies: 40);
     final viewportTop = tester.getTopLeft(find.byType(Scrollable).first).dy;
-    final cardTop = tester.getTopLeft(_card).dy + _cardMargin - viewportTop;
+    // The card's top edge in scroll space; the view starts above the list's
+    // top padding, not at zero.
+    final cardTop =
+        position.pixels +
+        tester.getTopLeft(_card).dy +
+        _cardMargin -
+        viewportTop;
     position.jumpTo(cardTop + 400);
     await tester.pump();
     expect(_pinned, findsOneWidget);

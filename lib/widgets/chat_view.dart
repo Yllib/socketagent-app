@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'resume_context_card.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -46,6 +47,7 @@ import '../models/composer_attachment.dart';
 import '../config/app_palette.dart';
 import 'light_backdrop.dart';
 import 'second_ticker.dart';
+import 'chat_scroll_controller.dart';
 
 class ChatView extends StatefulWidget {
   final List<ChatMessage> messages;
@@ -168,203 +170,7 @@ class ChatView extends StatefulWidget {
   State<ChatView> createState() => ChatViewState();
 }
 
-class _AutoFollowScrollController extends ScrollController {
-  _AutoFollowScrollController({
-    required this.shouldFollow,
-    required this.prependAnchorCorrection,
-  });
-
-  final bool Function() shouldFollow;
-  final double? Function() prependAnchorCorrection;
-  bool _followRequested = false;
-  double? _preservedEndDistance;
-  double? _preservedPixels;
-
-  void requestFollow() {
-    _followRequested = true;
-    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
-      position.requestFollow();
-    }
-  }
-
-  void cancelFollow() {
-    _followRequested = false;
-    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
-      position.cancelFollow();
-    }
-  }
-
-  void preserveCurrentEndDistance() {
-    if (!hasClients) return;
-    final current = position;
-    _preservedPixels = current.pixels;
-    _preservedEndDistance = current.maxScrollExtent - _preservedPixels!;
-    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
-      position.preserveEndDistance(
-        _preservedEndDistance!,
-        pixels: _preservedPixels!,
-      );
-    }
-  }
-
-  void rebasePreservedPosition() {
-    if (!hasClients || _preservedEndDistance == null) return;
-    final current = position;
-    _preservedPixels = current.pixels;
-    _preservedEndDistance = current.maxScrollExtent - current.pixels;
-    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
-      position.preserveEndDistance(
-        _preservedEndDistance!,
-        pixels: _preservedPixels!,
-      );
-    }
-  }
-
-  void finishPreservingEndDistance() {
-    _preservedEndDistance = null;
-    _preservedPixels = null;
-    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
-      position.finishPreservingEndDistance();
-    }
-  }
-
-  /// Moves to [pixels] during the next layout pass, clamped to the content
-  /// that pass produces. Use it when the same frame also changes row heights
-  /// so the viewport never paints the stale offset first.
-  void requestPixelsAfterLayout(double pixels) {
-    for (final position in positions.whereType<_AutoFollowScrollPosition>()) {
-      position.requestPixelsAfterLayout(pixels);
-    }
-  }
-
-  @override
-  ScrollPosition createScrollPosition(
-    ScrollPhysics physics,
-    ScrollContext context,
-    ScrollPosition? oldPosition,
-  ) {
-    return _AutoFollowScrollPosition(
-      physics: physics,
-      context: context,
-      oldPosition: oldPosition,
-      keepScrollOffset: keepScrollOffset,
-      debugLabel: debugLabel,
-      shouldFollow: shouldFollow,
-      prependAnchorCorrection: prependAnchorCorrection,
-      initiallyRequested: _followRequested,
-      preservedEndDistance: _preservedEndDistance,
-      preservedPixels: _preservedPixels,
-      onRequestApplied: () => _followRequested = false,
-    );
-  }
-}
-
-class _AutoFollowScrollPosition extends ScrollPositionWithSingleContext {
-  _AutoFollowScrollPosition({
-    required super.physics,
-    required super.context,
-    required this.shouldFollow,
-    required this.prependAnchorCorrection,
-    required this.onRequestApplied,
-    required bool initiallyRequested,
-    required double? preservedEndDistance,
-    required double? preservedPixels,
-    super.keepScrollOffset,
-    super.oldPosition,
-    super.debugLabel,
-  }) : _followRequested = initiallyRequested,
-       _preservedEndDistance = preservedEndDistance,
-       _preservedPixels = preservedPixels;
-
-  final bool Function() shouldFollow;
-  final double? Function() prependAnchorCorrection;
-  final VoidCallback onRequestApplied;
-  bool _followRequested;
-  double? _preservedEndDistance;
-  double? _preservedPixels;
-  double? _requestedPixels;
-
-  void requestFollow() => _followRequested = true;
-
-  void cancelFollow() => _followRequested = false;
-
-  void preserveEndDistance(double distance, {required double pixels}) {
-    _preservedEndDistance = distance;
-    _preservedPixels = pixels;
-  }
-
-  void finishPreservingEndDistance() {
-    _preservedEndDistance = null;
-    _preservedPixels = null;
-  }
-
-  void requestPixelsAfterLayout(double pixels) => _requestedPixels = pixels;
-
-  @override
-  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
-    final previousMaxExtent = hasContentDimensions
-        ? this.maxScrollExtent
-        : null;
-    final wasPinnedToBottom =
-        previousMaxExtent != null &&
-        hasPixels &&
-        (pixels - previousMaxExtent).abs() < 1.0;
-    final requestedPixels = _requestedPixels;
-    final correctToBottom =
-        requestedPixels == null &&
-        shouldFollow() &&
-        (_followRequested || wasPinnedToBottom);
-    final preservedEndDistance = shouldFollow() ? null : _preservedEndDistance;
-
-    final accepted = super.applyContentDimensions(
-      minScrollExtent,
-      maxScrollExtent,
-    );
-    var corrected = false;
-    if (requestedPixels != null && hasPixels) {
-      // An explicit reveal, such as collapsing a tool group from its pinned
-      // header, wins over follow and prepend preservation for this frame.
-      _requestedPixels = null;
-      final target = requestedPixels
-          .clamp(minScrollExtent, maxScrollExtent)
-          .toDouble();
-      if ((pixels - target).abs() >= 0.5) {
-        correctPixels(target);
-        corrected = true;
-      }
-    } else if (correctToBottom && hasPixels) {
-      if ((pixels - maxScrollExtent).abs() >= 0.5) {
-        // applyContentDimensions runs during layout. Correcting here updates
-        // the viewport before paint, unlike jumpTo after a frame, so history
-        // reconciliation and lazy extent refinement cannot visibly teleport.
-        correctPixels(maxScrollExtent);
-        corrected = true;
-      }
-      _followRequested = false;
-      onRequestApplied();
-    } else if (preservedEndDistance != null && hasPixels) {
-      final anchorCorrection = prependAnchorCorrection();
-      final preservedPixels =
-          (anchorCorrection == null
-                  ? maxScrollExtent - preservedEndDistance
-                  : (_preservedPixels ?? pixels) + anchorCorrection)
-              .clamp(minScrollExtent, maxScrollExtent)
-              .toDouble();
-      if ((pixels - preservedPixels).abs() >= 0.5) {
-        // Older rows were inserted ahead of the visible transcript. Preserve
-        // the previous distance from the end while layout is still running so
-        // the same rows remain under the user's finger without a painted jump.
-        correctPixels(preservedPixels);
-        corrected = true;
-      }
-    }
-    // The sliver pass that calculated these dimensions used the old offset.
-    // Ask the viewport for one immediate re-layout so it builds the actual
-    // bottom children before paint; otherwise the corrected offset can point
-    // at rows that were not laid out in this frame.
-    return corrected ? false : accepted;
-  }
-}
+typedef _RenderRow = ({CondensedChatRow content, String rowKey});
 
 /// The expanded tool group whose header has scrolled above the viewport while
 /// the rest of the group is still on screen.
@@ -385,7 +191,7 @@ class _PinnedCondensedGroup {
 }
 
 class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
-  late final _AutoFollowScrollController _scrollController;
+  late final ChatScrollController _scroll;
   final Set<String> _expandedImageCardIds = {};
   final Map<String, Set<String>> _expandedCondensedRowsBySession = {};
   final _pinnedCondensedGroup = ValueNotifier<_PinnedCondensedGroup?>(null);
@@ -400,19 +206,21 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   ChatMessage? _indexedLastMessage;
   int _indexedHistoryWindowRevision = -1;
   String? _indexedSessionStorageKey;
-  bool _historyPrefetchScheduled = false;
   int _transcriptTargetGeneration = 0;
   int _transcriptTargetSeekAttempts = 0;
-  bool _transcriptTargetLoadRequested = false;
   String? _lastTranscriptTargetIdentity;
-  bool _followFallbackScheduled = false;
-  int _prependPreservationGeneration = 0;
-  String? _prependAnchorRowKey;
-  double? _prependAnchorLayoutOffset;
-  RenderBox? _prependAnchorBox;
-  final Map<int, double> _activeViewportPointers = {};
-  bool _userScrollInProgress = false;
-  bool? _requestedFollowLatest;
+
+  /// Row that starts the forward-growing sliver. Rows before it render in a
+  /// sliver that grows upward, so older pages never move the viewport.
+  String? _centerRowKey;
+  Set<String> _windowRowKeys = const {};
+  int _centerGeneration = 0;
+
+  /// True from asking for an older page until that page has been laid out.
+  bool _olderHistoryRequested = false;
+  bool _olderHistoryCheckScheduled = false;
+
+  static const _centerSliverKey = ValueKey<String>('chat-window-center');
 
   bool get _hasTranscriptTarget =>
       (widget.targetEntryId?.isNotEmpty ?? false) ||
@@ -423,23 +231,13 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _scrollController = _AutoFollowScrollController(
-      shouldFollow: () =>
-          mounted &&
-          _effectiveFollowLatest &&
-          !_userPointerDown &&
-          !_userScrollInProgress &&
-          !_hasTranscriptTarget,
-      prependAnchorCorrection: _prependAnchorCorrection,
-    );
+    _scroll = ChatScrollController(following: widget.followLatest);
+    _scroll.followingListenable.addListener(_onFollowingChanged);
+    _scroll.addListener(_onScroll);
+    if (_hasTranscriptTarget) _scroll.hold();
     _reindexAllMessages(force: true);
-    _scrollController.addListener(_onScroll);
     _scheduleTranscriptTargetSeek();
-    if (_hasTranscriptTarget) {
-      _disableFollowForTranscriptTarget();
-    } else if (widget.followLatest) {
-      _followToBottom();
-    }
+    _scheduleOlderHistoryCheck();
   }
 
   void _reindexAllMessages({bool force = false}) {
@@ -494,19 +292,19 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   }
 
   void _releaseScrollInteractionAfterLifecycle() {
-    if (_scrollController.hasClients) {
-      final position = _scrollController.position;
-      _scrollController.jumpTo(
-        position.pixels
-            .clamp(position.minScrollExtent, position.maxScrollExtent)
-            .toDouble(),
-      );
-    }
+    if (!_scroll.hasClients) return;
+    final position = _scroll.position;
+    // Same offset, so the mode is untouched; only the activity is replaced.
+    _scroll.jumpTo(
+      position.pixels
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble(),
+    );
   }
 
   void _onScroll() {
-    if (!_scrollController.hasClients) return;
-    _scheduleHistoryPrefetchIfNeeded();
+    if (!_scroll.hasClients) return;
+    _scheduleOlderHistoryCheck();
     _updatePinnedCondensedGroup();
   }
 
@@ -530,11 +328,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final expanded = widget.condensedToolUsage
         ? _expandedCondensedRowsBySession[widget.sessionStorageKey ?? '']
         : null;
-    if (expanded == null || expanded.isEmpty || !_scrollController.hasClients) {
+    if (expanded == null || expanded.isEmpty || !_scroll.hasClients) {
       _pinnedCondensedGroup.value = null;
       return;
     }
-    final pixels = _scrollController.position.pixels;
+    final pixels = _scroll.position.pixels;
     final headerBox = _pinnedCondensedHeaderKey.currentContext
         ?.findRenderObject();
     final headerHeight = headerBox is RenderBox && headerBox.hasSize
@@ -590,9 +388,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   /// so the reader never sees the rows that used to sit below it.
   void _collapseCondensedGroupFromPinnedHeader(String rowKey) {
     final box = _messageRowKeys[rowKey]?.currentContext?.findRenderObject();
-    final reveal = box is RenderBox ? _revealOffsetFor(box) : null;
-    if (reveal != null) {
-      _scrollController.requestPixelsAfterLayout(reveal + _condensedCardMargin);
+    if (box is RenderBox) {
+      _scroll.revealAfterLayout(box, inset: _condensedCardMargin);
     }
     _pinnedCondensedGroup.value = null;
     _toggleCondensedGroup(rowKey);
@@ -678,7 +475,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     if (_lastTranscriptTargetIdentity != identity) {
       _lastTranscriptTargetIdentity = identity;
       _transcriptTargetSeekAttempts = 0;
-      _transcriptTargetLoadRequested = false;
     }
     final generation = ++_transcriptTargetGeneration;
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -694,29 +490,17 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         (row) => _rowMatchesTranscriptTarget(row.content),
       );
       if (messageIndex < 0) {
-        if (widget.hasMoreHistory &&
-            widget.onLoadMore != null &&
-            !_transcriptTargetLoadRequested) {
-          _transcriptTargetLoadRequested = true;
-          widget.onLoadMore!();
-          return;
-        }
-        if (!widget.hasMoreHistory) {
+        // Page backwards until the target row is loaded. The seek runs
+        // again when each page lands.
+        if (!_requestOlderHistory() && !widget.hasMoreHistory) {
           widget.onTranscriptTargetReached?.call();
         }
         return;
       }
-
-      final rowKey = rows[messageIndex].rowKey;
-      final listIndex = messageIndex + (widget.hasMoreHistory ? 1 : 0);
-      final listItemCount =
-          rows.length +
-          (_showsStatusRow ? 1 : 0) +
-          (widget.hasMoreHistory ? 1 : 0);
       _seekMountedTranscriptRow(
-        rowKey: rowKey,
-        targetListIndex: listIndex,
-        listItemCount: listItemCount,
+        rowKey: rows[messageIndex].rowKey,
+        targetListIndex: messageIndex,
+        listItemCount: rows.length + (_showsStatusRow ? 1 : 0),
         generation: generation,
       );
     });
@@ -747,7 +531,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       });
       return;
     }
-    if (!_scrollController.hasClients) {
+    if (!_scroll.hasClients) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _seekMountedTranscriptRow(
           rowKey: rowKey,
@@ -759,14 +543,15 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       return;
     }
 
+    // The row is not built yet. Jump to where the mounted rows suggest it
+    // is and try again next frame, until it mounts or attempts run out.
     _transcriptTargetSeekAttempts++;
-    final position = _scrollController.position;
+    final position = _scroll.position;
     final rows = _renderRows();
-    final listIndexByRowKey = <String, int>{};
-    for (var index = 0; index < rows.length; index++) {
-      listIndexByRowKey[rows[index].rowKey] =
-          index + (widget.hasMoreHistory ? 1 : 0);
-    }
+    final listIndexByRowKey = <String, int>{
+      for (var index = 0; index < rows.length; index++)
+        rows[index].rowKey: index,
+    };
     final mountedRows = <({int listIndex, double top})>[];
     for (final entry in _messageRowKeys.entries) {
       final listIndex = listIndexByRowKey[entry.key];
@@ -806,7 +591,11 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           (targetListIndex - nearest.listIndex) * averageExtent;
     } else {
       final denominator = (listItemCount - 1).clamp(1, 1 << 30);
-      targetPixels = position.maxScrollExtent * targetListIndex / denominator;
+      targetPixels =
+          position.minScrollExtent +
+          (position.maxScrollExtent - position.minScrollExtent) *
+              targetListIndex /
+              denominator;
     }
     position.jumpTo(
       targetPixels
@@ -824,17 +613,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         );
       });
     }
-  }
-
-  bool _historyWasPrepended(ChatView oldWidget) {
-    if (oldWidget.messages.isEmpty || widget.messages.isEmpty) return false;
-    // A live reply can be appended in the same frame as an older page. The
-    // total length delta and the last row therefore do not identify a prepend.
-    final previousFirstKey = _messageRowKey(oldWidget.messages.first);
-    return widget.messages.indexWhere(
-          (message) => _messageRowKey(message) == previousFirstKey,
-        ) >
-        0;
   }
 
   final _rowCache = CondensedChatRowsCache();
@@ -874,191 +652,134 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     return occurrence == 0 ? base : '$base#duplicate:$occurrence';
   }
 
+  /// Splits the rows at the center row. Rows before it render, newest first,
+  /// in a sliver that grows upward, so an older page lands above the viewport
+  /// without moving anything inside it.
+  ({List<_RenderRow> older, List<_RenderRow> window}) _splitRows(
+    List<_RenderRow> rows,
+  ) {
+    final centerKey = _centerRowKey;
+    var centerIndex = centerKey == null
+        ? -1
+        : rows.indexWhere((row) => row.rowKey == centerKey);
+    if (centerIndex < 0) {
+      // The center row is gone. Rows still mounted in the window sliver keep
+      // their layout when the center moves to the earliest survivor. With no
+      // survivor, both slivers start over.
+      centerIndex = rows.indexWhere(
+        (row) => _windowRowKeys.contains(row.rowKey),
+      );
+      if (centerIndex < 0) {
+        centerIndex = 0;
+        if (_windowRowKeys.isNotEmpty) _centerGeneration++;
+      }
+      _centerRowKey = rows.isEmpty ? null : rows[centerIndex].rowKey;
+    }
+    final window = rows.sublist(centerIndex);
+    _windowRowKeys = {for (final row in window) row.rowKey};
+    return (
+      older: rows.sublist(0, centerIndex).reversed.toList(),
+      window: window,
+    );
+  }
+
   @override
   void didUpdateWidget(ChatView oldWidget) {
     super.didUpdateWidget(oldWidget);
     _rowsForWidget = null;
     _reindexAllMessages();
 
-    if (_requestedFollowLatest == widget.followLatest) {
-      _requestedFollowLatest = null;
-    }
-    if (!widget.followLatest) {
-      _cancelFollowBottom();
+    final sessionChanged =
+        widget.sessionStorageKey != oldWidget.sessionStorageKey;
+    if (sessionChanged) {
+      // The scroll view is keyed by session, so a fresh viewport is coming.
+      _centerRowKey = null;
+      _windowRowKeys = const {};
+      _centerGeneration++;
+      _olderHistoryRequested = false;
+      _expandedImageCardIds.clear();
+      _messageRowKeys.clear();
+      _taskKeys.clear();
+      _taskRowKeyByToolUseId.clear();
+      // Not synchronously: this runs during build and the pinned header's
+      // ValueListenableBuilder may not rebuild from inside it.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updatePinnedCondensedGroup();
+      });
+      if (widget.followLatest && !_hasTranscriptTarget) {
+        _scroll.follow();
+      } else {
+        _scroll.hold();
+      }
+    } else if (widget.followLatest != oldWidget.followLatest) {
+      // Only transitions matter. Between them the controller owns the mode,
+      // and the parent's value is a mirror of it.
+      if (widget.followLatest) {
+        _scroll.follow();
+      } else {
+        _scroll.hold();
+      }
     }
 
     final targetIdentity = _transcriptTargetIdentity();
     if (_lastTranscriptTargetIdentity != targetIdentity) {
       _lastTranscriptTargetIdentity = targetIdentity;
       _transcriptTargetSeekAttempts = 0;
-      _transcriptTargetLoadRequested = false;
       _transcriptTargetGeneration++;
-      _cancelFollowBottom();
-      if (_hasTranscriptTarget) {
-        _disableFollowForTranscriptTarget();
-      }
+      if (_hasTranscriptTarget) _scroll.hold();
     }
     if (oldWidget.isLoadingMore && !widget.isLoadingMore) {
-      _transcriptTargetLoadRequested = false;
+      // The page is part of this frame's layout; the post-frame check
+      // below measures the distance only after it has been placed.
+      _olderHistoryRequested = false;
     }
 
-    final historyWindowWasReplaced =
-        widget.historyWindowRevision != oldWidget.historyWindowRevision;
-    final newRows = _renderRows();
-    final newRowKeys = newRows.map((row) => row.rowKey).toList();
-
-    final activeRowKeys = newRowKeys.toSet();
+    final activeRowKeys = {for (final row in _renderRows()) row.rowKey};
     _messageRowKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
     _taskKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
     _taskRowKeyByToolUseId.removeWhere(
       (_, rowKey) => !activeRowKeys.contains(rowKey),
     );
 
-    final historyLoadFinished =
-        oldWidget.isLoadingMore && !widget.isLoadingMore;
-    final historyWasPrepended = _historyWasPrepended(oldWidget);
-    final historyHeaderChanged =
-        widget.hasMoreHistory != oldWidget.hasMoreHistory;
-    if ((historyWasPrepended || historyHeaderChanged) &&
-        !_effectiveFollowLatest &&
-        !_hasTranscriptTarget) {
-      _preserveViewportAcrossPrepend();
-    }
-    if (historyLoadFinished || historyWasPrepended) {
-      _transcriptTargetLoadRequested = false;
-    }
-
-    final sessionChanged =
-        widget.sessionStorageKey != oldWidget.sessionStorageKey;
-    if (sessionChanged) {
-      _cancelFollowBottom();
-      _finishPreservingPrepend();
-      // A session ID can arrive after the cached chat has already painted.
-      // Do not erase ownership of a gesture that began in that window.
-      _userScrollInProgress = _userPointerDown;
-      _requestedFollowLatest = null;
-      _expandedImageCardIds.clear();
-      // Not synchronously: this runs during build and the pinned header's
-      // ValueListenableBuilder may not rebuild from inside it.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _updatePinnedCondensedGroup();
-      });
-      _messageRowKeys.clear();
-      _taskKeys.clear();
-      _taskRowKeyByToolUseId.clear();
-    }
-
-    if (!oldWidget.followLatest && widget.followLatest) {
-      _followToBottom();
-      return;
-    }
-
-    if (sessionChanged && !_hasTranscriptTarget) {
-      if (widget.followLatest) {
-        _followToBottom();
-      }
-      return;
-    }
-
-    if (oldWidget.isLoadingHistory && !widget.isLoadingHistory) {
-      if (_hasTranscriptTarget) {
-        _scheduleTranscriptTargetSeek();
-      } else if (widget.followLatest) {
-        _followToBottom();
-      }
-      _maybeBackfillViewport();
-      return;
-    }
-
-    if (historyWindowWasReplaced) {
-      _cancelFollowBottom();
-      if (_hasTranscriptTarget) {
-        _scheduleTranscriptTargetSeek();
-      } else if (widget.followLatest) {
-        _followToBottom();
-      }
-      _maybeBackfillViewport();
-      return;
-    }
-
-    if (historyLoadFinished || historyWasPrepended) {
-      _cancelFollowBottom();
-      if (_hasTranscriptTarget) {
-        _scheduleTranscriptTargetSeek();
-        return;
-      }
-      if (widget.followLatest) {
-        _followToBottom();
-      }
-      _maybeBackfillViewport();
-      _scheduleHistoryPrefetchIfNeeded();
-      return;
-    }
-
-    // While a run is active, every provider update can represent an in-place
-    // stream/card revision. Coalesce all such updates into one post-layout
-    // bottom settle. Outside an active run, a row-count change is sufficient;
-    // authoritative history replacement and session transitions are handled
-    // explicitly above.
-    if (widget.followLatest &&
-        (widget.isProcessing ||
-            oldWidget.isProcessing ||
-            widget.condensedToolUsage != oldWidget.condensedToolUsage ||
-            widget.messages.length != oldWidget.messages.length)) {
-      _followToBottom();
-    }
-
-    if (_hasTranscriptTarget) {
-      _scheduleTranscriptTargetSeek();
-    }
+    _scheduleOlderHistoryCheck();
+    if (_hasTranscriptTarget) _scheduleTranscriptTargetSeek();
   }
 
-  void _maybeBackfillViewport() {
+  void _scheduleOlderHistoryCheck() {
+    if (_olderHistoryCheckScheduled) return;
+    _olderHistoryCheckScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted ||
-          !_scrollController.hasClients ||
-          widget.isLoadingHistory ||
-          widget.isLoadingMore ||
-          !widget.hasMoreHistory ||
-          widget.onLoadMore == null) {
-        return;
-      }
-      final position = _scrollController.position;
-      // Keep at least a page of scrollback beyond the current viewport. The
-      // provider may continue farther to reach the latest user prompt.
-      if (position.maxScrollExtent < position.viewportDimension) {
-        widget.onLoadMore!();
-      }
+      _olderHistoryCheckScheduled = false;
+      if (mounted) _requestOlderHistoryIfNearTop();
     });
   }
 
-  void _scheduleHistoryPrefetchIfNeeded() {
-    if (_historyPrefetchScheduled ||
-        widget.isLoadingHistory ||
+  /// Asks for the previous page while the top of the loaded history is
+  /// within 1.25 viewports of the reader. This also fills a window shorter
+  /// than the viewport. It runs after layout, so a page that just landed has
+  /// been placed before the distance is measured.
+  void _requestOlderHistoryIfNearTop() {
+    if (!_scroll.hasClients) return;
+    final position = _scroll.position;
+    if (!position.hasContentDimensions) return;
+    final distanceFromOldestLoaded = position.pixels - position.minScrollExtent;
+    if (distanceFromOldestLoaded > position.viewportDimension * 1.25) return;
+    _requestOlderHistory();
+  }
+
+  /// One older page at a time: never while a page is loading, and never
+  /// again until the page that was asked for has been laid out.
+  bool _requestOlderHistory() {
+    if (_olderHistoryRequested ||
         widget.isLoadingMore ||
+        widget.isLoadingHistory ||
         !widget.hasMoreHistory ||
         widget.onLoadMore == null) {
-      return;
+      return false;
     }
-    _historyPrefetchScheduled = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _historyPrefetchScheduled = false;
-      if (!mounted ||
-          !_scrollController.hasClients ||
-          widget.isLoadingHistory ||
-          widget.isLoadingMore ||
-          !widget.hasMoreHistory ||
-          widget.onLoadMore == null) {
-        return;
-      }
-      final position = _scrollController.position;
-      final distanceFromOldestLoaded =
-          position.pixels - position.minScrollExtent;
-      final prefetchDistance = position.viewportDimension * 1.25;
-      if (distanceFromOldestLoaded <= prefetchDistance) {
-        widget.onLoadMore!();
-      }
-    });
+    _olderHistoryRequested = true;
+    widget.onLoadMore!();
+    return true;
   }
 
   void _handleToolExpansionChanged(
@@ -1070,12 +791,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final changed = expanded
         ? _expandedImageCardIds.add(messageId)
         : _expandedImageCardIds.remove(messageId);
-    if (changed && mounted) {
-      setState(() {});
-      if (widget.followLatest) {
-        _followToBottom();
-      }
-    }
+    if (changed && mounted) setState(() {});
   }
 
   Widget _buildToolOutputBlock(
@@ -1094,231 +810,27 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
-  void _cancelFollowBottom() {
-    _scrollController.cancelFollow();
-  }
-
-  void _preserveViewportAcrossPrepend() {
-    if (!_scrollController.hasClients) return;
-    _capturePrependAnchor();
-    final generation = ++_prependPreservationGeneration;
-    _scrollController.preserveCurrentEndDistance();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || generation != _prependPreservationGeneration) return;
-      _finishPreservingPrepend();
-    });
-  }
-
-  void _finishPreservingPrepend() {
-    _prependPreservationGeneration++;
-    _scrollController.finishPreservingEndDistance();
-    _prependAnchorRowKey = null;
-    _prependAnchorLayoutOffset = null;
-    _prependAnchorBox = null;
-  }
-
-  void _capturePrependAnchor() {
-    final viewport =
-        _scrollController.position.context.notificationContext
-                ?.findRenderObject()
-            as RenderBox?;
-    if (viewport == null || !viewport.hasSize) return;
-    final viewportTop = viewport.localToGlobal(Offset.zero).dy;
-    final viewportBottom = viewportTop + viewport.size.height;
-    String? selectedRowKey;
-    double? selectedTop;
-    RenderBox? selectedBox;
-
-    for (final entry in _messageRowKeys.entries) {
-      final box = entry.value.currentContext?.findRenderObject() as RenderBox?;
-      if (box == null || !box.hasSize) continue;
-      final top = box.localToGlobal(Offset.zero).dy;
-      final bottom = top + box.size.height;
-      if (bottom <= viewportTop || top >= viewportBottom) continue;
-      if (selectedTop == null || top < selectedTop) {
-        selectedRowKey = entry.key;
-        selectedTop = top;
-        selectedBox = box;
-      }
-    }
-
-    _prependAnchorRowKey = selectedRowKey;
-    _prependAnchorBox = selectedBox;
-    _prependAnchorLayoutOffset = selectedBox == null
-        ? null
-        : _sliverLayoutOffsetFor(selectedBox);
-  }
-
-  double? _prependAnchorCorrection() {
-    final expectedOffset = _prependAnchorLayoutOffset;
-    final box = _prependAnchorBox;
-    if (_prependAnchorRowKey == null ||
-        expectedOffset == null ||
-        box == null ||
-        !box.attached ||
-        !box.hasSize) {
-      return null;
-    }
-    final currentOffset = _sliverLayoutOffsetFor(box);
-    return currentOffset == null ? null : currentOffset - expectedOffset;
-  }
-
-  double? _sliverLayoutOffsetFor(RenderObject anchor) {
-    RenderObject child = anchor;
-    RenderObject? parent = child.parent;
-    while (parent != null) {
-      if (parent is RenderSliverMultiBoxAdaptor) {
-        final parentData = child.parentData;
-        return parentData is SliverMultiBoxAdaptorParentData
-            ? parentData.layoutOffset
-            : null;
-      }
-      child = parent;
-      parent = child.parent;
-    }
-    return null;
-  }
-
-  bool get _effectiveFollowLatest =>
-      _requestedFollowLatest ?? widget.followLatest;
-
-  bool get _userPointerDown => _activeViewportPointers.isNotEmpty;
-
-  bool get _userOwnsViewport => _userPointerDown || _userScrollInProgress;
-
-  void _handleViewportPointerDown(PointerDownEvent event) {
-    _activeViewportPointers[event.pointer] = event.position.dy;
-    // Pointer-down is the earliest reliable indication that the reader is
-    // taking control. Cancel entry-time follow/prepend work before the drag
-    // recognizer emits its first ScrollStartNotification.
-    _cancelFollowBottom();
-    // If a prepend was already queued, move its baseline to the exact offset
-    // at which the finger took ownership instead of discarding the anchor.
-    _scrollController.rebasePreservedPosition();
-  }
-
-  void _handleViewportPointerMove(PointerMoveEvent event) {
-    final startY = _activeViewportPointers[event.pointer];
-    if (startY == null || (event.position.dy - startY).abs() <= 2) return;
-    // RawScrollbar drives the ScrollPosition directly and may not attach drag
-    // details to its notifications. Pointer motion is the common ownership
-    // signal for both a chat drag and an interactive thumb drag.
-    if (_effectiveFollowLatest) _requestFollowLatest(false);
-  }
-
-  void _handleViewportPointerEnd(PointerEvent event) {
-    _activeViewportPointers.remove(event.pointer);
-  }
-
-  void _disableFollowForTranscriptTarget() {
-    final identity = _transcriptTargetIdentity();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+  /// Mirrors the controller's mode to the parent. Deferred because the mode
+  /// can change inside layout, where the parent cannot set state.
+  void _onFollowingChanged() {
+    final following = _scroll.following;
+    if (following == widget.followLatest) return;
+    scheduleMicrotask(() {
       if (!mounted ||
-          !_hasTranscriptTarget ||
-          _transcriptTargetIdentity() != identity) {
+          _scroll.following != following ||
+          widget.followLatest == following) {
         return;
       }
-      _requestFollowLatest(false);
-    });
-  }
-
-  void _requestFollowLatest(bool follow) {
-    if (_effectiveFollowLatest == follow) return;
-    _requestedFollowLatest = follow;
-    if (!follow) {
-      _cancelFollowBottom();
-    }
-    widget.onFollowLatestChanged?.call(follow);
-  }
-
-  bool _handleUserScrollNotification(ScrollNotification notification) {
-    // Nested tool output can scroll independently of the transcript.
-    if (notification.depth != 0) return false;
-    final userDirection =
-        notification is UserScrollNotification &&
-        notification.direction != ScrollDirection.idle;
-    if (userDirection ||
-        (notification is ScrollStartNotification &&
-            notification.dragDetails != null)) {
-      _userScrollInProgress = true;
-      _cancelFollowBottom();
-      _scrollController.rebasePreservedPosition();
-    }
-
-    if (_userScrollInProgress && notification is ScrollUpdateNotification) {
-      // A history page and a user scroll can land in adjacent layout passes.
-      // Keep any pending anchor based on the latest user-owned pixels so its
-      // correction adds only the prepended height, never a stale drag offset.
-      _scrollController.rebasePreservedPosition();
-    }
-
-    if (_userScrollInProgress && _effectiveFollowLatest) {
-      final movedByUser =
-          notification is ScrollUpdateNotification &&
-          (notification.scrollDelta?.abs() ?? 0) > 0;
-      final overscrollingAway =
-          notification is OverscrollNotification &&
-          notification.metrics.extentAfter > 2;
-      if (movedByUser || overscrollingAway) {
-        // The first real drag or wheel delta transfers ownership. Waiting
-        // for extentAfter is racy while entry-time history is still changing
-        // the content dimensions underneath the gesture.
-        _requestFollowLatest(false);
-      }
-    }
-
-    if (notification is ScrollEndNotification ||
-        (notification is UserScrollNotification &&
-            notification.direction == ScrollDirection.idle)) {
-      final endedUserScroll = _userScrollInProgress;
-      if (endedUserScroll &&
-          !_effectiveFollowLatest &&
-          notification.metrics.extentAfter <= 12) {
-        _requestFollowLatest(true);
-      }
-      _userScrollInProgress = false;
-      if (endedUserScroll && _effectiveFollowLatest) {
-        _followToBottom();
-      }
-    }
-    return false;
-  }
-
-  void _followToBottom() {
-    // Never even queue a follow while the reader owns the viewport. Checking
-    // only in the post-frame fallback is too late: applyContentDimensions can
-    // consume the request during layout and visibly snap before that callback.
-    if (_userOwnsViewport) return;
-    _scrollController.requestFollow();
-    if (_followFallbackScheduled) return;
-    _followFallbackScheduled = true;
-    final sessionStorageKey = widget.sessionStorageKey;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _followFallbackScheduled = false;
-      if (!mounted ||
-          !_effectiveFollowLatest ||
-          _userScrollInProgress ||
-          _hasTranscriptTarget ||
-          widget.sessionStorageKey != sessionStorageKey ||
-          !_scrollController.hasClients) {
-        return;
-      }
-      final position = _scrollController.position;
-      final maxExtent = position.maxScrollExtent;
-      if ((position.pixels - maxExtent).abs() >= 0.5) {
-        // Normally applyContentDimensions has already corrected the offset
-        // before paint. This handles same-extent content replacements where
-        // Flutter legitimately skips a viewport layout.
-        position.jumpTo(maxExtent);
-      }
+      widget.onFollowLatestChanged?.call(following);
     });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _scrollController.removeListener(_onScroll);
-    _scrollController.dispose();
+    _scroll.removeListener(_onScroll);
+    _scroll.followingListenable.removeListener(_onFollowingChanged);
+    _scroll.dispose();
     _pinnedCondensedGroup.dispose();
     super.dispose();
   }
@@ -1385,21 +897,17 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       );
     }
 
-    final hasLoadMore = widget.hasMoreHistory;
-    final itemCount =
-        (hasLoadMore ? 1 : 0) + visibleRows.length + (_showsStatusRow ? 1 : 0);
-    final listIndexByMessageKey = <Key, int>{};
-    for (
-      var messageIndex = 0;
-      messageIndex < visibleRows.length;
-      messageIndex++
-    ) {
-      final listIndex = messageIndex + (hasLoadMore ? 1 : 0);
-      listIndexByMessageKey[_messageSliverKey(
-            visibleRows[messageIndex].rowKey,
-          )] =
-          listIndex;
-    }
+    final split = _splitRows(visibleRows);
+    final older = split.older;
+    final window = split.window;
+    final olderIndexByKey = <Key, int>{
+      for (var index = 0; index < older.length; index++)
+        _messageSliverKey(older[index].rowKey): index,
+    };
+    final windowIndexByKey = <Key, int>{
+      for (var index = 0; index < window.length; index++)
+        _messageSliverKey(window[index].rowKey): index,
+    };
 
     return ColoredBox(
       key: const ValueKey('chat-surface'),
@@ -1440,88 +948,112 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               // stays opaque while light mode still gets it.
               child: LightBackdrop(
                 child: SizedBox.expand(
-                  child: Listener(
-                    behavior: HitTestBehavior.translucent,
-                    onPointerDown: _handleViewportPointerDown,
-                    onPointerMove: _handleViewportPointerMove,
-                    onPointerUp: _handleViewportPointerEnd,
-                    onPointerCancel: _handleViewportPointerEnd,
-                    child: Stack(
-                      fit: StackFit.expand,
-                      children: [
-                        // Own layer, so the pinned header appearing or
-                        // disappearing never repaints the transcript.
-                        RepaintBoundary(
-                          child: RawScrollbar(
-                            key: const ValueKey('chat-scrollbar'),
-                            controller: _scrollController,
-                            thumbVisibility: true,
-                            trackVisibility: false,
-                            interactive: true,
-                            thickness: 3,
-                            minThumbLength: 56,
-                            radius: const Radius.circular(2),
-                            mainAxisMargin: 4,
-                            crossAxisMargin: 0,
-                            scrollbarOrientation: ScrollbarOrientation.right,
-                            thumbColor: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant.withAlpha(145),
-                            child: NotificationListener<ScrollMetricsNotification>(
-                              onNotification: _handleScrollMetricsNotification,
-                              child: NotificationListener<ScrollNotification>(
-                                onNotification: _handleUserScrollNotification,
-                                child: ListView.builder(
-                                  key: ValueKey<String>(
-                                    'chat-list:${widget.sessionStorageKey ?? ''}',
-                                  ),
-                                  controller: _scrollController,
-                                  findChildIndexCallback: (key) =>
-                                      listIndexByMessageKey[key],
-                                  padding: const EdgeInsets.only(
-                                    top: 8,
-                                    bottom: 8,
-                                  ),
-                                  itemCount: itemCount,
-                                  itemBuilder: (context, index) {
-                                    var messageIndex = index;
-                                    if (hasLoadMore) {
-                                      if (messageIndex == 0) {
-                                        return _buildLoadMoreButton(context);
-                                      }
-                                      messageIndex--;
-                                    }
-                                    if (messageIndex < visibleRows.length) {
-                                      final row = visibleRows[messageIndex];
-                                      return _buildRenderRow(
-                                        row.content,
-                                        row.rowKey,
-                                      );
-                                    }
-                                    return _buildThinkingIndicator(context);
-                                  },
+                  child: Stack(
+                    fit: StackFit.expand,
+                    children: [
+                      // Own layer, so the pinned header appearing or
+                      // disappearing never repaints the transcript.
+                      RepaintBoundary(
+                        child: RawScrollbar(
+                          key: const ValueKey('chat-scrollbar'),
+                          controller: _scroll,
+                          thumbVisibility: true,
+                          trackVisibility: false,
+                          interactive: true,
+                          thickness: 3,
+                          minThumbLength: 56,
+                          radius: const Radius.circular(2),
+                          mainAxisMargin: 4,
+                          crossAxisMargin: 0,
+                          scrollbarOrientation: ScrollbarOrientation.right,
+                          thumbColor: Theme.of(
+                            context,
+                          ).colorScheme.onSurfaceVariant.withAlpha(145),
+                          child: NotificationListener<ScrollMetricsNotification>(
+                            onNotification: _handleScrollMetricsNotification,
+                            child: NotificationListener<ScrollNotification>(
+                              onNotification: _scroll.handleScrollNotification,
+                              child: CustomScrollView(
+                                key: ValueKey<String>(
+                                  'chat-list:${widget.sessionStorageKey ?? ''}',
                                 ),
+                                controller: _scroll,
+                                center: _centerSliverKey,
+                                slivers: [
+                                  // Before the center, topmost first. These
+                                  // grow upward, so a page of older rows or
+                                  // the header never moves the viewport.
+                                  SliverPadding(
+                                    padding: const EdgeInsets.only(top: 8),
+                                    sliver: widget.hasMoreHistory
+                                        ? SliverToBoxAdapter(
+                                            child: _buildLoadMoreButton(
+                                              context,
+                                            ),
+                                          )
+                                        : null,
+                                  ),
+                                  SliverList(
+                                    key: ValueKey<String>(
+                                      'chat-older:$_centerGeneration',
+                                    ),
+                                    delegate: SliverChildBuilderDelegate(
+                                      (context, index) => _buildRenderRow(
+                                        older[index].content,
+                                        older[index].rowKey,
+                                      ),
+                                      childCount: older.length,
+                                      findChildIndexCallback: (key) =>
+                                          olderIndexByKey[key],
+                                    ),
+                                  ),
+                                  SliverPadding(
+                                    key: _centerSliverKey,
+                                    padding: const EdgeInsets.only(bottom: 8),
+                                    sliver: SliverList(
+                                      key: ValueKey<String>(
+                                        'chat-window:$_centerGeneration',
+                                      ),
+                                      delegate: SliverChildBuilderDelegate(
+                                        (context, index) {
+                                          if (index < window.length) {
+                                            return _buildRenderRow(
+                                              window[index].content,
+                                              window[index].rowKey,
+                                            );
+                                          }
+                                          return _buildThinkingIndicator(
+                                            context,
+                                          );
+                                        },
+                                        childCount:
+                                            window.length +
+                                            (_showsStatusRow ? 1 : 0),
+                                        findChildIndexCallback: (key) =>
+                                            windowIndexByKey[key],
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
                         ),
-                        Positioned(
-                          top: 0,
-                          left: _condensedCardMarginHorizontal,
-                          right: _condensedCardMarginHorizontal,
-                          child: RepaintBoundary(
-                            child:
-                                ValueListenableBuilder<_PinnedCondensedGroup?>(
-                                  valueListenable: _pinnedCondensedGroup,
-                                  builder: (context, pinned, _) =>
-                                      pinned == null
-                                      ? const SizedBox.shrink()
-                                      : _buildPinnedCondensedHeader(pinned),
-                                ),
+                      ),
+                      Positioned(
+                        top: 0,
+                        left: _condensedCardMarginHorizontal,
+                        right: _condensedCardMarginHorizontal,
+                        child: RepaintBoundary(
+                          child: ValueListenableBuilder<_PinnedCondensedGroup?>(
+                            valueListenable: _pinnedCondensedGroup,
+                            builder: (context, pinned, _) => pinned == null
+                                ? const SizedBox.shrink()
+                                : _buildPinnedCondensedHeader(pinned),
                           ),
                         ),
-                      ],
-                    ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -2475,7 +2007,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
 
     return ListView.builder(
-      controller: _scrollController,
+      controller: _scroll,
       padding: const EdgeInsets.only(top: 4, bottom: 8),
       itemCount: items.length,
       itemBuilder: (context, index) => RawEventCard(item: items[index]),
