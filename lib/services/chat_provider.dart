@@ -7243,10 +7243,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _handleTaskNotification(msg);
           break;
         case 'session_forked':
+          // The fork already has its own ID and a copy of the history, so
+          // open it the same way as tapping it in the session list.
           final newId = msg['newSessionId'] as String?;
           if (newId != null && newId.isNotEmpty) {
-            _activeSessionId = newId;
-            notifyListeners();
+            resumeSession(newId, serverId: serverId);
             requestSessionList();
           }
           break;
@@ -18936,16 +18937,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void forkSession(String sessionId) {
-    _activeSessionId = null;
-    _activeSessionServerId = null;
-    _clearLiveMessageStreams();
-    _isProcessing = false;
-    _stopPromptRuntime();
-    _pendingLocalUserMessageIds.clear();
-    _pendingCacheUserPromptContent.clear();
-    _ws.sendForkSession(sessionId);
-    notifyListeners();
+  /// Asks [serverId] to fork [sessionId]. Its `session_forked` reply opens
+  /// the new session. Throws when that computer isn't connected.
+  void forkSession(String sessionId, {required String serverId}) {
+    final target = serverId.isNotEmpty
+        ? serverId
+        : _connMgr.activeServerId ?? '';
+    final sent = _connMgr.sendToServer(target, {
+      'type': 'fork_session',
+      'sessionId': sessionId,
+    });
+    if (!sent) throw StateError('That computer is not connected');
   }
 
   Future<void> initTtsVoices() async {

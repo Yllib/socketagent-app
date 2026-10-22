@@ -891,10 +891,6 @@ class WebSocketService {
     send({'type': 'stop_monitor', 'taskId': taskId});
   }
 
-  void sendForkSession(String sessionId) {
-    send({'type': 'fork_session', 'sessionId': sessionId});
-  }
-
   void sendInterrupt() {
     send({'type': 'interrupt'});
   }

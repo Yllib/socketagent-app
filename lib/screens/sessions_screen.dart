@@ -4087,8 +4087,17 @@ class _SessionsTabState extends State<SessionsTab> {
     if (!await _requireSubscription(serverId: session.serverId)) return;
     if (!context.mounted) return;
 
-    final provider = context.read<ChatProvider>();
-    provider.forkSession(session.id);
+    try {
+      context.read<ChatProvider>().forkSession(
+        session.id,
+        serverId: session.serverId,
+      );
+    } on StateError catch (error) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not fork: ${error.message}')),
+      );
+      return;
+    }
     openConversation(context);
   }
 
