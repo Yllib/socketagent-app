@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/message.dart';
+import '../screens/svg_viewer_screen.dart';
 import '../services/chat_provider.dart';
 import '../services/file_open_service.dart';
 import '../util/format.dart';
@@ -36,7 +37,8 @@ class FileCard extends StatelessWidget {
         lower.endsWith('.jpg') ||
         lower.endsWith('.jpeg') ||
         lower.endsWith('.gif') ||
-        lower.endsWith('.webp')) {
+        lower.endsWith('.webp') ||
+        lower.endsWith('.svg')) {
       return Icons.image;
     }
     if (lower.endsWith('.mp3') ||
@@ -132,6 +134,25 @@ class FileCard extends StatelessWidget {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(result.message ?? 'Could not open the file.')),
+    );
+  }
+
+  Future<void> _viewSvg(BuildContext context, String path) async {
+    final String svg;
+    try {
+      svg = await File(path).readAsString();
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not read the SVG: $e')));
+      return;
+    }
+    if (!context.mounted) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SvgViewerScreen(title: _displayName, svg: svg),
+      ),
     );
   }
 
@@ -251,6 +272,21 @@ class FileCard extends StatelessWidget {
               ),
               if (hasFile) ...[
                 const SizedBox(width: 4),
+                if (name.toLowerCase().endsWith('.svg'))
+                  IconButton(
+                    icon: Icon(
+                      Icons.visibility_outlined,
+                      size: 20,
+                      color: context.palette.blue,
+                    ),
+                    onPressed: () => _viewSvg(context, localPath),
+                    tooltip: 'View',
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(
+                      minWidth: 36,
+                      minHeight: 36,
+                    ),
+                  ),
                 IconButton(
                   icon: Icon(
                     Icons.open_in_new,

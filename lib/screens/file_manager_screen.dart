@@ -21,9 +21,10 @@ import '../util/format.dart';
 import '../widgets/markdown_blocks.dart';
 import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/zoomable_image.dart';
+import 'svg_viewer_screen.dart';
 import '../config/app_palette.dart';
 
-enum _FilePreviewKind { text, markdown, html, code, image, pdf }
+enum _FilePreviewKind { text, markdown, html, svg, code, image, pdf }
 
 class FileManagerScreen extends StatefulWidget {
   final String? serverId;
@@ -699,6 +700,10 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       await _previewImageEntry(entry);
       return;
     }
+    if (kind == _FilePreviewKind.svg) {
+      await _previewSvgEntry(entry);
+      return;
+    }
     if (kind == _FilePreviewKind.pdf) {
       await _previewPdfEntry(entry);
       return;
@@ -737,6 +742,36 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Preview failed: $e')));
+    }
+  }
+
+  Future<void> _previewSvgEntry(FileManagerEntry entry) async {
+    final provider = context.read<ChatProvider>();
+    final serverId = _effectiveServerId(provider);
+    if (serverId == null) return;
+    try {
+      final result = await provider.readFileManagerText(
+        path: entry.path,
+        serverId: serverId,
+        maxBytes: 1024 * 1024,
+      );
+      if (!mounted) return;
+      if (result['truncated'] == true) {
+        throw Exception('the file is larger than 1 MB');
+      }
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => SvgViewerScreen(
+            title: entry.name,
+            svg: result['content'] as String? ?? '',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('SVG preview failed: $e')));
     }
   }
 
@@ -971,6 +1006,9 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
   }
 
   _FilePreviewKind? _previewKindFor(FileManagerEntry entry) {
+    if (_normalizedExtension(entry.extension) == 'svg') {
+      return _FilePreviewKind.svg;
+    }
     if (entry.mediaKind == FileManagerMediaKind.image) {
       return _FilePreviewKind.image;
     }
@@ -1131,6 +1169,7 @@ class _FileTextPreviewScreenState extends State<_FileTextPreviewScreen> {
           ),
         );
       case _FilePreviewKind.text:
+      case _FilePreviewKind.svg:
       case _FilePreviewKind.image:
       case _FilePreviewKind.pdf:
         return SingleChildScrollView(
