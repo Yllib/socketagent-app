@@ -46,6 +46,45 @@ function Test-ServerReady($Configuration) {
     return $false
 }
 
+function Test-MachineServerReady([int]$Port) {
+    try {
+        $request = [Net.HttpWebRequest]::Create("http://127.0.0.1:$Port/internal/machine/health")
+        $request.Proxy = $null
+        $request.AllowAutoRedirect = $false
+        $request.Timeout = 1800
+        $request.ReadWriteTimeout = 1800
+        $response = $request.GetResponse()
+        try {
+            $reader = New-Object IO.StreamReader($response.GetResponseStream())
+            try { $body = $reader.ReadToEnd() | ConvertFrom-Json } finally { $reader.Dispose() }
+            return $response.StatusCode -eq 200 -and $body.service -eq 'socketagent' -and $body.ready -eq $true -and $body.machine -eq $true
+        } finally { $response.Dispose() }
+    } catch { return $false }
+}
+
+# The server that runs as SYSTEM for every Windows account, after its owner
+# switched it to SocketAgentService. Other accounts cannot read the owner's
+# folder or .env, so this trusts the ProgramData marker only when SYSTEM or
+# administrators own it, and checks readiness without a token.
+function Get-MachineServer {
+    param(
+        [string]$Marker = (Join-Path $env:ProgramData 'SocketAgent/machine-server.json'),
+        [string[]]$TrustedOwners = @('S-1-5-18', 'S-1-5-32-544'),
+        [scriptblock]$Probe = { param($port) Test-MachineServerReady $port }
+    )
+    if (!(Test-Path -LiteralPath $Marker)) { return $null }
+    try {
+        if ((Get-Acl -LiteralPath $Marker).GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $TrustedOwners) { return $null }
+        $record = [IO.File]::ReadAllText($Marker).TrimStart([char]0xfeff) | ConvertFrom-Json
+        $port = 0
+        if (!$record.directory -or ![int]::TryParse([string]$record.port, [ref]$port) -or $port -lt 1 -or $port -gt 65535) { return $null }
+        $result = [pscustomobject]@{ Status = 'stopped'; Directory = [string]$record.directory; Port = $port; TaskName = ''; Shared = $true }
+        if ($record.task -and (Get-ScheduledTask -TaskName ([string]$record.task) -ErrorAction SilentlyContinue)) { $result.TaskName = [string]$record.task }
+        if (& $Probe $port) { $result.Status = 'running' }
+        return $result
+    } catch { return $null }
+}
+
 function Get-OwnedServerTasks {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     foreach ($name in @('SocketAgent', 'SocketClaude')) {
@@ -71,8 +110,12 @@ function Find-LocalServer {
         [string]$UserDirectory = $env:USERPROFILE,
         [string]$LocalDirectory = $env:LOCALAPPDATA,
         [object[]]$Tasks = @(Get-OwnedServerTasks),
-        [scriptblock]$Probe = { param($configuration) Test-ServerReady $configuration }
+        [scriptblock]$Probe = { param($configuration) Test-ServerReady $configuration },
+        [scriptblock]$MachineServer = { Get-MachineServer }
     )
+    # A machine-wide server serves this account too, so never offer a second one.
+    $machine = & $MachineServer
+    if ($machine) { return $machine }
     $paths = @()
     $marker = Join-Path $LocalDirectory 'SocketAgent/install-location.txt'
     if (Test-Path -LiteralPath $marker) { $paths += ([IO.File]::ReadAllText($marker)).Trim().TrimStart([char]0xfeff) }

@@ -72,7 +72,9 @@ var
   // ActiveProgress is whichever page helper output (PHASE: lines) updates.
   Progress, DownloadProgress, ActiveProgress: TOutputMarqueeProgressWizardPage;
   ServerStatus, ServerDirectory, ServerTask, LastError, ProgressTitle: String;
-  ServerReady, Detecting: Boolean;
+  // ServerShared: the machine-wide server another account owns, which this
+  // account reaches by pairing rather than by reading its token.
+  ServerReady, Detecting, ServerShared: Boolean;
   PackageVersion: String;
 
 function IsAppUpdate: Boolean;
@@ -172,14 +174,18 @@ begin
   ServerStatus := 'unavailable';
   ServerDirectory := '';
   ServerTask := '';
+  ServerShared := False;
   if OK then begin
     ServerStatus := GetIniString('server', 'status', 'unavailable', ExpandConstant('{tmp}\server-state.ini'));
     ServerDirectory := GetIniString('server', 'directory', '', ExpandConstant('{tmp}\server-state.ini'));
     ServerTask := GetIniString('server', 'task', '', ExpandConstant('{tmp}\server-state.ini'));
+    ServerShared := GetIniString('server', 'shared', '0', ExpandConstant('{tmp}\server-state.ini')) = '1';
   end;
   ServerChoice.Visible := (ServerStatus = 'missing') or ((ServerStatus = 'stopped') and (ServerTask <> ''));
   ServerChoice.Checked := False;
-  if ServerStatus = 'running' then
+  if (ServerStatus = 'running') and ServerShared then
+    StatusText.Caption := 'This computer''s shared SocketAgent server is running, so it needs no second server.' + #13#10#13#10 + 'To connect the app, choose Add computer and paste the pairing code an administrator shows with socketagent pair.'
+  else if ServerStatus = 'running' then
     StatusText.Caption := 'We found a running SocketAgent server on this computer.' + #13#10#13#10 + ServerDirectory + #13#10#13#10 + 'The app will link to it automatically when you open it.'
   else if ServerStatus = 'stopped' then begin
     StatusText.Caption := 'We found a SocketAgent server, but it is not responding.' + #13#10#13#10 + ServerDirectory;

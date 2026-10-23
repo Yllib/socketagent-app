@@ -14,7 +14,8 @@ $ProgressPreference = 'SilentlyContinue'
 
 function Write-Result($State) {
     if ($ResultFile) {
-        $text = "[server]`r`nstatus=$($State.Status)`r`ndirectory=$($State.Directory)`r`nport=$($State.Port)`r`ntask=$($State.TaskName)`r`n"
+        $shared = if ($State.Shared) { 1 } else { 0 }
+        $text = "[server]`r`nstatus=$($State.Status)`r`ndirectory=$($State.Directory)`r`nport=$($State.Port)`r`ntask=$($State.TaskName)`r`nshared=$shared`r`n"
         [IO.File]::WriteAllText($ResultFile, $text, [Text.Encoding]::Unicode)
     }
 }
@@ -55,13 +56,24 @@ function Get-DesktopPackage {
         # Windows PowerShell 5.1 can default to TLS 1.0, which GitHub refuses.
         [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
         Write-Output 'PHASE:Finding the latest SocketAgent Desktop release'
-        $releases = Invoke-RestMethod -UseBasicParsing -Headers @{ Accept = 'application/vnd.github+json' } 'https://api.github.com/repos/Yllib/socketagent/releases?per_page=30'
         $asset = $null
-        # Android-only releases carry no desktop build, so take the newest that does.
-        foreach ($release in $releases) {
-            if ($release.draft -or $release.prerelease) { continue }
-            $asset = @($release.assets | Where-Object { $_.name -eq 'SocketAgent-windows-x64.zip' -and $_.state -eq 'uploaded' -and $_.digest -match '^sha256:[0-9a-fA-F]{64}$' }) | Select-Object -First 1
-            if ($asset) { $version = $release.tag_name -replace '^v', ''; break }
+        # GitHub can keep serving a stale or empty list for the same URL, so
+        # each try uses a new URL, and tries continue for about 5 seconds.
+        foreach ($delay in @(0, 500, 1000, 1500, 2000)) {
+            Start-Sleep -Milliseconds $delay
+            $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+            try {
+                $releases = Invoke-RestMethod -UseBasicParsing -Headers @{ Accept = 'application/vnd.github+json'; 'Cache-Control' = 'no-cache' } "https://api.github.com/repos/Yllib/socketagent/releases?per_page=30&t=$cacheBust"
+            } catch {
+                continue
+            }
+            # Android-only releases carry no desktop build, so take the newest that does.
+            foreach ($release in $releases) {
+                if ($release.draft -or $release.prerelease) { continue }
+                $asset = @($release.assets | Where-Object { $_.name -eq 'SocketAgent-windows-x64.zip' -and $_.state -eq 'uploaded' -and $_.digest -match '^sha256:[0-9a-fA-F]{64}$' }) | Select-Object -First 1
+                if ($asset) { $version = $release.tag_name -replace '^v', ''; break }
+            }
+            if ($asset) { break }
         }
         if (!$asset) { throw 'No SocketAgent Desktop release is available to download. Check your internet connection and retry.' }
         $zip = Join-Path $env:TEMP "socketagent-desktop-$version.zip"
@@ -153,6 +165,12 @@ try {
     }
     Write-Result $state
     if ($state.Status -ne 'running') { throw 'The server is not ready. You can retry or finish installing the desktop app.' }
+    if ($state.Shared) {
+        # Only the owner's account can read the server's token, so this app
+        # asks to be approved with its device key when it first connects.
+        Write-Output 'PHASE:This computer''s shared server is running. Approve the app from another device when it opens.'
+        exit 0
+    }
     # Enables app discovery for custom/legacy task locations without copying credentials.
     $marker = Join-Path $env:LOCALAPPDATA 'SocketAgent/install-location.txt'
     New-Item -ItemType Directory -Force (Split-Path $marker) | Out-Null
