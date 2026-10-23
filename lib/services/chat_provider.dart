@@ -3114,7 +3114,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Stores the LAN details a server reports, so an auto-routed computer
   /// paired over the relay can switch to a direct connection at home, and
   /// one whose address changed finds it again. Fixed-route computers keep
-  /// what the user entered.
+  /// what the user entered. A device approved without the token gets no
+  /// token here and signs in on the LAN with its device key; a token it
+  /// already has, such as one synced from another device, stays.
   Future<void> _captureDirectRouteFromCapabilities(
     String serverId,
     Map<String, dynamic> msg,
@@ -3123,10 +3125,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (route is! Map) return;
     final hosts = route['hosts'];
     final port = route['port'];
-    final token = route['token'];
-    if (hosts is! List || port is! int || token is! String || token.isEmpty) {
-      return;
-    }
+    final sent = route['token'];
+    if (hosts is! List || port is! int) return;
+    final keyNewlyAllowed =
+        (sent is! String || sent.isEmpty) &&
+        _connMgr.allowDeviceKeyDirect(serverId);
     final addresses = hosts
         .whereType<String>()
         .where((h) => h.isNotEmpty)
@@ -3144,9 +3147,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final index = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (index < 0) return;
     final existing = _serverConfigs[index];
+    final token = sent is String && sent.isNotEmpty ? sent : existing.token;
     if (existing.host == host &&
         existing.port == port &&
         existing.token == token) {
+      if (keyNewlyAllowed && existing.useRelay) {
+        unawaited(_connMgr.routeServer(serverId, force: true));
+      }
       return;
     }
     final updated = existing.copyWith(host: host, port: port, token: token);

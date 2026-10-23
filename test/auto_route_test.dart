@@ -12,19 +12,22 @@ import 'package:flutter_test/flutter_test.dart';
 
 final serverKey = base64Encode(List.filled(32, 7));
 
-ServerConfig autoConfig({bool useRelay = true, String host = '192.168.1.20'}) =>
-    ServerConfig(
-      id: 'computer',
-      name: 'Computer',
-      host: host,
-      port: 8085,
-      token: 'auth-token',
-      useRelay: useRelay,
-      autoRoute: true,
-      relayUrl: 'wss://relay.example',
-      pairingToken: 'pairing-token',
-      serverPubkey: serverKey,
-    );
+ServerConfig autoConfig({
+  bool useRelay = true,
+  String host = '192.168.1.20',
+  String token = 'auth-token',
+}) => ServerConfig(
+  id: 'computer',
+  name: 'Computer',
+  host: host,
+  port: 8085,
+  token: token,
+  useRelay: useRelay,
+  autoRoute: true,
+  relayUrl: 'wss://relay.example',
+  pairingToken: 'pairing-token',
+  serverPubkey: serverKey,
+);
 
 LocalRouteFinder finderAnswering(String? host) => LocalRouteFinder(
   discover: (_) => const Stream.empty(),
@@ -150,6 +153,26 @@ void main() {
       expect(saved, isEmpty);
       expect(manager.getConnection('computer')!.mode, ConnectionMode.direct);
     });
+
+    test(
+      'without the token, goes direct only once the computer allowed the device key',
+      () async {
+        manager
+          ..setSubscriberToken('subscriber')
+          ..routeFinder = finderAnswering('192.168.1.20');
+        await manager.setServers([autoConfig(token: '')]);
+        await manager.routeServer('computer', force: true);
+        // Not approved yet: the approval request lives on the relay.
+        expect(saved, isEmpty);
+        expect(manager.getConnection('computer')!.mode, ConnectionMode.relay);
+
+        expect(manager.allowDeviceKeyDirect('computer'), isTrue);
+        expect(manager.allowDeviceKeyDirect('computer'), isFalse);
+        await manager.routeServer('computer', force: true);
+        expect(saved.single.useRelay, isFalse);
+        expect(manager.getConnection('computer')!.mode, ConnectionMode.direct);
+      },
+    );
 
     test('leaves fixed-route computers alone', () async {
       manager

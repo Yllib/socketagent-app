@@ -68,6 +68,9 @@ class ConnectionManager {
   final Map<String, StreamSubscription> _messageSubs = {};
   final Map<String, StreamSubscription> _statusSubs = {};
   final Map<String, StreamSubscription> _deviceAuthSubs = {};
+  // Computers that sent a LAN route without the token: they approved this
+  // device's key, so a direct socket can sign in with it.
+  final Set<String> _deviceKeyDirect = {};
 
   String? activeServerId;
   String _subscriberToken = '';
@@ -345,7 +348,11 @@ class ConnectionManager {
   }
 
   Future<void> _route(ServerConfig config) async {
-    final canDirect = config.token.isNotEmpty && config.serverPubkey.isNotEmpty;
+    // An encrypted direct socket signs in with the token or, once the
+    // computer has approved it, with this device's key.
+    final canDirect =
+        config.serverPubkey.isNotEmpty &&
+        (config.token.isNotEmpty || _deviceKeyDirect.contains(config.id));
     final canRelay =
         config.isRelayPaired &&
         _subscriberToken.isNotEmpty &&
@@ -534,7 +541,12 @@ class ConnectionManager {
     _cryptoServices.remove(id);
     _lastRouted.remove(id);
     _relayRefused.remove(id);
+    _deviceKeyDirect.remove(id);
   }
+
+  /// [serverId] sent a LAN route without the token, so its direct socket
+  /// accepts this device's key. Returns true the first time.
+  bool allowDeviceKeyDirect(String serverId) => _deviceKeyDirect.add(serverId);
 
   /// Get the WebSocketService for a specific server.
   WebSocketService? getConnection(String serverId) => _connections[serverId];
