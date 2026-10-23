@@ -56,9 +56,55 @@ class LocalServerPlan {
   }
 }
 
-/// Reads only the current Windows user's installation. Never scans the network
-/// or obtains credentials from an unauthenticated HTTP endpoint.
+/// Reads only this computer's installations: the current Windows user's own,
+/// and the machine-wide server another account installed. Never scans the
+/// network or obtains credentials from an unauthenticated HTTP endpoint.
 class WindowsLocalServer {
+  /// The server described by `C:\ProgramData\SocketAgent\machine-server.json`.
+  /// It carries no token: an account that cannot read the owner's `.env`
+  /// connects with its device key, and the owner approves it once.
+  static ServerConfig? machineConfiguration(String text) {
+    try {
+      final record = jsonDecode(text.replaceFirst('\uFEFF', ''));
+      if (record is! Map) return null;
+      final port = record['port'];
+      final publicKey = record['publicKey'];
+      if (port is! int || port < 1 || port > 65535 || publicKey is! String) {
+        return null;
+      }
+      if (base64Decode(publicKey).length != 32) return null;
+      return ServerConfig(
+        id: 'windows_local_$port',
+        name: 'This computer',
+        host: '127.0.0.1',
+        port: port,
+        token: '',
+        serverPubkey: publicKey,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The marker counts only when SYSTEM or administrators own it. Setup makes
+  /// its folder writable by them alone, but any user can create a folder in
+  /// ProgramData before setup runs.
+  static Future<String?> _trustedMachineMarker() async {
+    final data = Platform.environment['ProgramData'];
+    if (data == null) return null;
+    final marker = File('$data\\SocketAgent\\machine-server.json');
+    if (!await marker.exists()) return null;
+    final owner = await Process.run('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "(Get-Acl -LiteralPath '${marker.path}').GetOwner([Security.Principal.SecurityIdentifier]).Value",
+    ]);
+    final sid = owner.stdout.toString().trim();
+    if (sid != 'S-1-5-18' && sid != 'S-1-5-32-544') return null;
+    return marker.readAsString();
+  }
+
   static Map<String, String> parseEnvironment(String text) {
     final result = <String, String>{};
     for (var line in const LineSplitter().convert(text)) {
@@ -157,6 +203,19 @@ class WindowsLocalServer {
         // Missing/inaccessible/old installations do not prevent normal startup.
       }
     }
+    try {
+      final text = await _trustedMachineMarker();
+      final machine = text == null ? null : machineConfiguration(text);
+      // The owner's own install is the same server, reached with its token.
+      if (machine != null &&
+          !found.any(
+            (c) =>
+                c.port == machine.port &&
+                c.serverPubkey == machine.serverPubkey,
+          )) {
+        found.add(machine);
+      }
+    } catch (_) {}
     return found;
   }
 }

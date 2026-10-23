@@ -40,6 +40,24 @@ DEFAULT_CWD='C:\\Projects With Spaces'
     }
   });
 
+  test('the machine marker gives a pinned, token-less local server', () {
+    final config = WindowsLocalServer.machineConfiguration(
+      '\uFEFF${jsonEncode({'directory': r'C:\Users\lanik\socketagent', 'port': 8085, 'task': 'SocketAgentService', 'publicKey': publicKey})}',
+    )!;
+    expect(config.host, '127.0.0.1');
+    expect(config.port, 8085);
+    expect(config.token, isEmpty);
+    expect(config.serverPubkey, publicKey);
+    expect(WindowsLocalServer.machineConfiguration('{"port": 8085}'), isNull);
+    expect(
+      WindowsLocalServer.machineConfiguration(
+        jsonEncode({'port': 8085, 'publicKey': 'short'}),
+      ),
+      isNull,
+    );
+    expect(WindowsLocalServer.machineConfiguration('nope'), isNull);
+  });
+
   group('LocalServerPlan', () {
     final key = base64Encode(List<int>.generate(32, (i) => i));
     final oldKey = base64Encode(List<int>.generate(32, (i) => 255 - i));

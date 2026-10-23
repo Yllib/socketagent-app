@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../services/account_crypto.dart';
 import '../services/chat_provider.dart';
 import '../services/desktop_shortcuts.dart';
 import '../services/desktop_workspace_controller.dart';
@@ -1533,7 +1534,10 @@ class _SessionsTabState extends State<SessionsTab> {
         break;
       case ConnectionStatus.connecting:
         color = context.palette.warning;
-        tooltip = 'Connecting...';
+        tooltip =
+            configs.any((c) => provider.deviceAuthFor(c.id).awaitingApproval)
+            ? 'Waiting for approval'
+            : 'Connecting...';
         break;
       case ConnectionStatus.disconnected:
         color = Colors.grey;
@@ -2647,6 +2651,7 @@ class _SessionsTabState extends State<SessionsTab> {
         for (final config in provider.serverConfigs) ...[
           config,
           provider.connMgr.statusOf(config.id),
+          provider.deviceAuthFor(config.id),
           [...provider.backendsForServer(config.id)],
         ],
         for (final session in provider.sessions)
@@ -2773,7 +2778,7 @@ class _SessionsTabState extends State<SessionsTab> {
                 if (_searchQuery.trim().isNotEmpty)
                   Expanded(child: _buildGlobalSearchResults(context, provider))
                 else if (provider.sessions.isEmpty)
-                  Expanded(child: _buildEmptyState(context))
+                  Expanded(child: _buildEmptyState(context, provider))
                 else
                   Expanded(
                     child: _buildSectionedSessionList(context, provider),
@@ -2923,19 +2928,25 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
+  /// The empty session list. A computer still waiting to approve this
+  /// device says so, with the code to compare, instead of looking empty.
+  Widget _buildEmptyState(BuildContext context, ChatProvider provider) {
+    final waiting = provider.serverConfigs
+        .map((config) => provider.deviceAuthFor(config.id))
+        .where((auth) => auth.awaitingApproval)
+        .firstOrNull;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            Icons.chat_bubble_outline,
+            waiting != null ? Icons.hourglass_top : Icons.chat_bubble_outline,
             size: 64,
             color: Theme.of(context).colorScheme.outline,
           ),
           const SizedBox(height: 16),
           Text(
-            'No sessions yet',
+            waiting != null ? 'Waiting for approval' : 'No sessions yet',
             style: TextStyle(
               fontSize: 18,
               color: Theme.of(context).colorScheme.outline,
@@ -2943,7 +2954,10 @@ class _SessionsTabState extends State<SessionsTab> {
           ),
           const SizedBox(height: 8),
           Text(
-            'Start a new session or resume an existing one',
+            waiting != null
+                ? 'Allow this device from another device.\nCode ${formatFingerprintCode(waiting.code)}'
+                : 'Start a new session or resume an existing one',
+            textAlign: TextAlign.center,
             style: TextStyle(
               fontSize: 14,
               color: Theme.of(context).colorScheme.outline.withAlpha(178),

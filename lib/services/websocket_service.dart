@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -322,8 +323,11 @@ class WebSocketService {
       _channelSubscription = _channel!.stream
           .asyncMap((data) async {
             if (gen != _connectionGeneration) return;
+            // A direct socket without a token stays connecting until the
+            // server approves its device key.
             if (_status != ConnectionStatus.connected &&
-                _mode == ConnectionMode.direct) {
+                _mode == ConnectionMode.direct &&
+                _token.isNotEmpty) {
               _setStatus(ConnectionStatus.connected);
             }
             try {
@@ -489,7 +493,15 @@ class WebSocketService {
     if (t == 'device_auth_result') {
       switch (_deviceAuth.onAuthResult(msg)) {
         case DeviceAuthAction.open:
-          _onEncryptionEstablished();
+          // A direct socket without a token is open once approved; the
+          // server sends its capabilities next.
+          if (_mode == ConnectionMode.direct) {
+            _lastHandshakeAwaited = false;
+            _emitDeviceAuth();
+            _setStatus(ConnectionStatus.connected);
+          } else {
+            _onEncryptionEstablished();
+          }
         case DeviceAuthAction.wait:
           _lastHandshakeAwaited = true;
           _emitDeviceAuth();
@@ -574,6 +586,10 @@ class WebSocketService {
 
   void _onEncryptionEstablished() {
     _encryptionReady = true;
+    if (_mode == ConnectionMode.direct && _token.isEmpty) {
+      _sendTokenlessDirectAuth();
+      return;
+    }
     _lastHandshakeAwaited = false;
     if (_mode == ConnectionMode.relay &&
         _deviceAuth.state.phase != DeviceAuthPhase.approved) {
@@ -604,6 +620,29 @@ class WebSocketService {
     // ignore this message and we'll stay on the legacy JSON envelope.
     send({
       'type': 'client_capabilities',
+      'lane': _lane.name,
+      'binaryEnvelope': true,
+      'binaryFileDownloadVersion': binaryFileDownloadVersion,
+      'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
+      'transportLaneVersion': transportLaneVersion,
+      'uploadAckVersion': uploadAckVersion,
+      'sessionEventAckVersion': _sessionEventAckVersion,
+    });
+  }
+
+  /// The desktop app under a Windows account that cannot read the server's
+  /// `.env` proves its device key instead. The server holds the socket until
+  /// a device approves the key, as it does for a new phone on the relay, so
+  /// status stays connecting until `device_auth_result` says ok. The name
+  /// carries the Windows account, since every account shares the computer.
+  void _sendTokenlessDirectAuth() {
+    _deviceAuth.onKeyExchangeAck('pending');
+    _emitDeviceAuth();
+    final account = Platform.environment['USERNAME']?.trim() ?? '';
+    _sendOnCurrentLane({
+      'type': 'direct_auth',
+      'name': account.isEmpty ? _deviceName : '$account on $_deviceName',
+      'platform': _devicePlatform,
       'lane': _lane.name,
       'binaryEnvelope': true,
       'binaryFileDownloadVersion': binaryFileDownloadVersion,

@@ -2735,12 +2735,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final next =
               replace ?? (add != null && !seen.contains(identity) ? add : null);
           if (next != null) {
-            final probe = await const ServerConnectionProbe().verify(
-              next,
-              subscriberToken: '',
-              timeout: const Duration(seconds: 3),
-            );
-            if (!probe.success) continue;
+            // Without a token the first connection waits for the owner to
+            // approve this device, so there is nothing to probe yet.
+            if (next.token.isNotEmpty) {
+              final probe = await const ServerConnectionProbe().verify(
+                next,
+                subscriberToken: '',
+                timeout: const Duration(seconds: 3),
+              );
+              if (!probe.success) continue;
+            }
             if (_outgoingDisposed) return;
             if (replace != null) {
               await updateServer(replace);
