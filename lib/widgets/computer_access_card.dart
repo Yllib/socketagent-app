@@ -226,7 +226,9 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
                             ),
                             OutlinedButton(
                               onPressed: _busy ? null : () => _answer('chat'),
-                              child: const Text('Allow for this chat'),
+                              child: Text(
+                                'Allow ${request.chatGrantLabel} for this chat',
+                              ),
                             ),
                             TextButton(
                               onPressed: _busy ? null : () => _answer('deny'),
@@ -244,7 +246,7 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
             )
           else
             Text(
-              _statusLabel(status, expired),
+              _statusLabel(request, status, expired),
               style: TextStyle(color: palette.textMuted),
             ),
           if (_error case final error?)
@@ -296,11 +298,15 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
     return '${left.inSeconds.clamp(0, 59)} s left';
   }
 
-  static String _statusLabel(String status, bool expired) {
+  static String _statusLabel(
+    ComputerAccessRequest request,
+    String status,
+    bool expired,
+  ) {
     if (expired) return 'Expired';
     return switch (status) {
       'once' || 'action' => 'Allowed once',
-      'chat' => 'Allowed for this chat',
+      'chat' => 'Allowed ${request.chatGrantLabel} for this chat',
       'deny' => 'Denied',
       'today' => 'Linked until midnight',
       'linked' => 'Linked',

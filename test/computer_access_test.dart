@@ -151,6 +151,14 @@ void main() {
     })!;
     expect(start.accessCoversAction(commandsOnly), isFalse);
     expect(start.accessCoversAction(const ComputerAccess()), isTrue);
+    // A chat approval covers one kind of access, and the card says which.
+    expect(request.chatGrantLabel, 'commands');
+    expect(start.chatGrantLabel, 'agents');
+    final read = ComputerAccessRequest.fromJson({
+      ...approval,
+      'action': 'transcript_read',
+    })!;
+    expect(read.chatGrantLabel, 'reads');
   });
 
   test('a link ends at the next local midnight and says so', () {

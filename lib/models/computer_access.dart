@@ -65,6 +65,14 @@ class ComputerAccessRequest {
     'sessions_list' || 'transcript_read' || 'transcript_search' => granted.read,
     _ => action.startsWith('agent_') && granted.agents,
   };
+
+  /// What a chat-scoped approval of this request covers, since the target
+  /// grants one kind of access per chat: `commands`, `reads` or `agents`.
+  String get chatGrantLabel => switch (action) {
+    'run_command' => 'commands',
+    'sessions_list' || 'transcript_read' || 'transcript_search' => 'reads',
+    _ => 'agents',
+  };
   bool get pending => status == 'pending';
 
   static ComputerAccessRequest? fromJson(Object? raw) {
