@@ -1699,7 +1699,13 @@ class _ChatScreenState extends State<_ChatScreen> {
                           },
                           onReadAloud: provider.replaySpeak,
                         ),
-                      _buildInputBar(provider),
+                      // Keyed so a banner appearing above it, such as the
+                      // brief hook banner, cannot take over its element and
+                      // rebuild the text field, which drops keyboard focus.
+                      KeyedSubtree(
+                        key: const ValueKey('input-bar'),
+                        child: _buildInputBar(provider),
+                      ),
                     ],
                   ),
                 ),
