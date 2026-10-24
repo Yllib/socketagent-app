@@ -3218,6 +3218,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     final shouldReconnectForDirectE2e =
         !existing.useRelay && existing.serverPubkey != serverPubkey;
+    // A new pairing code moves the computer to another relay room. The relay
+    // socket closes when its config changes, so open it again in the new one.
+    final pairingChanged =
+        existing.pairingToken.isNotEmpty &&
+        existing.pairingToken != effectivePairingToken;
 
     _serverConfigs[idx] = existing.copyWith(
       relayUrl: effectiveRelayUrl,
@@ -3229,7 +3234,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.getConnection(serverId)?.disconnect();
     }
     await _connMgr.setServers(_serverConfigs);
-    if (shouldReconnectForDirectE2e) {
+    if (shouldReconnectForDirectE2e || pairingChanged) {
       _connMgr.getConnection(serverId)?.connect();
     }
     await _registerPushNotifications();
@@ -5294,6 +5299,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'device_approve_result',
       'device_deny_result',
       'device_remove_result',
+      'pairing_reset_result',
       'device_pending',
       'device_pending_cleared',
       'device_auth_result',
@@ -6113,6 +6119,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'device_approve_result':
         case 'device_deny_result':
         case 'device_remove_result':
+        case 'pairing_reset_result':
         case 'link_room_info_result':
         case 'computer_link_result':
           _completeDeviceRequest(serverId, type, msg);
@@ -7930,6 +7937,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final _pendingDeviceController = StreamController<PendingDevice>.broadcast();
   final Set<String> _serversWithDeviceAuth = {};
   final Set<String> _serversWithComputerLinks = {};
+  final Set<String> _serversWithPairingReset = {};
   final Map<String, List<_DeviceRequestWaiter>> _deviceRequestCompleters = {};
   int _deviceRequestSeq = 0;
   final Set<String> _linkTicketRefreshes = {};
@@ -7957,6 +7965,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serversWithDeviceAuth.contains(serverId);
   bool serverSupportsComputerLinks(String serverId) =>
       _serversWithComputerLinks.contains(serverId);
+  bool serverSupportsPairingReset(String serverId) =>
+      _serversWithPairingReset.contains(serverId);
 
   /// This device's X25519 public key, as every computer knows it.
   String get devicePublicKey =>
@@ -8157,6 +8167,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _serversWithDeviceAuth.remove(serverId);
       _deviceRegistries.remove(serverId);
     }
+    if (msg['pairingReset'] is Map) {
+      _serversWithPairingReset.add(serverId);
+    } else {
+      _serversWithPairingReset.remove(serverId);
+    }
     if (msg['computerLinks'] is Map) {
       _serversWithComputerLinks.add(serverId);
       _sendKnownComputers(serverId);
@@ -8343,6 +8358,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       throw StateError(result['error'] as String? ?? 'Remove failed');
     }
     await loadDevices(serverId).catchError((_) => _emptyRegistry);
+  }
+
+  /// Gives [serverId] a new pairing code, so its old QR stops working. The
+  /// computer sends the new code to connected devices that hold the old one,
+  /// and this device reconnects with it.
+  Future<void> resetPairing(String serverId) async {
+    final result = await _deviceRequest(serverId, {
+      'type': 'pairing_reset',
+    }, 'pairing_reset_result');
+    if (result['ok'] == false) {
+      throw StateError(result['error'] as String? ?? 'Reset failed');
+    }
   }
 
   /// `learning` becomes `enforced`: only listed devices may connect.

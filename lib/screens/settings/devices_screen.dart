@@ -107,6 +107,41 @@ class _DevicesScreenState extends State<DevicesScreen> {
     }
   }
 
+  Future<void> _resetPairing(String computer) async {
+    final provider = context.read<ChatProvider>();
+    final messenger = ScaffoldMessenger.of(context);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reset the pairing code?'),
+        content: Text(
+          'The old QR stops working. Devices connected to $computer now '
+          'switch to the new code. Paired devices that are offline will '
+          'need to scan the new QR.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await provider.resetPairing(widget.serverId);
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Pairing code reset')),
+      );
+    } catch (error) {
+      if (mounted) setState(() => _error = _text(error));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
@@ -160,6 +195,16 @@ class _DevicesScreenState extends State<DevicesScreen> {
                           child: const Text('Lock'),
                         )
                       : null,
+                ),
+              if (provider.serverSupportsPairingReset(widget.serverId))
+                ListTile(
+                  leading: const Icon(Icons.qr_code),
+                  title: const Text('Pairing code'),
+                  subtitle: const Text('Anyone with the QR can pair'),
+                  trailing: OutlinedButton(
+                    onPressed: () => _resetPairing(name),
+                    child: const Text('Reset'),
+                  ),
                 ),
               if (pending.isNotEmpty) ...[
                 _Heading('Waiting for approval'),
