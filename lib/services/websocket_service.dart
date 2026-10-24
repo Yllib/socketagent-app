@@ -108,6 +108,10 @@ class WebSocketService {
   String _subscriberToken = '';
   CryptoService? _cryptoService;
   bool _encryptionReady = false;
+  // This connection's key exchange and cipher. Both reset on every connect,
+  // so nothing sealed for an earlier socket opens on this one.
+  SessionOffer? _sessionOffer;
+  PeerChannel? _peerChannel;
   bool _requireTrustedDirectKey = true;
 
   // Device registry handshake (relay only). The computer may hold the peer
@@ -274,6 +278,13 @@ class WebSocketService {
       await previousChannel?.sink.close().timeout(const Duration(seconds: 2));
     } catch (_) {}
     if (gen != _connectionGeneration) return;
+    _resetPeerChannel();
+    try {
+      await _cryptoService?.loadSessionRequirement();
+    } catch (error) {
+      debugPrint('[E2E] Could not read session key state: $error');
+    }
+    if (gen != _connectionGeneration) return;
 
     try {
       final Uri uri;
@@ -332,6 +343,7 @@ class WebSocketService {
             }
             try {
               final crypto = _cryptoService;
+              final channel = _peerChannel;
               final decoded = await (crypto == null
                   ? decodeSocketFrame(
                       data,
@@ -340,10 +352,13 @@ class WebSocketService {
                   : crypto.decodeFrame(
                       data,
                       relay: _mode == ConnectionMode.relay,
+                      channel: channel,
                     ));
               // Reconnects can finish while a large frame is being decoded.
               if (gen != _connectionGeneration || decoded == null) return;
               if (decoded.encrypted) {
+                if (channel == null) return;
+                channel.accept(decoded.nonce);
                 _routeDecryptedMessage(decoded.message);
               } else {
                 _handleIncoming(decoded.message);
@@ -411,6 +426,7 @@ class WebSocketService {
             'transportLaneVersion': transportLaneVersion,
             'uploadAckVersion': uploadAckVersion,
             'sessionEventAckVersion': _sessionEventAckVersion,
+            'sessionKeyVersion': sessionKeyVersion,
           });
         });
       }
@@ -455,7 +471,7 @@ class WebSocketService {
 
       // Plaintext messages in relay mode (only during key exchange)
       if (raw['type'] == 'key_exchange_ack') {
-        _onKeyExchangeAck(raw);
+        if (_completeKeyExchange(raw)) _onKeyExchangeAck(raw);
         return;
       }
 
@@ -468,7 +484,7 @@ class WebSocketService {
         _cryptoService != null &&
         _cryptoService!.isReady) {
       if (raw['type'] == 'key_exchange_ack') {
-        _onEncryptionEstablished();
+        if (_completeKeyExchange(raw)) _onEncryptionEstablished();
         return;
       }
     }
@@ -513,6 +529,17 @@ class WebSocketService {
       return;
     }
     if (t == 'server_capabilities') {
+      final channel = _peerChannel;
+      if (channel != null &&
+          !channel.sessionKeyed &&
+          ((msg['sessionKeyVersion'] as num?)?.toInt() ?? 0) >=
+              sessionKeyVersion) {
+        // The computer speaks session keys, so the handshake that set up
+        // this static-box channel was stripped on the way.
+        _cryptoService?.markServerSessionKeyed();
+        _refuseConnection('server supports session keys but none was agreed');
+        return;
+      }
       _applyServerCapabilities(msg);
       debugPrint(
         '[${_lane.name}] Server capabilities: binary=$_serverSupportsBinary '
@@ -579,6 +606,56 @@ class WebSocketService {
     );
   }
 
+  /// Sets up this connection's cipher from the plaintext key_exchange_ack.
+  /// False when the answer is refused and the socket is being dropped.
+  bool _completeKeyExchange(Map<String, dynamic> ack) {
+    final crypto = _cryptoService;
+    if (crypto == null) return false;
+    final offer = _sessionOffer;
+    _sessionOffer = null;
+    if (offer == null) {
+      // An ack nobody asked for cannot replace a channel, and only a computer
+      // that never used session keys may open one this way.
+      if (_peerChannel != null) return false;
+      if (crypto.serverRequiresSession) {
+        _refuseConnection('unrequested static-box key exchange answer');
+        return false;
+      }
+      _peerChannel = PeerChannel.legacy(crypto.cipherForLegacyChannel);
+      return true;
+    }
+    try {
+      final channel = offer.accept(ack, required: crypto.serverRequiresSession);
+      if (channel.sessionKeyed) crypto.markServerSessionKeyed();
+      _peerChannel?.dispose();
+      _peerChannel = channel;
+      return true;
+    } catch (error) {
+      _refuseConnection('key exchange refused: $error');
+      return false;
+    }
+  }
+
+  void _resetPeerChannel() {
+    _sessionOffer = null;
+    _peerChannel?.dispose();
+    _peerChannel = null;
+  }
+
+  /// Drops a socket whose encryption cannot be trusted and retries later.
+  void _refuseConnection(String reason) {
+    debugPrint('[E2E] Dropping connection: $reason');
+    _channelSubscription?.cancel();
+    _channelSubscription = null;
+    _connectionGeneration++;
+    _channel?.sink.close();
+    _channel = null;
+    _encryptionReady = false;
+    _resetPeerChannel();
+    _setStatus(ConnectionStatus.error);
+    _scheduleReconnect();
+  }
+
   void _emitDeviceAuth() {
     if (_deviceAuthController.isClosed) return;
     _deviceAuthController.add(_deviceAuth.state);
@@ -613,6 +690,7 @@ class WebSocketService {
         'transportLaneVersion': transportLaneVersion,
         'uploadAckVersion': uploadAckVersion,
         'sessionEventAckVersion': _sessionEventAckVersion,
+        'sessionKeyVersion': sessionKeyVersion,
       });
       return;
     }
@@ -627,6 +705,7 @@ class WebSocketService {
       'transportLaneVersion': transportLaneVersion,
       'uploadAckVersion': uploadAckVersion,
       'sessionEventAckVersion': _sessionEventAckVersion,
+      'sessionKeyVersion': sessionKeyVersion,
     });
   }
 
@@ -650,19 +729,20 @@ class WebSocketService {
       'transportLaneVersion': transportLaneVersion,
       'uploadAckVersion': uploadAckVersion,
       'sessionEventAckVersion': _sessionEventAckVersion,
+      'sessionKeyVersion': sessionKeyVersion,
     });
   }
 
   /// Send our public key to the server for NaCl key exchange
   void _sendKeyExchange() {
-    if (_cryptoService == null || !_cryptoService!.hasKeyPair) return;
+    final crypto = _cryptoService;
+    if (crypto == null || !crypto.hasKeyPair || !crypto.isReady) return;
 
-    // Key exchange is sent PLAINTEXT — server needs our public key to start encrypting
-    final msg = jsonEncode({
-      'type': 'key_exchange',
-      'pubkey': _cryptoService!.publicKeyBase64,
-    });
-    _channel?.sink.add(msg);
+    // Key exchange is sent PLAINTEXT — server needs our public key to start
+    // encrypting. The session offer in it is public too.
+    final offer = crypto.startSession();
+    _sessionOffer = offer;
+    _channel?.sink.add(jsonEncode(offer.message()));
   }
 
   void _scheduleReconnect() {
@@ -752,10 +832,11 @@ class WebSocketService {
     if (_channel == null) return false;
 
     try {
+      final peerChannel = _peerChannel;
       if ((_mode == ConnectionMode.relay ||
               (_mode == ConnectionMode.direct && _cryptoService != null)) &&
           _encryptionReady &&
-          _cryptoService != null) {
+          peerChannel != null) {
         final plaintext = jsonEncode(message);
         if (_serverSupportsBinary) {
           // Binary envelope: 1-byte JSON marker + UTF-8 JSON.
@@ -763,12 +844,10 @@ class WebSocketService {
           final payload = Uint8List(jsonBytes.length + 1);
           payload[0] = _binMarkerJson;
           payload.setRange(1, payload.length, jsonBytes);
-          final envelope = _cryptoService!.encryptBinary(payload);
-          _channel!.sink.add(envelope);
+          _channel!.sink.add(peerChannel.sealBinary(payload));
         } else {
           // Legacy text-JSON envelope.
-          final envelope = _cryptoService!.encrypt(plaintext);
-          _channel!.sink.add(jsonEncode(envelope));
+          _channel!.sink.add(jsonEncode(peerChannel.sealText(plaintext)));
         }
         return true;
       } else if (_mode == ConnectionMode.direct && _cryptoService == null) {
@@ -837,14 +916,11 @@ class WebSocketService {
     payload[off + 3] = chunkIndex & 0xFF;
     payload.setRange(off + 4, payload.length, bytes);
 
-    if (_mode == ConnectionMode.relay) {
-      if (!_encryptionReady || _cryptoService == null) return false;
-      final envelope = _cryptoService!.encryptBinary(payload);
-      _channel!.sink.add(envelope);
-    } else if (_mode == ConnectionMode.direct && _cryptoService != null) {
-      if (!_encryptionReady) return false;
-      final envelope = _cryptoService!.encryptBinary(payload);
-      _channel!.sink.add(envelope);
+    final peerChannel = _peerChannel;
+    if (_mode == ConnectionMode.relay ||
+        (_mode == ConnectionMode.direct && _cryptoService != null)) {
+      if (!_encryptionReady || peerChannel == null) return false;
+      _channel!.sink.add(peerChannel.sealBinary(payload));
     } else {
       _channel!.sink.add(payload);
     }
@@ -994,6 +1070,7 @@ class WebSocketService {
     _channel?.sink.close();
     _channel = null;
     _encryptionReady = false;
+    _resetPeerChannel();
     _serverSupportsTransportLanes = false;
     _serverSupportsUploadAcks = false;
     _uploadUsesBulkLane.clear();

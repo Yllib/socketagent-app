@@ -5,7 +5,13 @@ import '../models/browser_frame_wire.dart';
 import '../models/file_download_frame.dart';
 import 'nacl_cipher.dart';
 
-typedef DecodedSocketFrame = ({Map<String, dynamic> message, bool encrypted});
+/// [nonce] is the opened frame's nonce, for the session replay check. Null
+/// for a frame that was not sealed.
+typedef DecodedSocketFrame = ({
+  Map<String, dynamic> message,
+  bool encrypted,
+  Uint8List? nonce,
+});
 
 /// Frames at least this large are parsed off the UI isolate.
 const _largeFrameBytes = 32 * 1024;
@@ -34,10 +40,10 @@ Future<DecodedSocketFrame?> decodeSocketFrame(
   }
   final opened = _open(frame, cipher, encryptedBinary);
   if (opened == null) return null;
-  final (:body, :encrypted) = opened;
+  final (:body, :encrypted, :nonce) = opened;
   final json = body is String || (body is Uint8List && body.first == 0x4A);
-  if (large && json) return Isolate.run(() => _parse(body, encrypted));
-  return _parse(body, encrypted);
+  if (large && json) return Isolate.run(() => _parse(body, encrypted, nonce));
+  return _parse(body, encrypted, nonce);
 }
 
 DecodedSocketFrame? _decode(
@@ -46,12 +52,14 @@ DecodedSocketFrame? _decode(
   bool encryptedBinary,
 ) {
   final opened = _open(frame, cipher, encryptedBinary);
-  return opened == null ? null : _parse(opened.body, opened.encrypted);
+  return opened == null
+      ? null
+      : _parse(opened.body, opened.encrypted, opened.nonce);
 }
 
 /// Decrypts [frame] when it is sealed. The body is JSON text as a String, or
 /// wire bytes that start with a marker byte.
-({Object body, bool encrypted})? _open(
+({Object body, bool encrypted, Uint8List? nonce})? _open(
   Object? frame,
   NaclCipher? cipher,
   bool encryptedBinary,
@@ -59,30 +67,29 @@ DecodedSocketFrame? _decode(
   if (frame is String) {
     // Sealed text frames are always `{"n":…,"c":…}`, so plain JSON is never
     // parsed here on the UI isolate just to look for those keys.
-    if (!frame.startsWith('{"n":')) return (body: frame, encrypted: false);
+    if (!frame.startsWith('{"n":')) {
+      return (body: frame, encrypted: false, nonce: null);
+    }
     final raw = jsonDecode(frame) as Map<String, dynamic>;
     if (cipher == null) throw StateError('Encryption not initialized');
-    final plaintext = cipher.open(
-      base64Decode(raw['c'] as String),
-      base64Decode(raw['n'] as String),
-    );
-    return (body: utf8.decode(plaintext), encrypted: true);
+    final nonce = base64Decode(raw['n'] as String);
+    final plaintext = cipher.open(base64Decode(raw['c'] as String), nonce);
+    return (body: utf8.decode(plaintext), encrypted: true, nonce: nonce);
   }
   if (frame is! List<int>) return null;
   var bytes = frame is Uint8List ? frame : Uint8List.fromList(frame);
+  Uint8List? nonce;
   if (encryptedBinary) {
     if (cipher == null) throw StateError('Encryption not initialized');
     if (bytes.length < 24) throw const FormatException('Truncated envelope');
-    bytes = cipher.open(
-      Uint8List.sublistView(bytes, 24),
-      Uint8List.sublistView(bytes, 0, 24),
-    );
+    nonce = Uint8List.fromList(Uint8List.sublistView(bytes, 0, 24));
+    bytes = cipher.open(Uint8List.sublistView(bytes, 24), nonce);
   }
   if (bytes.isEmpty) return null;
-  return (body: bytes, encrypted: encryptedBinary);
+  return (body: bytes, encrypted: encryptedBinary, nonce: nonce);
 }
 
-DecodedSocketFrame? _parse(Object body, bool encrypted) {
+DecodedSocketFrame? _parse(Object body, bool encrypted, Uint8List? nonce) {
   final Map<String, dynamic>? message = switch (body) {
     String text => jsonDecode(text) as Map<String, dynamic>,
     Uint8List bytes => switch (bytes[0]) {
@@ -94,5 +101,7 @@ DecodedSocketFrame? _parse(Object body, bool encrypted) {
     },
     _ => null,
   };
-  return message == null ? null : (message: message, encrypted: encrypted);
+  return message == null
+      ? null
+      : (message: message, encrypted: encrypted, nonce: nonce);
 }

@@ -49,20 +49,25 @@ class NaclCipher {
     return Uint8List.fromList(box.decrypt(ByteList(cipherText), nonce: nonce));
   }
 
-  /// Seals [message] under a fresh random nonce.
-  ({Uint8List nonce, Uint8List cipherText}) seal(Uint8List message) {
+  /// Seals [message] under [nonce], or a fresh random nonce when it is null.
+  /// A given nonce must never repeat under this key.
+  ({Uint8List nonce, Uint8List cipherText}) seal(
+    Uint8List message, {
+    Uint8List? nonce,
+  }) {
     if (_native case (final sodium, final key)) {
-      final nonce = sodium.randombytes.buf(sodium.crypto.secretBox.nonceBytes);
+      final sealNonce =
+          nonce ?? sodium.randombytes.buf(sodium.crypto.secretBox.nonceBytes);
       return (
-        nonce: nonce,
+        nonce: sealNonce,
         cipherText: sodium.crypto.secretBox.easy(
           message: message,
-          nonce: nonce,
+          nonce: sealNonce,
           key: key,
         ),
       );
     }
-    final sealed = box.encrypt(message);
+    final sealed = box.encrypt(message, nonce: nonce);
     return (
       nonce: Uint8List.fromList(sealed.nonce.asTypedList),
       cipherText: Uint8List.fromList(sealed.cipherText.asTypedList),
