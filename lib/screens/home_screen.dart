@@ -2563,7 +2563,13 @@ class _ChatScreenState extends State<_ChatScreen> {
   }
 
   static const _permModes = [
-    ('bypassPermissions', 'Yolo', 'Auto-approve everything', Icons.speed),
+    (
+      'bypassPermissions',
+      'Yolo',
+      'Auto-approve, ask on safety checks',
+      Icons.speed,
+    ),
+    ('superYolo', 'Super Yolo', 'Auto-approve everything', Icons.flash_on),
     (
       'auto',
       'Smart Auto',
