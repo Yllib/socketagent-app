@@ -108,6 +108,10 @@ class WebSocketService {
   String _subscriberToken = '';
   CryptoService? _cryptoService;
   bool _encryptionReady = false;
+  // Set by this lane's server_capabilities. A bulk lane counts as ready only
+  // after it, or the first upload would go out before the lane knows whether
+  // the server takes binary chunks and acks them.
+  bool _serverCapabilitiesReceived = false;
   // This connection's key exchange and cipher. Both reset on every connect,
   // so nothing sealed for an earlier socket opens on this one.
   SessionOffer? _sessionOffer;
@@ -279,6 +283,7 @@ class WebSocketService {
     } catch (_) {}
     if (gen != _connectionGeneration) return;
     _resetPeerChannel();
+    _serverCapabilitiesReceived = false;
     try {
       await _cryptoService?.loadSessionRequirement();
     } catch (error) {
@@ -379,6 +384,7 @@ class WebSocketService {
             onDone: () {
               if (gen != _connectionGeneration) return;
               _encryptionReady = false;
+              _serverCapabilitiesReceived = false;
               _serverSupportsBinary = false;
               _serverSupportsUploadAcks = false;
               _deviceAuth.reset();
@@ -551,6 +557,7 @@ class WebSocketService {
   }
 
   void _applyServerCapabilities(Map<String, dynamic> msg) {
+    _serverCapabilitiesReceived = true;
     _serverSupportsBinary = msg['binaryEnvelope'] == true;
     _serverSupportsUploadAcks =
         ((msg['uploadAckVersion'] as num?)?.toInt() ?? 0) >= uploadAckVersion;
@@ -651,6 +658,7 @@ class WebSocketService {
     _channel?.sink.close();
     _channel = null;
     _encryptionReady = false;
+    _serverCapabilitiesReceived = false;
     _resetPeerChannel();
     _setStatus(ConnectionStatus.error);
     _scheduleReconnect();
@@ -772,7 +780,9 @@ class WebSocketService {
     return true;
   }
 
-  bool get bulkLaneReady => _bulkLane?._canSendApplicationMessages == true;
+  bool get bulkLaneReady =>
+      _bulkLane?._canSendApplicationMessages == true &&
+      _bulkLane?._serverCapabilitiesReceived == true;
 
   bool _shouldUseBulkLane(Map<String, dynamic> message) {
     if (!_manageBulkLane) return false;
@@ -1070,6 +1080,7 @@ class WebSocketService {
     _channel?.sink.close();
     _channel = null;
     _encryptionReady = false;
+    _serverCapabilitiesReceived = false;
     _resetPeerChannel();
     _serverSupportsTransportLanes = false;
     _serverSupportsUploadAcks = false;
