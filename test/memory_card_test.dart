@@ -74,6 +74,45 @@ void main() {
     );
   });
 
+  test('previous rides along, and a restore undoes a delete', () {
+    final edited = MemoryCard.fromJson({
+      ...live,
+      'memory': {
+        ...live['memory']! as Map,
+        'body': 'The user rewrote this.',
+        'userChange': 'edited',
+        'previous': {
+          'name': 'push-rules',
+          'description': 'Push only on an explicit ship request',
+          'memoryType': 'feedback',
+          'body': 'Pushing master deploys everywhere.',
+        },
+      },
+    })!;
+    expect(edited.body, 'The user rewrote this.');
+    expect(edited.previous!.body, 'Pushing master deploys everywhere.');
+    expect(
+      MemoryCard.fromJson(edited.toJson())!.previous!.toJson(),
+      edited.previous!.toJson(),
+    );
+    expect(MemoryCard.fromJson(live)!.previous, isNull);
+    expect(
+      MemoryCard.fromJson(live)!.toJson().containsKey('previous'),
+      isFalse,
+    );
+
+    final restored = MemoryCard.fromJson({
+      ...live,
+      'memory': {
+        ...live['memory']! as Map,
+        'change': 'deleted',
+        'userChange': 'restored',
+      },
+    })!;
+    expect(restored.deleted, isFalse);
+    expect(restored.statusLabel, 'Restored by you');
+  });
+
   Widget host(ChatMessage message) => MaterialApp(
     theme: ThemeData.dark(),
     home: Scaffold(body: MemoryCardView(message: message)),
@@ -119,5 +158,36 @@ void main() {
     expect(find.text('Deleted by you'), findsOneWidget);
     expect(find.text('Edit'), findsNothing);
     expect(find.text('Delete'), findsNothing);
+    expect(find.text('Restore'), findsOneWidget);
+  });
+
+  testWidgets('an edited card shows the new text and reveals the previous', (
+    tester,
+  ) async {
+    final edited = MemoryCard.fromJson({
+      ...live,
+      'memory': {
+        ...live['memory']! as Map,
+        'body': 'The user rewrote this.',
+        'userChange': 'edited',
+        'previous': {
+          'name': 'push-rules',
+          'description': 'Push only on an explicit ship request',
+          'memoryType': 'feedback',
+          'body': 'Pushing master deploys everywhere.',
+        },
+      },
+    })!;
+    await tester.pumpWidget(host(ChatMessage.memory(edited, entryId: 'e1')));
+    expect(find.text('Edited by you'), findsOneWidget);
+    expect(find.text('The user rewrote this.'), findsOneWidget);
+    expect(find.text('Pushing master deploys everywhere.'), findsNothing);
+    await tester.tap(find.text('Show previous'));
+    await tester.pump();
+    expect(find.text('Before your edit'), findsOneWidget);
+    expect(find.text('Pushing master deploys everywhere.'), findsOneWidget);
+    await tester.tap(find.text('Hide previous'));
+    await tester.pump();
+    expect(find.text('Pushing master deploys everywhere.'), findsNothing);
   });
 }

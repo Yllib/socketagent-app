@@ -1,3 +1,35 @@
+/// The parsed fields of one memory file.
+class MemoryVersion {
+  const MemoryVersion({
+    required this.name,
+    this.description = '',
+    this.memoryType = '',
+    this.body = '',
+  });
+
+  final String name;
+  final String description;
+  final String memoryType;
+  final String body;
+
+  static MemoryVersion? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    return MemoryVersion(
+      name: raw['name'] as String? ?? '',
+      description: raw['description'] as String? ?? '',
+      memoryType: raw['memoryType'] as String? ?? '',
+      body: raw['body'] as String? ?? '',
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'description': description,
+    'memoryType': memoryType,
+    'body': body,
+  };
+}
+
 /// A `memory_card`: one Claude Code auto-memory file as the agent left it
 /// after a tool call, plus what the user did to it from the card since.
 class MemoryCard {
@@ -9,6 +41,7 @@ class MemoryCard {
     this.body = '',
     this.change = 'created',
     this.userChange = '',
+    this.previous,
     this.sessionId = '',
   });
 
@@ -26,8 +59,12 @@ class MemoryCard {
   /// What the agent did: `created`, `edited` or `deleted`.
   final String change;
 
-  /// `edited` or `deleted` once the user acted on the card, else empty.
+  /// `edited`, `deleted` or `restored` once the user acted on the card,
+  /// else empty.
   final String userChange;
+
+  /// The text the agent wrote, kept from the user's first edit on.
+  final MemoryVersion? previous;
   final String sessionId;
 
   String get fileName {
@@ -37,13 +74,15 @@ class MemoryCard {
     return cut < 0 ? path : path.substring(cut + 1);
   }
 
-  /// The file is gone, whoever removed it.
-  bool get deleted => change == 'deleted' || userChange == 'deleted';
+  /// The file is gone, whoever removed it, and has not been put back.
+  bool get deleted =>
+      userChange == 'deleted' || (change == 'deleted' && userChange.isEmpty);
 
   /// Short status for the card header.
   String get statusLabel => switch (userChange) {
     'deleted' => 'Deleted by you',
     'edited' => 'Edited by you',
+    'restored' => 'Restored by you',
     _ => switch (change) {
       'created' => 'New memory',
       'edited' => 'Memory updated',
@@ -65,6 +104,7 @@ class MemoryCard {
       body: memory['body'] as String? ?? '',
       change: memory['change'] as String? ?? 'created',
       userChange: memory['userChange'] as String? ?? '',
+      previous: MemoryVersion.fromJson(memory['previous']),
       sessionId:
           raw['sessionId'] as String? ?? memory['sessionId'] as String? ?? '',
     );
@@ -78,6 +118,7 @@ class MemoryCard {
     'body': body,
     'change': change,
     if (userChange.isNotEmpty) 'userChange': userChange,
+    if (previous case final previous?) 'previous': previous.toJson(),
     'sessionId': sessionId,
   };
 }

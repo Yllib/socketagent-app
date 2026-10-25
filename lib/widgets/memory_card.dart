@@ -20,6 +20,7 @@ class MemoryCardView extends StatefulWidget {
 
 class _MemoryCardViewState extends State<MemoryCardView> {
   bool _busy = false;
+  bool _showPrevious = false;
   String? _error;
 
   MemoryCard? get _memory => MemoryCard.fromJson(widget.message.toolInput);
@@ -69,6 +70,27 @@ class _MemoryCardViewState extends State<MemoryCardView> {
     }
   }
 
+  Future<void> _restore() async {
+    final entryId = widget.message.entryId;
+    if (entryId == null || entryId.isEmpty) {
+      setState(() => _error = 'This card has no history entry to restore from');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await context.read<ChatProvider>().restoreMemory(entryId);
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = '$error'.replaceFirst('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final memory = _memory;
@@ -76,6 +98,7 @@ class _MemoryCardViewState extends State<MemoryCardView> {
     final palette = context.palette;
     final theme = Theme.of(context);
     final deleted = memory.deleted;
+    final previous = memory.previous;
     final accent = deleted ? palette.border : palette.lavender;
     final icon = deleted
         ? Icons.bookmark_remove_outlined
@@ -152,11 +175,58 @@ class _MemoryCardViewState extends State<MemoryCardView> {
                 ),
               ),
             ),
-          if (!deleted)
+          if (previous != null && _showPrevious)
             Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Row(
-                children: [
+              padding: const EdgeInsets.only(top: 8),
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
+                decoration: BoxDecoration(
+                  border: Border(
+                    left: BorderSide(color: palette.border, width: 2),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Before your edit',
+                      style: TextStyle(fontSize: 12, color: palette.textMuted),
+                    ),
+                    if (previous.description.isNotEmpty &&
+                        previous.description != memory.description)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          previous.description,
+                          style: TextStyle(color: palette.textSecondary),
+                        ),
+                      ),
+                    if (previous.body.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: SelectableText(
+                          previous.body,
+                          style: TextStyle(
+                            fontSize: 13,
+                            height: 1.35,
+                            color: palette.textSecondary,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Row(
+              children: [
+                if (deleted)
+                  OutlinedButton(
+                    onPressed: _busy ? null : _restore,
+                    child: const Text('Restore'),
+                  )
+                else ...[
                   OutlinedButton(
                     onPressed: _busy ? null : () => _edit(memory),
                     child: const Text('Edit'),
@@ -167,8 +237,19 @@ class _MemoryCardViewState extends State<MemoryCardView> {
                     child: const Text('Delete'),
                   ),
                 ],
-              ),
+                if (previous != null) ...[
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () =>
+                        setState(() => _showPrevious = !_showPrevious),
+                    child: Text(
+                      _showPrevious ? 'Hide previous' : 'Show previous',
+                    ),
+                  ),
+                ],
+              ],
             ),
+          ),
           if (_error case final error?)
             Padding(
               padding: const EdgeInsets.only(top: 6),

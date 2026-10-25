@@ -8913,6 +8913,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     'path': path,
   });
 
+  /// Puts a deleted memory back from the card's own history entry. The
+  /// server takes the path and text from that entry, not from the app.
+  Future<void> restoreMemory(String entryId) => _sendMemoryRequest({
+    'type': 'memory_restore',
+    'sessionId': _activeSessionId,
+    'entryId': entryId,
+  });
+
   /// Answers a `computer_access_request` card. For `once` and `chat` the
   /// answer carries an approval token boxed from this device's key to the
   /// target computer's key, so only the target can read it and the source
