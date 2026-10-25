@@ -421,18 +421,25 @@ void main() {
     expect(checkpoint?.entryCount, 3);
   });
 
-  test('a cache with a transcript hole cannot suppress server history', () {
+  test('a cache with a transcript hole still resumes, listing what it holds', () {
+    // Rows the server persists without a live event leave holes. The per-entry
+    // cursor names the held entries, so the server fills the hole instead of
+    // the phone discarding its cache or hiding the missing row.
     final cache = SessionTranscriptCache();
     final snapshot = {
       'offset': 7,
       'total': 10,
       'messages': [
-        {'entryId': 'entry-8', 'sessionSeq': 108},
-        {'entryId': 'entry-10', 'sessionSeq': 110},
+        {'entryId': 'entry-8', 'sessionSeq': 108, 'revision': 1},
+        {'entryId': 'entry-10', 'sessionSeq': 110, 'revision': 2},
       ],
     };
 
-    expect(cache.resumeCheckpoint(snapshot), isNull);
-    expect(cache.latestSessionSeq(snapshot), isNull);
+    expect(cache.latestSessionSeq(snapshot), 110);
+    expect(cache.resumeCheckpoint(snapshot)?.entryCount, 2);
+    expect(cache.resumeCursor(snapshot)?.entryRevisions, [
+      [108, 1],
+      [110, 2],
+    ]);
   });
 }

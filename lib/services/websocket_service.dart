@@ -768,7 +768,21 @@ class WebSocketService {
     });
   }
 
+  /// When the current socket became usable; null until it does.
+  DateTime? connectedAt;
+
+  /// Whether this socket connected after [moment]. A socket opened after a
+  /// network change is already on the new network and need not be replaced.
+  bool connectedAfter(DateTime moment) =>
+      _status == ConnectionStatus.connected &&
+      (connectedAt?.isAfter(moment) ?? false);
+
   void _setStatus(ConnectionStatus status) {
+    // The handshake reports "connected" from more than one step (encryption
+    // established, device approved). Listeners resync the whole session on
+    // each report, so a status the socket already has is not reported again.
+    if (_status == status) return;
+    if (status == ConnectionStatus.connected) connectedAt = DateTime.now();
     _status = status;
     _statusController.add(status);
   }

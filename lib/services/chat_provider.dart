@@ -3785,35 +3785,70 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_activeSessionId != null &&
         serverId != null &&
         serverId == _connMgr.activeServerId) {
+      final sessionId = _activeSessionId!;
       final historyRequestId =
-          _initialHistoryRequestId ??
-          _beginInitialHistoryRequest(_activeSessionId!);
-      final cachedSnapshot = _transcriptCache.peek(serverId, _activeSessionId!);
-      final checkpoint = _transcriptCache.resumeCheckpoint(cachedSnapshot);
+          _initialHistoryRequestId ?? _beginInitialHistoryRequest(sessionId);
       if (!_initialHistoryRequestDispatched) {
-        final sent = _connMgr.sendToServer(serverId, {
-          'type': 'resume_session',
-          'sessionId': _activeSessionId,
-          'historyRequestId': historyRequestId,
-          'openTraceId': historyRequestId,
-          if (checkpoint != null) ...{
-            'knownSessionSeq': checkpoint.latestSessionSeq,
-            'knownHistoryOffset': checkpoint.historyOffset,
-            'knownHistoryEntryCount': checkpoint.entryCount,
-            'knownHistoryDigest': _transcriptCache.historyDigest(
-              cachedSnapshot,
-            ),
-          },
-        });
-        if (sent) {
-          _markInitialHistoryRequestDispatched(
-            historyRequestId,
-            _activeSessionId!,
-          );
-        }
+        unawaited(
+          _sendResumeWithCache(serverId, sessionId, historyRequestId, {
+            'type': 'resume_session',
+            'sessionId': sessionId,
+            'historyRequestId': historyRequestId,
+            'openTraceId': historyRequestId,
+          }),
+        );
       }
       _connMgr.sendToServer(serverId, {'type': 'get_status_sync'});
     }
+  }
+
+  /// The resume fields that let the server send only what this phone lacks:
+  /// the per-entry cursor, plus the window fields older servers understand.
+  Map<String, dynamic> _resumeCursorFields(Map<String, dynamic>? snapshot) {
+    final checkpoint = _transcriptCache.resumeCheckpoint(snapshot);
+    if (checkpoint == null) return const {};
+    final cursor = _transcriptCache.resumeCursor(snapshot);
+    return {
+      'knownSessionSeq': checkpoint.latestSessionSeq,
+      'knownHistoryOffset': checkpoint.historyOffset,
+      'knownHistoryEntryCount': checkpoint.entryCount,
+      'knownHistoryDigest': _transcriptCache.historyDigest(snapshot),
+      if (cursor != null) ...{
+        'knownEntryRevisions': cursor.entryRevisions,
+        'knownEntryIdentityDigest': cursor.identityDigest,
+      },
+    };
+  }
+
+  /// Sends [resume] with the transcript cache's cursor. A cache that is not in
+  /// memory yet is read from disk first, and drawn if the chat is still empty,
+  /// so a cold open paints at once and still gets a delta. A slow read sends
+  /// the resume without a cursor rather than hold the open.
+  Future<void> _sendResumeWithCache(
+    String serverId,
+    String sessionId,
+    String requestId,
+    Map<String, dynamic> resume,
+  ) async {
+    var snapshot = _transcriptCache.peek(serverId, sessionId);
+    if (snapshot == null) {
+      snapshot = await _transcriptCache
+          .load(serverId, sessionId)
+          .timeout(const Duration(milliseconds: 1500), onTimeout: () => null);
+      if (_activeSessionId != sessionId ||
+          _initialHistoryRequestId != requestId ||
+          _initialHistoryRequestDispatched) {
+        return;
+      }
+      if (snapshot != null && _messages.isEmpty) {
+        _handleSessionHistory(snapshot, serverId: serverId, fromCache: true);
+      }
+    }
+    final sent = _connMgr.sendToServer(serverId, {
+      ...resume,
+      ..._resumeCursorFields(snapshot),
+    });
+    if (sent) _markInitialHistoryRequestDispatched(requestId, sessionId);
   }
 
   Future<void> _restoreOutgoingQueue() async {
@@ -17044,20 +17079,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final cachedSnapshot = resolvedServerId.isEmpty
         ? null
         : _transcriptCache.peek(resolvedServerId, sessionId);
-    final checkpoint = _transcriptCache.resumeCheckpoint(cachedSnapshot);
     if (cachedSnapshot != null) {
       _handleSessionHistory(
         cachedSnapshot,
         serverId: resolvedServerId,
         fromCache: true,
-      );
-    } else if (resolvedServerId.isNotEmpty) {
-      unawaited(
-        _loadTranscriptCacheAfterOpen(
-          resolvedServerId,
-          sessionId,
-          historyRequestId,
-        ),
       );
     }
     _ensurePendingHardStopCard(sessionId, serverId: resolvedServerId);
@@ -17068,25 +17094,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (session?.backend != null) 'backend': session!.backend,
       'historyRequestId': historyRequestId,
       'openTraceId': historyRequestId,
-      if (checkpoint != null) ...{
-        'knownSessionSeq': checkpoint.latestSessionSeq,
-        'knownHistoryOffset': checkpoint.historyOffset,
-        'knownHistoryEntryCount': checkpoint.entryCount,
-        'knownHistoryDigest': _transcriptCache.historyDigest(cachedSnapshot),
-      },
     };
-    bool resumeSent;
     if (targetServerId != null && targetServerId.isNotEmpty) {
       _activeSessionServerId = targetServerId;
       _connMgr.activeServerId = targetServerId;
-      resumeSent = _connMgr.sendToServer(targetServerId, resumeMessage);
-      _connMgr.sendToServer(targetServerId, {'type': 'get_status_sync'});
-    } else {
-      resumeSent = _connMgr.send(resumeMessage);
-      _connMgr.send({'type': 'get_status_sync'});
     }
-    if (resumeSent) {
-      _markInitialHistoryRequestDispatched(historyRequestId, sessionId);
+    if (resolvedServerId.isNotEmpty) {
+      unawaited(
+        _sendResumeWithCache(
+          resolvedServerId,
+          sessionId,
+          historyRequestId,
+          resumeMessage,
+        ),
+      );
+      _connMgr.sendToServer(resolvedServerId, {'type': 'get_status_sync'});
+    } else {
+      if (_connMgr.send(resumeMessage)) {
+        _markInitialHistoryRequestDispatched(historyRequestId, sessionId);
+      }
+      _connMgr.send({'type': 'get_status_sync'});
     }
 
     notifyListeners();
@@ -17123,22 +17150,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _handleSessionHistory(snapshot!, serverId: serverId, fromCache: true);
     _isRefreshingHistory = refreshing;
     notifyListeners();
-  }
-
-  Future<void> _loadTranscriptCacheAfterOpen(
-    String serverId,
-    String sessionId,
-    String historyRequestId,
-  ) async {
-    final snapshot = await _transcriptCache.load(serverId, sessionId);
-    if (snapshot == null ||
-        _activeSessionId != sessionId ||
-        _activeSessionServerId != serverId ||
-        _initialHistoryRequestId != historyRequestId ||
-        _messages.isNotEmpty) {
-      return;
-    }
-    _handleSessionHistory(snapshot, serverId: serverId, fromCache: true);
   }
 
   void resumeSessionFromNotification(
@@ -17265,18 +17276,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final snapshot = serverId == null
         ? null
         : _transcriptCache.peek(serverId, sessionId);
-    final checkpoint = _transcriptCache.resumeCheckpoint(snapshot);
     final message = <String, dynamic>{
       'type': 'resume_session',
       'sessionId': sessionId,
       'historyRequestId': requestId,
       'openTraceId': requestId,
-      if (checkpoint != null) ...{
-        'knownSessionSeq': checkpoint.latestSessionSeq,
-        'knownHistoryOffset': checkpoint.historyOffset,
-        'knownHistoryEntryCount': checkpoint.entryCount,
-        'knownHistoryDigest': _transcriptCache.historyDigest(snapshot),
-      },
+      ..._resumeCursorFields(snapshot),
     };
     // Reuse a validated cache cursor so retrying does not resend the whole
     // window. The server falls back to a bounded tail for incompatible caches.

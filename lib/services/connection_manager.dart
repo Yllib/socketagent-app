@@ -93,7 +93,11 @@ class ConnectionManager {
   Set<ConnectivityResult>? _lastNetwork;
   // Auto-routed computers whose socket belongs to a network the phone left.
   // Their route search reconnects them even when the route stays the same.
-  final Set<String> _staleSockets = {};
+  /// Sockets asked to reconnect, keyed by when the request's reason began.
+  /// A socket that connected after that moment already satisfies it.
+  final Map<String, DateTime> _staleSince = {};
+  /// When the current burst of network-change reports began.
+  DateTime? _networkChangedAt;
 
   final _messageController = StreamController<ServerMessage>.broadcast();
   final _statusController = StreamController<ServerStatusUpdate>.broadcast();
@@ -278,25 +282,37 @@ class ConnectionManager {
         previous.containsAll(current)) {
       return;
     }
+    // The platform reports one change as a short burst of events. A socket
+    // opened after the first of them is on the new network already; replacing
+    // it again would resume the session twice.
+    final now = DateTime.now();
+    final burstStart = _networkChangedAt;
+    if (burstStart == null ||
+        now.difference(burstStart) > const Duration(seconds: 10)) {
+      _networkChangedAt = now;
+    }
     for (final config in _configs.values) {
       final ws = _connections[config.id];
       if (ws == null) continue;
       final live =
           ws.status != ConnectionStatus.disconnected || ws.reconnecting;
-      if (live) reconnectServer(config.id);
+      if (live) reconnectServer(config.id, since: _networkChangedAt);
     }
   }
 
   /// Replaces [serverId]'s socket with a new one. For a socket that looks
   /// connected but has stopped answering, or one left on an old network.
-  void reconnectServer(String serverId) {
+  /// [since] is when the reason to reconnect began; a socket that connected
+  /// after it is kept.
+  void reconnectServer(String serverId, {DateTime? since}) {
     final config = _configs[serverId];
     final ws = _connections[serverId];
     if (config == null || ws == null) return;
+    final staleSince = since ?? DateTime.now();
     if (config.autoRoute) {
-      _staleSockets.add(serverId);
+      _staleSince[serverId] = staleSince;
       unawaited(routeServer(serverId, force: true));
-    } else {
+    } else if (!ws.connectedAfter(staleSince)) {
       ws.connect(force: true);
     }
   }
@@ -375,10 +391,11 @@ class ConnectionManager {
         : connectionModeForServerConfig(config);
 
     // The config may have changed while the search ran.
-    final stale = _staleSockets.remove(config.id);
+    final staleSince = _staleSince.remove(config.id);
     final latest = _configs[config.id];
     final ws = _connections[config.id];
     if (latest == null || !latest.autoRoute || ws == null) return;
+    final stale = staleSince != null && !ws.connectedAfter(staleSince);
     final next = latest.copyWith(
       useRelay: mode == ConnectionMode.relay,
       host: directHost ?? latest.host,

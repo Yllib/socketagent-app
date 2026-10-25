@@ -320,6 +320,8 @@ class SessionTranscriptCache {
     return _memory[_key(serverId, sessionId)];
   }
 
+  /// Window digest for servers that predate [resumeCursor]: one line per
+  /// cached entry, so a changed revision anywhere in the window is detected.
   String? historyDigest(Map<String, dynamic>? snapshot) {
     if (resumeCheckpoint(snapshot) == null) return null;
     final lines = StringBuffer();
@@ -336,20 +338,59 @@ class SessionTranscriptCache {
     return resumeCheckpoint(snapshot)?.latestSessionSeq;
   }
 
+  /// Exactly what the cache holds, for its newest [maxEntries] entries:
+  /// `[sessionSeq, revision]` pairs plus a digest of their identities. The
+  /// server answers with the entries this list misses or holds at an older
+  /// revision, and everything newer. Rows the server persists without a live
+  /// event (run boundaries, notifications, task states) leave gaps in the
+  /// cache; listing what is held, rather than a count, lets the server fill
+  /// them instead of resending the whole page.
+  ({List<List<int>> entryRevisions, String identityDigest})? resumeCursor(
+    Map<String, dynamic>? snapshot, {
+    int maxEntries = 500,
+  }) {
+    if (resumeCheckpoint(snapshot) == null) return null;
+    final messages = snapshot!['messages'] as List;
+    final start = messages.length > maxEntries
+        ? messages.length - maxEntries
+        : 0;
+    final pairs = <List<int>>[];
+    final identity = StringBuffer();
+    for (final entry in messages.skip(start)) {
+      final sequence = (entry['sessionSeq'] as num?)?.toInt();
+      final entryId = entry['entryId'];
+      final revision = (entry['revision'] as num?)?.toInt();
+      if (sequence == null ||
+          entryId is! String ||
+          entryId.isEmpty ||
+          revision == null ||
+          revision <= 0) {
+        return null;
+      }
+      pairs.add([sequence, revision]);
+      identity.writeln('$sequence:$entryId');
+    }
+    return (
+      entryRevisions: pairs,
+      identityDigest: sha256
+          .convert(utf8.encode(identity.toString()))
+          .toString(),
+    );
+  }
+
+  /// The window the cache covers: its first position, its newest sequence and
+  /// how many entries it holds. The count can be short of the window's true
+  /// size when live events skipped rows; [resumeCursor] tells the server which.
   ({int latestSessionSeq, int historyOffset, int entryCount})? resumeCheckpoint(
     Map<String, dynamic>? snapshot,
   ) {
     if (snapshot == null) return null;
     final offset = (snapshot['offset'] as num?)?.toInt();
-    final total = (snapshot['total'] as num?)?.toInt();
     final rawMessages = snapshot['messages'] as List?;
     if (offset == null ||
-        total == null ||
         rawMessages == null ||
         offset < 0 ||
-        total < offset ||
-        rawMessages.isEmpty ||
-        rawMessages.length != total - offset) {
+        rawMessages.isEmpty) {
       return null;
     }
 
