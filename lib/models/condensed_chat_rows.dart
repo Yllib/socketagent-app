@@ -181,6 +181,7 @@ bool isCondensedConversationMessage(ChatMessage message) {
     case MessageType.question:
     case MessageType.secureInput:
     case MessageType.computerAccess:
+    case MessageType.memory:
     case MessageType.browserSession:
     case MessageType.result:
     case MessageType.error:

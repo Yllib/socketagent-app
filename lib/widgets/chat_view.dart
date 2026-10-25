@@ -36,6 +36,7 @@ import 'codex_plan_card.dart';
 import 'codex_command_card.dart';
 import 'secure_input_card.dart';
 import 'computer_access_card.dart';
+import 'memory_card.dart';
 import 'html_plan_card.dart';
 import 'work_review_card.dart';
 import 'browser_session_card.dart';
@@ -1543,6 +1544,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         return _buildRunBoundaryDivider(msg);
       case MessageType.computerAccess:
         return ComputerAccessCard(message: msg);
+      case MessageType.memory:
+        return MemoryCardView(message: msg);
     }
   }
 

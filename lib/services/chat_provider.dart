@@ -61,6 +61,7 @@ import '../models/computer_issue.dart';
 import '../models/backend_config_file.dart';
 import '../models/account_vault.dart';
 import '../models/computer_access.dart';
+import '../models/memory_card.dart';
 import '../models/device_registry.dart';
 import 'account_crypto.dart';
 import 'account_service.dart';
@@ -976,6 +977,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   _fileManagerOperationCompleters = {};
   final Map<String, Completer<Map<String, dynamic>>>
   _fileManagerTextCompleters = {};
+  final Map<String, Completer<Map<String, dynamic>>> _memoryCompleters = {};
   final Map<String, Completer<Map<String, dynamic>>> _backendConfigCompleters =
       {};
   int _sdkSessionsRequestSeq = 0;
@@ -5292,6 +5294,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'file_manager_protected_result',
       'file_manager_operation_result',
       'file_manager_text_result',
+      'memory_read_result',
+      'memory_action_result',
       'backend_config_list_result',
       'backend_config_text_result',
       'backend_config_write_result',
@@ -6147,6 +6151,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'computer_access_resolved':
           _handleComputerAccessResolved(msg);
           break;
+        case 'memory_card':
+          _handleMemoryCard(msg);
+          break;
+        case 'memory_read_result':
+        case 'memory_action_result':
+          {
+            final requestId = msg['requestId'] as String? ?? '';
+            final completer = _memoryCompleters.remove(requestId);
+            if (completer == null || completer.isCompleted) break;
+            if (msg['ok'] == true) {
+              completer.complete(Map<String, dynamic>.from(msg));
+            } else {
+              completer.completeError(
+                Exception(msg['error'] as String? ?? 'Memory action failed'),
+              );
+            }
+            break;
+          }
         case 'recent_cwds':
           final cwds = (msg['cwds'] as List?)?.cast<String>() ?? [];
           final key = serverId ?? '';
@@ -8815,6 +8837,81 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _messages[idx].answered = status != 'pending';
     notifyListeners();
   }
+
+  /// A `memory_card` arrived: a new card, or a replacement for one already on
+  /// screen after the user edited or deleted the memory from it.
+  void _handleMemoryCard(Map<String, dynamic> msg) {
+    final card = MemoryCard.fromJson(msg);
+    if (card == null) return;
+    final entryId = msg['entryId'] as String?;
+    final existingIdx = entryId == null || entryId.isEmpty
+        ? -1
+        : _messages.indexWhere(
+            (m) => m.type == MessageType.memory && m.entryId == entryId,
+          );
+    if (existingIdx >= 0) {
+      final existing = _messages[existingIdx];
+      existing.toolInput
+        ?..clear()
+        ..addAll(card.toJson());
+      existing.textContent = card.name;
+      applyTranscriptPosition(existing, msg);
+      notifyListeners();
+      return;
+    }
+    final message = ChatMessage.memory(card, entryId: entryId);
+    applyTranscriptPosition(message, msg);
+    _messages.add(message);
+    notifyListeners();
+  }
+
+  String? get _memoryServerId =>
+      _activeSessionServerId ?? _connMgr.activeServerId;
+
+  Future<Map<String, dynamic>> _sendMemoryRequest(Map<String, dynamic> msg) {
+    final requestId = DateTime.now().microsecondsSinceEpoch.toString();
+    final completer = Completer<Map<String, dynamic>>();
+    _memoryCompleters[requestId] = completer;
+    final withId = {'requestId': requestId, ...msg};
+    final serverId = _memoryServerId;
+    if (serverId != null) {
+      _connMgr.sendToServer(serverId, withId);
+    } else {
+      _ws.send(withId);
+    }
+    return completer.future.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        _memoryCompleters.remove(requestId);
+        throw TimeoutException('The computer did not answer');
+      },
+    );
+  }
+
+  /// The memory file's full text, frontmatter included, for the editor.
+  Future<String> readMemoryFile(String path) async {
+    final result = await _sendMemoryRequest({
+      'type': 'memory_read',
+      'path': path,
+    });
+    return result['content'] as String? ?? '';
+  }
+
+  /// Saves the whole file. The server then re-sends every card for it.
+  Future<void> writeMemoryFile(String path, String content) =>
+      _sendMemoryRequest({
+        'type': 'memory_write',
+        'sessionId': _activeSessionId,
+        'path': path,
+        'content': content,
+      });
+
+  /// Removes the file and its MEMORY.md line. Cards update from the server.
+  Future<void> deleteMemoryFile(String path) => _sendMemoryRequest({
+    'type': 'memory_delete',
+    'sessionId': _activeSessionId,
+    'path': path,
+  });
 
   /// Answers a `computer_access_request` card. For `once` and `chat` the
   /// answer carries an approval token boxed from this device's key to the
@@ -13824,6 +13921,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           } else {
             loaded.add(qMsg);
+          }
+          break;
+        case 'memory':
+          final memory = MemoryCard.fromJson({
+            ...entry,
+            if (entry['sessionId'] is String) 'sessionId': entry['sessionId'],
+          });
+          if (memory == null) break;
+          final memoryEntryId = entry['entryId'] as String?;
+          final existingIdx = loaded.lastIndexWhere(
+            (m) =>
+                m.type == MessageType.memory &&
+                memoryEntryId != null &&
+                m.entryId == memoryEntryId,
+          );
+          if (existingIdx >= 0) {
+            loaded[existingIdx].toolInput
+              ?..clear()
+              ..addAll(memory.toJson());
+          } else {
+            loaded.add(ChatMessage.memory(memory, entryId: memoryEntryId));
           }
           break;
         case 'computer_access':

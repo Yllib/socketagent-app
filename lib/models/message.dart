@@ -2,6 +2,7 @@ import '../util/format.dart';
 import 'message_attachment.dart';
 import 'traced_error.dart';
 import 'computer_access.dart';
+import 'memory_card.dart';
 
 enum MessageSender { user, assistant, system }
 
@@ -48,6 +49,7 @@ enum MessageType {
   workReview,
   runBoundary,
   computerAccess,
+  memory,
 }
 
 class ChatMessage {
@@ -419,6 +421,22 @@ class ChatMessage {
       textContent: request.isLink ? request.reason : request.summary,
       toolInput: request.toJson(),
       answered: !request.pending,
+    );
+  }
+
+  /// A `memory_card`. The card lives in [toolInput]; [entryId] from the
+  /// server keeps live and replayed copies of the same card together.
+  factory ChatMessage.memory(MemoryCard card, {String? entryId}) {
+    return ChatMessage(
+      id: entryId != null && entryId.isNotEmpty
+          ? 'memory_$entryId'
+          : 'memory_${card.path}_${DateTime.now().microsecondsSinceEpoch}',
+      sender: MessageSender.assistant,
+      type: MessageType.memory,
+      timestamp: DateTime.now(),
+      textContent: card.name,
+      toolInput: card.toJson(),
+      entryId: entryId,
     );
   }
 
