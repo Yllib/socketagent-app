@@ -199,11 +199,18 @@ class _PinnedCondensedGroup {
 
 class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   late final ChatScrollController _scroll;
-  final Set<String> _expandedImageCardIds = {};
+
+  /// Tool cards the user opened, per session, by [_cardStateId]. The card
+  /// widgets themselves get remounted by row key changes, condensed
+  /// regrouping and sliver recycling, so the open state lives here.
+  final Map<String, Set<String>> _expandedCardsBySession = {};
   final Map<String, Set<String>> _expandedCondensedRowsBySession = {};
   final _pinnedCondensedGroup = ValueNotifier<_PinnedCondensedGroup?>(null);
   final _pinnedCondensedHeaderKey = GlobalKey();
   final Map<String, GlobalKey> _messageRowKeys = {};
+
+  /// Scroll anchors for task cards, by row key, with the row key each tool
+  /// use id was last built under.
   final Map<String, GlobalKey> _taskKeys = {};
   final Map<String, String> _taskRowKeyByToolUseId = {};
   Map<String, ChatMessage> _toolCallsById = {};
@@ -404,6 +411,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     }
     _pinnedCondensedGroup.value = null;
     _toggleCondensedGroup(rowKey);
+  }
+
+  GlobalKey? _taskKey(String? toolUseId, String rowKey) {
+    if (toolUseId == null || toolUseId.isEmpty) return null;
+    _taskRowKeyByToolUseId.putIfAbsent(toolUseId, () => rowKey);
+    return _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
   }
 
   /// Scroll to a task card in the chat by its toolUseId
@@ -708,7 +721,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       _windowRowKeys = const {};
       _centerGeneration++;
       _olderHistoryRequested = false;
-      _expandedImageCardIds.clear();
       _messageRowKeys.clear();
       _taskKeys.clear();
       _taskRowKeyByToolUseId.clear();
@@ -750,7 +762,15 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       }
     }
 
-    final activeRowKeys = {for (final row in _renderRows()) row.rowKey};
+    // Cards inside an open condensed group have their own row keys. Pruning
+    // those every update handed each card a new GlobalKey and remounted it.
+    final activeRowKeys = <String>{};
+    for (final row in _renderRows()) {
+      activeRowKeys.add(row.rowKey);
+      if (row.content case final CondensedWorkRow group) {
+        activeRowKeys.addAll(_condensedChildRowKeys(group, row.rowKey));
+      }
+    }
     _messageRowKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
     _taskKeys.removeWhere((rowKey, _) => !activeRowKeys.contains(rowKey));
     _taskRowKeyByToolUseId.removeWhere(
@@ -824,30 +844,42 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     return true;
   }
 
-  void _handleToolExpansionChanged(
-    String messageId,
-    bool expanded, {
-    required bool hasImage,
-  }) {
-    if (!hasImage) return;
+  Set<String> get _expandedCards => _expandedCardsBySession.putIfAbsent(
+    widget.sessionStorageKey ?? '',
+    () => <String>{},
+  );
+
+  /// Durable identity for a card's open state. A tool use id outlives the
+  /// message object, its row key and its transcript position.
+  String _cardStateId(ChatMessage msg) {
+    final toolUseId = msg.toolUseId;
+    return toolUseId != null && toolUseId.isNotEmpty
+        ? '${msg.type.name}:tool:$toolUseId'
+        : '${msg.type.name}:id:${msg.id}';
+  }
+
+  void _setCardExpanded(ChatMessage msg, bool expanded) {
+    final id = _cardStateId(msg);
     final changed = expanded
-        ? _expandedImageCardIds.add(messageId)
-        : _expandedImageCardIds.remove(messageId);
+        ? _expandedCards.add(id)
+        : _expandedCards.remove(id);
     if (changed && mounted) setState(() {});
   }
 
+  /// [stateOwner] keeps a card that mirrors another message's content, like a
+  /// background completion notice, open independently of the original.
   Widget _buildToolOutputBlock(
     ChatMessage msg, {
     bool greenTheme = false,
-    String? inspectionId,
+    ChatMessage? stateOwner,
   }) {
-    final id = inspectionId ?? msg.id;
+    final owner = stateOwner ?? msg;
     return ToolOutputBlock(
       message: msg,
       greenTheme: greenTheme,
-      expanded: _expandedImageCardIds.contains(id) ? true : null,
+      expanded: _expandedCards.contains(_cardStateId(owner)),
       onExpansionChanged: (expanded, {required hasImage}) =>
-          _handleToolExpansionChanged(id, expanded, hasImage: hasImage),
+          _setCardExpanded(owner, expanded),
       onBackgroundTask: widget.onBackgroundTask,
     );
   }
@@ -1135,9 +1167,21 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
 
   static const double _condensedCardMarginHorizontal = 8;
 
+  /// Row keys of the cards inside a condensed group. Each child is keyed by
+  /// its own identity, not its index, so a row joining the group does not
+  /// remount the cards after it.
+  List<String> _condensedChildRowKeys(CondensedWorkRow row, String rowKey) {
+    final occurrences = <String, int>{};
+    return [
+      for (final message in row.messages)
+        '$rowKey:child:${_collisionSafeRowKey(_messageRowKey(message), occurrences)}',
+    ];
+  }
+
   Widget _buildCondensedWorkRow(CondensedWorkRow row, String rowKey) {
     final expanded = _expandedCondensedRows.contains(rowKey);
     final theme = Theme.of(context);
+    final childRowKeys = _condensedChildRowKeys(row, rowKey);
 
     return Container(
       key: ValueKey<String>('condensed-work:$rowKey'),
@@ -1164,10 +1208,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           if (expanded && row.messages.isNotEmpty) ...[
             Divider(height: 1, color: theme.colorScheme.outlineVariant),
             for (var index = 0; index < row.messages.length; index++)
-              _buildCondensedChild(
-                row.messages[index],
-                '$rowKey:child:$index:${_messageRowKey(row.messages[index])}',
-              ),
+              _buildCondensedChild(row.messages[index], childRowKeys[index]),
           ],
         ],
       ),
@@ -1405,12 +1446,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             'summary': msg.toolInput?['summary']?.toString() ?? '',
             'status': msg.toolStreaming ? 'running' : 'completed',
           };
-          if (msg.toolUseId != null) {
-            _taskRowKeyByToolUseId.putIfAbsent(msg.toolUseId!, () => rowKey);
-            _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
-          }
           return Container(
-            key: _taskKeys[rowKey],
+            key: _taskKey(msg.toolUseId, rowKey),
             child: WorkflowCard(message: msg, state: state),
           );
         }
@@ -1447,8 +1484,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             msg.toolUseId != null &&
             widget.subagentTasks.containsKey(msg.toolUseId)) {
           final toolUseId = msg.toolUseId!;
-          _taskRowKeyByToolUseId.putIfAbsent(toolUseId, () => rowKey);
-          _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
           final isRunning =
               widget.subagentTasks[toolUseId]?['status'] == 'running';
           final children =
@@ -1457,7 +1492,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             message: msg,
             childMessages: children,
             isRunning: isRunning,
-            scrollKey: _taskKeys[rowKey],
+            scrollKey: _taskKey(toolUseId, rowKey),
+            expanded: _expandedCards.contains(_cardStateId(msg)),
+            onExpandedChanged: (expanded) => _setCardExpanded(msg, expanded),
             sourceServerId: widget.serverId,
             onReadAloud: widget.onReadAloud,
             onBackgroundTask: widget.onBackgroundTask,
@@ -1469,16 +1506,14 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         }
         // Backgrounded bash — register key for scroll-to
         if (msg.isBackgrounded && msg.toolUseId != null) {
-          _taskRowKeyByToolUseId.putIfAbsent(msg.toolUseId!, () => rowKey);
-          _taskKeys.putIfAbsent(rowKey, () => GlobalKey());
           return Container(
-            key: _taskKeys[rowKey],
-            child: _buildToolOutputBlock(msg, inspectionId: rowKey),
+            key: _taskKey(msg.toolUseId, rowKey),
+            child: _buildToolOutputBlock(msg),
           );
         }
-        return _buildToolOutputBlock(msg, inspectionId: rowKey);
+        return _buildToolOutputBlock(msg);
       case MessageType.toolResult:
-        return _buildToolOutputBlock(msg, inspectionId: rowKey);
+        return _buildToolOutputBlock(msg);
       case MessageType.question:
         if (msg.emailPreview != null) {
           return EmailPreviewCard(message: msg, onAnswer: widget.onAnswer);
@@ -1695,7 +1730,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         return _buildToolOutputBlock(
           original,
           greenTheme: true,
-          inspectionId: rowKey,
+          stateOwner: msg,
         );
       }
     }

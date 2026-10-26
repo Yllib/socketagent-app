@@ -33,6 +33,11 @@ class SubAgentCard extends StatefulWidget {
   /// neither callback applies.
   final ValueChanged<String>? onStopTask;
 
+  /// Open state owned by the parent, so it survives this widget being
+  /// remounted. Null keeps the state local.
+  final bool? expanded;
+  final ValueChanged<bool>? onExpandedChanged;
+
   const SubAgentCard({
     super.key,
     required this.message,
@@ -44,6 +49,8 @@ class SubAgentCard extends StatefulWidget {
     this.onReadAloud,
     this.onBackgroundTask,
     this.onStopTask,
+    this.expanded,
+    this.onExpandedChanged,
   });
 
   @override
@@ -52,6 +59,24 @@ class SubAgentCard extends StatefulWidget {
 
 class _SubAgentCardState extends State<SubAgentCard> {
   bool _expanded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.expanded ?? false;
+  }
+
+  @override
+  void didUpdateWidget(covariant SubAgentCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.expanded != null) _expanded = widget.expanded!;
+  }
+
+  void _toggleExpanded() {
+    final next = !_expanded;
+    setState(() => _expanded = next);
+    widget.onExpandedChanged?.call(next);
+  }
 
   String get _description {
     final input = widget.message.toolInput;
@@ -169,9 +194,7 @@ class _SubAgentCardState extends State<SubAgentCard> {
         children: [
           // Header
           InkWell(
-            onTap: isDone && hasExpandableContent
-                ? () => setState(() => _expanded = !_expanded)
-                : null,
+            onTap: isDone && hasExpandableContent ? _toggleExpanded : null,
             borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
