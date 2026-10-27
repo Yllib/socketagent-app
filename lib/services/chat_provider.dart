@@ -9644,6 +9644,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _findReplayedAssistantMessage(
             content,
             parentToolUseId: parentToolUseId,
+            incoming: msg,
           );
       if (existing != null) {
         existing.textContent = mergeLiveStreamContent(
@@ -9677,6 +9678,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final reconciled = _findReplayedAssistantMessage(
         content,
         parentToolUseId: parentToolUseId,
+        incoming: msg,
       );
       if (reconciled != null) streamMessage = reconciled;
     }
@@ -9824,6 +9826,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _findReplayedThinkingMessage(
             content,
             parentToolUseId: parentToolUseId,
+            incoming: msg,
           );
       if (existing != null) {
         existing.textContent = content;
@@ -14457,9 +14460,25 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return deduped;
   }
 
+  /// A text frame with a transcript position names its row. A bubble that
+  /// already holds a different row is another reply, however similar its
+  /// text: two status lines in a row often start with the same words, and
+  /// the first frame of the second is a prefix of the first.
+  bool _belongsToAnotherTranscriptRow(
+    ChatMessage candidate,
+    Map<String, dynamic>? incoming,
+  ) {
+    if (incoming == null || !hasCompleteTranscriptPosition(incoming)) {
+      return false;
+    }
+    return transcriptMessageIdentity(candidate) != null &&
+        !messageMatchesTranscriptPosition(candidate, incoming);
+  }
+
   ChatMessage? _findReplayedAssistantMessage(
     String content, {
     String? parentToolUseId,
+    Map<String, dynamic>? incoming,
   }) {
     final normalized = _normalizeHistoryText(content);
     if (normalized.isEmpty) return null;
@@ -14472,7 +14491,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final candidate = _messages[i];
       if (candidate.sender != MessageSender.assistant ||
           candidate.type != MessageType.text ||
-          candidate.parentToolUseId != parentToolUseId) {
+          candidate.parentToolUseId != parentToolUseId ||
+          _belongsToAnotherTranscriptRow(candidate, incoming)) {
         continue;
       }
       final candidateText = _normalizeHistoryText(candidate.textContent);
@@ -14489,6 +14509,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   ChatMessage? _findReplayedThinkingMessage(
     String content, {
     String? parentToolUseId,
+    Map<String, dynamic>? incoming,
   }) {
     final normalized = _normalizeHistoryText(content);
     if (normalized.isEmpty) return null;
@@ -14500,7 +14521,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     for (var i = _messages.length - 1; i > lastUserIndex; i--) {
       final candidate = _messages[i];
       if (candidate.type != MessageType.thinking ||
-          candidate.parentToolUseId != parentToolUseId) {
+          candidate.parentToolUseId != parentToolUseId ||
+          _belongsToAnotherTranscriptRow(candidate, incoming)) {
         continue;
       }
       final candidateText = _normalizeHistoryText(candidate.textContent);
