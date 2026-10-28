@@ -70,4 +70,26 @@ void main() {
     expect(parsed.text, 'use it');
     expect(parsed.notices, isEmpty);
   });
+  test('a delegated agent question is one line naming the agent', () {
+    final parsed = parse(
+      '<socketagent_delegation_question delegation_id="d1" session_id="s1" question_id="q1">\n'
+      'Your delegated claude agent "Review Rooster help reference" is blocked until this is answered.\n'
+      '\n'
+      'Question 1 (Tool approval): **Bash: List rooster docs and size the help file**\n'
+      '\n'
+      "A command used as a file in this command can't be checked before it runs\n"
+      'Options: Approve | Decline\n'
+      '\n'
+      'Answer with AgentSession action=answer, session_id="s1", question_id="q1".\n'
+      '</socketagent_delegation_question>',
+    );
+    expect(parsed.hidden, isTrue);
+    expect(parsed.text, isEmpty);
+    expect(parsed.notices.single.kind, UserPromptNoticeKind.delegationQuestion);
+    expect(
+      parsed.notices.single.text,
+      'Review Rooster help reference asked: '
+      'Bash: List rooster docs and size the help file',
+    );
+  });
 }

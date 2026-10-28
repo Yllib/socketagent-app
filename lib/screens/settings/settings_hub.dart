@@ -89,7 +89,7 @@ class SettingsHub extends StatelessWidget {
               _buildCategoryTile(
                 context,
                 icon: Icons.folder_open_outlined,
-                title: 'Computer Files',
+                title: 'Remote File Explorer',
                 subtitle: 'Browse files and manage agent protection',
                 onTap: () => Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const FileManagerScreen()),

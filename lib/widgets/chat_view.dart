@@ -1708,6 +1708,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final isPermissionMode = status == 'permission_mode';
     final isModelChange = status == 'model_change';
     final isOldModel = status == 'model_old';
+    final isDelegationQuestion = status == 'delegation_question';
     final originToolUseId = msg.originToolUseId ?? msg.parentToolUseId;
     final slashCommandId = originToolUseId ?? msg.toolUseId ?? '';
     final isSlashCommand = slashCommandId.startsWith('codex_slash_');
@@ -1747,6 +1748,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       icon = Icons.shield_outlined;
       color = context.palette.shade(Colors.cyan, 300);
       bgColor = Colors.cyan.shade900.withAlpha(40);
+    } else if (isDelegationQuestion) {
+      icon = Icons.help_outline;
+      color = context.palette.shade(Colors.amber, 300);
+      bgColor = Colors.amber.shade900.withAlpha(40);
     } else if (isOldModel) {
       icon = Icons.warning_amber_rounded;
       color = context.palette.shade(Colors.amber, 300);
@@ -1834,6 +1839,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                   ? 'MODEL'
                   : isOldModel
                   ? 'OLD MODEL'
+                  : isDelegationQuestion
+                  ? 'QUESTION'
                   : status.toUpperCase(),
               style: TextStyle(
                 color: color,

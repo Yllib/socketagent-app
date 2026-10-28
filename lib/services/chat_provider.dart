@@ -12657,18 +12657,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // there and this only stamps it; anywhere else it is the whole message.
     final rawContent = msg['content'] as String? ?? '';
     final prompt = rawContent.isEmpty ? null : _parseUserPrompt(rawContent);
+    bool livesAsCard(UserPromptNotice notice) =>
+        notice.kind == UserPromptNoticeKind.scheduledTask ||
+        notice.kind == UserPromptNoticeKind.delegationQuestion;
     if (prompt != null &&
-        prompt.notices.any(
-          (notice) => notice.kind == UserPromptNoticeKind.scheduledTask,
-        ) &&
+        prompt.notices.any(livesAsCard) &&
         !_messages.any(
           (message) =>
               message.uuid == uuid ||
               (msg['entryId'] != null && message.entryId == msg['entryId']),
         )) {
-      final notice = prompt.notices.firstWhere(
-        (notice) => notice.kind == UserPromptNoticeKind.scheduledTask,
-      );
+      final notice = prompt.notices.firstWhere(livesAsCard);
       final card = _userPromptNoticeCard(notice, 0, 0)..uuid = uuid;
       applyTranscriptPosition(card, msg);
       _messages = orderByTranscriptPosition([..._messages, card]);

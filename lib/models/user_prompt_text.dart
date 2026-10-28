@@ -26,6 +26,7 @@ enum UserPromptNoticeKind {
   todoDismissed,
   secretAttachment,
   scheduledTask,
+  delegationQuestion,
 }
 
 class UserPromptNotice {
@@ -163,6 +164,27 @@ ParsedUserPrompt parseUserPrompt(
         kind: UserPromptNoticeKind.scheduledTask,
         text: '${name ?? 'Scheduled task'}: ${status ?? 'result received'}',
         toolName: 'ScheduleTask',
+      ),
+    );
+    return ParsedUserPrompt(text: '', notices: notices, hidden: true);
+  }
+
+  // A delegated agent's question is addressed to the supervising agent. The
+  // user gets one line naming the agent and what it asked.
+  if (text.startsWith('<socketagent_delegation_question ')) {
+    final label = RegExp(r'agent "(.+)" is blocked').firstMatch(text)?.group(1);
+    final question = RegExp(
+      r'^Question 1(?: \([^)]*\))?: (.+)$',
+      multiLine: true,
+    ).firstMatch(text)?.group(1)?.replaceAll('**', '').trim();
+    notices.add(
+      UserPromptNotice(
+        kind: UserPromptNoticeKind.delegationQuestion,
+        text: [
+          '${label ?? 'Delegated agent'} asked',
+          if (question != null && question.isNotEmpty) question,
+        ].join(': '),
+        toolName: 'delegation_question',
       ),
     );
     return ParsedUserPrompt(text: '', notices: notices, hidden: true);

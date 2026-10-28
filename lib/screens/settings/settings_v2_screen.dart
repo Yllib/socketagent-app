@@ -495,7 +495,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                   children: [
                     _NavTile(
                       icon: Icons.folder_open_outlined,
-                      title: 'Computer Files',
+                      title: 'Remote File Explorer',
                       subtitle: 'Browse connected computer file systems',
                       trailing: Icons.chevron_right,
                       onTap: () => Navigator.of(context).push(

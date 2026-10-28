@@ -334,7 +334,9 @@ class _FileManagerScreenState extends State<FileManagerScreen> {
 
         return Scaffold(
           appBar: AppBar(
-            title: Text(selected == null ? 'Computer Files' : selected.name),
+            title: Text(
+              selected == null ? 'Remote File Explorer' : selected.name,
+            ),
             actions: [
               if (servers.length > 1)
                 PopupMenuButton<String>(

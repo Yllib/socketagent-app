@@ -51,6 +51,9 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
   List<Map<String, dynamic>> _sessions = const [];
   int _fetchGeneration = 0;
   Timer? _fetchDebounce;
+  // Bumped after a folder is created so that folder's parent node reloads.
+  int _treeRevision = 0;
+  String _refreshPath = '';
 
   bool get _isResume => widget.mode == SessionBrowserMode.resume;
 
@@ -121,6 +124,38 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
     if (_selectedPath == path) return;
     setState(() => _selectedPath = path);
     if (_isResume) _scheduleSessionFetch();
+  }
+
+  /// Asks for a name, creates that folder inside the selected one, and
+  /// selects it so "Use this folder" starts the session there.
+  Future<void> _createFolder() async {
+    final serverId = _serverId;
+    final parent = _selectedPath;
+    if (serverId == null || parent.isEmpty) return;
+    final name = await showDialog<String>(
+      context: context,
+      builder: (_) => _NewFolderDialog(parent: parent),
+    );
+    if (name == null || !mounted) return;
+    final path = _joinPath(parent, name);
+    try {
+      await context.read<ChatProvider>().createFileManagerFolder(
+        path: path,
+        serverId: serverId,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not create folder: $error')),
+      );
+      return;
+    }
+    if (!mounted || _serverId != serverId) return;
+    setState(() {
+      _refreshPath = parent;
+      _treeRevision++;
+      _selectedPath = path;
+    });
   }
 
   void _scheduleSessionFetch({bool immediate = false}) {
@@ -294,7 +329,18 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 12),
+                            if (_isResume)
+                              const SizedBox(width: 12)
+                            else
+                              IconButton(
+                                tooltip: 'New folder here',
+                                onPressed: _selectedPath.isEmpty
+                                    ? null
+                                    : _createFolder,
+                                icon: const Icon(
+                                  Icons.create_new_folder_outlined,
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -311,6 +357,8 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
                               selectedPath: _selectedPath,
                               initiallyExpanded: true,
                               onSelected: _selectFolder,
+                              refreshPath: _refreshPath,
+                              refreshRevision: _treeRevision,
                             ),
                           ],
                         ),
@@ -459,6 +507,8 @@ class _FolderTreeNode extends StatefulWidget {
     required this.onSelected,
     this.depth = 0,
     this.initiallyExpanded = false,
+    this.refreshPath = '',
+    this.refreshRevision = 0,
   });
 
   final ChatProvider provider;
@@ -469,6 +519,8 @@ class _FolderTreeNode extends StatefulWidget {
   final ValueChanged<String> onSelected;
   final int depth;
   final bool initiallyExpanded;
+  final String refreshPath;
+  final int refreshRevision;
 
   @override
   State<_FolderTreeNode> createState() => _FolderTreeNodeState();
@@ -484,6 +536,33 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
   void initState() {
     super.initState();
     if (_expanded) unawaited(_load());
+  }
+
+  @override
+  void didUpdateWidget(_FolderTreeNode oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // A folder was just created inside this one: open it and list again.
+    if (widget.refreshRevision != oldWidget.refreshRevision &&
+        widget.refreshPath == widget.path) {
+      _expanded = true;
+      unawaited(_loaded ? _reload() : _load());
+    }
+  }
+
+  /// Lists the folder again while its current children stay on screen.
+  Future<void> _reload() async {
+    final result = await widget.provider.listDirectory(
+      widget.path,
+      serverId: widget.serverId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _children =
+          (result['directories'] as List?)
+              ?.map((entry) => entry.toString())
+              .toList() ??
+          const [];
+    });
   }
 
   Future<void> _load() async {
@@ -577,7 +656,80 @@ class _FolderTreeNodeState extends State<_FolderTreeNode> {
               selectedPath: widget.selectedPath,
               onSelected: widget.onSelected,
               depth: widget.depth + 1,
+              refreshPath: widget.refreshPath,
+              refreshRevision: widget.refreshRevision,
             ),
+      ],
+    );
+  }
+}
+
+class _NewFolderDialog extends StatefulWidget {
+  const _NewFolderDialog({required this.parent});
+
+  final String parent;
+
+  @override
+  State<_NewFolderDialog> createState() => _NewFolderDialogState();
+}
+
+class _NewFolderDialogState extends State<_NewFolderDialog> {
+  final _controller = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _controller.text.trim();
+    final error = name.isEmpty
+        ? 'Enter a name'
+        : name == '.' || name == '..' || RegExp(r'[/\\]').hasMatch(name)
+        ? 'A folder name cannot contain / or \\'
+        : null;
+    if (error != null) {
+      setState(() => _error = error);
+      return;
+    }
+    Navigator.pop(context, name);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('New folder'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.parent,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            decoration: InputDecoration(
+              labelText: 'Name',
+              errorText: _error,
+              border: const OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _submit(),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Create')),
       ],
     );
   }
