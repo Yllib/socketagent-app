@@ -275,6 +275,22 @@ class ComputerLink {
   }
 }
 
+/// "14:30" for a time today, else "2026-10-28 14:30", for when a client
+/// signed in or was last seen.
+String deviceTimeLabel(DateTime at, DateTime now) {
+  final local = at.toLocal();
+  final time =
+      '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  if (local.year == now.year &&
+      local.month == now.month &&
+      local.day == now.day) {
+    return time;
+  }
+  final date =
+      '${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}';
+  return '$date $time';
+}
+
 /// The next local midnight, when an "Allow for today" link ends.
 DateTime nextLocalMidnight(DateTime now) =>
     DateTime(now.year, now.month, now.day + 1);

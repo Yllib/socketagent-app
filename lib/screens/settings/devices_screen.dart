@@ -354,14 +354,22 @@ class _DeviceRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
+    final now = DateTime.now();
+    // An AI client row is one sign-in; several from the same account look
+    // alike, so each shows when it signed in and when it last called.
     final details = [
       if (device.platform.isNotEmpty && !device.isConnector) device.platform,
       if (device.hasAccess && device.access != null)
         '${device.access!.label} · ${device.confirm?.label.toLowerCase()}',
-      if (device.expiresAt case final ends?)
-        linkExpiryLabel(ends, DateTime.now()),
-      if (device.lastSeenAt case final seen?) 'seen ${_ago(seen)}',
-      if (device.via.isNotEmpty) 'via ${device.via}',
+      if (device.expiresAt case final ends?) linkExpiryLabel(ends, now),
+      if (device.isConnector)
+        if (device.addedAt case final added?)
+          'signed in ${deviceTimeLabel(added, now)}',
+      if (device.lastSeenAt case final seen?)
+        device.isConnector
+            ? 'seen ${deviceTimeLabel(seen, now)}'
+            : 'seen ${_ago(seen)}',
+      if (device.via.isNotEmpty && !device.isConnector) 'via ${device.via}',
     ].join(' · ');
     return ListTile(
       leading: Icon(

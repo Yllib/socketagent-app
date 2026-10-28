@@ -85,6 +85,15 @@ void main() {
     expect(client.confirm, LinkConfirm.never);
   });
 
+  test('sign-in and seen times tell AI client rows apart', () {
+    final now = DateTime(2026, 10, 28, 9, 5);
+    expect(deviceTimeLabel(DateTime(2026, 10, 28, 4, 27), now), '04:27');
+    expect(
+      deviceTimeLabel(DateTime(2026, 10, 27, 23, 59), now),
+      '2026-10-27 23:59',
+    );
+  });
+
   test('an ai_connector_status reply parses', () {
     final status = AiConnectorStatus.fromJson({
       'type': 'ai_connector_status',

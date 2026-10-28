@@ -75,8 +75,8 @@ class _DeviceApprovalDialogState extends State<DeviceApprovalDialog> {
                 ? '${pending.name} is signing in to the AI connector on '
                       '${computer ?? 'this computer'}. It can list your '
                       'computers, run commands and agents, and read '
-                      'transcripts. Each computer still asks before '
-                      'actions unless you turn that off.'
+                      'transcripts, within the access you give it under '
+                      'Devices. Remove it there to sign it out.'
                 : '${pending.name} (${pending.platform}) wants to use '
                       '${computer ?? 'this computer'}.',
           ),
