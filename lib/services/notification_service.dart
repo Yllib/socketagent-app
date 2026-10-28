@@ -62,6 +62,11 @@ class NotificationService {
     return stableId('session-complete:${serverId ?? ''}:$sessionId');
   }
 
+  /// Tap target that opens [sessionId] in the chat.
+  static String sessionPayload(String sessionId, {String? serverId}) {
+    return 'session:${Uri.encodeComponent(sessionId)}:${Uri.encodeComponent(serverId ?? '')}';
+  }
+
   static int sessionAlertId(
     String sessionId, {
     String? serverId,
@@ -87,6 +92,10 @@ class NotificationService {
   String? _launchPayload;
   final Map<int, DateTime> _lastShownAtById = {};
   final Map<int, String> _lastShownSignatureById = {};
+  // Android's getActiveNotifications never returns a card's payload, so the
+  // payloads of finished-session cards this process posted are kept here for
+  // the repost in markSessionCompletionRead.
+  final Map<int, String> _completionPayloadById = {};
   final Map<int, Future<void>> _operationTailsById = {};
   Future<void> _groupRefreshTail = Future<void>.value();
 
@@ -404,7 +413,9 @@ class NotificationService {
 
   /// Marks one completion read without discarding its notification. Reposting
   /// it on the no-badge channel preserves the card until the user swipes it.
-  Future<bool> markSessionCompletionRead(int id) {
+  /// [payload] is the tap target to use when neither the shade nor this
+  /// process knows the card's own, such as after an app restart.
+  Future<bool> markSessionCompletionRead(int id, {required String payload}) {
     return _enqueueForId(id, () async {
       if (!_isInitialized) await initialize();
 
@@ -420,12 +431,15 @@ class NotificationService {
           return existing != null;
         }
 
+        final shadePayload = existing.payload ?? '';
         await _plugin.cancel(id: id);
         await _showSessionCompletionRaw(
           id: id,
           title: existing.title ?? 'Session finished',
           body: existing.body ?? '',
-          payload: existing.payload ?? '',
+          payload: shadePayload.isNotEmpty
+              ? shadePayload
+              : _completionPayloadById[id] ?? payload,
           unread: false,
           alert: false,
         );
@@ -446,6 +460,7 @@ class NotificationService {
     required bool unread,
     required bool alert,
   }) {
+    _completionPayloadById[id] = payload;
     final channelId = unread
         ? completionUnreadChannelId
         : completionReadChannelId;
@@ -705,6 +720,7 @@ class NotificationService {
 
       try {
         await _plugin.cancel(id: id);
+        _completionPayloadById.remove(id);
         return true;
       } catch (e) {
         debugPrint('[Notification] cancel error: $e');
@@ -718,6 +734,7 @@ class NotificationService {
       if (!_isInitialized) await initialize();
       try {
         await _plugin.cancel(id: id);
+        _completionPayloadById.remove(id);
         await _refreshCompletedSessionSummary();
         return true;
       } catch (e) {

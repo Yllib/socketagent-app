@@ -1273,6 +1273,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             sessionId,
             serverId: resolvedServerId,
           ),
+          payload: NotificationService.sessionPayload(
+            sessionId,
+            serverId: resolvedServerId,
+          ),
         ),
       );
     }
@@ -1517,8 +1521,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             id: _sessionCompletionNotificationId(sessionId, serverId: sid),
             title: running.title,
             body: 'Agent finished. Open the session to review.',
-            payload:
-                'session:${Uri.encodeComponent(sessionId)}:${Uri.encodeComponent(sid)}',
+            payload: NotificationService.sessionPayload(
+              sessionId,
+              serverId: sid,
+            ),
           ),
         );
       }
