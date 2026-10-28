@@ -35,6 +35,11 @@ final ValueListenable<int> secondTicks = _PeriodicTicks(
   const Duration(seconds: 1),
 );
 
+/// One tick per minute, for countdowns that show minutes at most.
+final ValueListenable<int> minuteTicks = _PeriodicTicks(
+  const Duration(minutes: 1),
+);
+
 const _spokes = 12;
 
 /// Twelve ticks per second: one spoke step, so [RunningIndicator] turns once

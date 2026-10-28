@@ -30,6 +30,7 @@ import 'session_browser_screen.dart';
 import '../config/app_palette.dart';
 import '../widgets/light_backdrop.dart';
 import '../widgets/second_ticker.dart';
+import '../widgets/fleeting_time_left.dart';
 
 /// Teleport asks before sending a transcript at least this large, uncompressed.
 const _largeTranscriptBytes = 100 * 1024 * 1024;
@@ -39,6 +40,7 @@ enum _SessionMenuAction {
   project,
   notifications,
   rename,
+  makePermanent,
   fork,
   teleport,
   startFresh,
@@ -383,6 +385,7 @@ class _SessionsTabState extends State<SessionsTab> {
     String? serverId,
     String? backend,
     bool sdkSession = false,
+    bool fleeting = false,
   }) async {
     final openKey = _openSessionKey(
       sessionId: sessionId,
@@ -465,6 +468,7 @@ class _SessionsTabState extends State<SessionsTab> {
           cwd: cwd,
           serverId: serverId,
           backend: effectiveBackend,
+          fleeting: fleeting,
         );
       }
 
@@ -670,13 +674,20 @@ class _SessionsTabState extends State<SessionsTab> {
     String path, {
     String? serverId,
     String? backend,
+    bool fleeting = false,
   }) async {
     final provider = context.read<ChatProvider>();
     final exists = await provider.checkCwd(path, serverId: serverId);
     if (!context.mounted) return;
 
     if (exists) {
-      _openSession(context, cwd: path, serverId: serverId, backend: backend);
+      _openSession(
+        context,
+        cwd: path,
+        serverId: serverId,
+        backend: backend,
+        fleeting: fleeting,
+      );
       return;
     }
 
@@ -705,7 +716,13 @@ class _SessionsTabState extends State<SessionsTab> {
       final created = await provider.createCwd(path, serverId: serverId);
       if (!context.mounted) return;
       if (created) {
-        _openSession(context, cwd: path, serverId: serverId, backend: backend);
+        _openSession(
+          context,
+          cwd: path,
+          serverId: serverId,
+          backend: backend,
+          fleeting: fleeting,
+        );
       } else {
         final detail = _shortCwdFailure(provider.lastCwdCheck);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -883,6 +900,7 @@ class _SessionsTabState extends State<SessionsTab> {
     String selectedBackend = provider.preferredBackendForServer(
       selectedServerId,
     );
+    bool fleeting = false;
 
     showModalBottomSheet(
       context: context,
@@ -1119,8 +1137,18 @@ class _SessionsTabState extends State<SessionsTab> {
                 path,
                 serverId: selectedServerId,
                 backend: selectedBackend,
+                fleeting: fleeting,
               );
             }
+
+            // Fleeting sessions are deleted after six idle hours unless the
+            // user keeps them. Shown for every server; an older server
+            // ignores the request and starts a permanent session.
+            final lifetimeChipWidget = miniChip(
+              icon: fleeting ? Icons.timer_outlined : Icons.all_inclusive,
+              label: fleeting ? 'Fleeting' : 'Permanent',
+              onTap: () => setSheetState(() => fleeting = !fleeting),
+            );
 
             return Padding(
               padding: EdgeInsets.only(
@@ -1143,16 +1171,20 @@ class _SessionsTabState extends State<SessionsTab> {
                         ),
                       ),
                     ),
-                    // Compact server + backend chips, only when there's a real choice.
-                    if (serverChipWidget != null || backendChipWidget != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                        child: Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [?serverChipWidget, ?backendChipWidget],
-                        ),
+                    // Compact server + backend chips only when there's a real
+                    // choice; the lifetime chip is always a choice.
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          ?serverChipWidget,
+                          ?backendChipWidget,
+                          lifetimeChipWidget,
+                        ],
                       ),
+                    ),
                     // Path field + browse icon button.
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -3014,6 +3046,15 @@ class _SessionsTabState extends State<SessionsTab> {
             label: 'Rename',
             icon: Icons.edit_outlined,
           ),
+          if (session.isFleeting)
+            AdaptiveSheetAction(
+              value: _SessionMenuAction.makePermanent,
+              label: 'Make permanent',
+              subtitle: session.expiresAt == null
+                  ? 'Fleeting. Deleted after 6 idle hours'
+                  : 'Fleeting. Deleted in ${formatTimeLeft(session.expiresAt!.difference(DateTime.now()))}',
+              icon: Icons.timer_off_outlined,
+            ),
         ]),
         AdaptiveSheetSection([
           AdaptiveSheetAction(
@@ -3075,6 +3116,8 @@ class _SessionsTabState extends State<SessionsTab> {
         provider.toggleSessionNotifications(session.id);
       case _SessionMenuAction.rename:
         _showRenameDialog(context, session);
+      case _SessionMenuAction.makePermanent:
+        provider.makeSessionPermanent(session.id, serverId: session.serverId);
       case _SessionMenuAction.fork:
         await _forkSession(context, session);
       case _SessionMenuAction.teleport:
@@ -4494,6 +4537,8 @@ class _SessionsTabState extends State<SessionsTab> {
                                     color: theme.palette.text,
                                   ),
                                 ),
+                                if (session.isFleeting)
+                                  FleetingTimeLeft(session: session),
                                 if (provider.serverConfigs.length > 1)
                                   ConstrainedBox(
                                     constraints: const BoxConstraints(
@@ -4542,6 +4587,10 @@ class _SessionsTabState extends State<SessionsTab> {
                                     ),
                                   ),
                                 ),
+                                if (session.isFleeting) ...[
+                                  const SizedBox(width: 6),
+                                  FleetingTimeLeft(session: session),
+                                ],
                                 if (session.serverName.isNotEmpty &&
                                     provider.serverConfigs.length > 1) ...[
                                   const SizedBox(width: 6),

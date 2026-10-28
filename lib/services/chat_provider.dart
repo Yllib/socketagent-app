@@ -15905,7 +15905,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _rawThrottle = null;
   }
 
-  void createNewSession({String? cwd, String? serverId, String? backend}) {
+  void createNewSession({
+    String? cwd,
+    String? serverId,
+    String? backend,
+    bool fleeting = false,
+  }) {
     _messages = [];
     _pendingInjectedMessageCount = 0;
     _pendingLocalUserMessageIds.clear();
@@ -15980,6 +15985,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'type': 'new_session',
       'cwd': ?effectiveCwd,
       'backend': effectiveBackend,
+      // Older servers ignore the field and start a permanent session.
+      if (fleeting) 'lifetime': 'fleeting',
     };
     if (serverId != null) {
       _connMgr.sendToServer(serverId, msg);
@@ -18583,6 +18590,37 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       });
     } else {
       _ws.sendArchiveSession(sessionId);
+    }
+    notifyListeners();
+  }
+
+  /// Keeps a fleeting session for good. One-way; the server has no reverse.
+  void makeSessionPermanent(String sessionId, {String? serverId}) {
+    final idx = _sessions.indexWhere(
+      (s) =>
+          s.id == sessionId &&
+          (serverId == null || serverId.isEmpty || s.serverId == serverId),
+    );
+    final session = idx >= 0 ? _sessions[idx] : null;
+    if (session != null) {
+      final updated = session.copyWith(lifetime: 'permanent');
+      _sessions[idx] = updated;
+      final serverSessions = _perServerSessions[updated.serverId];
+      final serverIdx =
+          serverSessions?.indexWhere((s) => s.id == sessionId) ?? -1;
+      if (serverSessions != null && serverIdx >= 0) {
+        serverSessions[serverIdx] = updated;
+      }
+      _saveSessionCacheSoon();
+    }
+    final targetServerId = session?.serverId.isNotEmpty == true
+        ? session!.serverId
+        : serverId;
+    final msg = {'type': 'make_session_permanent', 'sessionId': sessionId};
+    if (targetServerId != null && targetServerId.isNotEmpty) {
+      _connMgr.sendToServer(targetServerId, msg);
+    } else {
+      _ws.send(msg);
     }
     notifyListeners();
   }

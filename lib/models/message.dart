@@ -818,8 +818,18 @@ class Session {
   /// Scheduled task whose run started this session.
   final String? scheduledTaskId;
 
+  /// 'fleeting' | 'permanent' | null. Null is permanent, which is what older
+  /// servers send for every session.
+  final String? lifetime;
+
+  /// When the server will delete an idle fleeting session. Null while it runs
+  /// or when the session is permanent.
+  final DateTime? expiresAt;
+
   /// Claude only. Folders the agent may use besides [cwd].
   final List<String> additionalDirectories;
+
+  bool get isFleeting => lifetime == 'fleeting';
 
   Session({
     required this.id,
@@ -843,6 +853,8 @@ class Session {
     this.delegatedBySessionId,
     this.delegationId,
     this.scheduledTaskId,
+    this.lifetime,
+    this.expiresAt,
     this.additionalDirectories = const [],
   });
 
@@ -881,6 +893,8 @@ class Session {
       delegatedBySessionId: json['delegatedBySessionId'] as String?,
       delegationId: json['delegationId'] as String?,
       scheduledTaskId: json['scheduledTaskId'] as String?,
+      lifetime: json['lifetime'] as String?,
+      expiresAt: DateTime.tryParse(json['expiresAt'] as String? ?? ''),
       additionalDirectories: switch (json['agentSettings']) {
         {'additionalDirectories': final List<dynamic> dirs} =>
           dirs.whereType<String>().toList(growable: false),
@@ -911,6 +925,8 @@ class Session {
     'delegatedBySessionId': delegatedBySessionId,
     'delegationId': delegationId,
     'scheduledTaskId': scheduledTaskId,
+    if (lifetime != null) 'lifetime': lifetime,
+    if (expiresAt != null) 'expiresAt': expiresAt!.toIso8601String(),
     if (additionalDirectories.isNotEmpty)
       'agentSettings': {'additionalDirectories': additionalDirectories},
   };
@@ -937,6 +953,7 @@ class Session {
     String? delegatedBySessionId,
     String? delegationId,
     String? scheduledTaskId,
+    String? lifetime,
     List<String>? additionalDirectories,
   }) {
     return Session(
@@ -963,6 +980,9 @@ class Session {
       delegatedBySessionId: delegatedBySessionId ?? this.delegatedBySessionId,
       delegationId: delegationId ?? this.delegationId,
       scheduledTaskId: scheduledTaskId ?? this.scheduledTaskId,
+      lifetime: lifetime ?? this.lifetime,
+      // A session made permanent keeps no deadline.
+      expiresAt: lifetime == 'permanent' ? null : expiresAt,
       additionalDirectories:
           additionalDirectories ?? this.additionalDirectories,
     );
@@ -995,6 +1015,8 @@ class Session {
       delegatedBySessionId: delegatedBySessionId,
       delegationId: delegationId,
       scheduledTaskId: scheduledTaskId,
+      lifetime: lifetime,
+      expiresAt: expiresAt,
       additionalDirectories: additionalDirectories,
     );
   }

@@ -1933,6 +1933,14 @@ class _ChatScreenState extends State<_ChatScreen> {
     final hasSession = provider.activeSessionId != null;
     final codex = provider.activeSessionBackend == 'codex';
     final serverId = provider.activeSessionServerId;
+    final activeSession = provider.sessions
+        .where(
+          (session) =>
+              session.id == provider.activeSessionId &&
+              (serverId == null || session.serverId == serverId),
+        )
+        .firstOrNull;
+    final fleeting = activeSession?.isFleeting == true;
     final reviews = context.read<WorkReviewRepository>();
     final supportsReviews =
         serverId != null && reviews.supportsServer(serverId);
@@ -1952,6 +1960,12 @@ class _ChatScreenState extends State<_ChatScreen> {
     return SessionActionsSheet(
       onSettingChanged: onSettingChanged,
       quickActions: [
+        if (fleeting)
+          const SessionAction(
+            'make_permanent',
+            'Make permanent',
+            Icons.timer_off_outlined,
+          ),
         SessionAction(
           'project_files',
           'Files',
@@ -2203,6 +2217,12 @@ class _ChatScreenState extends State<_ChatScreen> {
       return;
     }
     switch (value) {
+      case 'make_permanent':
+        final sessionId = provider.activeSessionId;
+        if (sessionId != null) {
+          provider.makeSessionPermanent(sessionId, serverId: serverId);
+        }
+        break;
       case 'hide_activity':
         _setPanelHidden(provider, SessionPanel.activity, true);
         break;
