@@ -22,6 +22,7 @@ import 'services/push_notification_service.dart';
 import 'services/firebase_project_configuration_service.dart';
 import 'services/play_billing_service.dart';
 import 'services/session_deep_link.dart';
+import 'models/device_approval_notification.dart';
 import 'models/notification_navigation.dart';
 import 'screens/main_shell_screen.dart';
 import 'screens/home_screen.dart';
@@ -364,6 +365,11 @@ class _AppLauncherState extends State<AppLauncher>
       _handleNotificationAction(payload);
       return;
     }
+    final approval = DeviceApprovalPayload.parse(payload);
+    if (approval != null) {
+      _openDeviceApproval(approval);
+      return;
+    }
     final download = _parseDownloadPayload(payload);
     if (download != null) {
       _openDownloadDefault(download);
@@ -423,10 +429,22 @@ class _AppLauncherState extends State<AppLauncher>
   }
 
   void _handleNotificationAction(String payload) {
-    final parts = payload.split(':');
-    if (parts.length < 3) return;
-    final actionId = Uri.decodeComponent(parts[1]);
-    final actionPayload = Uri.decodeComponent(parts.sublist(2).join(':'));
+    final action = parseNotificationAction(payload);
+    if (action == null) return;
+    final actionId = action.actionId;
+    final actionPayload = action.payload;
+    final approval = DeviceApprovalPayload.parse(actionPayload);
+    if (approval != null) {
+      switch (actionId) {
+        case deviceAllowActionId:
+          unawaited(_answerDeviceApproval(approval, allow: true));
+        case deviceDenyActionId:
+          unawaited(_answerDeviceApproval(approval, allow: false));
+        default:
+          _openDeviceApproval(approval);
+      }
+      return;
+    }
     final download = _parseDownloadPayload(actionPayload);
     if (download == null) return;
 
@@ -450,6 +468,55 @@ class _AppLauncherState extends State<AppLauncher>
         _openDownloadSession(download);
         break;
     }
+  }
+
+  /// A tap on a device approval notification: show the dialog for that
+  /// request, fetching it from the computer when the app missed the notice.
+  void _openDeviceApproval(DeviceApprovalPayload approval) {
+    final provider = context.read<ChatProvider>();
+    _showNotificationParent(NotificationParentDestination.sessions);
+    unawaited(
+      provider.promptPendingDevice(approval).then((found) {
+        if (!found && mounted) {
+          _showNotice('That sign-in already ended. Start it again.');
+        }
+      }),
+    );
+  }
+
+  /// Allow or Deny tapped on the notification itself. The answer goes
+  /// through the same request the dialog sends.
+  Future<void> _answerDeviceApproval(
+    DeviceApprovalPayload approval, {
+    required bool allow,
+  }) async {
+    final provider = context.read<ChatProvider>();
+    final who = approval.name.isEmpty ? 'the device' : approval.name;
+    try {
+      final pending = await provider.findPendingDevice(approval);
+      if (pending == null) {
+        _showNotice('That sign-in already ended. Start it again.');
+        return;
+      }
+      if (allow) {
+        await provider.approveDevice(pending);
+        _showNotice('Allowed $who');
+      } else {
+        await provider.denyDevice(pending);
+        _showNotice('Denied $who');
+      }
+    } catch (error) {
+      _showNotice(
+        error is StateError ? error.message : 'Could not answer: $error',
+      );
+    }
+  }
+
+  void _showNotice(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(text)));
   }
 
   void _openDownloadDefault(Map<String, String> download) {

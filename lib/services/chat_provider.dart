@@ -62,6 +62,7 @@ import '../models/backend_config_file.dart';
 import '../models/account_vault.dart';
 import '../models/computer_access.dart';
 import '../models/memory_card.dart';
+import '../models/device_approval_notification.dart';
 import '../models/device_registry.dart';
 import 'account_crypto.dart';
 import 'account_service.dart';
@@ -7992,6 +7993,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, List<ComputerLink>> _computerLinks = {};
   final List<PendingDevice> _pendingDevices = [];
   final _pendingDeviceController = StreamController<PendingDevice>.broadcast();
+
+  /// Prompts raised before the shell listened, shown once it does.
+  final List<PendingDevice> _unpromptedDevices = [];
   final Set<String> _serversWithDeviceAuth = {};
   final Set<String> _serversWithComputerLinks = {};
   final Set<String> _serversWithPairingReset = {};
@@ -8010,6 +8014,75 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Fires once per new `device_pending` notice so the shell can prompt.
   Stream<PendingDevice> get pendingDeviceEvents =>
       _pendingDeviceController.stream;
+
+  /// Feeds one server message through the normal dispatcher.
+  @visibleForTesting
+  Future<void> handleServerMessageForTest(
+    Map<String, dynamic> msg,
+    String serverId,
+  ) => _handleServerMessage(msg, serverId);
+
+  /// Prompts that fired while nothing listened. The shell drains this when
+  /// it subscribes, so a request fetched during a cold start still shows.
+  List<PendingDevice> takeUnpromptedPendingDevices() {
+    final queued = List<PendingDevice>.of(_unpromptedDevices);
+    _unpromptedDevices.clear();
+    return queued;
+  }
+
+  void _promptPendingDevice(PendingDevice pending) {
+    if (_pendingDeviceController.hasListener) {
+      _pendingDeviceController.add(pending);
+    } else {
+      _unpromptedDevices.removeWhere(
+        (p) =>
+            p.serverId == pending.serverId && p.publicKey == pending.publicKey,
+      );
+      _unpromptedDevices.add(pending);
+    }
+  }
+
+  /// The request a device approval notification was about: from the local
+  /// list, else from the computer, connecting first when needed. Null once
+  /// it was answered or expired.
+  Future<PendingDevice?> findPendingDevice(
+    DeviceApprovalPayload approval,
+  ) async {
+    final local = _pendingDevices.where(approval.matches).firstOrNull;
+    if (local != null) return local;
+    if (_connMgr.statusOf(approval.serverId) != ConnectionStatus.connected) {
+      await _connMgr.reconnectAndWait(
+        approval.serverId,
+        const Duration(seconds: 15),
+      );
+    }
+    final registry = await loadDevices(approval.serverId);
+    return registry.pending.where(approval.matches).firstOrNull;
+  }
+
+  /// Shows the dialog for the request a notification was about, whether or
+  /// not it was prompted before. False when the request is gone.
+  Future<bool> promptPendingDevice(DeviceApprovalPayload approval) async {
+    final local = _pendingDevices.where(approval.matches).firstOrNull;
+    if (local != null) {
+      _promptPendingDevice(local);
+      return true;
+    }
+    // Fetching merges the computer's list, and a request new to this
+    // device prompts from that merge, so prompting here would show it twice.
+    return await findPendingDevice(approval) != null;
+  }
+
+  /// Takes a settled request's notification out of the shade.
+  void _cancelDeviceApprovalNotification(PendingDevice pending) {
+    for (final id in deviceApprovalNotificationIds(
+      serverId: pending.serverId,
+      publicKey: pending.publicKey,
+      code: pending.code,
+    )) {
+      unawaited(NotificationService().cancel(id));
+    }
+  }
 
   DeviceRegistry? deviceRegistryFor(String serverId) =>
       _deviceRegistries[serverId];
@@ -8212,14 +8285,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (deviceAuth is Map) {
       final fresh = _serversWithDeviceAuth.add(serverId);
       if (fresh || _deviceRegistries[serverId] == null) {
-        // Refresh this device's listing, then load the registry.
+        // Refresh this device's listing before loading the registry.
         _connMgr.sendToServer(serverId, {
           'type': 'device_auth',
           'name': _deviceName,
           'platform': _devicePlatform,
         });
-        _connMgr.sendToServer(serverId, {'type': 'device_list'});
       }
+      // Every connection reloads the list: a device_pending notice sent
+      // while this device was away only lives in the computer's list.
+      _connMgr.sendToServer(serverId, {'type': 'device_list'});
     } else {
       _serversWithDeviceAuth.remove(serverId);
       _deviceRegistries.remove(serverId);
@@ -8358,7 +8433,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       _pendingDevices.add(device);
       if (!known.contains(device.publicKey)) {
-        _pendingDeviceController.add(device);
+        _promptPendingDevice(device);
       }
     }
   }
@@ -8383,6 +8458,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingDevices.removeWhere(
       (p) => p.serverId == pending.serverId && p.publicKey == pending.publicKey,
     );
+    _cancelDeviceApprovalNotification(pending);
     notifyListeners();
     unawaited(loadDevices(pending.serverId).catchError((_) => _emptyRegistry));
   }
@@ -8391,6 +8467,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingDevices.removeWhere(
       (p) => p.serverId == pending.serverId && p.publicKey == pending.publicKey,
     );
+    _cancelDeviceApprovalNotification(pending);
     notifyListeners();
     await _deviceRequest(pending.serverId, {
       'type': 'device_deny',
@@ -8821,17 +8898,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       (p) => p.serverId == serverId && p.publicKey == pending.publicKey,
     );
     _pendingDevices.add(pending);
-    _pendingDeviceController.add(pending);
+    _promptPendingDevice(pending);
     notifyListeners();
   }
 
+  /// The request was answered elsewhere or expired, so its notification
+  /// and any queued prompt go too.
   void _handleDevicePendingCleared(Map<String, dynamic> msg, String? serverId) {
     final publicKey = msg['publicKey'];
-    _pendingDevices.removeWhere(
-      (p) =>
-          p.serverId == serverId &&
-          (publicKey is! String || p.publicKey == publicKey),
-    );
+    bool cleared(PendingDevice p) =>
+        p.serverId == serverId &&
+        (publicKey is! String || p.publicKey == publicKey);
+    for (final pending in _pendingDevices.where(cleared)) {
+      _cancelDeviceApprovalNotification(pending);
+    }
+    _pendingDevices.removeWhere(cleared);
+    _unpromptedDevices.removeWhere(cleared);
     notifyListeners();
   }
 

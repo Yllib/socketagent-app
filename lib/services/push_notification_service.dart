@@ -4,6 +4,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/device_approval_notification.dart';
 import '../models/session_notification_policy.dart';
 import 'notification_service.dart';
 
@@ -201,6 +202,23 @@ class PushNotificationService {
     }
 
     if (!shouldDisplay) return;
+    final approval = DeviceApprovalPayload.fromPushData(
+      data,
+      title: title,
+      body: body,
+    );
+    if (approval != null) {
+      // Allow and Deny answer from the shade; a tap opens the dialog.
+      await notifications.showInstant(
+        id: deviceApprovalNotificationId(approval),
+        title: title,
+        body: deviceApprovalBody(approval, body),
+        payload: approval.encode(),
+        actions: deviceApprovalActions(),
+        autoCancel: true,
+      );
+      return;
+    }
     await notifications.showInstant(
       id: id,
       title: title,
@@ -231,6 +249,12 @@ class PushNotificationService {
     }
 
     if (sessionId == null || sessionId.isEmpty) {
+      final approval = DeviceApprovalPayload.fromPushData(
+        data,
+        title: data['title']?.toString() ?? '',
+        body: data['body']?.toString() ?? '',
+      );
+      if (approval != null) return approval.encode();
       if (!scheduledTarget) return null;
       return withQuery(
         'scheduled_tasks'

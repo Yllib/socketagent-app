@@ -1,5 +1,19 @@
 enum NotificationParentDestination { sessions, scheduledTasks }
 
+/// A button pressed on a notification: `notification_action:<id>:<payload>`
+/// as `NotificationService.payloadForResponse` encodes it.
+typedef NotificationAction = ({String actionId, String payload});
+
+NotificationAction? parseNotificationAction(String payload) {
+  if (!payload.startsWith('notification_action:')) return null;
+  final parts = payload.split(':');
+  if (parts.length < 3) return null;
+  return (
+    actionId: Uri.decodeComponent(parts[1]),
+    payload: Uri.decodeComponent(parts.sublist(2).join(':')),
+  );
+}
+
 class NotificationNavigationTarget {
   const NotificationNavigationTarget({
     required this.parent,

@@ -70,6 +70,11 @@ class MainShellScreenState extends State<MainShellScreen>
         if (!mounted) return;
         showDeviceApprovalDialog(context, pending);
       });
+      // Requests that arrived before this screen was listening, such as a
+      // notice fetched during a cold start from a notification.
+      for (final pending in provider.takeUnpromptedPendingDevices()) {
+        showDeviceApprovalDialog(context, pending);
+      }
       _backendAuthRequiredSub = provider.backendAuthRequiredEvents.listen((
         event,
       ) {
