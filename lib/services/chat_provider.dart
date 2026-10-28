@@ -17655,7 +17655,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     Duration timeout = const Duration(minutes: 3),
   }) async {
     final owner = resolveDownloadServerId(serverId, _connMgr.activeServerId);
-    final id = 'preview_${_stableFileTransferId('$owner:$path')}';
+    final id = '$_previewDownloadPrefix${_stableFileTransferId('$owner:$path')}';
     final existing = _fileBytesCompleters[id];
     if (existing != null) return existing.future;
     final completer = Completer<String?>();
@@ -19936,12 +19936,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     ];
   }
 
+  /// Fetches that fill an image or file preview in the app. They never
+  /// notify, resume or land in Downloads, even when their caller is gone.
+  static const _previewDownloadPrefix = 'preview_';
+  bool _isPreviewDownload(String fileId) =>
+      fileId.startsWith(_previewDownloadPrefix) ||
+      _fileBytesCompleters.containsKey(fileId);
+
   void _showDownloadProgressNotification(
     String fileId,
     String fileName,
     double? progress,
   ) {
-    if (_fileBytesCompleters.containsKey(fileId)) return;
+    if (_isPreviewDownload(fileId)) return;
     _pendingDownloadNotifications[fileId] = _DownloadProgressNotification(
       fileId: fileId,
       fileName: fileName,
@@ -19998,6 +20005,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _showDownloadFinishedNotification(String fileId, String fileName) {
     _clearDownloadProgressNotification(fileId);
+    if (_isPreviewDownload(fileId)) return;
     unawaited(
       _notifications.showInstant(
         id: _downloadNotificationId(fileId),
@@ -20011,6 +20019,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   void _showDownloadFailedNotification(String fileId, String error) {
     _clearDownloadProgressNotification(fileId);
+    if (_isPreviewDownload(fileId)) return;
     unawaited(
       _notifications.showInstant(
         id: _downloadNotificationId(fileId),
@@ -20044,7 +20053,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'source': source,
         'fileName': _serverFileNames[fileId] ?? 'file',
         'sessionId': _downloadSessionIds[fileId],
-        'preview': _fileBytesCompleters.containsKey(fileId),
+        'preview': _isPreviewDownload(fileId),
       },
     );
     await part.load();
@@ -20485,6 +20494,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (_downloadsDisposed || generation != _downloadGenerations[id]) return;
       _fileBytesCompleters.remove(id);
       if (!preview.isCompleted) preview.complete(encoded);
+    } else if (_isPreviewDownload(id)) {
+      // The preview's caller gave up; its bytes stay in the part cache.
     } else {
       final target = await _moveHttpDownloadToUniqueTarget(
         tempFile: part.file,
@@ -20630,7 +20641,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final preview = _fileBytesCompleters.remove(id);
     // A preview's caller gets the error and can fetch again. Resuming it
     // here would finish without a caller, saving it as a user download.
-    if (reconnect && preview == null) _resumeDownloadIds.add(id);
+    if (reconnect && !_isPreviewDownload(id)) _resumeDownloadIds.add(id);
     final part = _downloadParts[id];
     if (part != null) {
       part.metadata['state'] = 'paused';
