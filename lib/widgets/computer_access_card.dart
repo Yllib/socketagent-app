@@ -83,8 +83,8 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
     final access = _access ?? request.access;
 
     final title = request.isLink
-        ? '${request.sourceName} asks for access to ${request.targetName}'
-        : '${request.sourceName} wants to act on ${request.targetName}';
+        ? '${request.askerLabel} asks for access to ${request.targetName}'
+        : '${request.askerLabel} wants to act on ${request.targetName}';
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -103,7 +103,11 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
           Row(
             children: [
               Icon(
-                request.isLink ? Icons.link : Icons.devices_other,
+                request.fromConnector
+                    ? Icons.smart_toy_outlined
+                    : request.isLink
+                    ? Icons.link
+                    : Icons.devices_other,
                 size: 16,
                 color: pending ? palette.peach : palette.textMuted,
               ),

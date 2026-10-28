@@ -20,6 +20,9 @@ class ComputerAccessRequest {
     this.access = const ComputerAccess(),
     this.reason = '',
     this.status = 'pending',
+    this.clientName = '',
+    this.clientPublicKey = '',
+    this.approvalKey = '',
   });
 
   final String requestId;
@@ -53,7 +56,24 @@ class ComputerAccessRequest {
   /// `expired`.
   final String status;
 
+  /// The AI client behind the request when it came through the AI
+  /// connector, for example "Claude". Empty for a linked computer's agent.
+  final String clientName;
+  final String clientPublicKey;
+
+  /// The key the target expects in the approval's `sourceKey`, when it is
+  /// not the asking computer's own key. Set when an AI client acts on the
+  /// computer that raised the card, so that computer is both source and
+  /// target and the approval must name the client instead.
+  final String approvalKey;
+
   bool get isLink => kind == 'link';
+  bool get fromConnector => clientName.isNotEmpty;
+
+  /// Who is asking, as the card names them: "Claude (AI connector)" or the
+  /// source computer.
+  String get askerLabel =>
+      fromConnector ? '$clientName (AI connector)' : sourceName;
 
   /// A link card for one waiting request, which `action` can allow alone.
   bool get hasAction => action.isNotEmpty && digest.isNotEmpty;
@@ -81,6 +101,7 @@ class ComputerAccessRequest {
     if (requestId is! String || requestId.isEmpty) return null;
     final source = raw['source'];
     final target = raw['target'];
+    final client = raw['client'];
     final expires = raw['expiresAt'];
     return ComputerAccessRequest(
       requestId: requestId,
@@ -103,6 +124,11 @@ class ComputerAccessRequest {
       reason: raw['reason'] as String? ?? '',
       status:
           raw['status'] as String? ?? raw['decision'] as String? ?? 'pending',
+      clientName: client is Map ? client['name'] as String? ?? '' : '',
+      clientPublicKey: client is Map
+          ? client['publicKey'] as String? ?? ''
+          : '',
+      approvalKey: raw['approvalKey'] as String? ?? '',
     );
   }
 
@@ -120,6 +146,9 @@ class ComputerAccessRequest {
     'access': access.toJson(),
     'reason': reason,
     'status': status,
+    if (fromConnector)
+      'client': {'name': clientName, 'publicKey': clientPublicKey},
+    if (approvalKey.isNotEmpty) 'approvalKey': approvalKey,
   };
 
   ComputerAccessRequest withStatus(String status) =>
@@ -128,7 +157,8 @@ class ComputerAccessRequest {
   bool isExpired(DateTime now) =>
       expiresAt > 0 && now.millisecondsSinceEpoch >= expiresAt;
 
-  /// The plaintext an approval token seals for the target.
+  /// The plaintext an approval token seals for the target. [sourceKey] is
+  /// the asking computer's key unless the card names an [approvalKey].
   Map<String, Object?> approvalPayload({
     required String scope,
     required String sourceKey,
@@ -137,7 +167,7 @@ class ComputerAccessRequest {
     'challengeId': challengeId,
     'scope': scope,
     'sourceSessionId': sessionId,
-    'sourceKey': sourceKey,
+    'sourceKey': approvalKey.isNotEmpty ? approvalKey : sourceKey,
     'expiresAt': expiresAt,
   };
 

@@ -7,7 +7,8 @@ import '../services/account_crypto.dart';
 import '../services/chat_provider.dart';
 
 /// Shows a `device_pending` notice and lets the user allow or deny it. The
-/// other device shows the same six-digit code.
+/// other device shows the same six-digit code. An AI client signing in
+/// through the AI connector (platform `connector`) shows it in the browser.
 Future<void> showDeviceApprovalDialog(
   BuildContext context,
   PendingDevice pending,
@@ -58,19 +59,30 @@ class _DeviceApprovalDialogState extends State<DeviceApprovalDialog> {
         .firstOrNull
         ?.name;
     final pending = widget.pending;
+    final connector = pending.platform == 'connector';
     return AlertDialog(
-      title: const Text('Allow this device?'),
+      title: Text(
+        connector
+            ? 'Allow ${pending.name} to use your computers?'
+            : 'Allow this device?',
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${pending.name} (${pending.platform}) wants to use '
-            '${computer ?? 'this computer'}.',
+            connector
+                ? '${pending.name} is signing in to the AI connector on '
+                      '${computer ?? 'this computer'}. It can list your '
+                      'computers, run commands and agents, and read '
+                      'transcripts. Each computer still asks before '
+                      'actions unless you turn that off.'
+                : '${pending.name} (${pending.platform}) wants to use '
+                      '${computer ?? 'this computer'}.',
           ),
           const SizedBox(height: 12),
           Text(
-            'Code on the other device',
+            connector ? 'Code in the browser' : 'Code on the other device',
             style: TextStyle(color: palette.textMuted),
           ),
           Text(

@@ -5,6 +5,7 @@ import '../../config/app_palette.dart';
 import '../../models/device_registry.dart';
 import '../../services/chat_provider.dart';
 import '../../widgets/device_approval_dialog.dart';
+import 'ai_connector_screen.dart';
 
 /// The devices a computer lets connect, from its `devices.json`.
 class DevicesScreen extends StatefulWidget {
@@ -52,7 +53,10 @@ class _DevicesScreenState extends State<DevicesScreen> {
           'Remove ${device.name.isEmpty ? 'this device' : device.name}?',
         ),
         content: Text(
-          device.isComputer
+          device.isConnector
+              ? '${device.name} is signed out of the AI connector on '
+                    '$computer. Its tokens stop working at once.'
+              : device.isComputer
               ? 'Agents on ${device.name} lose access to $computer.'
               : 'It can no longer connect to $computer, and the computer '
                     'changes its token so the old one stops working.',
@@ -75,6 +79,20 @@ class _DevicesScreenState extends State<DevicesScreen> {
     } catch (error) {
       if (mounted) setState(() => _error = _text(error));
     }
+  }
+
+  /// Switches an AI client between asking before each action and never
+  /// asking. The computer answers with a fresh device list.
+  void _setConnectorConfirm(RegisteredDevice device, LinkConfirm confirm) {
+    final sent = context
+        .read<ChatProvider>()
+        .connMgr
+        .sendToServer(widget.serverId, {
+          'type': 'ai_connector_client_set',
+          'publicKey': device.publicKey,
+          'confirm': confirm.wire,
+        });
+    if (!sent) setState(() => _error = 'Not connected to this computer');
   }
 
   Future<void> _lock() async {
@@ -157,6 +175,7 @@ class _DevicesScreenState extends State<DevicesScreen> {
             .toList();
         final phones = registry?.phones.toList() ?? const [];
         final computers = registry?.computers.toList() ?? const [];
+        final connectors = registry?.connectors.toList() ?? const [];
         return Scaffold(
           appBar: AppBar(
             title: Text('Devices on $name'),
@@ -206,13 +225,39 @@ class _DevicesScreenState extends State<DevicesScreen> {
                     child: const Text('Reset'),
                   ),
                 ),
+              ListTile(
+                leading: const Icon(Icons.smart_toy_outlined),
+                title: const Text('AI connector'),
+                subtitle: Text(
+                  connectors.isEmpty
+                      ? 'Let Claude or ChatGPT use your computers'
+                      : '${connectors.length} connected '
+                            'client${connectors.length == 1 ? '' : 's'}',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        AiConnectorScreen(serverId: widget.serverId),
+                  ),
+                ),
+              ),
               if (pending.isNotEmpty) ...[
                 _Heading('Waiting for approval'),
                 for (final device in pending)
                   ListTile(
-                    leading: Icon(Icons.phonelink_ring, color: palette.peach),
+                    leading: Icon(
+                      device.platform == 'connector'
+                          ? Icons.smart_toy_outlined
+                          : Icons.phonelink_ring,
+                      color: palette.peach,
+                    ),
                     title: Text(device.name),
-                    subtitle: Text('${device.platform} · code ${device.code}'),
+                    subtitle: Text(
+                      device.platform == 'connector'
+                          ? 'AI connector sign-in · code ${device.code}'
+                          : '${device.platform} · code ${device.code}',
+                    ),
                     trailing: FilledButton(
                       onPressed: () =>
                           showDeviceApprovalDialog(context, device),
@@ -247,6 +292,25 @@ class _DevicesScreenState extends State<DevicesScreen> {
                     isSelf: false,
                     onRemove: () => _remove(device, name),
                   ),
+              ],
+              if (connectors.isNotEmpty) ...[
+                _Heading('AI clients'),
+                for (final device in connectors) ...[
+                  _DeviceRow(
+                    device: device,
+                    isSelf: false,
+                    onRemove: () => _remove(device, name),
+                  ),
+                  SwitchListTile(
+                    dense: true,
+                    title: const Text('Ask before each action'),
+                    value: device.confirm != LinkConfirm.never,
+                    onChanged: (ask) => _setConnectorConfirm(
+                      device,
+                      ask ? LinkConfirm.ask : LinkConfirm.never,
+                    ),
+                  ),
+                ],
               ],
             ],
           ),
@@ -291,8 +355,8 @@ class _DeviceRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.palette;
     final details = [
-      if (device.platform.isNotEmpty) device.platform,
-      if (device.isComputer && device.access != null)
+      if (device.platform.isNotEmpty && !device.isConnector) device.platform,
+      if (device.hasAccess && device.access != null)
         '${device.access!.label} · ${device.confirm?.label.toLowerCase()}',
       if (device.expiresAt case final ends?)
         linkExpiryLabel(ends, DateTime.now()),
@@ -301,7 +365,9 @@ class _DeviceRow extends StatelessWidget {
     ].join(' · ');
     return ListTile(
       leading: Icon(
-        device.isComputer
+        device.isConnector
+            ? Icons.smart_toy_outlined
+            : device.isComputer
             ? Icons.dns_outlined
             : device.platform == 'windows'
             ? Icons.desktop_windows_outlined

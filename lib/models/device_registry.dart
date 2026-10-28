@@ -77,7 +77,8 @@ class RegisteredDevice {
 
   final String publicKey;
 
-  /// `device` for a phone or desktop app, `computer` for a linked computer.
+  /// `device` for a phone or desktop app, `computer` for a linked computer,
+  /// `connector` for an AI client signed in through the AI connector.
   final String kind;
   final String name;
   final String platform;
@@ -92,6 +93,10 @@ class RegisteredDevice {
   final bool online;
 
   bool get isComputer => kind == 'computer';
+  bool get isConnector => kind == 'connector';
+
+  /// Computers and AI clients both carry access boxes and a confirm mode.
+  bool get hasAccess => isComputer || isConnector;
 
   static RegisteredDevice? fromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -106,10 +111,12 @@ class RegisteredDevice {
       addedAt: _time(raw['addedAt']),
       lastSeenAt: _time(raw['lastSeenAt']),
       via: raw['via'] as String? ?? '',
-      access: kind == 'computer'
+      access: kind == 'computer' || kind == 'connector'
           ? ComputerAccess.fromJson(raw['access'])
           : null,
-      confirm: kind == 'computer' ? LinkConfirm.fromWire(raw['confirm']) : null,
+      confirm: kind == 'computer' || kind == 'connector'
+          ? LinkConfirm.fromWire(raw['confirm'])
+          : null,
       expiresAt: _time(raw['expiresAt']),
       online: raw['online'] == true,
     );
@@ -145,9 +152,12 @@ class DeviceRegistry {
 
   bool get learning => mode == 'learning';
 
-  Iterable<RegisteredDevice> get phones => devices.where((d) => !d.isComputer);
+  Iterable<RegisteredDevice> get phones =>
+      devices.where((d) => !d.isComputer && !d.isConnector);
   Iterable<RegisteredDevice> get computers =>
       devices.where((d) => d.isComputer);
+  Iterable<RegisteredDevice> get connectors =>
+      devices.where((d) => d.isConnector);
 
   /// [serverId] tags the pending entries with the computer they wait on.
   static DeviceRegistry fromJson(
