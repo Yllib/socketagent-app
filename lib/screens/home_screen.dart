@@ -584,6 +584,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     provider.setViewingSession(
       provider.activeSessionId,
       chatScreenVisible: widget.visible,
+      owner: this,
     );
 
     // Restore saved draft for this session
@@ -620,6 +621,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       provider.setViewingSession(
         provider.activeSessionId,
         chatScreenVisible: widget.visible,
+        owner: this,
       );
       if (!widget.visible) _focusNode.unfocus();
     }
@@ -632,7 +634,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     // Save draft before disposing
     final provider = _lifecycleProvider;
     provider.saveDraft(_textController.text.trim());
-    provider.setViewingSession(null, chatScreenVisible: false);
+    provider.clearViewingSession(this);
     assistVoiceTrigger.removeListener(_onAssistVoiceTrigger);
     _speechSub?.cancel();
     _speechErrorSub?.cancel();
@@ -1265,6 +1267,7 @@ class _ChatScreenState extends State<_ChatScreen> {
           provider.setViewingSession(
             currentSessionId,
             chatScreenVisible: widget.visible,
+            owner: this,
           );
           // Restore draft for the new session
           final draft = provider.getDraft();

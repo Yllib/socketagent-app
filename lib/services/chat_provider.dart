@@ -694,6 +694,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _activeSessionBackend;
   String? _viewingSessionId; // set by HomeScreen when user is on that screen
   String? _viewingServerId;
+  // The chat screen that last set the viewing state; see clearViewingSession.
+  Object? _viewingOwner;
   bool _chatScreenVisible = false;
   bool _appInForeground = true;
   // Per-session input drafts (sessionId → unsent text)
@@ -1259,7 +1261,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? sessionId, {
     String? serverId,
     bool chatScreenVisible = true,
+    Object? owner,
   }) {
+    _viewingOwner = owner;
     _chatScreenVisible = chatScreenVisible;
     final resolvedServerId = sessionId == null || !chatScreenVisible
         ? null
@@ -1282,6 +1286,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _syncOngoingSessionNotifications();
   }
+
+  /// Clears the viewing state only while [owner] still holds it. A chat
+  /// screen replaced by another one is disposed after its successor's
+  /// initState, so clearing blindly there would wipe the successor's state.
+  void clearViewingSession(Object owner) {
+    if (!identical(_viewingOwner, owner)) return;
+    setViewingSession(null, chatScreenVisible: false);
+  }
+
+  @visibleForTesting
+  String? get viewingSessionId => _viewingSessionId;
 
   /// Get recent CWDs (server-side, keyed by serverId).
   List<String> getRecentCwds({String? serverId}) {

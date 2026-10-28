@@ -67,6 +67,23 @@ class NotificationService {
     return 'session:${Uri.encodeComponent(sessionId)}:${Uri.encodeComponent(serverId ?? '')}';
   }
 
+  /// Tag of a running-session card: its session target plus the run start.
+  /// Android returns a card's tag from getActiveNotifications but never its
+  /// payload, so this is what lets removeStaleActiveSessionsForServer identify
+  /// a card after an app or server restart, whichever isolate posted it. It
+  /// stays the same for every update within one run.
+  static String? sessionOngoingTag(String? payload, {DateTime? startedAt}) {
+    final target = _sessionTargetFromPayload(payload);
+    if (target == null) return null;
+    final base = sessionPayload(target.sessionId, serverId: target.serverId);
+    final start = startedAt ?? target.startedAt;
+    if (start == null) return base;
+    final encodedStart = Uri.encodeQueryComponent(
+      start.toUtc().toIso8601String(),
+    );
+    return '$base?startedAt=$encodedStart';
+  }
+
   static int sessionAlertId(
     String sessionId, {
     String? serverId,
@@ -96,6 +113,10 @@ class NotificationService {
   // payloads of finished-session cards this process posted are kept here for
   // the repost in markSessionCompletionRead.
   final Map<int, String> _completionPayloadById = {};
+  // Tag of the running-session card this process last posted per id, so a
+  // routine progress update skips the shade lookup that replaces a card left
+  // over from an earlier run.
+  final Map<int, String> _ongoingTagById = {};
   final Map<int, Future<void>> _operationTailsById = {};
   Future<void> _groupRefreshTail = Future<void>.value();
 
@@ -552,6 +573,8 @@ class NotificationService {
   /// Removes Android running-session children that are absent from an
   /// authoritative status sync. The caller converts the returned entries into
   /// fallback completions so a server/app restart cannot silently lose them.
+  /// The session and run start come from the card's tag, the one field the
+  /// shade reports that this app controls; see [sessionOngoingTag].
   Future<List<RecoveredSessionNotification>>
   removeStaleActiveSessionsForServer({
     required String serverId,
@@ -569,9 +592,12 @@ class NotificationService {
             expectedNotificationIds.contains(notificationId)) {
           continue;
         }
-        final target = _sessionTargetFromPayload(notification.payload);
+        final target = _sessionTargetFromPayload(
+          notification.tag ?? notification.payload,
+        );
         if (target == null || (target.serverId ?? '') != serverId) continue;
-        await _plugin.cancel(id: notificationId);
+        await _plugin.cancel(id: notificationId, tag: notification.tag);
+        _ongoingTagById.remove(notificationId);
         if (target.sessionId.startsWith('scheduled-')) continue;
         recovered.add(
           RecoveredSessionNotification(
@@ -670,6 +696,13 @@ class NotificationService {
 
       try {
         final percent = progressPercent(progress);
+        final tag = groupKey == activeSessionsGroup
+            ? sessionOngoingTag(payload, startedAt: startedAt)
+            : null;
+        if (tag != null && _ongoingTagById[id] != tag) {
+          await _cancelOtherCardsWithId(id, keepTag: tag);
+          _ongoingTagById[id] = tag;
+        }
         final androidDetails = AndroidNotificationDetails(
           activeWorkChannelId,
           'Active Work',
@@ -680,6 +713,7 @@ class NotificationService {
           enableVibration: false,
           channelShowBadge: false,
           groupKey: groupKey,
+          tag: tag,
           groupAlertBehavior: GroupAlertBehavior.children,
           ongoing: true,
           autoCancel: false,
@@ -720,13 +754,27 @@ class NotificationService {
 
       try {
         await _plugin.cancel(id: id);
+        await _cancelOtherCardsWithId(id);
         _completionPayloadById.remove(id);
+        _ongoingTagById.remove(id);
         return true;
       } catch (e) {
         debugPrint('[Notification] cancel error: $e');
         return false;
       }
     });
+  }
+
+  /// Removes every shade card with [id] except the one tagged [keepTag].
+  /// Android keys cards by (tag, id), so a plain cancel leaves tagged cards
+  /// in place, and a card from an earlier run or an older app version would
+  /// otherwise sit beside the new one.
+  Future<void> _cancelOtherCardsWithId(int id, {String? keepTag}) async {
+    if (Platform.isWindows) return;
+    for (final notification in await _plugin.getActiveNotifications()) {
+      if (notification.id != id || notification.tag == keepTag) continue;
+      await _plugin.cancel(id: id, tag: notification.tag);
+    }
   }
 
   Future<bool> dismissSessionCompletion(int id) {
