@@ -8,6 +8,7 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import android.net.Uri
 import android.provider.Settings
 import android.view.WindowInsets
@@ -56,6 +57,12 @@ class MainActivity : FlutterActivity() {
         pendingUnlock?.success(false)
         pendingUnlock = result
         startActivityForResult(intent, UNLOCK_REQUEST)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        // FlutterActivity has made its FlutterView the content by now.
+        findViewById<FlutterView>(FLUTTER_VIEW_ID)?.let(ImeInsetRepair::install)
     }
 
     override fun onResume() {
