@@ -1378,7 +1378,6 @@ class _SkillsScreenState extends State<SkillsScreen> {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
       constraints: adaptiveActionSheetConstraints,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, sheetSetState) {
