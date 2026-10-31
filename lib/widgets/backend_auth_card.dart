@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/message.dart';
 import '../screens/settings/mcp_servers_screen.dart';
-import '../screens/settings/settings_v2_screen.dart';
+import '../screens/computers/backend_auth.dart';
 import '../services/chat_provider.dart';
 import '../config/app_palette.dart';
 

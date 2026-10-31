@@ -238,7 +238,7 @@ class _SessionsTabState extends State<SessionsTab> {
     final supported = provider.backendsForServer(result.serverId);
     String backend = provider.preferredBackendForServer(result.serverId);
     if (supported.length > 1) {
-      final selection = await _pickServerAndBackend(
+      final selection = await pickServerAndBackend(
         context,
         provider,
         presetServerId: result.serverId,
@@ -450,7 +450,7 @@ class _SessionsTabState extends State<SessionsTab> {
           final needsBackendPick =
               needsServerPick || initialBackends.length > 1;
           if (needsBackendPick) {
-            final result = await _pickServerAndBackend(
+            final result = await pickServerAndBackend(
               context,
               provider,
               presetServerId: serverId,
@@ -496,178 +496,6 @@ class _SessionsTabState extends State<SessionsTab> {
   /// Combined server + backend picker. Server section is hidden when there's
   /// only one server. Backend section is hidden when the chosen server only
   /// supports one backend (so claude-only servers feel exactly like before).
-  Future<({String? serverId, String backend})?> _pickServerAndBackend(
-    BuildContext context,
-    ChatProvider provider, {
-    String? presetServerId,
-  }) async {
-    final connectedServers = provider.serverConfigs
-        .where(
-          (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
-        )
-        .toList();
-    String? selectedServer =
-        presetServerId ??
-        (connectedServers.isNotEmpty
-            ? connectedServers.first.id
-            : provider.serverConfigs.firstOrNull?.id);
-    String selectedBackend = provider.preferredBackendForServer(selectedServer);
-
-    return showModalBottomSheet<({String? serverId, String backend})>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      showDragHandle: true,
-      constraints: adaptiveActionSheetConstraints,
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setState) {
-            final supported = provider.backendsForServer(selectedServer);
-            // Snap back to a valid choice if the user just changed servers.
-            if (!supported.contains(selectedBackend)) {
-              selectedBackend = provider.preferredBackendForServer(
-                selectedServer,
-              );
-            }
-            // Hide the server radio when a server was preselected upstream
-            // (e.g., in the CWD picker) — re-asking would be confusing.
-            final showServers =
-                provider.serverConfigs.length > 1 && presetServerId == null;
-            final showBackends = supported.length > 1;
-
-            return AdaptiveSheetBody(
-              title: 'New session',
-              children: [
-                if (showServers) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: Text(
-                      'Computer',
-                      style: Theme.of(context).textTheme.labelSmall,
-                    ),
-                  ),
-                  RadioGroup<String>(
-                    groupValue: selectedServer,
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => selectedServer = value);
-                      }
-                    },
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final config in provider.serverConfigs)
-                          Builder(
-                            builder: (context) {
-                              final status = provider.connMgr.statusOf(
-                                config.id,
-                              );
-                              final isConnected =
-                                  status == ConnectionStatus.connected;
-                              return RadioListTile<String>(
-                                value: config.id,
-                                enabled: isConnected,
-                                title: Text(config.name),
-                                subtitle: Text(
-                                  config.useRelay
-                                      ? 'Relay'
-                                      : '${config.host}:${config.port}',
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: Theme.of(
-                                      context,
-                                    ).colorScheme.onSurface.withAlpha(128),
-                                  ),
-                                ),
-                                secondary: Icon(
-                                  isConnected
-                                      ? Icons.cloud_done
-                                      : Icons.cloud_off,
-                                  color: isConnected
-                                      ? context.palette.success
-                                      : Colors.grey,
-                                ),
-                                dense: true,
-                              );
-                            },
-                          ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                ],
-                if (showBackends) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                    child: Text(
-                      'Backend',
-                      style: Theme.of(context).textTheme.labelSmall,
-                    ),
-                  ),
-                  RadioGroup<String>(
-                    groupValue: selectedBackend,
-                    onChanged: (value) {
-                      if (value != null) {
-                        setState(() => selectedBackend = value);
-                      }
-                    },
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final backend in supported)
-                          RadioListTile<String>(
-                            value: backend,
-                            title: Text(_backendLabel(backend)),
-                            subtitle: Text(
-                              _backendSubtitle(backend),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurface.withAlpha(128),
-                              ),
-                            ),
-                            dense: true,
-                          ),
-                      ],
-                    ),
-                  ),
-                  const Divider(height: 1),
-                ],
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        child: const Text('Cancel'),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: selectedServer == null
-                            ? null
-                            : () => Navigator.pop(ctx, (
-                                serverId: selectedServer,
-                                backend: selectedBackend,
-                              )),
-                        child: const Text('Create'),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  String _backendLabel(String b) => b == 'codex' ? 'Codex (ChatGPT)' : 'Claude';
-  String _backendSubtitle(String b) => b == 'codex'
-      ? 'OpenAI Codex CLI — billed via your ChatGPT subscription'
-      : 'Anthropic Claude Agent SDK — billed via your Claude subscription';
 
   Future<void> _validateAndOpen(
     BuildContext context,
@@ -4822,3 +4650,176 @@ class _SessionsTabState extends State<SessionsTab> {
 
 /// Full-screen folder browser for navigating a server's filesystem.
 // FolderBrowserScreen is now in widgets/folder_browser_screen.dart
+
+/// Picks the backend for a new session, and the computer too unless
+/// [presetServerId] fixed it. Null when cancelled.
+Future<({String? serverId, String backend})?> pickServerAndBackend(
+  BuildContext context,
+  ChatProvider provider, {
+  String? presetServerId,
+}) async {
+  final connectedServers = provider.serverConfigs
+      .where(
+        (c) => provider.connMgr.statusOf(c.id) == ConnectionStatus.connected,
+      )
+      .toList();
+  String? selectedServer =
+      presetServerId ??
+      (connectedServers.isNotEmpty
+          ? connectedServers.first.id
+          : provider.serverConfigs.firstOrNull?.id);
+  String selectedBackend = provider.preferredBackendForServer(selectedServer);
+
+  return showModalBottomSheet<({String? serverId, String backend})>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    showDragHandle: true,
+    constraints: adaptiveActionSheetConstraints,
+    builder: (ctx) {
+      return StatefulBuilder(
+        builder: (ctx, setState) {
+          final supported = provider.backendsForServer(selectedServer);
+          // Snap back to a valid choice if the user just changed servers.
+          if (!supported.contains(selectedBackend)) {
+            selectedBackend = provider.preferredBackendForServer(
+              selectedServer,
+            );
+          }
+          // Hide the server radio when a server was preselected upstream
+          // (e.g., in the CWD picker) — re-asking would be confusing.
+          final showServers =
+              provider.serverConfigs.length > 1 && presetServerId == null;
+          final showBackends = supported.length > 1;
+
+          return AdaptiveSheetBody(
+            title: 'New session',
+            children: [
+              if (showServers) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    'Computer',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+                RadioGroup<String>(
+                  groupValue: selectedServer,
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => selectedServer = value);
+                    }
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final config in provider.serverConfigs)
+                        Builder(
+                          builder: (context) {
+                            final status = provider.connMgr.statusOf(config.id);
+                            final isConnected =
+                                status == ConnectionStatus.connected;
+                            return RadioListTile<String>(
+                              value: config.id,
+                              enabled: isConnected,
+                              title: Text(config.name),
+                              subtitle: Text(
+                                config.useRelay
+                                    ? 'Relay'
+                                    : '${config.host}:${config.port}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(
+                                    context,
+                                  ).colorScheme.onSurface.withAlpha(128),
+                                ),
+                              ),
+                              secondary: Icon(
+                                isConnected
+                                    ? Icons.cloud_done
+                                    : Icons.cloud_off,
+                                color: isConnected
+                                    ? context.palette.success
+                                    : Colors.grey,
+                              ),
+                              dense: true,
+                            );
+                          },
+                        ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+              ],
+              if (showBackends) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    'Backend',
+                    style: Theme.of(context).textTheme.labelSmall,
+                  ),
+                ),
+                RadioGroup<String>(
+                  groupValue: selectedBackend,
+                  onChanged: (value) {
+                    if (value != null) {
+                      setState(() => selectedBackend = value);
+                    }
+                  },
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final backend in supported)
+                        RadioListTile<String>(
+                          value: backend,
+                          title: Text(_backendLabel(backend)),
+                          subtitle: Text(
+                            _backendSubtitle(backend),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurface.withAlpha(128),
+                            ),
+                          ),
+                          dense: true,
+                        ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+              ],
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton(
+                      onPressed: selectedServer == null
+                          ? null
+                          : () => Navigator.pop(ctx, (
+                              serverId: selectedServer,
+                              backend: selectedBackend,
+                            )),
+                      child: const Text('Create'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
+
+String _backendLabel(String b) => b == 'codex' ? 'Codex (ChatGPT)' : 'Claude';
+String _backendSubtitle(String b) => b == 'codex'
+    ? 'OpenAI Codex CLI — billed via your ChatGPT subscription'
+    : 'Anthropic Claude Agent SDK — billed via your Claude subscription';

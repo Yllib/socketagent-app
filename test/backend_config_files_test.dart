@@ -1,6 +1,6 @@
 import 'package:app/models/backend_config_file.dart';
 import 'package:app/models/computer_issue.dart';
-import 'package:app/screens/settings/backend_config_screen.dart';
+import 'package:app/screens/computers/backend_config_screen.dart';
 import 'package:app/services/chat_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';

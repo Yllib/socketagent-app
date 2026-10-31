@@ -1,6 +1,6 @@
 import 'package:app/models/computer_access.dart';
 import 'package:app/models/device_registry.dart';
-import 'package:app/screens/settings/ai_connector_screen.dart';
+import 'package:app/screens/computers/ai_connector_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

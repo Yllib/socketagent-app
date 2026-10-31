@@ -18,6 +18,8 @@ import '../services/websocket_service.dart';
 import '../models/notification_navigation.dart';
 import 'sessions_screen.dart';
 import 'scheduled_tasks_screen.dart';
+import 'computers/backend_auth.dart' show showBackendSignIn;
+import 'computers/computers_screen.dart';
 import 'settings/settings_v2_screen.dart';
 import 'paywall_screen.dart';
 
@@ -34,6 +36,8 @@ class MainShellScreenState extends State<MainShellScreen>
     with RouteAware, WidgetsBindingObserver {
   static const sessionsIndex = 0;
   static const scheduledTasksIndex = 1;
+  static const computersIndex = 2;
+  static const settingsIndex = 3;
   static const _updateCheckInterval = Duration(minutes: 5);
   static const _foregroundUpdateThrottle = Duration(minutes: 1);
   late int _currentIndex;
@@ -58,7 +62,7 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void initState() {
     super.initState();
-    _currentIndex = widget.initialIndex.clamp(0, 2).toInt();
+    _currentIndex = widget.initialIndex.clamp(0, settingsIndex).toInt();
     WidgetsBinding.instance.addObserver(this);
     if (Platform.isWindows) {
       HardwareKeyboard.instance.addHandler(_handleDesktopShortcut);
@@ -106,7 +110,7 @@ class MainShellScreenState extends State<MainShellScreen>
                   );
                   return;
                 }
-                setState(() => _currentIndex = 2);
+                setState(() => _currentIndex = settingsIndex);
               },
             ),
           ),
@@ -214,7 +218,8 @@ class MainShellScreenState extends State<MainShellScreen>
       // Returning from Android's package installer must re-read the running
       // version immediately so a completed install is not shown as pending.
       unawaited(_checkForAppUpdate(force: _updateService.hasDownloadedUpdate));
-      if (_currentIndex == 1 && _scheduledTaskRefreshTimer == null) {
+      if (_currentIndex == scheduledTasksIndex &&
+          _scheduledTaskRefreshTimer == null) {
         _startScheduledTaskRefresh();
       }
     } else if (state == AppLifecycleState.hidden ||
@@ -345,17 +350,20 @@ class MainShellScreenState extends State<MainShellScreen>
     setState(() => _currentIndex = index);
 
     final provider = context.read<ChatProvider>();
-    if (index == 0) {
+    if (index == sessionsIndex) {
       _scheduledTaskRefreshTimer?.cancel();
       _scheduledTaskRefreshTimer = null;
       provider.requestSessionList();
-    } else if (index == 1) {
+    } else if (index == scheduledTasksIndex) {
       _startScheduledTaskRefresh();
     } else {
       _scheduledTaskRefreshTimer?.cancel();
       _scheduledTaskRefreshTimer = null;
     }
   }
+
+  /// Switches to the Computers tab, for settings rows that summarize them.
+  void showComputers() => _onTabChanged(computersIndex);
 
   void showNotificationParent(NotificationParentDestination destination) {
     _onTabChanged(
@@ -410,10 +418,10 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _currentIndex == 0,
+      canPop: _currentIndex == sessionsIndex,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) {
-          setState(() => _currentIndex = 0);
+          setState(() => _currentIndex = sessionsIndex);
         }
       },
       child: Scaffold(
@@ -439,6 +447,10 @@ class MainShellScreenState extends State<MainShellScreen>
                     label: Text('Tasks'),
                   ),
                   NavigationRailDestination(
+                    icon: Icon(Icons.devices_outlined),
+                    label: Text('Computers'),
+                  ),
+                  NavigationRailDestination(
                     icon: Icon(Icons.settings_outlined),
                     label: Text('Settings'),
                   ),
@@ -459,6 +471,7 @@ class MainShellScreenState extends State<MainShellScreen>
                   const PauseWhileHidden<ChatProvider>(
                     child: ScheduledTasksScreen(),
                   ),
+                  const PauseWhileHidden<ChatProvider>(child: ComputersTab()),
                   PauseWhileHidden<ChatProvider>(
                     child: SettingsV2Screen(updateService: _updateService),
                   ),
@@ -495,6 +508,11 @@ class MainShellScreenState extends State<MainShellScreen>
                               )
                             : const Icon(Icons.schedule),
                         label: 'Tasks',
+                      ),
+                      const NavigationDestination(
+                        icon: Icon(Icons.devices_outlined),
+                        selectedIcon: Icon(Icons.devices),
+                        label: 'Computers',
                       ),
                       const NavigationDestination(
                         icon: Icon(Icons.settings_outlined),

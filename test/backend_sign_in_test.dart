@@ -1,4 +1,4 @@
-import 'package:app/screens/settings/settings_v2_screen.dart';
+import 'package:app/screens/computers/backend_auth.dart';
 import 'package:app/services/chat_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
