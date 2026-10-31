@@ -143,7 +143,9 @@ class ChatScrollController extends ScrollController {
         .clamp(position.minScrollExtent, position.maxScrollExtent)
         .toDouble();
     if ((position.pixels - clamped).abs() >= 0.5) position.jumpTo(clamped);
-    if (target <= 0 || exact != null || _rowTargetRetryScheduled) return;
+    // The top is an estimate too until row 0 is laid out: a first row taller
+    // than the mean (a time label, say) moves the minimum after the jump.
+    if (exact != null || _rowTargetRetryScheduled) return;
     _rowTargetRetryScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _rowTargetRetryScheduled = false;

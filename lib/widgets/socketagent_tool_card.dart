@@ -152,7 +152,7 @@ class _SocketAgentToolCardState extends State<SocketAgentToolCard> {
               ),
               child: ScrollPassthrough(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(8),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [

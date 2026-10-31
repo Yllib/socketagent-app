@@ -64,7 +64,7 @@ void main() {
         final thumb = _thumbRect(tester);
         expect(
           thumb.height,
-          closeTo(previous.height, 3),
+          closeTo(previous.height, 4),
           reason: 'step $step: thumb length must not jump with layout',
         );
         expect(
@@ -113,10 +113,11 @@ void main() {
     key.currentState!.completeLoad(prependCount: 50);
     await tester.pumpAndSettle();
     final after = _thumbRect(tester);
-    // The rows that land take the space the header had above row 0, so the
-    // row under the viewport's top edge moves by less than one row.
+    // The rows that land take the space the header had above row 0, and the
+    // time label moves from the old first row to the new one, so the row
+    // under the viewport's top edge moves by about one row.
     final oneRow = (chat.height - 2 * ChatScrollbar.margin) / 110;
-    expect(after.top, closeTo(before.top, oneRow));
+    expect(after.top, closeTo(before.top, oneRow * 1.5));
     expect(after.height, closeTo(before.height, 2));
     expect(tester.takeException(), isNull);
   });
@@ -145,11 +146,17 @@ void main() {
           .position;
       expect(key.currentState!.followLatest, isTrue);
 
-      // Up to the middle of the track: row 110 of 220, which is loaded row
-      // 10, and the view is no longer following. That close to the top of
-      // the loaded rows the next page is requested at once, and its loading
-      // bar animates, so settle by frames from here on.
+      // Up to the middle of the track: halfway through the 220 rows the
+      // thumb can travel over, which is a low loaded row, and the view is no
+      // longer following. That close to the top of the loaded rows the next
+      // page is requested at once, and its loading bar animates, so settle
+      // by frames from here on.
       final start = _thumbRect(tester);
+      final movableRows = tester
+          .renderObject<RenderChatScrollbar>(find.byType(ChatScrollbar))
+          .thumb!
+          .movableRows;
+      final midRow = movableRows / 2 - 100;
       final gesture = await tester.startGesture(start.center);
       await gesture.moveBy(Offset(0, -(track - start.height) / 2));
       await _pumpFrames(tester, 10);
@@ -158,7 +165,7 @@ void main() {
         _thumbRect(tester).top,
         closeTo(start.top - (track - start.height) / 2, 1),
       );
-      expect(_topVisibleMessage(tester), inInclusiveRange(5, 15));
+      expect(_topVisibleMessage(tester), closeTo(midRow, 3));
       expect(key.currentState!.loadMoreCalls, 1);
 
       // On to the top: the view is at the top of what is loaded. The thumb

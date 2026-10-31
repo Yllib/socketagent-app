@@ -244,10 +244,11 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('close returns no action', (tester) async {
+  testWidgets('dismissing the sheet returns no action', (tester) async {
     String? selected = 'unset';
     await pumpMenu(tester, onResult: (value) => selected = value);
-    await tester.tap(find.byTooltip('Close session actions'));
+    // There is no close button; tap the barrier above the sheet.
+    await tester.tapAt(const Offset(20, 20));
     await tester.pumpAndSettle();
     expect(selected, isNull);
   });

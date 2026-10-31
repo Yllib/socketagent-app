@@ -129,28 +129,27 @@ class _SessionActionsSheetState extends State<SessionActionsSheet> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // No close button: the sheet dismisses by drag or tap outside.
               Padding(
-                padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
                 child: Row(
                   children: [
                     if (group != null)
                       IconButton(
                         tooltip: 'Back to session actions',
                         onPressed: () => setState(() => _groupTitle = null),
-                        icon: const Icon(Icons.arrow_back),
-                      )
-                    else
-                      const SizedBox(width: 8),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 28,
+                          height: 28,
+                        ),
+                        icon: const Icon(Icons.arrow_back, size: 20),
+                      ),
                     Expanded(
                       child: Text(
                         group?.title ?? 'Session actions',
                         style: Theme.of(context).textTheme.titleMedium,
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Close session actions',
-                      onPressed: () => Navigator.pop(context),
-                      icon: const Icon(Icons.close),
                     ),
                   ],
                 ),

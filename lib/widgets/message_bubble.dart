@@ -37,6 +37,11 @@ class MessageBubble extends StatelessWidget {
   onReport;
   final String? sourceServerId;
 
+  /// The chat hides the time on messages that follow another within five
+  /// minutes. A sent message still shows its delivery mark until the agent
+  /// has read it.
+  final bool showTimestamp;
+
   const MessageBubble({
     super.key,
     required this.message,
@@ -47,6 +52,7 @@ class MessageBubble extends StatelessWidget {
     this.onReadAloud,
     this.onReport,
     this.sourceServerId,
+    this.showTimestamp = true,
   });
 
   @override
@@ -86,16 +92,18 @@ class MessageBubble extends StatelessWidget {
             hasActions,
             hasMessageActions,
           ),
-          Padding(
-            padding: const EdgeInsets.only(left: 12, right: 12, bottom: 4),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                MessageTimestamp(timestamp: message.timestamp),
-                if (isUser) ..._deliveryMark(theme),
-              ],
+          if (showTimestamp || (isUser && message.uuid == null))
+            Padding(
+              padding: const EdgeInsets.only(left: 12, right: 12, bottom: 2),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (showTimestamp)
+                    MessageTimestamp(timestamp: message.timestamp),
+                  if (isUser) ..._deliveryMark(theme),
+                ],
+              ),
             ),
-          ),
           if (isUploading)
             _buildUploadIndicator(context, theme, isUser, uploadProgress),
         ],
@@ -171,8 +179,10 @@ class MessageBubble extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: context.palette.border, width: 1),
       ),
-      codeblockPadding: const EdgeInsets.all(12),
+      codeblockPadding: const EdgeInsets.all(8),
       codeblockAlign: WrapAlignment.start,
+      blockSpacing: 4,
+      listIndent: 18,
       blockquoteDecoration: BoxDecoration(
         border: Border(
           left: BorderSide(color: theme.colorScheme.primary, width: 3),
@@ -211,11 +221,13 @@ class MessageBubble extends StatelessWidget {
           child: Opacity(
             opacity: isPending ? 0.5 : 1.0,
             child: Container(
+              // Agent text gets nearly the full width; a user bubble keeps
+              // a gutter so the two sides still read apart.
               margin: EdgeInsets.only(
-                left: isUser ? 64 : 8,
-                right: isUser ? 8 : 64,
-                top: 4,
-                bottom: 4,
+                left: isUser ? 48 : 8,
+                right: isUser ? 8 : 16,
+                top: 3,
+                bottom: 3,
               ),
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               decoration: BoxDecoration(
@@ -340,16 +352,18 @@ class MessageBubble extends StatelessWidget {
               ),
             ),
           ),
+        // Both badges sit on the bubble's outer corner, 8 px in from the
+        // bubble's margin.
         if (hasActions)
           Positioned(
             top: -2,
-            left: 56,
+            left: 40,
             child: _RewindButton(onTap: () => _showRewindSheet(context)),
           ),
         if (hasMessageActions)
           Positioned(
             top: -2,
-            right: 56,
+            right: 8,
             child: _MessageActionsButton(
               onTap: () => _showMessageActions(context),
             ),
@@ -414,7 +428,6 @@ class MessageBubble extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
       constraints: adaptiveActionSheetConstraints,
       builder: (sheetContext) => AdaptiveSheetBody(
         children: [
@@ -497,7 +510,6 @@ class MessageBubble extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
       constraints: adaptiveActionSheetConstraints,
       builder: (sheetContext) => AdaptiveSheetBody(
         title: 'Why are you reporting this response?',
@@ -594,7 +606,6 @@ class MessageBubble extends StatelessWidget {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      showDragHandle: true,
       constraints: adaptiveActionSheetConstraints,
       builder: (ctx) => AdaptiveSheetBody(
         title: 'Rewind options',

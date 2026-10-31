@@ -40,6 +40,7 @@ enum _SessionMenuAction {
   project,
   notifications,
   rename,
+  select,
   makePermanent,
   fork,
   teleport,
@@ -48,6 +49,9 @@ enum _SessionMenuAction {
   archive,
   delete,
 }
+
+/// The session list's overflow menu, off the AppBar.
+enum _SessionsOverflow { select, archived, transfers }
 
 /// "None" or "2 folders", for an extra folders menu entry.
 String _folderCount(int count) => switch (count) {
@@ -1656,79 +1660,6 @@ class _SessionsTabState extends State<SessionsTab> {
 
   /// View menu, Filters button with a reset X, and on phones the search
   /// toggle. Fits one row on a narrow phone without scrolling.
-  Widget _filterRow(BuildContext context, ChatProvider provider) {
-    final colors = Theme.of(context).colorScheme;
-    final summary = _filterSummary(provider);
-    const compact = VisualDensity.compact;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 2, 4, 2),
-      child: Row(
-        children: [
-          _viewMenu(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(switch (_view) {
-                    SessionListView.sessions => Icons.view_list,
-                    SessionListView.projects => Icons.folder_special_outlined,
-                    SessionListView.folders => Icons.folder_open,
-                  }, size: 18),
-                  const SizedBox(width: 6),
-                  Text(_view.label),
-                  const Icon(Icons.arrow_drop_down, size: 18),
-                ],
-              ),
-            ),
-          ),
-          Flexible(
-            child: TextButton.icon(
-              key: const ValueKey('session-filters'),
-              onPressed: () => _showFilters(context, provider),
-              style: TextButton.styleFrom(
-                visualDensity: compact,
-                foregroundColor: summary == null
-                    ? colors.onSurface
-                    : colors.primary,
-              ),
-              icon: const Icon(Icons.filter_list, size: 18),
-              label: Text(
-                summary ?? 'Filters',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
-          if (summary != null)
-            IconButton(
-              key: const ValueKey('clear-session-filters'),
-              tooltip: 'Clear filters',
-              visualDensity: compact,
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: _clearFilters,
-            ),
-          const Spacer(),
-          if (!widget.sidebar)
-            IconButton(
-              icon: Icon(_searchOpen ? Icons.search_off : Icons.search),
-              tooltip: _searchOpen ? 'Hide search' : 'Search sessions',
-              onPressed: () {
-                setState(() {
-                  _searchOpen = !_searchOpen;
-                  if (!_searchOpen) {
-                    _searchQuery = '';
-                    _searchController.clear();
-                    _resetGlobalSearch();
-                  }
-                });
-              },
-            ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildFilterChipBar(BuildContext context, ChatProvider provider) {
     final theme = Theme.of(context);
     return Material(
@@ -1736,22 +1667,26 @@ class _SessionsTabState extends State<SessionsTab> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _filterRow(context, provider),
           if (_searchOpen || widget.sidebar)
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 6),
               child: TextField(
                 controller: _searchController,
                 autofocus: !widget.sidebar,
+                style: const TextStyle(fontSize: 13),
                 decoration: InputDecoration(
                   hintText: widget.sidebar
                       ? 'Search sessions'
                       : 'Search every computer and session...',
-                  prefixIcon: const Icon(Icons.search),
+                  prefixIcon: const Icon(Icons.search, size: 18),
+                  prefixIconConstraints: const BoxConstraints(
+                    minWidth: 32,
+                    minHeight: 32,
+                  ),
                   suffixIcon: _searchQuery.isEmpty
                       ? null
                       : IconButton(
-                          icon: const Icon(Icons.close),
+                          icon: const Icon(Icons.close, size: 18),
                           onPressed: () {
                             setState(() {
                               _searchQuery = '';
@@ -1761,8 +1696,12 @@ class _SessionsTabState extends State<SessionsTab> {
                           },
                         ),
                   isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 8,
+                  ),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
                 onChanged: _handleSearchChanged,
@@ -2181,13 +2120,13 @@ class _SessionsTabState extends State<SessionsTab> {
       onLongPress: onMenu,
       onSecondaryTapUp: onMenu == null ? null : (_) => onMenu(),
       child: SizedBox(
-        height: 44,
+        height: 36,
         child: Row(
           children: [
             SizedBox(width: _groupInset(depth)),
             Icon(
               open ? Icons.expand_more : Icons.chevron_right,
-              size: 24,
+              size: 18,
               color: theme.colorScheme.onSurface,
             ),
             const SizedBox(width: 4),
@@ -2474,7 +2413,7 @@ class _SessionsTabState extends State<SessionsTab> {
   ) {
     final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
       child: Row(
         children: [
           Text(
@@ -2533,10 +2472,12 @@ class _SessionsTabState extends State<SessionsTab> {
         }
 
         _selectedServerFilterIds.retainAll(configs.map((config) => config.id));
+        final filterSummary = _filterSummary(provider);
         return Scaffold(
           appBar: AppBar(
             automaticallyImplyLeading: false,
-            toolbarHeight: widget.sidebar ? 56 : null,
+            toolbarHeight: 56,
+            titleSpacing: _selectionMode ? null : 8,
             titleTextStyle: widget.sidebar
                 ? Theme.of(context).textTheme.titleMedium
                 : null,
@@ -2547,11 +2488,49 @@ class _SessionsTabState extends State<SessionsTab> {
                     onPressed: _exitSelection,
                   )
                 : null,
-            title: Text(
-              _selectionMode
-                  ? '${_selectedSessions(provider).length} selected'
-                  : 'Sessions',
-            ),
+            // The view menu is the title: "Sessions", "Projects" or
+            // "Folders" with a dropdown arrow, and the active filters under
+            // it. The old filter row is gone.
+            title: _selectionMode
+                ? Text('${_selectedSessions(provider).length} selected')
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _viewMenu(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(switch (_view) {
+                              SessionListView.sessions => Icons.view_list,
+                              SessionListView.projects =>
+                                Icons.folder_special_outlined,
+                              SessionListView.folders => Icons.folder_open,
+                            }, size: 18),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                _view.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const Icon(Icons.arrow_drop_down, size: 20),
+                          ],
+                        ),
+                      ),
+                      if (filterSummary != null)
+                        Text(
+                          filterSummary,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                    ],
+                  ),
             actions: _selectionMode
                 ? [
                     IconButton(
@@ -2589,30 +2568,88 @@ class _SessionsTabState extends State<SessionsTab> {
                     ),
                   ]
                 : [
-                    IconButton(
-                      icon: const Icon(Icons.checklist),
-                      tooltip: 'Select sessions',
-                      onPressed: () => setState(() {
-                        _selectionMode = true;
-                        _searchOpen = false;
-                        _searchQuery = '';
-                        _searchController.clear();
-                        _resetGlobalSearch();
-                      }),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.inventory_2_outlined),
-                      tooltip: 'Archived Sessions',
-                      onPressed: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const ArchiveScreen(),
-                        ),
+                    if (widget.sidebar)
+                      IconButton(
+                        icon: const Icon(Icons.add),
+                        tooltip: 'New session',
+                        onPressed: () =>
+                            _showSessionActionMenu(context, provider),
                       ),
-                    ),
                     IconButton(
-                      icon: const Icon(Icons.swap_horiz),
-                      tooltip: 'Transfers',
-                      onPressed: () => _showTeleportHistory(context),
+                      key: const ValueKey('session-filters'),
+                      icon: const Icon(Icons.filter_list),
+                      color: filterSummary == null
+                          ? null
+                          : Theme.of(context).colorScheme.primary,
+                      tooltip: 'Filters',
+                      onPressed: () => _showFilters(context, provider),
+                    ),
+                    if (filterSummary != null)
+                      IconButton(
+                        key: const ValueKey('clear-session-filters'),
+                        tooltip: 'Clear filters',
+                        icon: const Icon(Icons.close),
+                        onPressed: _clearFilters,
+                      ),
+                    if (!widget.sidebar)
+                      IconButton(
+                        icon: Icon(
+                          _searchOpen ? Icons.search_off : Icons.search,
+                        ),
+                        tooltip: _searchOpen
+                            ? 'Hide search'
+                            : 'Search sessions',
+                        onPressed: () {
+                          setState(() {
+                            _searchOpen = !_searchOpen;
+                            if (!_searchOpen) {
+                              _searchQuery = '';
+                              _searchController.clear();
+                              _resetGlobalSearch();
+                            }
+                          });
+                        },
+                      ),
+                    PopupMenuButton<_SessionsOverflow>(
+                      tooltip: 'More',
+                      icon: const Icon(Icons.more_vert),
+                      onSelected: (choice) {
+                        switch (choice) {
+                          case _SessionsOverflow.select:
+                            setState(() {
+                              _selectionMode = true;
+                              _searchOpen = false;
+                              _searchQuery = '';
+                              _searchController.clear();
+                              _resetGlobalSearch();
+                            });
+                          case _SessionsOverflow.archived:
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const ArchiveScreen(),
+                              ),
+                            );
+                          case _SessionsOverflow.transfers:
+                            _showTeleportHistory(context);
+                        }
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(
+                          value: _SessionsOverflow.select,
+                          height: 36,
+                          child: Text('Select sessions'),
+                        ),
+                        PopupMenuItem(
+                          value: _SessionsOverflow.archived,
+                          height: 36,
+                          child: Text('Archived sessions'),
+                        ),
+                        PopupMenuItem(
+                          value: _SessionsOverflow.transfers,
+                          height: 36,
+                          child: Text('Transfers'),
+                        ),
+                      ],
                     ),
                     _buildConnectionIndicator(provider),
                   ],
@@ -2621,19 +2658,6 @@ class _SessionsTabState extends State<SessionsTab> {
             child: Column(
               children: [
                 _buildUpdateBanner(context),
-                if (widget.sidebar && !_selectionMode)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-                    child: SizedBox(
-                      width: double.infinity,
-                      child: FilledButton.icon(
-                        onPressed: () =>
-                            _showSessionActionMenu(context, provider),
-                        icon: const Icon(Icons.add, size: 18),
-                        label: const Text('New session'),
-                      ),
-                    ),
-                  ),
                 _buildFilterChipBar(context, provider),
                 if (_searchQuery.trim().isNotEmpty)
                   Expanded(child: _buildGlobalSearchResults(context, provider))
@@ -2646,12 +2670,13 @@ class _SessionsTabState extends State<SessionsTab> {
               ],
             ),
           ),
+          // Small, so it covers less of the last row.
           floatingActionButton: _selectionMode || widget.sidebar
               ? null
-              : FloatingActionButton.extended(
+              : FloatingActionButton.small(
+                  tooltip: 'New session',
                   onPressed: () => _showSessionActionMenu(context, provider),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Session'),
+                  child: const Icon(Icons.add),
                 ),
         );
       },
@@ -2841,7 +2866,6 @@ class _SessionsTabState extends State<SessionsTab> {
       context: context,
       anchor: anchor,
       title: session.title,
-      subtitle: session.backend == 'codex' ? 'Codex session' : 'Claude session',
       sections: [
         AdaptiveSheetSection([
           AdaptiveSheetAction(
@@ -2874,6 +2898,12 @@ class _SessionsTabState extends State<SessionsTab> {
             label: 'Rename',
             icon: Icons.edit_outlined,
           ),
+          if (!_selectionMode)
+            const AdaptiveSheetAction(
+              value: _SessionMenuAction.select,
+              label: 'Select',
+              icon: Icons.checklist,
+            ),
           if (session.isFleeting)
             AdaptiveSheetAction(
               value: _SessionMenuAction.makePermanent,
@@ -2944,6 +2974,8 @@ class _SessionsTabState extends State<SessionsTab> {
         provider.toggleSessionNotifications(session.id);
       case _SessionMenuAction.rename:
         _showRenameDialog(context, session);
+      case _SessionMenuAction.select:
+        _enterSelection(session);
       case _SessionMenuAction.makePermanent:
         provider.makeSessionPermanent(session.id, serverId: session.serverId);
       case _SessionMenuAction.fork:
@@ -4244,9 +4276,10 @@ class _SessionsTabState extends State<SessionsTab> {
                   serverId: session.serverId,
                 )
               : null,
+          // Long-press opens the session menu, which has Select in it.
           onLongPress: isAvailable
               ? _openingSessionKey == null
-                    ? () => _enterSelection(session)
+                    ? () => _showSessionContextMenu(context, session)
                     : null
               : () => _showOfflineSessionSnack(context, session),
           child: Opacity(
@@ -4278,17 +4311,12 @@ class _SessionsTabState extends State<SessionsTab> {
                 margin: widget.sidebar
                     ? const EdgeInsets.symmetric(horizontal: 6, vertical: 2)
                     : null,
-                padding: EdgeInsets.fromLTRB(
-                  compact ? 10 : 16,
-                  compact ? 8 : 12,
-                  compact ? 8 : 16,
-                  compact ? 8 : 12,
-                ),
+                padding: EdgeInsets.fromLTRB(compact ? 10 : 12, 8, 8, 8),
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Padding(
-                      padding: EdgeInsets.only(top: 2, right: compact ? 8 : 12),
+                      padding: const EdgeInsets.only(top: 2, right: 8),
                       child: _selectionMode
                           ? Checkbox(
                               value: selected,
@@ -4330,7 +4358,7 @@ class _SessionsTabState extends State<SessionsTab> {
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontWeight: FontWeight.w700,
-                              fontSize: compact ? 13.5 : 15.5,
+                              fontSize: compact ? 13.5 : 14,
                               color: Color.lerp(
                                 theme.colorScheme.onSurface,
                                 theme.colorScheme.primary,
@@ -4339,7 +4367,7 @@ class _SessionsTabState extends State<SessionsTab> {
                             ),
                           ),
                           if (showSecondaryText) ...[
-                            const SizedBox(height: 3),
+                            const SizedBox(height: 2),
                             Text(
                               secondaryText,
                               maxLines: 1,
@@ -4350,188 +4378,49 @@ class _SessionsTabState extends State<SessionsTab> {
                               ),
                             ),
                           ],
-                          // Line 3: status/time, path, and compact badges.
-                          const SizedBox(height: 3),
-                          if (widget.sidebar)
-                            Wrap(
-                              spacing: 6,
-                              runSpacing: 3,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                Text(
-                                  statusText,
+                          // Line 3: turns, status or time, folder, then
+                          // computer and flags as plain text.
+                          const SizedBox(height: 2),
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  metaText,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color: theme.palette.text,
+                                    color: showBusy
+                                        ? theme.colorScheme.primary
+                                        : theme.palette.text,
                                   ),
                                 ),
-                                if (session.isFleeting)
-                                  FleetingTimeLeft(session: session),
-                                if (provider.serverConfigs.length > 1)
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(
-                                      maxWidth: 130,
-                                    ),
-                                    child: Text(
-                                      session.serverName,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        fontSize: 11,
-                                        color: theme.palette.text,
-                                      ),
-                                    ),
-                                  ),
-                                if (!isAvailable)
-                                  Text(
-                                    _serverStatusLabel(status),
-                                    style: const TextStyle(fontSize: 11),
-                                  ),
-                                if (delegated)
-                                  const Text(
-                                    'AGENT',
-                                    style: TextStyle(fontSize: 10),
-                                  ),
-                                if (session.scheduledTaskId != null)
-                                  const Text(
-                                    'SCHEDULED',
-                                    style: TextStyle(fontSize: 10),
-                                  ),
+                              ),
+                              if (session.isFleeting) ...[
+                                const SizedBox(width: 6),
+                                FleetingTimeLeft(session: session),
                               ],
-                            )
-                          else
-                            Row(
-                              children: [
-                                Flexible(
-                                  child: Text(
-                                    metaText,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      color: showBusy
-                                          ? theme.colorScheme.primary
-                                          : theme.palette.text,
-                                    ),
+                              if (session.serverName.isNotEmpty &&
+                                  provider.serverConfigs.length > 1) ...[
+                                const SizedBox(width: 6),
+                                Text(
+                                  session.serverName,
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w600,
+                                    color: session.serverColor != null
+                                        ? Color(session.serverColor!)
+                                        : theme.colorScheme.primary,
                                   ),
                                 ),
-                                if (session.isFleeting) ...[
-                                  const SizedBox(width: 6),
-                                  FleetingTimeLeft(session: session),
-                                ],
-                                if (session.serverName.isNotEmpty &&
-                                    provider.serverConfigs.length > 1) ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 5,
-                                      vertical: 1,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: session.serverColor != null
-                                          ? Color(
-                                              session.serverColor!,
-                                            ).withAlpha(showBusy ? 200 : 140)
-                                          : theme.colorScheme.primaryContainer
-                                                .withAlpha(120),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      session.serverName,
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: session.serverColor != null
-                                            ? FontWeight.w500
-                                            : null,
-                                        color: session.serverColor != null
-                                            ? Colors.white
-                                            : theme
-                                                  .colorScheme
-                                                  .onPrimaryContainer,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                                if (!isAvailable) ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 5,
-                                      vertical: 1,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: theme
-                                          .colorScheme
-                                          .surfaceContainerHighest,
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      _serverStatusLabel(status).toUpperCase(),
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: 0.5,
-                                        color: theme.palette.text,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                                if (delegated) ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 5,
-                                      vertical: 1,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: theme
-                                          .colorScheme
-                                          .secondaryContainer
-                                          .withAlpha(170),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      'AGENT',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: 0.5,
-                                        color: theme
-                                            .colorScheme
-                                            .onSecondaryContainer,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                                if (session.scheduledTaskId != null) ...[
-                                  const SizedBox(width: 6),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 5,
-                                      vertical: 1,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: theme
-                                          .colorScheme
-                                          .secondaryContainer
-                                          .withAlpha(170),
-                                      borderRadius: BorderRadius.circular(4),
-                                    ),
-                                    child: Text(
-                                      'SCHEDULED',
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w600,
-                                        letterSpacing: 0.5,
-                                        color: theme
-                                            .colorScheme
-                                            .onSecondaryContainer,
-                                      ),
-                                    ),
-                                  ),
-                                ],
                               ],
-                            ),
+                              if (!isAvailable)
+                                _metaFlag(context, _serverStatusLabel(status)),
+                              if (delegated) _metaFlag(context, 'Agent'),
+                              if (session.scheduledTaskId != null)
+                                _metaFlag(context, 'Scheduled'),
+                            ],
+                          ),
                           if (session.backend == 'codex' &&
                               session.freshThreadPending) ...[
                             const SizedBox(height: 7),
@@ -4585,45 +4474,6 @@ class _SessionsTabState extends State<SessionsTab> {
                         ],
                       ),
                     ),
-                    if (!_selectionMode)
-                      Builder(
-                        builder: (buttonContext) => IconButton(
-                          tooltip: 'Session actions',
-                          icon: Icon(
-                            Icons.more_vert,
-                            size: 18,
-                            color: theme.colorScheme.onSurface.withAlpha(128),
-                          ),
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(
-                            minWidth: 32,
-                            minHeight: 32,
-                          ),
-                          onPressed: isAvailable
-                              ? _openingSessionKey == null
-                                    ? () {
-                                        final box =
-                                            buttonContext.findRenderObject()!
-                                                as RenderBox;
-                                        _showSessionContextMenu(
-                                          context,
-                                          session,
-                                          anchor: Platform.isWindows
-                                              ? box.localToGlobal(
-                                                      Offset(
-                                                        0,
-                                                        box.size.height,
-                                                      ),
-                                                    ) &
-                                                    Size(box.size.width, 0)
-                                              : null,
-                                        );
-                                      }
-                                    : null
-                              : () =>
-                                    _showOfflineSessionSnack(context, session),
-                        ),
-                      ),
                   ],
                 ),
               ),
@@ -4633,6 +4483,20 @@ class _SessionsTabState extends State<SessionsTab> {
       ),
     );
   }
+
+  /// A small upper-case flag in the meta line, in place of a filled pill.
+  Widget _metaFlag(BuildContext context, String label) => Padding(
+    padding: const EdgeInsets.only(left: 6),
+    child: Text(
+      label.toUpperCase(),
+      style: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.5,
+        color: Theme.of(context).colorScheme.onSurfaceVariant,
+      ),
+    ),
+  );
 
   void _showOfflineSessionSnack(BuildContext context, Session session) {
     final server = session.serverName.isNotEmpty
@@ -4674,7 +4538,6 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    showDragHandle: true,
     constraints: adaptiveActionSheetConstraints,
     builder: (ctx) {
       return StatefulBuilder(
@@ -4697,7 +4560,7 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
             children: [
               if (showServers) ...[
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
                   child: Text(
                     'Computer',
                     style: Theme.of(context).textTheme.labelSmall,
@@ -4753,7 +4616,7 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
               ],
               if (showBackends) ...[
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 2),
                   child: Text(
                     'Backend',
                     style: Theme.of(context).textTheme.labelSmall,
@@ -4773,15 +4636,6 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
                         RadioListTile<String>(
                           value: backend,
                           title: Text(_backendLabel(backend)),
-                          subtitle: Text(
-                            _backendSubtitle(backend),
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurface.withAlpha(128),
-                            ),
-                          ),
                           dense: true,
                         ),
                     ],
@@ -4790,7 +4644,7 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
                 const Divider(height: 1),
               ],
               Padding(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
@@ -4820,6 +4674,3 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
 }
 
 String _backendLabel(String b) => b == 'codex' ? 'Codex (ChatGPT)' : 'Claude';
-String _backendSubtitle(String b) => b == 'codex'
-    ? 'OpenAI Codex CLI — billed via your ChatGPT subscription'
-    : 'Anthropic Claude Agent SDK — billed via your Claude subscription';

@@ -134,7 +134,7 @@ class _ThinkingCardState extends State<ThinkingCard> {
                   ),
                   child: ScrollPassthrough(
                     child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(8),
                       child: SelectableText(
                         text,
                         style: GoogleFonts.jetBrainsMono(

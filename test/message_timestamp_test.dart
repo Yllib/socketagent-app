@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('timestamps use local dates and the device clock format', (
+  testWidgets('timestamps show the local time in the device clock format', (
     tester,
   ) async {
     final timestamp = DateTime.utc(2026, 9, 22, 17, 42);
@@ -22,10 +22,15 @@ void main() {
       final context = tester.element(find.byType(MessageTimestamp));
       final localization = MaterialLocalizations.of(context);
       final local = timestamp.toLocal();
-      final expected =
-          '${localization.formatShortDate(local)} · '
-          '${localization.formatTimeOfDay(TimeOfDay.fromDateTime(local), alwaysUse24HourFormat: use24Hours)}';
+      final expected = localization.formatTimeOfDay(
+        TimeOfDay.fromDateTime(local),
+        alwaysUse24HourFormat: use24Hours,
+      );
       expect(find.text(expected), findsOneWidget);
+      expect(
+        find.textContaining(localization.formatShortDate(local)),
+        findsNothing,
+      );
     }
   });
 

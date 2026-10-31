@@ -17,7 +17,6 @@ import 'package:desktop_drop/desktop_drop.dart';
 import '../services/desktop_workspace_controller.dart';
 import '../widgets/desktop_split_view.dart';
 import '../widgets/adaptive_action_sheet.dart';
-import '../widgets/adaptive_control_bar.dart';
 import '../widgets/claude_account_usage.dart';
 import '../widgets/context_window_breakdown.dart';
 import '../widgets/codex_account_usage.dart';
@@ -1294,6 +1293,11 @@ class _ChatScreenState extends State<_ChatScreen> {
         final baseTheme = Theme.of(context);
         final chatSurfaceColor = baseTheme.colorScheme.surface;
         final notificationFocus = provider.notificationTranscriptFocus;
+        final hasSession =
+            provider.activeSessionId != null || provider.isPendingNewSession;
+        final headerMuted =
+            (sessionTheme?.textColor ?? baseTheme.colorScheme.onSurface)
+                .withAlpha(178);
         return Theme(
           data: sessionTheme != null
               ? baseTheme.copyWith(
@@ -1333,6 +1337,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    // Line 1: title, context usage, connection.
                     Row(
                       children: [
                         Expanded(
@@ -1347,45 +1352,35 @@ class _ChatScreenState extends State<_ChatScreen> {
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                    const SizedBox(height: 1),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  _activeComputerName(provider),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color:
-                                        (sessionTheme?.textColor ??
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface)
-                                            .withAlpha(178),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
                         const SizedBox(width: 8),
                         if (provider.lastUsage != null)
                           _buildUsageIndicator(provider.lastUsage!),
                         _buildConnectionIndicator(provider.connectionStatus),
                       ],
                     ),
-                    const SizedBox(height: 1),
+                    // Line 2: computer (folder in its tooltip) and
+                    // permission mode.
                     Row(
                       children: [
-                        if (provider.activeSessionId != null ||
-                            provider.isPendingNewSession)
+                        Flexible(
+                          child: Tooltip(
+                            message: provider.activeSessionCwd ?? '',
+                            child: Text(
+                              _activeComputerName(provider),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: headerMuted,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (hasSession) ...[
+                          Text(
+                            ' · ',
+                            style: TextStyle(fontSize: 11, color: headerMuted),
+                          ),
                           GestureDetector(
                             onTap: () => _showPermissionModePicker(provider),
                             child: Row(
@@ -1394,12 +1389,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                                 Icon(
                                   _permissionModeIcon(displayPermMode),
                                   size: 11,
-                                  color:
-                                      (sessionTheme?.textColor ??
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface)
-                                          .withAlpha(178),
+                                  color: headerMuted,
                                 ),
                                 const SizedBox(width: 4),
                                 Text(
@@ -1409,51 +1399,23 @@ class _ChatScreenState extends State<_ChatScreen> {
                                   ),
                                   style: TextStyle(
                                     fontSize: 11,
-                                    color:
-                                        (sessionTheme?.textColor ??
-                                                Theme.of(
-                                                  context,
-                                                ).colorScheme.onSurface)
-                                            .withAlpha(178),
+                                    color: headerMuted,
                                   ),
                                 ),
                                 Icon(
                                   Icons.arrow_drop_down,
                                   size: 14,
-                                  color:
-                                      (sessionTheme?.textColor ??
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface)
-                                          .withAlpha(128),
+                                  color: headerMuted.withAlpha(128),
                                 ),
                               ],
                             ),
                           ),
-                        if (provider.activeSessionCwd != null)
-                          Expanded(
-                            child: Tooltip(
-                              message: provider.activeSessionCwd!,
-                              child: Text(
-                                _compactCwd(provider.activeSessionCwd!),
-                                textAlign: TextAlign.right,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  fontFamily: 'monospace',
-                                  color:
-                                      (sessionTheme?.textColor ??
-                                              Theme.of(
-                                                context,
-                                              ).colorScheme.onSurface)
-                                          .withAlpha(178),
-                                ),
-                              ),
-                            ),
-                          ),
+                        ],
                       ],
                     ),
+                    // Line 3: model, effort, thinking, raw, auto-scroll,
+                    // more. Plain text, no chips.
+                    if (hasSession) _buildHeaderControls(provider),
                   ],
                 ),
               ),
@@ -1473,9 +1435,6 @@ class _ChatScreenState extends State<_ChatScreen> {
                           status: provider.conversationRewindStatus!,
                           onDismiss: provider.dismissConversationRewindNotice,
                         ),
-                      if (provider.activeSessionId != null ||
-                          provider.isPendingNewSession)
-                        _buildControlChips(provider),
                       LinkedScheduledTasksPanel(
                         tasks: scheduledTasksForSession(
                           provider.scheduledTasks,
@@ -1755,107 +1714,128 @@ class _ChatScreenState extends State<_ChatScreen> {
       ? child
       : SessionBackendWatermark(backend: backend, compact: true, child: child);
 
-  String _compactCwd(String cwd) {
-    const maxLength = 42;
-    if (cwd.length <= maxLength) return cwd;
-    return '…${cwd.substring(cwd.length - maxLength + 1)}';
-  }
-
-  Widget _buildControlChips(ChatProvider provider) {
-    final theme = Theme.of(context);
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        border: Border(
-          bottom: BorderSide(
-            color: theme.colorScheme.outlineVariant.withAlpha(60),
+  /// The header's third line. The model label gets the most room; the rest
+  /// are short. Scaled down as one unit when the bar is narrow or text is
+  /// large, so every control stays on screen.
+  Widget _buildHeaderControls(ChatProvider provider) {
+    final controls = <Widget>[
+      if (provider.supportedModels.isNotEmpty)
+        _buildModelChip(provider)
+      else if (provider.isLoadingNewSessionModels)
+        _buildLoadingModelChip(),
+      _buildEffortChip(provider),
+      if (provider.activeSessionBackend != 'codex')
+        _buildThinkingChip(provider),
+      if (provider.rawMode)
+        Tooltip(
+          message: 'Turn off raw events',
+          child: InkWell(
+            onTap: provider.toggleRawMode,
+            child: _headerControl(
+              'RAW',
+              color: context.palette.shade(Colors.orange, 300),
+            ),
           ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: AdaptiveControlBar(
-          hasModel:
-              provider.supportedModels.isNotEmpty ||
-              provider.isLoadingNewSessionModels,
+      _buildFollowLatestChip(),
+      _buildSessionMoreChip(provider),
+    ];
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: Alignment.centerLeft,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (provider.supportedModels.isNotEmpty)
-              _buildModelChip(provider)
-            else if (provider.isLoadingNewSessionModels)
-              _buildLoadingModelChip(),
-            _buildEffortChip(provider),
-            if (provider.activeSessionBackend != 'codex')
-              _buildThinkingChip(provider),
-            if (provider.rawMode)
-              Tooltip(
-                message: 'Turn off raw events',
-                child: InkWell(
-                  borderRadius: BorderRadius.circular(16),
-                  onTap: provider.toggleRawMode,
-                  child: _buildChipBody(
-                    Icons.code,
-                    'RAW',
-                    iconColor: context.palette.shade(Colors.orange, 300),
-                    labelColor: context.palette.shade(Colors.orange, 300),
-                  ),
-                ),
-              ),
-            _buildFollowLatestChip(),
-            _buildSessionMoreChip(provider),
+            for (final (index, control) in controls.indexed) ...[
+              if (index > 0) _headerDot(),
+              control,
+            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildChipBody(
-    IconData icon,
-    String label, {
-    Color? iconColor,
-    Color? labelColor,
-    bool active = false,
-  }) => AdaptiveControlChip(
-    icon: icon,
-    label: label,
-    iconColor: iconColor,
-    labelColor: labelColor,
-    active: active,
+  Widget _headerDot() => Text(
+    ' · ',
+    style: TextStyle(fontSize: 12, color: _headerControlColor().withAlpha(120)),
   );
 
+  /// The AppBar's foreground, so the controls follow a permission or fast
+  /// mode tint like the rest of the header.
+  Color _headerControlColor() =>
+      Theme.of(context).appBarTheme.foregroundColor ??
+      Theme.of(context).colorScheme.onSurface;
+
+  /// One control on the header's third line: plain text, an optional
+  /// colour, and a dropdown arrow when tapping opens a menu.
+  Widget _headerControl(
+    String label, {
+    Color? color,
+    bool dropdown = false,
+    bool active = false,
+    Widget? leading,
+    double maxWidth = double.infinity,
+  }) {
+    final base = _headerControlColor();
+    final textColor =
+        color ??
+        (active ? Theme.of(context).colorScheme.primary : base.withAlpha(200));
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (leading != null) ...[leading, const SizedBox(width: 4)],
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+                  color: textColor,
+                ),
+              ),
+            ),
+            if (dropdown)
+              Icon(
+                Icons.arrow_drop_down,
+                size: 16,
+                color: textColor.withAlpha(160),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildFollowLatestChip() {
-    final theme = Theme.of(context);
     final following = _followLatest;
     return Tooltip(
       message: following
           ? 'Auto-scroll is on. Tap to turn it off.'
           : 'Auto-scroll is off. Tap to jump to the bottom and turn it on.',
       child: InkWell(
-        borderRadius: BorderRadius.circular(16),
         onTap: () => setState(() => _followLatest = !following),
-        child: _buildChipBody(
-          Icons.vertical_align_bottom,
-          'AUTO',
-          active: following,
-          iconColor: following
-              ? theme.colorScheme.onPrimaryContainer
-              : theme.colorScheme.onSurfaceVariant,
-          labelColor: following
-              ? theme.colorScheme.onPrimaryContainer
-              : theme.colorScheme.onSurfaceVariant,
-        ),
+        child: _headerControl('AUTO', active: following),
       ),
     );
   }
 
-  Widget _buildLoadingModelChip() => const Tooltip(
+  Widget _buildLoadingModelChip() => Tooltip(
     message: 'Loading models',
-    child: AdaptiveControlChip(
-      icon: Icons.hourglass_empty,
-      label: 'Loading models',
-      leading: SizedBox(
-        width: 14,
-        height: 14,
+    child: _headerControl(
+      'Loading models',
+      leading: const SizedBox(
+        width: 12,
+        height: 12,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
     ),
@@ -1867,7 +1847,6 @@ class _ChatScreenState extends State<_ChatScreen> {
       builder: (buttonContext) => Tooltip(
         message: 'Session actions',
         child: InkWell(
-          borderRadius: BorderRadius.circular(16),
           onTapDown: (details) => pointer = details.globalPosition,
           onTapCancel: () => pointer = null,
           onTap: () {
@@ -1882,7 +1861,14 @@ class _ChatScreenState extends State<_ChatScreen> {
               ),
             );
           },
-          child: _buildChipBody(Icons.more_horiz, 'More'),
+          child: _headerControl(
+            'More',
+            leading: Icon(
+              Icons.more_horiz,
+              size: 14,
+              color: _headerControlColor().withAlpha(200),
+            ),
+          ),
         ),
       ),
     );
@@ -2426,7 +2412,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       tooltip: 'Model: $name',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
-      child: _buildChipBody(Icons.smart_toy, name),
+      child: _headerControl(name, dropdown: true, maxWidth: 200),
       itemBuilder: (context) => provider.supportedModels.map((model) {
         final value = (model['value'] ?? model['id'] ?? '').toString();
         final modelName = _modelDisplayNameForEntry(model, value);
@@ -2434,6 +2420,7 @@ class _ChatScreenState extends State<_ChatScreen> {
         final isSelected = value == currentModel;
         return PopupMenuItem(
           value: value,
+          height: 36,
           child: Row(
             children: [
               if (isSelected)
@@ -2505,31 +2492,12 @@ class _ChatScreenState extends State<_ChatScreen> {
 
   Widget _buildEffortChip(ChatProvider provider) {
     final isCodex = provider.activeSessionBackend == 'codex';
-    IconData icon;
-    Color color;
-    switch (provider.effort) {
-      case 'minimal':
-        icon = Icons.remove_circle_outline;
-        color = Theme.of(context).colorScheme.onSurfaceVariant;
-        break;
-      case 'low':
-        icon = Icons.bolt;
-        color = context.palette.shade(Colors.blue, 300);
-        break;
-      case 'medium':
-        icon = Icons.speed;
-        color = Theme.of(context).colorScheme.onSurfaceVariant;
-        break;
-      case 'max':
-      case 'xhigh':
-      case 'ultra':
-        icon = Icons.whatshot;
-        color = context.palette.shade(Colors.orange, 300);
-        break;
-      default: // high
-        icon = Icons.auto_awesome;
-        color = Theme.of(context).colorScheme.primary;
-    }
+    final color = switch (provider.effort) {
+      'minimal' || 'medium' => Theme.of(context).colorScheme.onSurfaceVariant,
+      'low' => context.palette.shade(Colors.blue, 300),
+      'max' || 'xhigh' || 'ultra' => context.palette.shade(Colors.orange, 300),
+      _ => Theme.of(context).colorScheme.primary, // high
+    };
     final label = _effortLabel(provider.effort);
     final options = provider.selectedModelEffortLevels;
 
@@ -2538,11 +2506,12 @@ class _ChatScreenState extends State<_ChatScreen> {
       tooltip: isCodex ? 'Reasoning effort: $label' : 'Effort: $label',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
-      child: _buildChipBody(icon, label, iconColor: color),
+      child: _headerControl(label, color: color, dropdown: true),
       itemBuilder: (context) => [
         for (final e in options)
           PopupMenuItem(
             value: e,
+            height: 36,
             child: Row(
               children: [
                 if (e == provider.effort)
@@ -2711,6 +2680,7 @@ class _ChatScreenState extends State<_ChatScreen> {
         for (final entry in modes)
           PopupMenuItem(
             value: entry.$1,
+            height: 36,
             child: Row(
               children: [
                 if (entry.$1 == displayMode)
@@ -2753,23 +2723,19 @@ class _ChatScreenState extends State<_ChatScreen> {
 
   Widget _buildThinkingChip(ChatProvider provider) {
     final thinkingType = provider.thinking['type'] as String? ?? 'adaptive';
-    IconData icon;
     Color color;
     String label;
     switch (thinkingType) {
       case 'enabled':
-        icon = Icons.psychology_alt;
         color = context.palette.shade(Colors.purple, 300);
         final budget = provider.thinking['budgetTokens'] as int?;
         label = budget != null ? 'Think ${(budget / 1000).round()}k' : 'Think';
         break;
       case 'disabled':
-        icon = Icons.psychology_outlined;
         color = Theme.of(context).colorScheme.onSurfaceVariant;
         label = 'No Think';
         break;
       default: // adaptive
-        icon = Icons.psychology;
         color = Theme.of(context).colorScheme.primary;
         label = 'Adaptive';
     }
@@ -2779,7 +2745,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       tooltip: 'Thinking: $label',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
-      child: _buildChipBody(icon, label, iconColor: color),
+      child: _headerControl(label, color: color, dropdown: true),
       itemBuilder: (context) {
         final options = <MapEntry<String, Map<String, dynamic>>>[
           MapEntry('Adaptive', {'type': 'adaptive'}),
@@ -2801,6 +2767,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                       provider.thinking['budgetTokens']);
           return PopupMenuItem(
             value: opt.value,
+            height: 36,
             child: Row(
               children: [
                 if (isSelected)
@@ -4008,10 +3975,10 @@ class _ChatScreenState extends State<_ChatScreen> {
       padding: EdgeInsets.only(
         left: 8,
         right: 8,
-        top: 8,
+        top: 4,
         bottom: MediaQuery.of(context).viewInsets.bottom > 0
-            ? 8
-            : MediaQuery.of(context).padding.bottom + 8,
+            ? 4
+            : MediaQuery.of(context).padding.bottom + 4,
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -4065,7 +4032,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                   MediaQuery.of(context).viewInsets.bottom > 0)
                 // Inline PTT button when keyboard is showing
                 SizedBox(
-                  height: 48,
+                  height: 44,
                   child: Center(
                     child: Listener(
                       onPointerDown: (_) {
@@ -4100,7 +4067,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 )
               else if (!provider.pushToTalk)
                 SizedBox(
-                  height: 48,
+                  height: 44,
                   child: Center(
                     child: VoiceButton(
                       isListening: provider.isListening,
@@ -4114,7 +4081,7 @@ class _ChatScreenState extends State<_ChatScreen> {
               // gets its own button next to the regular speech-to-text mic.
               if (provider.activeSessionBackend == 'codex')
                 SizedBox(
-                  height: 48,
+                  height: 44,
                   child: Center(
                     child: IconButton(
                       icon: Icon(
@@ -4132,36 +4099,6 @@ class _ChatScreenState extends State<_ChatScreen> {
                     ),
                   ),
                 ),
-              SizedBox(
-                height: 48,
-                child: Center(
-                  child: Builder(
-                    builder: (buttonContext) => IconButton(
-                      tooltip: 'Attach',
-                      icon: Icon(
-                        Icons.attach_file,
-                        color: theme.colorScheme.onSurface.withAlpha(178),
-                        size: 22,
-                      ),
-                      onPressed: () {
-                        final box =
-                            buttonContext.findRenderObject()! as RenderBox;
-                        _showAttachmentMenu(
-                          provider,
-                          anchor: Platform.isWindows
-                              ? box.localToGlobal(Offset.zero) & box.size
-                              : null,
-                        );
-                      },
-                      padding: const EdgeInsets.all(8),
-                      constraints: const BoxConstraints(
-                        minWidth: 40,
-                        minHeight: 40,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
               Expanded(
                 // Grows to about 40% of the space the keyboard leaves, then
                 // scrolls. Past three lines an expand button opens the
@@ -4186,14 +4123,46 @@ class _ChatScreenState extends State<_ChatScreen> {
                         filled: true,
                         fillColor: theme.colorScheme.surfaceContainerHighest,
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(24),
+                          borderRadius: BorderRadius.circular(22),
                           borderSide: BorderSide.none,
                         ),
                         contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 14,
+                          horizontal: 12,
+                          vertical: 10,
                         ),
                         isDense: true,
+                        // Attach lives inside the pill, so the text gets
+                        // the width a separate button took.
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 40,
+                          minHeight: 40,
+                        ),
+                        prefixIcon: Builder(
+                          builder: (buttonContext) => IconButton(
+                            tooltip: 'Attach',
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(
+                              minWidth: 40,
+                              minHeight: 40,
+                            ),
+                            icon: Icon(
+                              Icons.attach_file,
+                              color: theme.colorScheme.onSurface.withAlpha(178),
+                              size: 20,
+                            ),
+                            onPressed: () {
+                              final box =
+                                  buttonContext.findRenderObject()!
+                                      as RenderBox;
+                              _showAttachmentMenu(
+                                provider,
+                                anchor: Platform.isWindows
+                                    ? box.localToGlobal(Offset.zero) & box.size
+                                    : null,
+                              );
+                            },
+                          ),
+                        ),
                         suffixIcon: long
                             ? IconButton(
                                 icon: const Icon(Icons.open_in_full, size: 20),
@@ -4213,7 +4182,7 @@ class _ChatScreenState extends State<_ChatScreen> {
               if (provider.isProcessing) ...[
                 // Send with priority: tap = next, long-press = popup menu
                 SizedBox(
-                  height: 48,
+                  height: 44,
                   child: Center(
                     child: GestureDetector(
                       onTap: () => _sendMessage(provider, priority: 'next'),
@@ -4238,7 +4207,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                   ),
                 ),
                 SizedBox(
-                  height: 48,
+                  height: 44,
                   child: Center(
                     child: IconButton(
                       icon: Icon(
@@ -4256,7 +4225,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 ),
               ] else
                 SizedBox(
-                  height: 48,
+                  height: 44,
                   child: Center(
                     child: IconButton(
                       icon: Icon(Icons.send, color: theme.colorScheme.primary),

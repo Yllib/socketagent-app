@@ -120,16 +120,13 @@ class _ProgressPanelState extends State<ProgressPanel> {
     final dismissing = _dismissibleIds
         .where((id) => _countdown.remaining(id) != null)
         .length;
-    final radius = BorderRadius.circular(_expanded ? 12 : 8);
     final progress = total == 0 ? 0.0 : completed / total;
+    // A flat strip with a bottom rule, not an outlined card.
     return Container(
-      margin: EdgeInsets.symmetric(horizontal: 8, vertical: _expanded ? 4 : 2),
+      margin: EdgeInsets.zero,
       child: Material(
         color: context.palette.panel,
-        shape: RoundedRectangleBorder(
-          borderRadius: radius,
-          side: BorderSide(color: widget.accent.withAlpha(65)),
-        ),
+        shape: Border(bottom: BorderSide(color: widget.accent.withAlpha(65))),
         clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -141,7 +138,7 @@ class _ProgressPanelState extends State<ProgressPanel> {
               child: InkWell(
                 onTap: () => setState(() => _expanded = !_expanded),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+                  padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
                   child: Row(
                     children: [
                       Icon(widget.icon, size: 16, color: widget.accent),

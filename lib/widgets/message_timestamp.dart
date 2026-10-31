@@ -10,13 +10,13 @@ class MessageTimestamp extends StatelessWidget {
   Widget build(BuildContext context) {
     final local = timestamp.toLocal();
     final localization = MaterialLocalizations.of(context);
-    final date = localization.formatShortDate(local);
+    // Time only. The run boundary carries the date when the day changes.
     final time = localization.formatTimeOfDay(
       TimeOfDay.fromDateTime(local),
       alwaysUse24HourFormat: MediaQuery.alwaysUse24HourFormatOf(context),
     );
     return Text(
-      '$date · $time',
+      time,
       style: TextStyle(
         fontSize: 10,
         height: 1.2,

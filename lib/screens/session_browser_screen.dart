@@ -227,7 +227,6 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
     final selected = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
-      showDragHandle: true,
       builder: (sheetContext) =>
           _ComputerPickerSheet(provider: provider, selectedServerId: _serverId),
     );

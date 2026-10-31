@@ -718,12 +718,15 @@ void main() {
     WidgetTester tester,
   ) async {
     final key = GlobalKey<_HistoryHarnessState>();
+    // Enough rows that mid-conversation is more than a viewport from the
+    // top, or the drag would ask for older history and its loading bar
+    // would never settle.
     await tester.pumpWidget(
       MaterialApp(
         home: _HistoryHarness(
           key: key,
           initiallyLoadingHistory: false,
-          messageCount: 40,
+          messageCount: 80,
         ),
       ),
     );

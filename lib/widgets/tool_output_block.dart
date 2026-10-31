@@ -514,7 +514,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   top: BorderSide(color: context.palette.border, width: 1),
                 ),
               ),
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(8),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -560,7 +560,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                 ),
                 child: ScrollPassthrough(
                   child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(8),
                     child: _buildDiffView(editDiff),
                   ),
                 ),
@@ -577,7 +577,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               ),
               child: ScrollPassthrough(
                 child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(8),
                   child: _buildDiffView(patchDiff),
                 ),
               ),
@@ -607,7 +607,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               widget.message.toolImageFilePath!.isNotEmpty &&
               !_hasImage)
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
                 border: Border(
                   top: BorderSide(color: context.palette.border, width: 1),
@@ -676,7 +676,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -780,7 +780,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -928,7 +928,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
           padding: const EdgeInsets.only(top: 36, bottom: 4, right: 2),
           child: SingleChildScrollView(
             controller: _outputScroll,
-            padding: const EdgeInsets.fromLTRB(12, 12, 20, 12),
+            padding: const EdgeInsets.fromLTRB(8, 8, 20, 8),
             child: structured != null
                 ? StructuredDataView(value: structured, accent: _toolAccent)
                 : SelectableText(
@@ -959,7 +959,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
       ),
       child: ScrollPassthrough(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.all(8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

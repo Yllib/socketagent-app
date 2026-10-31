@@ -60,94 +60,123 @@ class _QuestionCardState extends State<QuestionCard> {
     final theme = Theme.of(context);
     final isPlan = _isPlanReview;
 
+    final accent = isPlan
+        ? theme.colorScheme.tertiary
+        : theme.colorScheme.primary;
+    final icon = isPlan ? Icons.architecture : Icons.help_outline;
+    final titleText = isPlan ? 'Plan Review' : 'Question';
+    final single = questions.length == 1;
+    final answeredMark = isAnswered
+        ? Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Icon(
+              Icons.check_circle,
+              size: 16,
+              color: context.palette.shade(Colors.green, 400),
+            ),
+          )
+        : null;
+    final submit = isAnswered
+        ? null
+        : FilledButton(
+            onPressed: _submit,
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 36),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Submit'),
+          );
+
+    // A flat block with a left accent, not a raised card. With one question
+    // its header line doubles as the card title.
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: Card(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+      decoration: BoxDecoration(
         color: isAnswered
-            ? theme.colorScheme.surfaceContainerHighest.withAlpha(128)
-            : isPlan
-            ? theme.colorScheme.tertiaryContainer
-            : theme.colorScheme.secondaryContainer,
-        elevation: isAnswered ? 0 : 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    isPlan ? Icons.architecture : Icons.help_outline,
-                    size: 20,
-                    color: isPlan
-                        ? theme.colorScheme.onTertiaryContainer
-                        : theme.colorScheme.onSecondaryContainer,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    isPlan ? 'Plan Review' : 'Question',
-                    style: TextStyle(
-                      fontWeight: FontWeight.bold,
-                      color: isPlan
-                          ? theme.colorScheme.onTertiaryContainer
-                          : theme.colorScheme.onSecondaryContainer,
-                    ),
-                  ),
-                  if (isAnswered) ...[
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.check_circle,
-                      size: 18,
-                      color: context.palette.shade(Colors.green, 400),
-                    ),
-                  ],
-                ],
-              ),
-              const SizedBox(height: 12),
-              for (final q in questions)
-                _buildQuestionSection(context, q, isAnswered),
-              if (!isAnswered) ...[
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: FilledButton(
-                    onPressed: _submit,
-                    child: const Text('Submit'),
-                  ),
-                ),
-              ],
-            ],
+            ? theme.colorScheme.surfaceContainerLow
+            : theme.colorScheme.surfaceContainer,
+        border: Border(
+          left: BorderSide(
+            color: accent.withAlpha(isAnswered ? 110 : 255),
+            width: 3,
           ),
         ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!single) ...[
+            Row(
+              children: [
+                Icon(icon, size: 16, color: accent),
+                const SizedBox(width: 6),
+                Text(
+                  titleText,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: accent,
+                  ),
+                ),
+                ?answeredMark,
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
+          for (final (index, q) in questions.indexed)
+            _buildQuestionSection(
+              context,
+              q,
+              isAnswered,
+              leading: single ? Icon(icon, size: 14, color: accent) : null,
+              trailing: single ? answeredMark : null,
+              fallbackHeader: titleText,
+              submit: index == questions.length - 1 ? submit : null,
+            ),
+        ],
       ),
     );
   }
 
+  /// [submit] renders beside the custom-answer field, or below the options
+  /// when the question has no field.
   Widget _buildQuestionSection(
     BuildContext context,
     QuestionItem question,
-    bool isAnswered,
-  ) {
+    bool isAnswered, {
+    Widget? leading,
+    Widget? trailing,
+    required String fallbackHeader,
+    Widget? submit,
+  }) {
     final key = question.question;
     _selectedOptions.putIfAbsent(key, () => {});
     _otherControllers.putIfAbsent(key, () => TextEditingController());
 
     final isPlanReview = question.header == 'Plan Review';
+    final header = question.header ?? (leading == null ? null : fallbackHeader);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (question.header != null)
+        if (header != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 4),
-            child: Text(
-              question.header!,
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
-              ),
+            child: Row(
+              children: [
+                if (leading != null) ...[leading, const SizedBox(width: 6)],
+                Text(
+                  header,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+                ?trailing,
+              ],
             ),
           ),
         if (isPlanReview)
@@ -170,7 +199,7 @@ class _QuestionCardState extends State<QuestionCard> {
           )
         else
           Text(question.question, style: const TextStyle(fontSize: 14)),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         if (!isAnswered) ...[
           if (question.options.any(
             (o) => o.preview != null && o.preview!.isNotEmpty,
@@ -192,23 +221,41 @@ class _QuestionCardState extends State<QuestionCard> {
             ),
           if (!isPlanReview)
             Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: TextField(
-                controller: _otherControllers[key],
-                decoration: InputDecoration(
-                  hintText: 'Add context or type a custom answer...',
-                  isDense: true,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(8),
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _otherControllers[key],
+                      decoration: InputDecoration(
+                        hintText: 'Add context or type a custom answer...',
+                        isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      minLines: 1,
+                      maxLines: 3,
+                    ),
                   ),
-                ),
-                maxLines: 2,
+                  if (submit != null) ...[const SizedBox(width: 8), submit],
+                ],
               ),
+            )
+          else if (submit != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Align(alignment: Alignment.centerRight, child: submit),
             ),
         ] else ...[
           _buildSubmittedAnswer(context, question),
         ],
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
       ],
     );
   }
@@ -293,10 +340,10 @@ class _QuestionCardState extends State<QuestionCard> {
     final theme = Theme.of(context);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(6),
         border: Border.all(color: theme.colorScheme.outlineVariant),
       ),
       child: Column(
@@ -332,6 +379,10 @@ class _QuestionCardState extends State<QuestionCard> {
 
     return FilterChip(
       label: Text(option.label),
+      labelStyle: const TextStyle(fontSize: 13),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       tooltip: option.description,
       selected: selected,
       onSelected: (val) {

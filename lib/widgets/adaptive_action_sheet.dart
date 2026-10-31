@@ -95,7 +95,6 @@ Future<T?> showAdaptiveActionSheet<T>({
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    showDragHandle: true,
     constraints: adaptiveActionSheetConstraints,
     builder: (sheetContext) => AdaptiveSheetBody(
       title: title,
@@ -165,12 +164,10 @@ class AdaptiveSheetBody extends StatelessWidget {
       constraints: BoxConstraints(maxHeight: maxHeight),
       child: SafeArea(
         top: false,
+        // Tile density comes from the app theme.
         child: ListTileTheme(
           data: const ListTileThemeData(
-            dense: true,
-            minVerticalPadding: 6,
             contentPadding: EdgeInsets.symmetric(horizontal: 16),
-            visualDensity: VisualDensity(horizontal: 0, vertical: -2),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -178,7 +175,7 @@ class AdaptiveSheetBody extends StatelessWidget {
             children: [
               if (title != null || subtitle != null)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -209,7 +206,9 @@ class AdaptiveSheetBody extends StatelessWidget {
                 fit: FlexFit.loose,
                 child: ListView(
                   shrinkWrap: true,
-                  padding: EdgeInsets.zero,
+                  padding: EdgeInsets.only(
+                    top: title == null && subtitle == null ? 8 : 0,
+                  ),
                   children: children,
                 ),
               ),

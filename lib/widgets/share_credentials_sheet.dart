@@ -48,7 +48,6 @@ Future<void> shareCredentials(
   final choice = await showModalBottomSheet<_ShareChoice>(
     context: context,
     constraints: adaptiveActionSheetConstraints,
-    showDragHandle: true,
     builder: (_) => _ShareSheet(
       computers: computers,
       relayAccess: relayAccess && canOfferRelay,

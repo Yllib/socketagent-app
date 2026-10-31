@@ -644,6 +644,59 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   List<({CondensedChatRow content, String rowKey})> _lastRenderedRows = [];
   List<({CondensedChatRow content, String rowKey})>? _rowsForWidget;
 
+  /// Rows that show their time: the first row, and any row more than five
+  /// minutes after the row before it. Cards inside a condensed group never
+  /// do; their keys are not top-level row keys.
+  Set<String> _timestampRowKeys = const {};
+
+  /// The [ChatView.hasMoreHistory] the timestamp sets were computed for.
+  bool? _timestampsForMoreHistory;
+
+  /// Run boundaries that start a new day and so carry the date.
+  Set<String> _dateRowKeys = const {};
+
+  static const _timestampGap = Duration(minutes: 5);
+
+  void _assignTimestamps(List<_RenderRow> rows) {
+    final shown = <String>{};
+    final dated = <String>{};
+    DateTime? previous;
+    // With more history above, the first row's predecessor is unknown, not
+    // absent. Leaving its time off also keeps the row's height fixed when
+    // the next page lands above it.
+    var first = widget.hasMoreHistory;
+    for (final row in rows) {
+      final content = row.content;
+      final message = switch (content) {
+        CondensedVisibleRow(:final message) => message,
+        CondensedWorkRow(:final messages) => messages.firstOrNull,
+      };
+      if (message == null) continue;
+      final time = message.timestamp;
+      if (first) {
+        first = false;
+      } else if (message.type == MessageType.runBoundary) {
+        if (previous == null || !_sameDay(previous, time)) {
+          dated.add(row.rowKey);
+        }
+      } else if (previous == null ||
+          time.difference(previous) > _timestampGap) {
+        shown.add(row.rowKey);
+      }
+      previous = time;
+    }
+    _timestampRowKeys = shown;
+    _dateRowKeys = dated;
+  }
+
+  static bool _sameDay(DateTime a, DateTime b) {
+    final left = a.toLocal();
+    final right = b.toLocal();
+    return left.year == right.year &&
+        left.month == right.month &&
+        left.day == right.day;
+  }
+
   List<({CondensedChatRow content, String rowKey})> _renderRows() {
     final ready = _rowsForWidget;
     if (ready != null) return ready;
@@ -653,7 +706,9 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       enabled: widget.condensedToolUsage,
       isProcessing: widget.isProcessing,
     );
-    if (!identical(rows, _lastCondensedRows)) {
+    if (!identical(rows, _lastCondensedRows) ||
+        _timestampsForMoreHistory != widget.hasMoreHistory) {
+      _timestampsForMoreHistory = widget.hasMoreHistory;
       final occurrences = <String, int>{};
       _lastCondensedRows = rows;
       _lastRenderedRows = [
@@ -663,6 +718,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             rowKey: _collisionSafeRowKey(row.keySeed, occurrences),
           ),
       ];
+      _assignTimestamps(_lastRenderedRows);
     }
     return _rowsForWidget = _lastRenderedRows;
   }
@@ -1203,6 +1259,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
             key: ValueKey<String>('condensed-work-toggle:$rowKey'),
             summaryKey: ValueKey<String>('condensed-work-summary:$rowKey'),
             expanded: expanded,
+            showTime: _timestampRowKeys.contains(rowKey),
             onTap: () => _toggleCondensedGroup(rowKey),
           ),
           if (expanded && row.messages.isNotEmpty) ...[
@@ -1215,14 +1272,16 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
-  /// Header row of a condensed work card. The card uses it in place, and the
-  /// same widget is pinned to the top of the viewport while the card's own
-  /// header is scrolled away.
+  /// Header row of a condensed work card, one line: summary, details and
+  /// the time when the row qualifies for one. The card uses it in place, and
+  /// the same widget is pinned to the top of the viewport while the card's
+  /// own header is scrolled away.
   Widget _buildCondensedWorkHeader(
     CondensedWorkRow row, {
     required Key key,
     required bool expanded,
     required VoidCallback onTap,
+    bool showTime = false,
     Key? summaryKey,
   }) {
     final theme = Theme.of(context);
@@ -1237,52 +1296,49 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
           key: key,
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             child: Row(
               children: [
                 Icon(
                   expanded ? Icons.expand_more : Icons.chevron_right,
-                  size: 19,
+                  size: 18,
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 6),
+                const SizedBox(width: 4),
                 Icon(
                   Icons.view_stream_outlined,
-                  size: 16,
+                  size: 14,
                   color: theme.colorScheme.primary,
                 ),
                 const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        summary,
-                        key: summaryKey,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      if (details.isNotEmpty)
-                        Text(
-                          details,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            fontSize: 10.5,
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      if (row.messages.isNotEmpty)
-                        MessageTimestamp(
-                          timestamp: row.messages.first.timestamp,
-                        ),
-                    ],
+                Text(
+                  summary,
+                  key: summaryKey,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
+                if (details.isNotEmpty)
+                  Expanded(
+                    child: Text(
+                      ' · $details',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                else
+                  const Spacer(),
+                if (showTime && row.messages.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  MessageTimestamp(timestamp: row.messages.first.timestamp),
+                ],
               ],
             ),
           ),
@@ -1312,6 +1368,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         pinned.row,
         key: ValueKey<String>('condensed-work-pinned:${pinned.rowKey}'),
         expanded: true,
+        showTime: _timestampRowKeys.contains(pinned.rowKey),
         onTap: () => _collapseCondensedGroupFromPinnedHeader(pinned.rowKey),
       ),
     );
@@ -1407,6 +1464,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         msg.type == MessageType.codexPlan) {
       return content;
     }
+    if (!_timestampRowKeys.contains(rowKey)) return content;
     return TimestampedChatCard(timestamp: msg.timestamp, child: content);
   }
 
@@ -1415,6 +1473,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       case MessageType.text:
         return MessageBubble(
           message: msg,
+          showTimestamp: _timestampRowKeys.contains(rowKey),
           sourceServerId: widget.serverId,
           onRewindConversation: widget.onRewindConversation,
           codexRewind: widget.codexRewind,
@@ -1539,6 +1598,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       case MessageType.result:
         return MessageBubble(
           message: msg,
+          showTimestamp: _timestampRowKeys.contains(rowKey),
           sourceServerId: widget.serverId,
           onReadAloud: widget.onReadAloud,
           onReport: widget.onReportAiResponse,
@@ -1576,7 +1636,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       case MessageType.workReview:
         return WorkReviewCard(message: msg);
       case MessageType.runBoundary:
-        return _buildRunBoundaryDivider(msg);
+        return _buildRunBoundaryDivider(
+          msg,
+          showDate: _dateRowKeys.contains(rowKey),
+        );
       case MessageType.computerAccess:
         return ComputerAccessCard(message: msg);
       case MessageType.memory:
@@ -1634,29 +1697,16 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       );
     }
 
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.only(left: 8, right: 64, top: 4, bottom: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHighest,
-          borderRadius: const BorderRadius.only(
-            topLeft: Radius.circular(16),
-            topRight: Radius.circular(16),
-            bottomLeft: Radius.circular(4),
-            bottomRight: Radius.circular(16),
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            RunningIndicator(size: 16, color: theme.colorScheme.primary),
-            const SizedBox(width: 10),
-            // Only the label rebuilds each second, not the chat.
-            startedAt == null ? label(context) : EverySecond(builder: label),
-          ],
-        ),
+    // A plain row, like the waiting row below, not a bubble.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 6, 64, 6),
+      child: Row(
+        children: [
+          RunningIndicator(size: 16, color: theme.colorScheme.primary),
+          const SizedBox(width: 10),
+          // Only the label rebuilds each second, not the chat.
+          startedAt == null ? label(context) : EverySecond(builder: label),
+        ],
       ),
     );
   }
@@ -1886,7 +1936,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     );
   }
 
-  Widget _buildRunBoundaryDivider(ChatMessage msg) {
+  Widget _buildRunBoundaryDivider(ChatMessage msg, {bool showDate = false}) {
     final theme = Theme.of(context);
     final durationMs = (msg.toolInput?['runDurationMs'] as num?)?.toInt() ?? 0;
     final runNumber = (msg.toolInput?['runNumber'] as num?)?.toInt();
@@ -1899,9 +1949,13 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final runLabel = runNumber == null || runNumber <= 0
         ? 'Run'
         : 'Run $runNumber';
-    final label = outcome == 'completed'
-        ? '$runLabel · ${_formatElapsed(Duration(milliseconds: durationMs))}'
-        : '${outcome[0].toUpperCase()}${outcome.substring(1)} · ${_formatElapsed(Duration(milliseconds: durationMs))}';
+    final elapsedLabel = _formatElapsed(Duration(milliseconds: durationMs));
+    final runText = outcome == 'completed'
+        ? '$runLabel · $elapsedLabel'
+        : '${outcome[0].toUpperCase()}${outcome.substring(1)} · $elapsedLabel';
+    final label = showDate
+        ? '${_boundaryDate(msg.timestamp)} · $runText'
+        : runText;
     return Semantics(
       label:
           '$outcome run duration ${_formatElapsed(Duration(milliseconds: durationMs))}',
@@ -1926,6 +1980,15 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  /// "Oct 31", or "10/31/2025" when the year is not this one.
+  String _boundaryDate(DateTime timestamp) {
+    final local = timestamp.toLocal();
+    final localization = MaterialLocalizations.of(context);
+    return local.year == DateTime.now().year
+        ? localization.formatShortMonthDay(local)
+        : localization.formatShortDate(local);
   }
 
   Widget _buildSkillInvocationCard(ChatMessage msg) {

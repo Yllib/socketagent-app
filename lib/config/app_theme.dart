@@ -80,6 +80,20 @@ ThemeData appTheme({Brightness brightness = Brightness.dark, Color? accent}) {
     colorScheme: scheme,
     useMaterial3: true,
     brightness: brightness,
+    // Dense everywhere. Flutter's default is compact on desktop already and
+    // standard on phones, so this only tightens the phone. Tiles lose 8 px,
+    // buttons and chips 8 px, text fields 4 px.
+    visualDensity: VisualDensity.compact,
+    listTileTheme: const ListTileThemeData(
+      dense: true,
+      minVerticalPadding: 4,
+      visualDensity: VisualDensity(horizontal: 0, vertical: -2),
+    ),
+    // Material 3 defaults to 80 with labels; 64 keeps the labels.
+    navigationBarTheme: const NavigationBarThemeData(height: 64),
+    // The drag handle reserves a 48 px box on every sheet. Sheets still
+    // dismiss by drag without it.
+    bottomSheetTheme: const BottomSheetThemeData(showDragHandle: false),
     scaffoldBackgroundColor: scheme.surface,
     canvasColor: scheme.surface,
     dividerColor: scheme.outlineVariant,
