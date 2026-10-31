@@ -97,7 +97,7 @@ class _VoiceProvider extends ChangeNotifier implements ChatProvider {
 
 void main() {
   testWidgets(
-    'voice tabs keep account setup out of dictation and connect from source picker',
+    'voice screen keeps account setup out of dictation and connects from source picker',
     (tester) async {
       tester.view.physicalSize = const Size(360, 820);
       tester.view.devicePixelRatio = 1;
@@ -206,6 +206,8 @@ void main() {
       await tester.tap(find.text('Read aloud'));
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.text('Voice'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('Voice'));
       await tester.pumpAndSettle();
       expect(find.text('Search voices'), findsOneWidget);

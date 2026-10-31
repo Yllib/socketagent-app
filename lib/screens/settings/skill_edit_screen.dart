@@ -173,7 +173,6 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final title = _isPlugin
         ? 'View Skill'
         : _isNew
@@ -203,7 +202,6 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Name
             TextField(
               controller: _nameController,
               readOnly: _isPlugin,
@@ -211,52 +209,49 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                 labelText: 'Name',
                 hintText: 'my-command',
                 helperText: _nameHelperText,
+                isDense: true,
                 border: const OutlineInputBorder(),
-                prefixIcon: const Icon(Icons.tag, size: 20),
               ),
               onChanged: (_) => setState(() {}),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-            // Agent, Scope & Format controls
-            DropdownButtonFormField<String>(
-              initialValue: _agent,
-              decoration: const InputDecoration(
-                labelText: 'Agent',
-                border: OutlineInputBorder(),
-                contentPadding: EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 14,
-                ),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'claude', child: Text('Claude')),
-                DropdownMenuItem(value: 'codex', child: Text('Codex')),
-              ],
-              onChanged: _isPlugin
-                  ? null
-                  : (val) {
-                      if (val == null) return;
-                      setState(() {
-                        _agent = val;
-                        if (_agent == 'codex') _format = 'skill';
-                      });
-                    },
-            ),
-            const SizedBox(height: 16),
-
+            // Agent, scope and type on one line.
             Row(
               children: [
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
+                    initialValue: _agent,
+                    decoration: const InputDecoration(
+                      labelText: 'Agent',
+                      isDense: true,
+                      border: OutlineInputBorder(),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'claude', child: Text('Claude')),
+                      DropdownMenuItem(value: 'codex', child: Text('Codex')),
+                    ],
+                    onChanged: _isPlugin
+                        ? null
+                        : (val) {
+                            if (val == null) return;
+                            setState(() {
+                              _agent = val;
+                              if (_agent == 'codex') _format = 'skill';
+                            });
+                          },
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: _scope == 'plugin' ? 'user' : _scope,
                     decoration: const InputDecoration(
                       labelText: 'Scope',
+                      isDense: true,
                       border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 14,
-                      ),
                     ),
                     items: [
                       const DropdownMenuItem(
@@ -276,17 +271,15 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                           },
                   ),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
                 Expanded(
                   child: DropdownButtonFormField<String>(
+                    isExpanded: true,
                     initialValue: _format,
                     decoration: const InputDecoration(
                       labelText: 'Type',
+                      isDense: true,
                       border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 14,
-                      ),
                     ),
                     items: const [
                       DropdownMenuItem(
@@ -304,122 +297,80 @@ class _SkillEditScreenState extends State<SkillEditScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-            // Description
             TextField(
               controller: _descriptionController,
               readOnly: _isPlugin,
-              maxLines: 2,
+              maxLines: null,
               decoration: const InputDecoration(
                 labelText: 'Description',
                 hintText: 'What this skill does or when to trigger it',
+                isDense: true,
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.description, size: 20),
                 alignLabelWithHint: true,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-            // Allowed Tools
             TextField(
               controller: _allowedToolsController,
               readOnly: _isPlugin,
               decoration: const InputDecoration(
-                labelText: 'Allowed Tools (optional)',
+                labelText: 'Allowed tools (optional)',
                 hintText: 'Read, Write, Bash(git:*)',
+                isDense: true,
                 border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.build_outlined, size: 20),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
-            // Argument Hint
             if (_format == 'command') ...[
               TextField(
                 controller: _argumentHintController,
                 readOnly: _isPlugin,
                 decoration: const InputDecoration(
-                  labelText: 'Argument Hint (optional)',
+                  labelText: 'Argument hint (optional)',
                   hintText: '[file] [message]',
+                  isDense: true,
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.input, size: 20),
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 8),
             ],
 
-            // Body/Instructions header
-            Row(
-              children: [
-                Icon(
-                  Icons.article_outlined,
-                  size: 18,
-                  color: theme.colorScheme.onSurface.withAlpha(150),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  'Instructions',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: theme.colorScheme.onSurface.withAlpha(180),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-
-            // Body text area
             TextField(
               controller: _bodyController,
               readOnly: _isPlugin,
               maxLines: null,
-              minLines: 10,
+              minLines: 8,
               style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
               decoration: InputDecoration(
+                labelText: 'Instructions',
                 hintText: _format == 'command'
                     ? 'Instructions for Claude when this command is invoked...\n\nUse \$ARGUMENTS for user input.\nUse !`command` for bash execution.\nUse @filepath for file references.'
                     : _agent == 'codex'
-                    ? 'Guidance for Codex — describe when and how to apply this skill...'
-                    : 'Guidance for Claude — describe when and how to apply this skill...',
+                    ? 'Guidance for Codex. Describe when and how to apply this skill...'
+                    : 'Guidance for Claude. Describe when and how to apply this skill...',
+                isDense: true,
                 border: const OutlineInputBorder(),
                 alignLabelWithHint: true,
               ),
             ),
 
-            if (_isPlugin) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.orange.withAlpha(20),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.orange.withAlpha(60)),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.info_outline,
-                      size: 18,
-                      color: context.palette.shade(Colors.orange, 300),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        'Plugin skills are read-only. Duplicate to create an editable copy.',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: context.palette.shade(Colors.orange, 300),
-                        ),
-                      ),
-                    ),
-                  ],
+            if (_isPlugin)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Plugin skills are read-only. Duplicate to create an editable copy.',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.palette.shade(Colors.orange, 300),
+                  ),
                 ),
               ),
-            ],
 
-            const SizedBox(height: 80),
+            const SizedBox(height: 24),
           ],
         ),
       ),

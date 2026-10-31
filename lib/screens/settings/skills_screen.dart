@@ -349,11 +349,21 @@ class _SkillsScreenState extends State<SkillsScreen> {
             tooltip: 'Refresh',
             onPressed: _fetchAll,
           ),
+          PopupMenuButton<String>(
+            tooltip: 'Add',
+            icon: const Icon(Icons.add),
+            onSelected: (value) => value == 'skill'
+                ? _showNewSkillServerPicker()
+                : _showAddMarketplaceDialog(),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'skill', child: Text('New skill')),
+              PopupMenuItem(
+                value: 'marketplace',
+                child: Text('Add Claude marketplace'),
+              ),
+            ],
+          ),
         ],
-      ),
-      floatingActionButton: FloatingActionButton.small(
-        onPressed: _showNewSkillServerPicker,
-        child: const Icon(Icons.add),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -422,7 +432,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Tap + to create a skill or command.',
+              'Use + to create a skill or add a marketplace.',
               textAlign: TextAlign.center,
               style: TextStyle(
                 fontSize: 12,
@@ -437,7 +447,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
     return RefreshIndicator(
       onRefresh: () async => _fetchAll(),
       child: ListView(
-        padding: const EdgeInsets.only(bottom: 80),
+        padding: const EdgeInsets.only(bottom: 16),
         children: _buildSections(),
       ),
     );
@@ -621,7 +631,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
         final pluginSkills = groupedClaudePluginSkills[pluginName];
 
         if (pluginSkills != null && pluginSkills.isNotEmpty) {
-          // Installed plugin with skills — show as expandable group
+          // Installed plugin with skills, shown as expandable group
           final deduped = pluginSkills.values
               .map((list) => list.first)
               .toList();
@@ -636,7 +646,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
             ),
           );
         } else {
-          // No skills yet — show as a toggle row
+          // No skills yet, shown as a toggle row
           children.add(_buildPluginToggleRow(pluginEntries));
         }
       }
@@ -736,25 +746,6 @@ class _SkillsScreenState extends State<SkillsScreen> {
         ),
       );
     }
-
-    // ── Add Claude marketplace button ──
-    sections.add(
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: OutlinedButton.icon(
-          onPressed: _showAddMarketplaceDialog,
-          icon: const Icon(Icons.add, size: 16),
-          label: const Text(
-            'Add Claude Marketplace',
-            style: TextStyle(fontSize: 13),
-          ),
-          style: OutlinedButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            side: BorderSide(color: Colors.deepPurple.withAlpha(80)),
-          ),
-        ),
-      ),
-    );
 
     return sections;
   }
@@ -977,8 +968,8 @@ class _SkillsScreenState extends State<SkillsScreen> {
           }
         });
       },
-      tilePadding: const EdgeInsets.symmetric(horizontal: 20),
-      childrenPadding: const EdgeInsets.only(left: 16),
+      tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+      childrenPadding: const EdgeInsets.only(left: 8),
       dense: true,
       visualDensity: VisualDensity.compact,
       leading: Icon(icon, size: 16, color: color.withAlpha(180)),
@@ -1027,7 +1018,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
     return InkWell(
       onTap: () => _openEditor(existing: ss),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         child: Row(
           children: [
             Icon(
@@ -1041,18 +1032,21 @@ class _SkillsScreenState extends State<SkillsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '/${ss.name}',
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                      fontFamily: 'monospace',
-                      color: theme.colorScheme.onSurface,
-                    ),
-                  ),
-                  const SizedBox(height: 3),
                   Row(
                     children: [
+                      Flexible(
+                        child: Text(
+                          '/${ss.name}',
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w500,
+                            fontFamily: 'monospace',
+                            color: theme.colorScheme.onSurface,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
                       _buildAgentBadge(ss.agent),
                       const SizedBox(width: 4),
                       _buildScopeBadge(ss.scope),
@@ -1161,7 +1155,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
     );
   }
 
-  /// Flat list tile for marketplace plugins — shows per-server status badges
+  /// Flat list tile for marketplace plugins, shows per-server status badges
   /// and routes actions through the server picker when multiple servers.
   Widget _buildPluginToggleRow(
     List<MapEntry<String, Map<String, dynamic>>> serverEntries,
@@ -1171,47 +1165,44 @@ class _SkillsScreenState extends State<SkillsScreen> {
     final name = first['name'] as String? ?? '';
     final description = first['description'] as String? ?? '';
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: ListTile(
-        dense: true,
-        visualDensity: VisualDensity.compact,
-        onTap: () => _openPluginReadme(serverEntries.first.key, first),
-        leading: Icon(
-          Icons.extension_outlined,
-          size: 18,
-          color: Colors.orange.withAlpha(180),
-        ),
-        title: Row(
-          children: [
-            Flexible(
-              child: Text(
-                name,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500,
-                  color: theme.colorScheme.onSurface.withAlpha(220),
-                ),
+    return ListTile(
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      onTap: () => _openPluginReadme(serverEntries.first.key, first),
+      leading: Icon(
+        Icons.extension_outlined,
+        size: 18,
+        color: Colors.orange.withAlpha(180),
+      ),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: theme.colorScheme.onSurface.withAlpha(220),
               ),
             ),
-            const SizedBox(width: 6),
-            _buildAgentBadge('claude'),
-          ],
-        ),
-        subtitle: description.isNotEmpty
-            ? Text(
-                description,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  color: theme.colorScheme.onSurface.withAlpha(100),
-                ),
-              )
-            : null,
-        trailing: _buildPluginActions(serverEntries),
+          ),
+          const SizedBox(width: 6),
+          _buildAgentBadge('claude'),
+        ],
       ),
+      subtitle: description.isNotEmpty
+          ? Text(
+              description,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11,
+                color: theme.colorScheme.onSurface.withAlpha(100),
+              ),
+            )
+          : null,
+      trailing: _buildPluginActions(serverEntries),
     );
   }
 

@@ -12,6 +12,46 @@ import '../../services/chat_provider.dart';
 import '../../services/device_unlock.dart';
 import '../../services/google_auth.dart';
 import '../../services/window_security_service.dart';
+import 'settings_v2_screen.dart';
+
+/// The message shown for a failed account action.
+String accountErrorText(Object error) => switch (error) {
+  StateError(:final message) => message,
+  FormatException(:final message) => message,
+  GoogleAuthNotConfigured() => error.toString(),
+  _ => 'Something went wrong: $error',
+};
+
+/// Asks for a recovery key and opens the account with it. Throws a
+/// [StateError] when the key is not accepted.
+Future<void> restoreAccountWithRecoveryKey(
+  BuildContext context,
+  AccountService account,
+) async {
+  final typed = await showDialog<String>(
+    context: context,
+    builder: (_) => const _RecoveryKeyDialog(),
+  );
+  if (typed == null) return;
+  final ok = await account.restoreWithRecoveryKey(typed);
+  if (!ok) throw StateError('That is not a recovery key');
+}
+
+/// Runs a sign-in or restore from a screen without its own error row. A
+/// cancelled Google sign-in is silent; anything else goes to a snackbar.
+Future<void> runAccountAction(
+  BuildContext context,
+  Future<void> Function() action,
+) async {
+  final messenger = ScaffoldMessenger.of(context);
+  try {
+    await action();
+  } on GoogleAuthCanceled {
+    // The user closed the sign-in. Nothing to report.
+  } catch (error) {
+    messenger.showSnackBar(SnackBar(content: Text(accountErrorText(error))));
+  }
+}
 
 /// The account: an encrypted vault of computers and settings shared between
 /// this user's devices. Every device joins by signing in with Google, which
@@ -46,16 +86,7 @@ class _AccountScreenState extends State<AccountScreen> {
     } on GoogleAuthCanceled {
       // The user closed the sign-in. Nothing to report.
     } catch (error) {
-      if (mounted) {
-        setState(
-          () => _error = switch (error) {
-            StateError(:final message) => message,
-            FormatException(:final message) => message,
-            GoogleAuthNotConfigured() => error.toString(),
-            _ => 'Something went wrong: $error',
-          },
-        );
-      }
+      if (mounted) setState(() => _error = accountErrorText(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -64,15 +95,8 @@ class _AccountScreenState extends State<AccountScreen> {
   Future<void> _signIn(AccountService account) =>
       _run(account.signInWithGoogle);
 
-  Future<void> _restore(AccountService account) => _run(() async {
-    final typed = await showDialog<String>(
-      context: context,
-      builder: (_) => const _RecoveryKeyDialog(),
-    );
-    if (typed == null) return;
-    final ok = await account.restoreWithRecoveryKey(typed);
-    if (!ok) throw StateError('That is not a recovery key');
-  });
+  Future<void> _restore(AccountService account) =>
+      _run(() => restoreAccountWithRecoveryKey(context, account));
 
   Future<void> _showRecoveryKey(AccountService account) => _run(() async {
     final key = account.recoveryKey;
@@ -232,7 +256,7 @@ class _AccountScreenState extends State<AccountScreen> {
             ],
           ),
           body: ListView(
-            padding: const EdgeInsets.only(bottom: 24),
+            padding: const EdgeInsets.only(bottom: 16),
             children: [
               if (_error case final error?)
                 ListTile(
@@ -260,26 +284,20 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   List<Widget> _noAccount(AccountService account) => [
-    const ListTile(
-      title: Text('Sync computers, tokens and settings between your devices.'),
-      subtitle: Text(
-        'The key lives in your Google Drive, in a folder only this app can '
-        'see. The relay stores encrypted data it cannot read.',
-      ),
-    ),
     ListTile(
       leading: const Icon(Icons.login),
       title: const Text('Sign in with Google'),
-      subtitle: account.googleConfigured
-          ? null
-          : const Text('Google sign-in isn\'t set up in this build'),
+      subtitle: Text(
+        account.googleConfigured
+            ? 'Syncs computers, tokens and settings between your devices'
+            : 'Google sign-in is not set up in this build',
+      ),
       enabled: !_busy && account.googleConfigured,
       onTap: () => _signIn(account),
     ),
     ListTile(
       leading: const Icon(Icons.key_outlined),
       title: const Text('Restore with recovery key'),
-      subtitle: const Text('For when you cannot use your Google account'),
       enabled: !_busy,
       onTap: () => _restore(account),
     ),
@@ -334,16 +352,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   'account ${account.accountId!.substring(0, 8)}',
         ),
       ),
-      Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-        child: Text(
-          'Devices',
-          style: Theme.of(context).textTheme.labelLarge?.copyWith(
-            color: Theme.of(context).colorScheme.primary,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ),
+      const SettingsGroupLabel('Devices'),
       for (final device in account.devices)
         ListTile(
           leading: Icon(
@@ -373,32 +382,22 @@ class _AccountScreenState extends State<AccountScreen> {
                       : () => _removeDevice(account, device),
                 ),
         ),
-      const ListTile(
-        dense: true,
-        title: Text(
-          'Other devices join by signing in with the same Google account.',
-        ),
-      ),
+      const Divider(height: 1, indent: 16, endIndent: 16),
       ListTile(
         leading: const Icon(Icons.key_outlined),
-        title: const Text('Recovery key'),
-        subtitle: const Text(
-          'A copy of the key outside Google. Needs the device unlock',
-        ),
+        title: const Text('Show recovery key'),
         enabled: !_busy,
         onTap: () => _showRecoveryKey(account),
       ),
       ListTile(
         leading: Icon(Icons.logout, color: palette.danger),
         title: Text('Sign out', style: TextStyle(color: palette.danger)),
-        subtitle: const Text('Keeps the computers on this device'),
         enabled: !_busy,
         onTap: () => _signOut(account),
       ),
       ListTile(
         leading: Icon(Icons.delete_forever_outlined, color: palette.danger),
         title: Text('Delete account', style: TextStyle(color: palette.danger)),
-        subtitle: const Text('Signs out every device'),
         enabled: !_busy,
         onTap: () => _deleteAccount(account),
       ),

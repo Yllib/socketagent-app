@@ -67,18 +67,18 @@ class McpServersScreen extends StatelessWidget {
                 children: [
                   Icon(
                     Icons.extension_outlined,
-                    size: 64,
+                    size: 40,
                     color: Theme.of(context).colorScheme.outline,
                   ),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 8),
                   Text(
                     'No MCP servers',
                     style: TextStyle(
-                      fontSize: 18,
+                      fontSize: 16,
                       color: Theme.of(context).colorScheme.outline,
                     ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 4),
                   Text(
                     'Tap refresh after connecting to a session',
                     style: TextStyle(
@@ -93,7 +93,7 @@ class McpServersScreen extends StatelessWidget {
             );
           }
           return ListView(
-            padding: const EdgeInsets.only(top: 8),
+            padding: const EdgeInsets.only(bottom: 16),
             children: servers.map((server) {
               final name = server['name'] as String? ?? 'Unknown';
               final status = server['status'] as String? ?? 'unknown';
@@ -165,12 +165,14 @@ class McpServersScreen extends StatelessWidget {
                     if (isFailed)
                       IconButton(
                         icon: Icon(Icons.refresh, size: 20, color: warning),
+                        visualDensity: VisualDensity.compact,
                         onPressed: () => provider.reconnectMcpServer(name),
                         tooltip: 'Reconnect',
                       ),
                     if (toggleable)
                       Switch(
                         value: enabled,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         onChanged: (val) => provider.toggleMcpServer(name, val),
                       ),
                   ],

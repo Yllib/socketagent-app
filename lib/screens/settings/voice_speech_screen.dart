@@ -7,6 +7,7 @@ import '../../services/kokoro_model_manager.dart';
 import '../../services/moonshine_speech_service.dart';
 import '../../services/tts_engine.dart';
 import '../../widgets/speech_recognition_controls.dart';
+import 'settings_v2_screen.dart';
 
 class VoiceSpeechScreen extends StatelessWidget {
   const VoiceSpeechScreen({super.key});
@@ -35,45 +36,41 @@ class VoiceSpeechScreen extends StatelessWidget {
   }
 
   @override
-  Widget build(BuildContext context) => DefaultTabController(
-    length: 2,
-    child: Scaffold(
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: Theme.of(context).colorScheme.surface,
+    appBar: AppBar(
+      title: const Text('Voice & Speech'),
       backgroundColor: Theme.of(context).colorScheme.surface,
-      appBar: AppBar(
-        title: const Text('Voice & Speech'),
-        backgroundColor: Theme.of(context).colorScheme.surface,
-        foregroundColor: Theme.of(context).colorScheme.onSurface,
-        actions: [
-          if (Platform.isAndroid)
-            PopupMenuButton<String>(
-              tooltip: 'More options',
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'report',
-                  child: Text('Save diagnostic report'),
-                ),
-              ],
-              onSelected: (_) => _saveReport(context),
-            ),
+      foregroundColor: Theme.of(context).colorScheme.onSurface,
+      actions: [
+        if (Platform.isAndroid)
+          PopupMenuButton<String>(
+            tooltip: 'More options',
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'report',
+                child: Text('Save diagnostic report'),
+              ),
+            ],
+            onSelected: (_) => _saveReport(context),
+          ),
+      ],
+    ),
+    body: Consumer<ChatProvider>(
+      builder: (context, provider, _) => ListView(
+        padding: const EdgeInsets.only(bottom: 16),
+        children: [
+          const SettingsGroupLabel('Dictation'),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SpeechRecognitionControls(provider: provider),
+          ),
+          const SettingsGroupLabel('Read aloud'),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: _ReadAloudSettings(provider: provider),
+          ),
         ],
-        bottom: const TabBar(
-          tabs: [
-            Tab(text: 'Dictation'),
-            Tab(text: 'Read aloud'),
-          ],
-        ),
-      ),
-      body: Consumer<ChatProvider>(
-        builder: (context, provider, _) => TabBarView(
-          children: [
-            ListView(
-              key: const PageStorageKey('dictation-settings'),
-              padding: const EdgeInsets.all(20),
-              children: [SpeechRecognitionControls(provider: provider)],
-            ),
-            _ReadAloudSettings(provider: provider),
-          ],
-        ),
       ),
     ),
   );
@@ -400,9 +397,9 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
   Widget build(BuildContext context) {
     final mode = provider.ttsEngineMode;
     final voice = provider.selectedTtsEngineVoice;
-    return ListView(
-      key: const PageStorageKey('read-aloud-settings'),
-      padding: const EdgeInsets.all(20),
+    final elevenLabs = mode == TtsEngineMode.elevenLabs;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_voiceLoadError != null)
           ListTile(
@@ -413,19 +410,12 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
               child: const Text('Retry'),
             ),
           ),
-
-        const Text(
-          'Choose how replies sound.',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 16),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Read replies automatically'),
           value: provider.ttsEnabled,
           onChanged: provider.setTtsEnabled,
         ),
-        const Divider(height: 32),
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.volume_up_outlined),
@@ -436,24 +426,44 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
         ),
         if (mode == TtsEngineMode.kokoroDevice)
           _KokoroDownloads(provider: provider),
-        const SizedBox(height: 12),
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Voice'),
           subtitle: Text(voice?.name ?? 'Choose a voice'),
-          trailing: const Icon(Icons.chevron_right),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (elevenLabs)
+                IconButton(
+                  tooltip: 'Refresh voices',
+                  icon: provider.elevenLabsVoicesLoading
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.refresh),
+                  onPressed: _busy || provider.elevenLabsVoicesLoading
+                      ? null
+                      : () => _run(provider.refreshElevenLabsVoices),
+                ),
+              IconButton(
+                tooltip: 'Preview voice',
+                icon: _previewing
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.play_arrow),
+                onPressed: _busy || _previewing || voice == null
+                    ? null
+                    : _preview,
+              ),
+              const Icon(Icons.chevron_right),
+            ],
+          ),
           onTap: _busy ? null : _chooseVoice,
         ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton.icon(
-            onPressed: _busy || _previewing || voice == null ? null : _preview,
-            icon: const Icon(Icons.play_arrow),
-            label: Text(_previewing ? 'Playing preview…' : 'Preview voice'),
-          ),
-        ),
-        if (mode == TtsEngineMode.elevenLabs) ...[
-          const Divider(height: 32),
+        if (elevenLabs) ...[
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Speaking style'),
@@ -484,7 +494,6 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
                     }
                   },
           ),
-          const SizedBox(height: 16),
           Row(
             children: [
               const Expanded(child: Text('Speaking speed')),
@@ -508,17 +517,6 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
             trailing: const Icon(Icons.chevron_right),
             onTap: _busy ? null : _account,
           ),
-          TextButton.icon(
-            onPressed: _busy || provider.elevenLabsVoicesLoading
-                ? null
-                : () => _run(provider.refreshElevenLabsVoices),
-            icon: const Icon(Icons.refresh),
-            label: Text(
-              provider.elevenLabsVoicesLoading
-                  ? 'Refreshing voices…'
-                  : 'Refresh voices',
-            ),
-          ),
           if (provider.elevenLabsVoicesError != null)
             const Text(
               'Voices could not be refreshed. Check your connection and try again.',
@@ -526,7 +524,7 @@ class _ReadAloudSettingsState extends State<_ReadAloudSettings> {
         ],
         if (_busy)
           const Padding(
-            padding: EdgeInsets.only(top: 12),
+            padding: EdgeInsets.only(top: 8),
             child: Text('Updating…'),
           ),
       ],
@@ -609,7 +607,6 @@ class _KokoroDownloadsState extends State<_KokoroDownloads> {
     builder: (_, progress, _) => Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 12),
         const Text(
           'Voice downloads',
           style: TextStyle(fontWeight: FontWeight.w600),
@@ -734,19 +731,19 @@ class _ElevenLabsAccountState extends State<_ElevenLabsAccount> {
       foregroundColor: Theme.of(context).colorScheme.onSurface,
     ),
     body: ListView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       children: [
         Text(
           widget.provider.hasElevenLabsApiKey
               ? 'Your account is connected.'
               : 'Connect your ElevenLabs account.',
-          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Read-aloud text is sent to ElevenLabs under your API key and usage limits.',
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Use an API key from your ElevenLabs account. Read-aloud text is sent to ElevenLabs, and your account’s usage limits apply.',
-        ),
-        const SizedBox(height: 24),
         TextField(
           controller: _key,
           enabled: !_busy,
@@ -762,7 +759,7 @@ class _ElevenLabsAccountState extends State<_ElevenLabsAccount> {
                 : 'Access key',
           ),
         ),
-        const SizedBox(height: 20),
+        const SizedBox(height: 12),
         FilledButton(
           onPressed: _busy || _key.text.trim().isEmpty ? null : _connect,
           child: Text(

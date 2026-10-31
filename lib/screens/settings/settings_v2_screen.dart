@@ -329,171 +329,154 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
             title: const Text('Settings'),
             actions: [
               _buildUpdateAction(context),
-              Padding(
-                padding: const EdgeInsets.only(left: 2, right: 12),
-                child: Center(
-                  child: Text(
-                    _currentVersion.isEmpty ? 'Version' : 'v$_currentVersion',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+              // Seven quick taps on the version open owner access.
+              GestureDetector(
+                key: const Key('app-version-row'),
+                behavior: HitTestBehavior.opaque,
+                onTap: _handleVersionTap,
+                child: Padding(
+                  padding: const EdgeInsets.only(left: 2, right: 12),
+                  child: Center(
+                    child: Text(
+                      _currentVersion.isEmpty ? 'Version' : 'v$_currentVersion',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                 ),
               ),
             ],
           ),
+          // The tiles need a Material above them for ink, and the backdrop
+          // paints its own colour, so the ink layer sits between the two.
           body: LightBackdrop(
-            child: ListView(
-              padding: const EdgeInsets.only(bottom: 28),
-              children: [
-                _Overview(provider: provider, updateService: updateService),
-                if (issues.isNotEmpty)
+            child: Material(
+              type: MaterialType.transparency,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 16),
+                children: [
+                  if (issues.isNotEmpty)
+                    _SettingsGroup(
+                      title: 'Needs Attention',
+                      children: [
+                        for (final item in issues) _ActionTile(item: item),
+                      ],
+                    ),
                   _SettingsGroup(
-                    title: 'Needs Attention',
+                    title: 'Account & Relay',
                     children: [
-                      for (final item in issues) _ActionTile(item: item),
+                      _AccountTile(provider: provider),
+                      const _SubscriptionTile(),
                     ],
                   ),
-                _SettingsGroup(
-                  title: 'Account & Relay',
-                  children: [
-                    _AccountTile(provider: provider),
-                    _RelayTile(provider: provider),
-                    const _SubscriptionTile(),
-                  ],
-                ),
-                _SettingsGroup(
-                  title: 'Integrations',
-                  children: [
-                    if (provider.mcpServers.isNotEmpty)
+                  _SettingsGroup(
+                    title: 'Integrations',
+                    children: [
+                      if (provider.mcpServers.isNotEmpty)
+                        _NavTile(
+                          icon: Icons.extension_outlined,
+                          title: 'MCP Servers',
+                          subtitle: _mcpSubtitle(provider),
+                          trailing: Icons.chevron_right,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const McpServersScreen(),
+                            ),
+                          ),
+                        ),
                       _NavTile(
-                        icon: Icons.extension_outlined,
-                        title: 'MCP Servers',
-                        subtitle: _mcpSubtitle(provider),
+                        icon: Icons.auto_fix_high,
+                        title: 'Skills, Plugins & Commands',
                         trailing: Icons.chevron_right,
                         onTap: () => Navigator.of(context).push(
                           MaterialPageRoute(
-                            builder: (_) => const McpServersScreen(),
+                            builder: (_) => const SkillsScreen(),
                           ),
                         ),
                       ),
-                    _NavTile(
-                      icon: Icons.auto_fix_high,
-                      title: 'Skills, Plugins & Commands',
-                      subtitle: 'Configured per connected computer',
-                      trailing: Icons.chevron_right,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const SkillsScreen()),
-                      ),
-                    ),
-                  ],
-                ),
-                _SettingsGroup(
-                  title: 'Voice & Notifications',
-                  children: [
-                    _NavTile(
-                      icon: Icons.mic_outlined,
-                      title: 'Voice & Speech',
-                      subtitle: _voiceSubtitle(provider),
-                      trailing: Icons.chevron_right,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const VoiceSpeechScreen(),
+                    ],
+                  ),
+                  _SettingsGroup(
+                    title: 'Voice & Notifications',
+                    children: [
+                      _NavTile(
+                        icon: Icons.mic_outlined,
+                        title: 'Voice & Speech',
+                        subtitle: _voiceSubtitle(provider),
+                        trailing: Icons.chevron_right,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const VoiceSpeechScreen(),
+                          ),
                         ),
                       ),
-                    ),
-                    if (Platform.isAndroid)
-                      _NotificationSummaryTile()
-                    else
-                      const ListTile(
-                        leading: Icon(Icons.notifications_outlined),
-                        title: Text('Desktop notifications'),
-                        subtitle: Text(
-                          'Keep SocketAgent open to receive session alerts.',
+                      if (Platform.isAndroid)
+                        _NotificationSummaryTile()
+                      else
+                        const _DetailRow(
+                          icon: Icons.notifications_outlined,
+                          title: 'Desktop notifications',
+                          trailing: 'While the app is open',
+                        ),
+                      if (Platform.isWindows) const _StartWithWindowsTile(),
+                      SwitchListTile(
+                        secondary: const Icon(Icons.volume_up_outlined),
+                        title: const Text('Sound when a run finishes'),
+                        value: provider.runFinishedSoundEnabled,
+                        onChanged: provider.setRunFinishedSoundEnabled,
+                      ),
+                    ],
+                  ),
+                  _SettingsGroup(
+                    title: 'Chat & Display',
+                    children: [
+                      const _AppearanceTile(),
+                      if (Platform.isWindows) const _TextSizeTile(),
+                      SwitchListTile(
+                        secondary: const Icon(Icons.view_stream_outlined),
+                        title: const Text('Condensed Tool Usage'),
+                        value: provider.condensedToolUsage,
+                        onChanged: provider.setCondensedToolUsage,
+                      ),
+                      TranscriptCacheTile(provider: provider),
+                    ],
+                  ),
+                  _SettingsGroup(
+                    title: 'Security & Privacy',
+                    children: [
+                      _NavTile(
+                        icon: Icons.shield_outlined,
+                        title: 'Protected Files',
+                        trailing: Icons.chevron_right,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const ProtectedFilesScreen(),
+                          ),
                         ),
                       ),
-                    if (Platform.isWindows) const _StartWithWindowsTile(),
-                    SwitchListTile(
-                      secondary: const Icon(Icons.volume_up_outlined),
-                      title: const Text('Sound when a run finishes'),
-                      subtitle: const Text(
-                        'For the open session, which gets no popup',
-                      ),
-                      value: provider.runFinishedSoundEnabled,
-                      onChanged: provider.setRunFinishedSoundEnabled,
-                    ),
-                  ],
-                ),
-                _SettingsGroup(
-                  title: 'Chat & Display',
-                  children: [
-                    const _AppearanceTile(),
-                    if (Platform.isWindows) const _TextSizeTile(),
-                    SwitchListTile(
-                      secondary: const Icon(Icons.view_stream_outlined),
-                      title: const Text('Condensed Tool Usage'),
-                      subtitle: const Text(
-                        'Collapse internal work between conversation messages',
-                      ),
-                      value: provider.condensedToolUsage,
-                      onChanged: provider.setCondensedToolUsage,
-                    ),
-                    TranscriptCacheTile(provider: provider),
-                  ],
-                ),
-                _SettingsGroup(
-                  title: 'Files & Security',
-                  children: [
-                    _NavTile(
-                      icon: Icons.shield_outlined,
-                      title: 'Protected Files',
-                      subtitle: 'Approval rules for sensitive paths',
-                      trailing: Icons.chevron_right,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const ProtectedFilesScreen(),
+                      _NavTile(
+                        icon: Icons.key_outlined,
+                        title: 'Credential Manager',
+                        subtitle: 'Move computers between devices',
+                        trailing: Icons.chevron_right,
+                        onTap: () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const CredentialManagerScreen(),
+                          ),
                         ),
                       ),
-                    ),
-                    _NavTile(
-                      icon: Icons.key_outlined,
-                      title: 'Credential Manager',
-                      subtitle:
-                          'Send computers to another device or receive them',
-                      trailing: Icons.chevron_right,
-                      onTap: () => Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => const CredentialManagerScreen(),
-                        ),
+                      _NavTile(
+                        icon: Icons.privacy_tip_outlined,
+                        title: 'Privacy Policy',
+                        trailing: Icons.open_in_new,
+                        onTap: _openPrivacyPolicy,
                       ),
-                    ),
-                  ],
-                ),
-                _SettingsGroup(
-                  title: 'About',
-                  children: [
-                    ListTile(
-                      key: const Key('app-version-row'),
-                      leading: const Icon(Icons.info_outline),
-                      title: const Text('Version'),
-                      subtitle: Text(
-                        _currentVersion.isEmpty
-                            ? 'Loading'
-                            : 'v$_currentVersion',
-                      ),
-                      onTap: _handleVersionTap,
-                    ),
-                    _NavTile(
-                      icon: Icons.privacy_tip_outlined,
-                      title: 'Privacy Policy',
-                      subtitle: 'How SocketAgent handles data',
-                      trailing: Icons.open_in_new,
-                      onTap: _openPrivacyPolicy,
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
         );
@@ -506,9 +489,6 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
     ChatProvider provider,
   ) {
     final items = <_AttentionItem>[];
-    final relayServers = provider.serverConfigs
-        .where((c) => c.useRelay)
-        .toList();
     final failedMcp = provider.mcpServers.where((server) {
       final status = server['status']?.toString() ?? '';
       return status == 'failed' || status == 'error';
@@ -526,20 +506,6 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           onTap: () => Navigator.of(context).push(
             MaterialPageRoute<void>(builder: (_) => const AccountScreen()),
           ),
-        ),
-      );
-    }
-    if (relayServers.isNotEmpty && !provider.hasCachedRelayAccess) {
-      items.add(
-        _AttentionItem(
-          icon: Icons.cloud_off_outlined,
-          title: 'Relay sign-in required',
-          subtitle:
-              '${relayServers.length} relay computer${relayServers.length == 1 ? '' : 's'} configured',
-          severity: _AttentionSeverity.error,
-          onTap: () => Navigator.of(
-            context,
-          ).push(MaterialPageRoute(builder: (_) => const PaywallScreen())),
         ),
       );
     }
@@ -592,63 +558,8 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
   }
 }
 
-class _Overview extends StatelessWidget {
-  const _Overview({required this.provider, required this.updateService});
-
-  final ChatProvider provider;
-  final UpdateService updateService;
-
-  @override
-  Widget build(BuildContext context) {
-    final relayServers = provider.serverConfigs.where((c) => c.useRelay).length;
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Operations',
-            style: Theme.of(
-              context,
-            ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: _MetricChip(
-                  icon: Icons.cloud_outlined,
-                  label: 'Relay',
-                  value: relayServers == 0
-                      ? 'unused'
-                      : provider.hasCachedRelayAccess
-                      ? 'signed in'
-                      : 'sign in',
-                  tone: relayServers == 0 || provider.hasCachedRelayAccess
-                      ? _ChipTone.good
-                      : _ChipTone.warning,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: _MetricChip(
-                  icon: Icons.system_update,
-                  label: 'App',
-                  value: updateService.updateAvailable ? 'update' : 'current',
-                  tone: updateService.updateAvailable
-                      ? _ChipTone.info
-                      : _ChipTone.good,
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
-
+/// A labelled run of tiles. The label sits flush with the tile text and the
+/// tiles are separated by hairlines, with no card around them.
 class _SettingsGroup extends StatelessWidget {
   const _SettingsGroup({required this.title, required this.children});
 
@@ -657,54 +568,53 @@ class _SettingsGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SettingsGroupLabel(title),
+        for (var i = 0; i < children.length; i++) ...[
+          children[i],
+          if (i != children.length - 1)
+            const Divider(height: 1, indent: 16, endIndent: 16),
+        ],
+      ],
+    );
+  }
+}
+
+/// Section label shared by the settings screens: bold, in the primary text
+/// colour, not a faded caption.
+class SettingsGroupLabel extends StatelessWidget {
+  const SettingsGroupLabel(this.text, {super.key, this.action});
+
+  final String text;
+  final Widget? action;
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      padding: const EdgeInsets.fromLTRB(16, 14, 8, 2),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.primary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Material(
-            color: Theme.of(context).colorScheme.surfaceContainerLow,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-              side: BorderSide(
-                color: Theme.of(context).colorScheme.outlineVariant,
+          Expanded(
+            child: Text(
+              text,
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: Theme.of(context).colorScheme.onSurface,
+                fontWeight: FontWeight.w700,
               ),
             ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                for (var i = 0; i < children.length; i++) ...[
-                  children[i],
-                  if (i != children.length - 1)
-                    Divider(
-                      height: 1,
-                      indent: 56,
-                      color: Theme.of(context).colorScheme.outlineVariant,
-                    ),
-                ],
-              ],
-            ),
           ),
+          ?action,
         ],
       ),
     );
   }
 }
 
+/// The account row. Signed out, tapping it starts the Google sign-in right
+/// here; the recovery-key restore sits in the row's menu. Signed in, it opens
+/// the account screen.
 class _AccountTile extends StatelessWidget {
   const _AccountTile({required this.provider});
 
@@ -713,10 +623,39 @@ class _AccountTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final account = provider.account;
-    final String subtitle;
     if (!account.hasAccount) {
-      subtitle = 'Sign in with Google to sync computers between devices';
-    } else if (account.lastError != null) {
+      final canSignIn = account.googleConfigured;
+      return ListTile(
+        leading: const Icon(Icons.account_circle_outlined),
+        title: const Text('Account'),
+        subtitle: Text(
+          canSignIn
+              ? 'Sign in with Google to sync between devices'
+              : 'Google sign-in is not set up in this build',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        trailing: PopupMenuButton<String>(
+          tooltip: 'Account options',
+          icon: const Icon(Icons.more_vert),
+          onSelected: (_) => runAccountAction(
+            context,
+            () => restoreAccountWithRecoveryKey(context, account),
+          ),
+          itemBuilder: (_) => const [
+            PopupMenuItem(
+              value: 'restore',
+              child: Text('Restore with recovery key'),
+            ),
+          ],
+        ),
+        onTap: canSignIn
+            ? () => runAccountAction(context, account.signInWithGoogle)
+            : null,
+      );
+    }
+    final String subtitle;
+    if (account.lastError != null) {
       subtitle = account.lastError!;
     } else {
       final count = account.devices.length;
@@ -725,38 +664,13 @@ class _AccountTile extends StatelessWidget {
           '$count device${count == 1 ? '' : 's'}';
     }
     return _NavTile(
-      icon: account.hasAccount
-          ? Icons.account_circle
-          : Icons.account_circle_outlined,
+      icon: Icons.account_circle,
       title: 'Account',
       subtitle: subtitle,
       trailing: Icons.chevron_right,
       onTap: () => Navigator.of(
         context,
       ).push(MaterialPageRoute<void>(builder: (_) => const AccountScreen())),
-    );
-  }
-}
-
-class _RelayTile extends StatelessWidget {
-  const _RelayTile({required this.provider});
-
-  final ChatProvider provider;
-
-  @override
-  Widget build(BuildContext context) {
-    final relayCount = provider.serverConfigs.where((c) => c.useRelay).length;
-    return _DetailRow(
-      icon: provider.hasCachedRelayAccess
-          ? Icons.cloud_done_outlined
-          : Icons.cloud_off_outlined,
-      title: 'Relay access',
-      subtitle: relayCount == 0
-          ? 'No relay computers configured'
-          : provider.hasCachedRelayAccess
-          ? '$relayCount relay computer${relayCount == 1 ? '' : 's'}'
-          : 'Sign in required',
-      trailing: provider.hasCachedRelayAccess ? 'Ready' : 'Off',
     );
   }
 }
@@ -878,19 +792,36 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
         final hasAccess = provider.hasCachedRelayAccess;
         final isOwner = provider.subscriptionStatus == 'owner';
         final isLegacyStripe = provider.subscriptionProvider == 'stripe';
-        final lines = _subscriptionLines(provider);
+        final relayCount = provider.serverConfigs
+            .where((c) => c.useRelay)
+            .length;
+        // Relay computers that cannot connect until this device signs in.
+        final blocked = !hasAccess && relayCount > 0;
+        final lines = [
+          ..._subscriptionLines(provider),
+          if (relayCount > 0)
+            '$relayCount relay computer${relayCount == 1 ? '' : 's'}',
+        ];
+        final status = hasAccess
+            ? isOwner
+                  ? 'Owner'
+                  : isLegacyStripe
+                  ? 'Legacy'
+                  : 'Ready'
+            : blocked
+            ? 'Sign in'
+            : 'Off';
 
         return ListTile(
           leading: Icon(
-            hasAccess ? Icons.receipt_long_outlined : Icons.login_outlined,
+            hasAccess ? Icons.cloud_done_outlined : Icons.cloud_off_outlined,
+            color: blocked ? context.palette.danger : null,
           ),
-          title: Text(hasAccess ? 'Subscription' : 'Relay sign-in'),
-          subtitle: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              for (final line in lines)
-                Text(line, maxLines: 1, overflow: TextOverflow.ellipsis),
-            ],
+          title: Text(hasAccess ? 'Relay subscription' : 'Relay sign-in'),
+          subtitle: Text(
+            lines.join(' · '),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
           trailing: _openingPortal
               ? const SizedBox(
@@ -901,10 +832,15 @@ class _SubscriptionTileState extends State<_SubscriptionTile> {
               : Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (hasAccess && isOwner) const Text('Owner'),
-                    if (hasAccess && isLegacyStripe) const Text('Legacy'),
-                    if (hasAccess && (isOwner || isLegacyStripe))
-                      const SizedBox(width: 4),
+                    Text(
+                      status,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: blocked
+                            ? context.palette.danger
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
                     const Icon(Icons.chevron_right),
                   ],
                 ),
@@ -1022,7 +958,6 @@ class _AppearanceTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = context.watch<ThemeModeController>();
     return ListTile(
-      leading: const Icon(Icons.brightness_6_outlined),
       title: const Text('Appearance'),
       trailing: SegmentedButton<ThemeMode>(
         showSelectedIcon: false,
@@ -1062,7 +997,7 @@ class _NavTile extends StatelessWidget {
   const _NavTile({
     required this.icon,
     required this.title,
-    required this.subtitle,
+    this.subtitle,
     this.iconColor,
     this.trailing,
     this.onTap,
@@ -1070,7 +1005,7 @@ class _NavTile extends StatelessWidget {
 
   final IconData icon;
   final String title;
-  final String subtitle;
+  final String? subtitle;
   final Color? iconColor;
   final IconData? trailing;
   final VoidCallback? onTap;
@@ -1080,7 +1015,9 @@ class _NavTile extends StatelessWidget {
     return ListTile(
       leading: Icon(icon, color: iconColor),
       title: Text(title),
-      subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
+      subtitle: subtitle == null
+          ? null
+          : Text(subtitle!, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: trailing == null ? null : Icon(trailing),
       onTap: onTap,
     );
@@ -1088,16 +1025,10 @@ class _NavTile extends StatelessWidget {
 }
 
 class _DetailRow extends StatelessWidget {
-  const _DetailRow({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    this.trailing,
-  });
+  const _DetailRow({required this.icon, required this.title, this.trailing});
 
   final IconData icon;
   final String title;
-  final String subtitle;
   final String? trailing;
 
   @override
@@ -1105,7 +1036,6 @@ class _DetailRow extends StatelessWidget {
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
-      subtitle: Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis),
       trailing: trailing == null
           ? null
           : Text(
@@ -1114,68 +1044,6 @@ class _DetailRow extends StatelessWidget {
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ),
-    );
-  }
-}
-
-class _MetricChip extends StatelessWidget {
-  const _MetricChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.tone,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final _ChipTone tone;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = switch (tone) {
-      _ChipTone.good => Colors.green.shade600,
-      _ChipTone.warning => Colors.orange.shade700,
-      _ChipTone.info => Theme.of(context).colorScheme.primary,
-      _ChipTone.neutral => Theme.of(context).colorScheme.onSurfaceVariant,
-    };
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 7),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 5),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall,
-                  ),
-                  Text(
-                    value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -1205,8 +1073,6 @@ class _AttentionItem {
 }
 
 enum _AttentionSeverity { error, warning, info }
-
-enum _ChipTone { good, warning, info, neutral }
 
 /// The connection label, naming the approval code while another device has
 /// to let this one in.
@@ -1295,7 +1161,6 @@ class _StartWithWindowsTileState extends State<_StartWithWindowsTile> {
   Widget build(BuildContext context) => SwitchListTile(
     secondary: const Icon(Icons.power_settings_new),
     title: const Text('Start with Windows'),
-    subtitle: const Text('Opens in the tray when you sign in'),
     value: _enabled ?? false,
     onChanged: _enabled == null ? null : _set,
   );

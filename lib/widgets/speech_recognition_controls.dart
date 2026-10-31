@@ -99,7 +99,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
           body: AnimatedBuilder(
             animation: provider,
             builder: (_, _) => ListView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
               children: [
                 SpeechRecognitionControls(provider: provider, view: view),
               ],
@@ -152,7 +152,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
     required String label,
     required SpeechRecognitionSettings Function(double) update,
   }) => Padding(
-    padding: const EdgeInsets.only(bottom: 20),
+    padding: const EdgeInsets.only(bottom: 8),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -212,13 +212,6 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Turn your speech into a message.',
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-        ),
-        const SizedBox(height: 8),
-        const Text('Dictation stays on this device.'),
-        const SizedBox(height: 24),
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.mic_none),
@@ -230,12 +223,12 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
           onTap: () => _open(SpeechSettingsView.models, 'Recognition model'),
         ),
         _progress(),
-        const Divider(height: 32),
-        const Text(
-          'Microphone button',
-          style: TextStyle(fontWeight: FontWeight.w600),
+        // The control goes full width under its label; as a trailing widget
+        // it overflows a narrow phone at large text sizes.
+        const Padding(
+          padding: EdgeInsets.only(top: 8, bottom: 4),
+          child: Text('Microphone button'),
         ),
-        const SizedBox(height: 12),
         SizedBox(
           width: double.infinity,
           child: SegmentedButton<bool>(
@@ -245,6 +238,10 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
             ],
             selected: {provider.pushToTalk},
             showSelectedIcon: false,
+            style: const ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
             onSelectionChanged: _disabled
                 ? null
                 : (values) {
@@ -253,13 +250,6 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
                   },
           ),
         ),
-        const SizedBox(height: 10),
-        Text(
-          provider.pushToTalk
-              ? 'Hold the microphone while speaking. Release to finish.'
-              : 'Tap once to start. Pause to finish, or tap again to stop.',
-        ),
-        const SizedBox(height: 16),
         ListTile(
           contentPadding: EdgeInsets.zero,
           title: const Text('Fine-tune dictation'),
@@ -267,18 +257,16 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
           trailing: const Icon(Icons.chevron_right),
           onTap: () => _open(SpeechSettingsView.tuning, 'Fine-tune dictation'),
         ),
-        if (Platform.isAndroid) ...[
-          const Divider(height: 32),
+        if (Platform.isAndroid)
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Listen on assistant shortcut'),
             subtitle: const Text(
-              'Start dictation when your phone’s assistant shortcut opens SocketAgent.',
+              'When the assistant shortcut opens SocketAgent',
             ),
             value: provider.autoVoiceOnAssist,
             onChanged: (value) => provider.setAutoVoiceOnAssist(value),
           ),
-        ],
       ],
     );
   }
@@ -288,10 +276,6 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Choose a model for English dictation. Download once, then use it offline.',
-        ),
-        const SizedBox(height: 16),
         for (final model in AsrModel.values.where(
           (model) => model != AsrModel.nemotron || Platform.isWindows,
         )) ...[
@@ -354,12 +338,12 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
     children: [
       Text(
         _settings.model.label,
-        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+        style: const TextStyle(fontWeight: FontWeight.w600),
       ),
-      const SizedBox(height: 24),
+      const SizedBox(height: 8),
       if (_settings.model == AsrModel.zipformer) ...[
         const Text('Recognition effort'),
-        const SizedBox(height: 12),
+        const SizedBox(height: 4),
         SegmentedButton<int>(
           segments: const [
             ButtonSegment(value: 1, label: Text('Fast')),
@@ -372,10 +356,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
               ? null
               : (v) => _save(_settings.copyWith(searchPaths: v.first)),
         ),
-        const Padding(
-          padding: EdgeInsets.symmetric(vertical: 12),
-          child: Text('Choose how carefully to interpret your words.'),
-        ),
+        const SizedBox(height: 8),
         _slider(
           title: 'Pause between sentences',
           detail: 'How long a pause separates two sentences.',
