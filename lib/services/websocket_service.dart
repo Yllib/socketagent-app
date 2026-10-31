@@ -1046,6 +1046,10 @@ class WebSocketService {
     send({'type': 'mcp_status'});
   }
 
+  void sendMcpLogin(String serverName) {
+    send({'type': 'mcp_login', 'serverName': serverName});
+  }
+
   void sendMcpReconnect(String serverName) {
     send({'type': 'mcp_reconnect', 'serverName': serverName});
   }

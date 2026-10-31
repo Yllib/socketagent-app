@@ -859,6 +859,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _sessionModel;
   List<Map<String, dynamic>> _supportedModels = [];
   List<Map<String, dynamic>> _mcpServers = [];
+  /// Sign-in URLs awaited per MCP server, answered by mcp_login_started.
+  final Map<String, Completer<String>> _mcpLoginUrls = {};
+  /// MCP servers with a sign-in running, from the tap until mcp_login_result.
+  final Set<String> _mcpLoginsPending = {};
+  /// Why the last sign-in per MCP server failed.
+  final Map<String, String> _mcpLoginErrors = {};
   bool _rawMode = false;
   final List<SdkItem> _rawItems = [];
   MessageGroup? _currentMessageGroup;
@@ -7440,6 +7446,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'mcp_status':
           _handleMcpStatus(msg);
           break;
+        case 'mcp_login_started':
+          _handleMcpLoginStarted(msg);
+          break;
+        case 'mcp_login_result':
+          _handleMcpLoginResult(msg);
+          break;
         case 'elicitation_url':
           _handleElicitationUrl(msg);
           break;
@@ -12345,6 +12357,76 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  void _handleMcpLoginStarted(Map<String, dynamic> msg) {
+    final name = msg['serverName'] as String? ?? '';
+    final url = msg['url'] as String? ?? '';
+    final waiting = _mcpLoginUrls.remove(name);
+    if (waiting == null || waiting.isCompleted) return;
+    if (url.isEmpty) {
+      waiting.completeError(StateError('The server sent no sign-in URL.'));
+    } else {
+      waiting.complete(url);
+    }
+  }
+
+  void _handleMcpLoginResult(Map<String, dynamic> msg) {
+    final name = msg['serverName'] as String? ?? '';
+    if (name.isEmpty) return;
+    final success = msg['success'] == true;
+    final error = msg['error'] as String? ?? 'Sign-in failed.';
+    _mcpLoginsPending.remove(name);
+    final waiting = _mcpLoginUrls.remove(name);
+    if (waiting != null && !waiting.isCompleted) {
+      waiting.completeError(StateError(error));
+    }
+    if (success) {
+      _mcpLoginErrors.remove(name);
+    } else {
+      _mcpLoginErrors[name] = error;
+    }
+    notifyListeners();
+  }
+
+  bool mcpLoginPending(String serverName) =>
+      _mcpLoginsPending.contains(serverName);
+
+  String? mcpLoginError(String serverName) => _mcpLoginErrors[serverName];
+
+  /// Starts an OAuth sign-in for [serverName] and opens its authorization
+  /// page in the server-side browser, where the OAuth callback on the
+  /// server's 127.0.0.1 can land. Completes with the browser to show. The
+  /// outcome arrives later as mcp_login_result.
+  Future<ActiveBrowserSession> signInMcpServer(String serverName) async {
+    final waiting = Completer<String>();
+    _mcpLoginUrls[serverName] = waiting;
+    _mcpLoginsPending.add(serverName);
+    _mcpLoginErrors.remove(serverName);
+    notifyListeners();
+    try {
+      _ws.sendMcpLogin(serverName);
+      final url = await waiting.future.timeout(
+        const Duration(seconds: 30),
+        onTimeout: () => throw TimeoutException(
+          'The server did not start the sign-in within 30 seconds.',
+        ),
+      );
+      return await startBrowserSession(url: url);
+    } catch (error) {
+      _mcpLoginsPending.remove(serverName);
+      _mcpLoginErrors[serverName] = switch (error) {
+        TimeoutException(:final message?) => message,
+        StateError(:final message) => message,
+        _ => '$error',
+      };
+      notifyListeners();
+      rethrow;
+    } finally {
+      if (identical(_mcpLoginUrls[serverName], waiting)) {
+        _mcpLoginUrls.remove(serverName);
+      }
+    }
+  }
+
   void _handleAuthStatus(Map<String, dynamic> msg) {
     final isAuthenticating = msg['isAuthenticating'] == true;
     final output = (msg['output'] as List?)?.cast<String>() ?? [];
@@ -15994,6 +16076,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _sessionModel = null;
     _supportedModels = [];
     _mcpServers = [];
+    _mcpLoginsPending.clear();
+    _mcpLoginErrors.clear();
     _subagentTasks.clear();
     _backgroundTasks.clear();
     _workflowTasks.clear();
@@ -17197,6 +17281,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _sessionModel = null;
     _supportedModels = [];
     _mcpServers = [];
+    _mcpLoginsPending.clear();
+    _mcpLoginErrors.clear();
     _subagentTasks.clear();
     _backgroundTasks.clear();
     _workflowTasks.clear();
