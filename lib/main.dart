@@ -13,6 +13,10 @@ import 'services/desktop_window_service.dart';
 import 'services/desktop_audio.dart';
 import 'services/windows_preferences_worker.dart';
 import 'services/theme_mode_controller.dart';
+import 'ui_a/ui_a_root.dart';
+import 'ui_b/ui_b_root.dart';
+import 'ui_c/ui_c_root.dart';
+import 'ui_variant.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'widgets/desktop_window_frame.dart';
 import 'widgets/desktop_startup.dart';
@@ -60,6 +64,7 @@ Future<Widget> _initializeApp() async {
   try {
     await chatProvider.settingsReady;
     final themeMode = await ThemeModeController.load();
+    final uiVariant = await UiVariantController.load();
     if (AppBuild.supportsPlayBilling) {
       PlayBillingService.instance.initialize(
         chatProvider.verifyGooglePlayPurchase,
@@ -74,6 +79,7 @@ Future<Widget> _initializeApp() async {
       chatProvider: chatProvider,
       workReviews: workReviews,
       themeMode: themeMode,
+      uiVariant: uiVariant,
     );
   } catch (_) {
     workReviews?.dispose();
@@ -105,12 +111,14 @@ class ClaudeAssistantApp extends StatelessWidget {
   final ChatProvider chatProvider;
   final WorkReviewRepository workReviews;
   final ThemeModeController themeMode;
+  final UiVariantController uiVariant;
 
   const ClaudeAssistantApp({
     super.key,
     required this.chatProvider,
     required this.workReviews,
     required this.themeMode,
+    required this.uiVariant,
   });
 
   @override
@@ -121,6 +129,7 @@ class ClaudeAssistantApp extends StatelessWidget {
         ChangeNotifierProvider.value(value: chatProvider),
         ChangeNotifierProvider.value(value: workReviews),
         ChangeNotifierProvider.value(value: themeMode),
+        ChangeNotifierProvider.value(value: uiVariant),
       ],
       child: Consumer<ThemeModeController>(
         builder: (context, themeMode, _) => MaterialApp(
@@ -579,6 +588,11 @@ class _AppLauncherState extends State<AppLauncher>
 
   void _navigateToNotificationSession() {
     if (!mounted) return;
+    final uiVariant = context.read<UiVariantController>();
+    if (uiVariant.variant != UiVariant.classic) {
+      uiVariant.requestSessionOpen();
+      return;
+    }
     if (Platform.isWindows) {
       openConversation(context);
       return;
@@ -603,14 +617,19 @@ class _AppLauncherState extends State<AppLauncher>
       children: [
         // Main app content (renders behind splash)
         if (_checked)
-          MainShellScreen(
-            key: _mainShellKey,
-            initialIndex:
-                _mainShellDestination ==
-                    NotificationParentDestination.scheduledTasks
-                ? MainShellScreenState.scheduledTasksIndex
-                : MainShellScreenState.sessionsIndex,
-          ),
+          switch (context.watch<UiVariantController>().variant) {
+            UiVariant.classic => MainShellScreen(
+              key: _mainShellKey,
+              initialIndex:
+                  _mainShellDestination ==
+                      NotificationParentDestination.scheduledTasks
+                  ? MainShellScreenState.scheduledTasksIndex
+                  : MainShellScreenState.sessionsIndex,
+            ),
+            UiVariant.a => const UiARoot(),
+            UiVariant.b => const UiBRoot(),
+            UiVariant.c => const UiCRoot(),
+          },
 
         // Splash overlay — fades out once ready
         if (!_splashDone)

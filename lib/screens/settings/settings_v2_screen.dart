@@ -22,6 +22,7 @@ import '../../services/play_billing_service.dart';
 import '../../services/push_notification_service.dart';
 import '../../services/private_integration_auth_flow.dart';
 import '../../services/theme_mode_controller.dart';
+import '../../ui_variant.dart';
 import '../../services/update_service.dart';
 import '../../services/websocket_service.dart';
 import '../../util/format.dart';
@@ -477,6 +478,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                   title: 'Chat & Display',
                   children: [
                     const _AppearanceTile(),
+                    const _InterfaceTile(),
                     if (Platform.isWindows) const _TextSizeTile(),
                     SwitchListTile(
                       secondary: const Icon(Icons.view_stream_outlined),
@@ -3269,6 +3271,33 @@ class _AppearanceTile extends StatelessWidget {
             ButtonSegment(value: mode, label: Text(themeModeLabel(mode))),
         ],
         onSelectionChanged: (values) => controller.setMode(values.first),
+      ),
+    );
+  }
+}
+
+/// Picks which interface the app runs: the classic one or a redesign.
+class _InterfaceTile extends StatelessWidget {
+  const _InterfaceTile();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = context.watch<UiVariantController>();
+    return ListTile(
+      leading: const Icon(Icons.dashboard_customize_outlined),
+      title: const Text('Interface'),
+      trailing: SegmentedButton<UiVariant>(
+        showSelectedIcon: false,
+        style: const ButtonStyle(
+          visualDensity: VisualDensity.compact,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        ),
+        selected: {controller.variant},
+        segments: [
+          for (final variant in UiVariant.values)
+            ButtonSegment(value: variant, label: Text(uiVariantLabel(variant))),
+        ],
+        onSelectionChanged: (values) => controller.setVariant(values.first),
       ),
     );
   }
