@@ -11693,6 +11693,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'source': 'claude_sdk',
           'originToolUseId': ?toolUseId,
         };
+        // Codex reports a command left running in a background terminal only
+        // through this snapshot, so its card is marked here. Claude marks its
+        // cards through task_started and this repeats that state.
+        final card = toolUseId == null ? null : _toolCardFor(toolUseId);
+        if (card != null) {
+          card.toolStreaming = true;
+          card.isBackgrounded = true;
+          card.backgroundTaskId = taskId;
+        }
       }
     }
 
