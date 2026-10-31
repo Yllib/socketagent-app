@@ -61,10 +61,35 @@ void main() {
     await capture(tester, 'phone_computers');
   });
 
+  testWidgets('phone empty session and new session sheet', (tester) async {
+    final store = FakeUiCStore(openSessionId: null);
+    await pumpUiC(tester, store);
+    await tester.tap(find.text('Session').last);
+    await tester.pumpAndSettle();
+    await capture(tester, 'phone_session_empty');
+    await tester.tap(find.text('New session'));
+    await tester.pumpAndSettle();
+    await capture(tester, 'phone_new_session');
+  });
+
+  testWidgets('phone settings', (tester) async {
+    final store = FakeUiCStore(openSessionId: null);
+    await pumpUiC(tester, store);
+    await tester.tap(find.text('More').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Settings'));
+    await tester.pumpAndSettle();
+    await capture(tester, 'phone_settings');
+  });
+
   testWidgets('desktop workspace', (tester) async {
     final store = FakeUiCStore();
     await pumpUiC(tester, store, target: desktop);
     await capture(tester, 'desktop_workspace');
+    final nav = tester.element(find.byType(Scaffold).first).read<UiCNav>();
+    nav.openMore(MorePage.automations);
+    await tester.pumpAndSettle();
+    await capture(tester, 'desktop_automations');
   });
 
   testWidgets('desktop ice and phone paper', (tester) async {

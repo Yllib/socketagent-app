@@ -24,7 +24,7 @@ Future<void> showSecureEntry(BuildContext context, ChatMessage message) async {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => Provider<UiCStore>.value(
+      builder: (dialogContext) => ChangeNotifierProvider<UiCStore>.value(
         value: store,
         child: _SecureDialog(message: message, requestId: requestId),
       ),

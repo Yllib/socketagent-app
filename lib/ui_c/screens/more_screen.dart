@@ -33,7 +33,7 @@ class MoreScreen extends StatelessWidget {
         if (desktop) {
           return Row(
             children: [
-              SizedBox(width: 220, child: _Index(current: page)),
+              SizedBox(width: 250, child: _Index(current: page)),
               Container(width: 1, color: context.c.line),
               Expanded(
                 child: _Page(
