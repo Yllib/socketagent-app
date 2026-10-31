@@ -69,7 +69,10 @@ Future<void> renderPng(
         child: MaterialApp(
           debugShowCheckedModeBanner: false,
           theme: theme.material(1),
-          home: RepaintBoundary(key: _rootKey, child: child),
+          home: RepaintBoundary(
+            key: _rootKey,
+            child: Material(color: theme.bg, child: child),
+          ),
         ),
       ),
     ),
