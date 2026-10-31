@@ -34,11 +34,16 @@ void main() {
   });
 
   FakeComputersProvider twoComputers() => FakeComputersProvider(
+    // Studio is first in the owner's order and still retrying, so the tab
+    // must move it below tower and call it offline.
     configs: [
-      fakeConfig('tower', 'tower', host: '10.0.0.4', port: 8787),
       fakeConfig('studio', 'studio', useRelay: true, expectedOnline: true),
+      fakeConfig('tower', 'tower', host: '10.0.0.4', port: 8787),
     ],
-    statuses: const {'tower': ConnectionStatus.connected},
+    statuses: const {
+      'tower': ConnectionStatus.connected,
+      'studio': ConnectionStatus.connecting,
+    },
     fakeSessions: [
       fakeSession('a', 'tower', running: true),
       fakeSession('b', 'tower'),
@@ -72,7 +77,7 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('summaries count load, carry the version and fold warnings', (
+  testWidgets('summaries list online computers first and fold warnings', (
     tester,
   ) async {
     final provider = twoComputers();
@@ -92,7 +97,6 @@ void main() {
     final studio = summaries.last;
     expect(studio.online, isFalse);
     expect(studio.statusLabel, 'offline, expected online');
-    expect(studio.needsAttention, isTrue);
     expect(studio.address, '');
     expect(studio.runningCount, 0, reason: 'offline sessions cannot run');
     expect(studio.warnings, [
@@ -133,28 +137,25 @@ void main() {
       findsOneWidget,
     );
 
+    // Only tower is online, so only tower has buttons.
     expect(find.widgetWithText(FilledButton, 'New session'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Reconnect'), findsOneWidget);
-    expect(find.widgetWithText(OutlinedButton, 'Files'), findsNWidgets(2));
-    expect(find.widgetWithText(OutlinedButton, 'Terminal'), findsNWidgets(2));
-    expect(find.widgetWithText(OutlinedButton, 'Settings'), findsNWidgets(2));
-
-    final offlineFiles = tester.widgetList<OutlinedButton>(
-      find.widgetWithText(OutlinedButton, 'Files'),
+    expect(find.widgetWithText(OutlinedButton, 'Files'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Terminal'), findsOneWidget);
+    expect(find.widgetWithText(OutlinedButton, 'Settings'), findsOneWidget);
+    expect(find.text('Reconnect'), findsNothing);
+    expect(
+      tester.getTopLeft(find.text('tower')).dy,
+      lessThan(tester.getTopLeft(find.text('studio')).dy),
     );
-    expect(offlineFiles.last.onPressed, isNull, reason: 'studio is offline');
   });
 
-  testWidgets('Reconnect asks the connection manager for a fresh socket', (
-    tester,
-  ) async {
-    final provider = twoComputers();
-    await pumpTab(tester, provider);
+  testWidgets('tapping an offline computer opens its page', (tester) async {
+    await pumpTab(tester, twoComputers());
 
-    await tester.tap(find.widgetWithText(FilledButton, 'Reconnect'));
-    await tester.pump();
+    await tester.tap(find.text('studio'));
+    await tester.pumpAndSettle();
 
-    expect(provider.fakeConnMgr.reconnected, ['studio']);
+    expect(find.widgetWithText(AppBar, 'studio'), findsOneWidget);
   });
 
   testWidgets('Settings opens the computer page', (tester) async {

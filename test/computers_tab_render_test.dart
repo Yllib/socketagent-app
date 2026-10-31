@@ -130,8 +130,6 @@ class _NoActions implements ComputerActions {
   @override
   void open(ComputerSummary computer) {}
   @override
-  void reconnect(ComputerSummary computer) {}
-  @override
   void registerPush(ComputerSummary computer) {}
   @override
   void terminal(ComputerSummary computer) {}

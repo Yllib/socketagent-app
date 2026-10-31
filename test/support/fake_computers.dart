@@ -10,21 +10,18 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Reports a fixed link state per computer and records reconnects.
+/// Reports a fixed link state per computer and never opens a socket.
 class FakeConnectionManager extends ConnectionManager {
   FakeConnectionManager(this.statuses);
 
   final Map<String, ConnectionStatus> statuses;
-  final List<String> reconnected = [];
 
   @override
   ConnectionStatus statusOf(String serverId) =>
       statuses[serverId] ?? ConnectionStatus.disconnected;
 
   @override
-  void reconnectServer(String serverId, {DateTime? since}) {
-    reconnected.add(serverId);
-  }
+  void reconnectServer(String serverId, {DateTime? since}) {}
 }
 
 /// A provider whose computers, sessions and per-computer facts are fixed, so

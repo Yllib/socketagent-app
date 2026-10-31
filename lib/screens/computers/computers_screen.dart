@@ -5,7 +5,6 @@ import 'package:provider/provider.dart';
 
 import '../../config/app_palette.dart';
 import '../../services/chat_provider.dart';
-import '../../services/websocket_service.dart' show ConnectionStatus;
 import '../../widgets/light_backdrop.dart';
 import '../connect_computer_screen.dart';
 import '../file_manager_screen.dart';
@@ -96,7 +95,6 @@ abstract class ComputerActions {
   void newSession(ComputerSummary computer);
   void files(ComputerSummary computer);
   void terminal(ComputerSummary computer);
-  void reconnect(ComputerSummary computer);
   void registerPush(ComputerSummary computer);
 }
 
@@ -179,11 +177,6 @@ class _LiveComputerActions implements ComputerActions {
   }
 
   @override
-  void reconnect(ComputerSummary computer) {
-    provider.connMgr.reconnectServer(computer.id);
-  }
-
-  @override
   void registerPush(ComputerSummary computer) {
     unawaited(_registerPush(computer));
   }
@@ -238,13 +231,11 @@ class ComputerRow extends StatelessWidget {
     final palette = context.palette;
     final scheme = Theme.of(context).colorScheme;
     final c = computer;
-    final statusColor = switch (c.status) {
-      ConnectionStatus.connected => palette.success,
-      ConnectionStatus.connecting => palette.warning,
-      ConnectionStatus.error => palette.danger,
-      ConnectionStatus.disconnected =>
-        c.config.expectedOnline ? palette.danger : scheme.onSurfaceVariant,
-    };
+    final statusColor = c.online
+        ? palette.success
+        : c.config.expectedOnline
+        ? palette.danger
+        : scheme.onSurfaceVariant;
     final meta = TextStyle(fontSize: 13, color: scheme.onSurfaceVariant);
     final badge = c.config.colorValue;
     return InkWell(
@@ -354,48 +345,44 @@ class ComputerRow extends StatelessWidget {
                   ],
                 ),
               ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: [
-                if (c.online)
+            // Offline rows carry no buttons. A tap still opens the
+            // computer's settings.
+            if (c.online) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
                   _RowButton(
                     'New session',
                     icon: Icons.add,
                     primary: true,
                     onPressed: () => actions.newSession(c),
-                  )
-                else
-                  _RowButton(
-                    'Reconnect',
-                    icon: Icons.refresh,
-                    primary: true,
-                    onPressed: () => actions.reconnect(c),
                   ),
-                if (c.online && c.pushRegistered == false)
+                  if (c.pushRegistered == false)
+                    _RowButton(
+                      'Register push',
+                      icon: Icons.notifications_active_outlined,
+                      onPressed: () => actions.registerPush(c),
+                    ),
                   _RowButton(
-                    'Register push',
-                    icon: Icons.notifications_active_outlined,
-                    onPressed: () => actions.registerPush(c),
+                    'Files',
+                    icon: Icons.folder_outlined,
+                    onPressed: () => actions.files(c),
                   ),
-                _RowButton(
-                  'Files',
-                  icon: Icons.folder_outlined,
-                  onPressed: c.online ? () => actions.files(c) : null,
-                ),
-                _RowButton(
-                  'Terminal',
-                  icon: Icons.terminal,
-                  onPressed: c.online ? () => actions.terminal(c) : null,
-                ),
-                _RowButton(
-                  'Settings',
-                  icon: Icons.tune,
-                  onPressed: () => actions.open(c),
-                ),
-              ],
-            ),
+                  _RowButton(
+                    'Terminal',
+                    icon: Icons.terminal,
+                    onPressed: () => actions.terminal(c),
+                  ),
+                  _RowButton(
+                    'Settings',
+                    icon: Icons.tune,
+                    onPressed: () => actions.open(c),
+                  ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

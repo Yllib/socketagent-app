@@ -85,7 +85,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(bar().selectedIndex, MainShellScreenState.computersIndex);
     expect(find.text('0 of 1 online'), findsOneWidget);
-    expect(find.widgetWithText(FilledButton, 'Reconnect'), findsOneWidget);
+    expect(find.text('offline'), findsOneWidget);
 
     await tester.tap(tab('Settings'));
     await tester.pumpAndSettle();

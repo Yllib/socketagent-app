@@ -59,28 +59,20 @@ class ComputerSummary {
   String get address =>
       config.host.isEmpty ? '' : '${config.host}:${config.port}';
 
-  /// The status word beside the name: connected, via relay, offline and so on.
+  /// The status word beside the name. Anything short of connected reads as
+  /// offline: the connection manager retries on its own, so "connecting" and
+  /// "connection error" only describe its retry loop.
   String get statusLabel {
-    if (!online && auth.awaitingApproval) {
+    if (online) return config.useRelay ? 'connected via relay' : 'connected';
+    if (auth.awaitingApproval) {
       return 'waiting for approval, code ${formatFingerprintCode(auth.code)}';
     }
-    return switch (status) {
-      ConnectionStatus.connected =>
-        config.useRelay ? 'connected via relay' : 'connected',
-      ConnectionStatus.connecting => 'connecting',
-      ConnectionStatus.error => 'connection error',
-      ConnectionStatus.disconnected =>
-        config.expectedOnline ? 'offline, expected online' : 'offline',
-    };
+    return config.expectedOnline ? 'offline, expected online' : 'offline';
   }
-
-  /// Offline when it should be on, or failing to connect.
-  bool get needsAttention =>
-      status == ConnectionStatus.error ||
-      (status == ConnectionStatus.disconnected && config.expectedOnline);
 }
 
-/// One summary per configured computer, in the owner's order. Push state is
+/// One summary per configured computer, online ones first, each group in the
+/// owner's order. Push state is
 /// reported only where push applies, Android unless [pushApplies] says so.
 List<ComputerSummary> computerSummaries(
   ChatProvider provider, {
@@ -89,10 +81,11 @@ List<ComputerSummary> computerSummaries(
   final activeServerId =
       provider.activeSessionServerId ?? provider.connMgr.activeServerId;
   final push = pushApplies ?? Platform.isAndroid;
-  return [
+  final all = [
     for (final config in provider.serverConfigs)
       _summarize(provider, config, activeServerId, pushApplies: push),
   ];
+  return [...all.where((c) => c.online), ...all.where((c) => !c.online)];
 }
 
 ComputerSummary _summarize(
