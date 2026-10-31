@@ -337,8 +337,6 @@ class InboxRow extends StatelessWidget {
           onTap: () => store.answerAccess(request.requestId, 'deny'),
         ),
       ]);
-    } else {
-      actions.add(CButton('Open', dense: true, onTap: open));
     }
 
     return HairRow(
@@ -372,6 +370,10 @@ class InboxRow extends StatelessWidget {
                 item.since,
                 style: UiCFonts.mono(size: 11, color: c.warn),
               ),
+              if (actions.isEmpty) ...[
+                const SizedBox(width: 4),
+                Icon(Icons.chevron_right, size: 16, color: c.textFaint),
+              ],
             ],
           ),
           if (item.detail.isNotEmpty)
@@ -416,10 +418,11 @@ class InboxRow extends StatelessWidget {
               ],
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.only(left: 23, top: 6),
-            child: Wrap(spacing: 6, runSpacing: 4, children: actions),
-          ),
+          if (actions.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(left: 23, top: 6),
+              child: Wrap(spacing: 6, runSpacing: 4, children: actions),
+            ),
         ],
       ),
     );
@@ -534,7 +537,12 @@ class SessionLine extends StatelessWidget {
                     ],
                     if (live.children > 0) ...[
                       const SizedBox(width: 8),
-                      Tag('${live.children} AGENTS', color: c.accent),
+                      Tag(
+                        live.children == 1
+                            ? '1 AGENT'
+                            : '${live.children} AGENTS',
+                        color: c.accent,
+                      ),
                     ],
                     if (session.isFleeting && session.expiresAt != null) ...[
                       const SizedBox(width: 8),

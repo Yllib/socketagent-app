@@ -133,15 +133,10 @@ class _Index extends StatelessWidget {
               ),
             ),
         const SizedBox(height: 16),
+        const SectionHead('Interface'),
         const Padding(
           padding: EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: [
-              SectionHead('Interface', padding: EdgeInsets.zero),
-              SizedBox(width: 12),
-              InterfaceSwitch(expanded: true),
-            ],
-          ),
+          child: InterfaceSwitch(expanded: true),
         ),
       ],
     );

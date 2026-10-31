@@ -265,7 +265,7 @@ class _Header extends StatelessWidget {
                   children: [
                     if (computer != null) ...[
                       ComputerMark(
-                        name: computer.shortName,
+                        name: computer.name,
                         color: computer.color,
                         connected: computer.isConnected,
                         size: 7,
