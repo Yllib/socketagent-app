@@ -1941,15 +1941,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             };
           })
           .toList();
-      nativeCommands.sort(
-        (a, b) =>
-            (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? ''),
-      );
-      skillCommands.sort(
-        (a, b) =>
-            (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? ''),
-      );
-      return [...nativeCommands, ...skillCommands];
+      // The session's own list from Codex (skills/list and installed plugin
+      // skills) knows paths and enabled state, so its entries replace the
+      // SKILL.md scan's by name. The scan still covers a session whose list
+      // has not arrived.
+      final fromCodex = (_supportedCommands ?? const [])
+          .whereType<Map>()
+          .map((command) => Map<String, dynamic>.from(command))
+          .where((command) => command['agent'] == 'codex')
+          .map((command) => {
+            ...command,
+            'name': _cleanSlashName((command['name'] ?? '').toString()),
+          })
+          .where((command) => (command['name'] as String).isNotEmpty)
+          .toList();
+      final merged = <String, Map<String, dynamic>>{};
+      for (final command in fromCodex) {
+        merged[(command['name'] as String).toLowerCase()] = command;
+      }
+      for (final command in [...nativeCommands, ...skillCommands]) {
+        merged.putIfAbsent(
+          (command['name'] as String).toLowerCase(),
+          () => command,
+        );
+      }
+      final result = merged.values.toList();
+      result.sort((a, b) {
+        final kindOrder =
+            (a['kind'] == 'command' ? 0 : 1) - (b['kind'] == 'command' ? 0 : 1);
+        if (kindOrder != 0) return kindOrder;
+        return (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? '');
+      });
+      return result;
     }
 
     final merged = <String, Map<String, dynamic>>{};
