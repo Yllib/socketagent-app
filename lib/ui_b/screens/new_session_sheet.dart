@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../model/actions.dart';
 import '../model/board_model.dart';
 import '../theme/ui_b_theme.dart';
+import '../widgets/clock.dart';
 import '../widgets/primitives.dart';
 
 /// Computer, harness, folder, lifetime. The first message starts the session.
@@ -16,12 +17,17 @@ Future<void> showNewSessionSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: NewSessionForm(
-        computers: computers,
-        actions: actions,
-        initialServerId: serverId,
+    builder: (_) => uiBScoped(
+      context,
+      Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: NewSessionForm(
+          computers: computers,
+          actions: actions,
+          initialServerId: serverId,
+        ),
       ),
     ),
   );

@@ -53,6 +53,9 @@ class _UiBRootState extends State<UiBRoot> {
     _variant.sessionOpenRequests.addListener(_onOpenRequest);
     _provider!.requestSessionList();
     _provider!.requestScheduledTasks();
+    for (final c in _provider!.serverConfigs) {
+      _provider!.requestRecentCwds(serverId: c.id);
+    }
   }
 
   void _onOpenRequest() {

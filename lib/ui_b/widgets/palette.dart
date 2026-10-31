@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../model/actions.dart';
 import '../model/board_model.dart';
 import '../theme/ui_b_theme.dart';
+import 'clock.dart';
 import 'primitives.dart';
 
 /// One field that jumps anywhere: sessions by title, folder or computer,
@@ -29,13 +30,16 @@ Future<void> showPalette(
   return showDialog<void>(
     context: context,
     barrierColor: Colors.black54,
-    builder: (_) => Align(
-      alignment: const Alignment(0, -0.7),
-      child: Material(
-        color: Colors.transparent,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560, maxHeight: 440),
-          child: Palette(board: board, actions: actions, commands: commands),
+    builder: (_) => uiBScoped(
+      context,
+      Align(
+        alignment: const Alignment(0, -0.7),
+        child: Material(
+          color: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 440),
+            child: Palette(board: board, actions: actions, commands: commands),
+          ),
         ),
       ),
     ),

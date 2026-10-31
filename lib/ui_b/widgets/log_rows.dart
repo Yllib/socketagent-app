@@ -239,6 +239,11 @@ class _WorkBandState extends State<WorkBand> {
                   ).difference(row.messages.first.timestamp),
           )
         : formatShortDuration(m.elapsed);
+    final results = {
+      for (final x in row.messages)
+        if (x.type == MessageType.toolResult && x.toolUseId != null)
+          x.toolUseId!: x,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -296,6 +301,7 @@ class _WorkBandState extends State<WorkBand> {
                       msg,
                       actions: widget.actions,
                       session: widget.session,
+                      result: results[msg.toolUseId],
                     ),
                 ],
               ),
@@ -314,10 +320,14 @@ class WorkRow extends StatelessWidget {
     super.key,
     required this.actions,
     required this.session,
+    this.result,
   });
   final ChatMessage message;
   final UiBActions actions;
   final SessionView session;
+
+  /// The tool result from the same band, found once per band.
+  final ChatMessage? result;
 
   @override
   Widget build(BuildContext context) {
@@ -326,7 +336,7 @@ class WorkRow extends StatelessWidget {
     final m = message;
     switch (m.type) {
       case MessageType.toolCall:
-        return ToolRow(m, actions: actions, session: session);
+        return ToolRow(m, actions: actions, session: session, result: result);
       case MessageType.toolResult:
         // Results are shown under their call. A stray result has no call.
         return const SizedBox.shrink();
@@ -398,10 +408,14 @@ class ToolRow extends StatefulWidget {
     super.key,
     required this.actions,
     required this.session,
+    this.result,
   });
   final ChatMessage message;
   final UiBActions actions;
   final SessionView session;
+
+  /// The matching tool result when the caller already knows it.
+  final ChatMessage? result;
 
   @override
   State<ToolRow> createState() => _ToolRowState();
@@ -417,10 +431,12 @@ class _ToolRowState extends State<ToolRow> {
     final text = UiBText.of(context);
     final m = widget.message;
     final s = describeTool(m);
-    final result = widget.session.messages.firstWhere(
-      (x) => x.type == MessageType.toolResult && x.toolUseId == m.toolUseId,
-      orElse: () => m,
-    );
+    final result =
+        widget.result ??
+        widget.session.messages.firstWhere(
+          (x) => x.type == MessageType.toolResult && x.toolUseId == m.toolUseId,
+          orElse: () => m,
+        );
     final output =
         (result.type == MessageType.toolResult
             ? result.toolOutput

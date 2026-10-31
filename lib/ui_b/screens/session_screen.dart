@@ -5,6 +5,7 @@ import '../model/actions.dart';
 import '../model/log_model.dart';
 import '../model/session_model.dart';
 import '../theme/ui_b_theme.dart';
+import '../widgets/clock.dart';
 import '../widgets/composer.dart';
 import '../widgets/log_rows.dart';
 import '../widgets/primitives.dart';
@@ -523,16 +524,19 @@ Future<void> showSteeringSheet(
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    builder: (_) => SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.only(top: 8, bottom: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SectionHeader('Steering'),
-            SteeringPanel(session: session, actions: actions),
-          ],
+    builder: (_) => uiBScoped(
+      context,
+      SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 8, bottom: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SectionHeader('Steering'),
+              SteeringPanel(session: session, actions: actions),
+            ],
+          ),
         ),
       ),
     ),
@@ -549,16 +553,19 @@ Future<void> showRailSheet(
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    builder: (_) => DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.7,
-      maxChildSize: 0.95,
-      builder: (_, controller) => PrimaryScrollController(
-        controller: controller,
-        child: SideRail(
-          session: session,
-          actions: actions,
-          onJumpToRun: onJumpToRun,
+    builder: (_) => uiBScoped(
+      context,
+      DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.7,
+        maxChildSize: 0.95,
+        builder: (_, controller) => PrimaryScrollController(
+          controller: controller,
+          child: SideRail(
+            session: session,
+            actions: actions,
+            onJumpToRun: onJumpToRun,
+          ),
         ),
       ),
     ),

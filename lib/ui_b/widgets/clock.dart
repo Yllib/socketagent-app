@@ -1,6 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
+
+import '../theme/ui_b_theme.dart';
 
 /// One shared second hand. It ticks only while something on screen is live
 /// (a running session, a live task) and stops otherwise, so an idle board
@@ -54,6 +56,20 @@ class UiBClockScope extends InheritedNotifier<UiBClock> {
     final scope = context.getInheritedWidgetOfExactType<UiBClockScope>();
     return scope?.notifier?.now ?? DateTime.now();
   }
+}
+
+/// Re-applies this interface's theme and clock to a route opened from
+/// [from]. Sheets and dialogs render in the app's root overlay, above the
+/// shell and outside its scopes, so they would otherwise take the app's
+/// own theme.
+Widget uiBScoped(BuildContext from, Widget child) {
+  final themeScope = from.getInheritedWidgetOfExactType<UiBThemeScope>();
+  final clock = from.getInheritedWidgetOfExactType<UiBClockScope>()?.notifier;
+  final theme = themeScope?.theme ?? UiBTheme.night;
+  final scale = themeScope?.textScale ?? 1;
+  Widget out = Theme(data: theme.material(scale), child: child);
+  if (clock != null) out = UiBClockScope(clock: clock, child: out);
+  return UiBThemeScope(theme: theme, textScale: scale, child: out);
 }
 
 /// "1:04:33" or "4:33" style elapsed label. Compact enough for a row.

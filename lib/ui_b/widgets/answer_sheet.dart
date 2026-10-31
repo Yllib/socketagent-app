@@ -27,11 +27,14 @@ Future<void> openAnswerSheet(
   if (Platform.isWindows || MediaQuery.sizeOf(context).width > 700) {
     return showDialog<void>(
       context: context,
-      builder: (_) => Dialog(
-        insetPadding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
-          child: body,
+      builder: (_) => uiBScoped(
+        context,
+        Dialog(
+          insetPadding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 720),
+            child: body,
+          ),
         ),
       ),
     );
@@ -40,9 +43,14 @@ Future<void> openAnswerSheet(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
-      child: body,
+    builder: (_) => uiBScoped(
+      context,
+      Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: body,
+      ),
     ),
   );
 }
