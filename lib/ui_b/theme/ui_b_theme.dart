@@ -319,6 +319,15 @@ class UiBThemeController extends ChangeNotifier {
     );
   }
 
+  /// Applies the saved choice to this instance.
+  Future<void> restore() async {
+    final saved = await load();
+    if (saved._id == _id && saved._textScale == _textScale) return;
+    _id = saved._id;
+    _textScale = saved._textScale;
+    notifyListeners();
+  }
+
   Future<void> setTheme(UiBThemeId id) async {
     if (id == _id) return;
     _id = id;

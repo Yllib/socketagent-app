@@ -805,8 +805,9 @@ class AutomationForm extends StatelessWidget {
             FlatButton(
               'Mark read',
               onPressed: () {
-                if (item.serverId case final s?)
+                if (item.serverId case final s?) {
                   actions.markAutomationRead(s, item.id);
+                }
                 Navigator.of(context).maybePop();
               },
             ),

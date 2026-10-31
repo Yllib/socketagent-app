@@ -21,6 +21,15 @@ List<ComputerChip> fakeComputers() => const [
     waitingCount: 2,
     version: '1.1.14',
     pushRegistered: true,
+    host: '10.0.0.4:8787',
+    sessionCount: 9,
+    backends: ['claude', 'codex'],
+    recentCwds: [
+      '/home/billy/agents/socketagent',
+      '/home/billy/agents/socketagent-app',
+      '/home/billy/rubano/books',
+    ],
+    defaultCwd: '/home/billy/agents/socketagent',
   ),
   ComputerChip(
     id: 'laptop',
@@ -31,6 +40,9 @@ List<ComputerChip> fakeComputers() => const [
     version: '1.1.14',
     pushRegistered: true,
     viaRelay: true,
+    host: 'relay',
+    sessionCount: 4,
+    recentCwds: ['/Users/billy/work/fleet'],
   ),
   ComputerChip(
     id: 'mac',
@@ -40,6 +52,9 @@ List<ComputerChip> fakeComputers() => const [
     expectedOnline: true,
     version: '1.1.9',
     pushRegistered: false,
+    host: '10.0.0.9:8787',
+    sessionCount: 2,
+    issues: ['codex: not signed in, run codex login on the computer'],
   ),
   ComputerChip(
     id: 'nas',

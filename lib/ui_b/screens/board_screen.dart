@@ -62,7 +62,7 @@ class _BoardScreenState extends State<BoardScreen> {
     final sessions = model.sessions.where(_matches).toList()
       ..sort(compareBoardSessions);
     final slivers = <Widget>[
-      if (widget.header != null) widget.header!,
+      if (widget.header case final h?) SliverToBoxAdapter(child: h),
       SliverToBoxAdapter(
         child: ComputerStrip(
           computers: model.computers,

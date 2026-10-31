@@ -39,6 +39,12 @@ class ComputerChip {
     this.issueCount = 0,
     this.pushRegistered,
     this.viaRelay = false,
+    this.issues = const [],
+    this.sessionCount = 0,
+    this.host = '',
+    this.backends = const ['claude'],
+    this.recentCwds = const [],
+    this.defaultCwd,
   });
 
   final String id;
@@ -54,6 +60,16 @@ class ComputerChip {
   /// Null when unknown.
   final bool? pushRegistered;
   final bool viaRelay;
+
+  /// Problems the computer reported about its harnesses, as text.
+  final List<String> issues;
+  final int sessionCount;
+  final String host;
+
+  /// Harnesses the computer can run, for the new-session chooser.
+  final List<String> backends;
+  final List<String> recentCwds;
+  final String? defaultCwd;
 
   bool get online => link == ComputerLink.connected;
 
