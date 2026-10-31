@@ -108,16 +108,16 @@ class BoardState extends State<Board> {
         ),
         if (waits.isNotEmpty) ...[
           SliverToBoxAdapter(
-            child: SectionLabel('Needs you', count: waits.length, color: p.wait),
+            child: SectionLabel(
+              'Needs you',
+              count: waits.length,
+              color: p.wait,
+            ),
           ),
           SliverList.list(
             children: [
               for (final w in waits)
-                _WaitStrip(
-                  wait: w,
-                  data: data,
-                  onTap: () => widget.onWait(w),
-                ),
+                _WaitStrip(wait: w, data: data, onTap: () => widget.onWait(w)),
             ],
           ),
         ],
@@ -143,11 +143,7 @@ class BoardState extends State<Board> {
         ],
         if (shown.isNotEmpty) ...[
           SliverToBoxAdapter(
-            child: SectionLabel(
-              'Recent',
-              count: recent.length,
-              color: p.muted,
-            ),
+            child: SectionLabel('Recent', count: recent.length, color: p.muted),
           ),
           _strips(data, shown),
           if (recent.length > shown.length)
@@ -287,7 +283,9 @@ class _Meter extends StatelessWidget {
     }
 
     return Container(
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: p.line)),
+      ),
       child: Row(
         children: [
           cell('Need you', '$waits', p.wait, lit: waits > 0),
@@ -328,6 +326,7 @@ class _ComputerFilter extends StatelessWidget {
       required bool on,
       required VoidCallback onTap,
       String? trail,
+      Color? trailColor,
     }) {
       return InkWell(
         onTap: onTap,
@@ -353,7 +352,10 @@ class _ComputerFilter extends StatelessWidget {
               ),
               if (trail != null) ...[
                 const SizedBox(width: 6),
-                Text(trail, style: Ts.mono(p, color: p.run, size: 11.5)),
+                Text(
+                  trail,
+                  style: Ts.mono(p, color: trailColor ?? p.run, size: 11.5),
+                ),
               ],
             ],
           ),
@@ -376,6 +378,7 @@ class _ComputerFilter extends StatelessWidget {
               text: c.name,
               on: selected.contains(c.id),
               onTap: () => onToggle(c.id),
+              trailColor: c.online ? null : p.muted,
               trail: () {
                 final n = data.sessions
                     .where(
@@ -383,9 +386,7 @@ class _ComputerFilter extends StatelessWidget {
                     )
                     .length;
                 if (!c.online) {
-                  return c.status == ConnectionStatus.connecting
-                      ? '…'
-                      : 'off';
+                  return c.status == ConnectionStatus.connecting ? '…' : 'off';
                 }
                 return n > 0 ? '$n' : null;
               }(),
@@ -432,7 +433,8 @@ class SessionStrip extends StatelessWidget {
     final computer = data.computerOf(s);
     final offline = computer != null && !computer.online;
     final isSelected =
-        selected || (s.id == data.openSessionId && s.serverId == data.openServerId);
+        selected ||
+        (s.id == data.openSessionId && s.serverId == data.openServerId);
     final edge = switch (live) {
       Live.running => p.run,
       Live.compacting => p.accent,
@@ -452,12 +454,16 @@ class SessionStrip extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.only(right: 5),
           child: LiveMark(
-            color: offline ? p.muted : computerColor(p, s.serverColor ?? computer?.color),
+            color: offline
+                ? p.muted
+                : computerColor(p, s.serverColor ?? computer?.color),
             hollow: offline,
           ),
         ),
       ),
-      TextSpan(text: s.serverName.isEmpty ? computer?.name ?? '' : s.serverName),
+      TextSpan(
+        text: s.serverName.isEmpty ? computer?.name ?? '' : s.serverName,
+      ),
       TextSpan(text: '  ${harnessLabel(s.backend)}  '),
       TextSpan(text: shortPath(s.cwd)),
     ];
@@ -499,7 +505,11 @@ class SessionStrip extends StatelessWidget {
                   if (child)
                     Padding(
                       padding: const EdgeInsets.only(right: 6),
-                      child: Text('↳', style: TextStyle(color: p.muted)),
+                      child: Icon(
+                        Icons.subdirectory_arrow_right,
+                        size: 14,
+                        color: p.muted,
+                      ),
                     ),
                   Expanded(
                     child: Text(
@@ -542,7 +552,9 @@ class SessionStrip extends StatelessWidget {
                   s.messagePreview.replaceAll('\n', ' '),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Ts.meta(p).copyWith(color: p.text.withValues(alpha: 0.7)),
+                  style: Ts.meta(
+                    p,
+                  ).copyWith(color: p.text.withValues(alpha: 0.7)),
                 ),
               ],
             ],
@@ -564,7 +576,11 @@ String waitKindLabel(WaitKind kind) => switch (kind) {
 };
 
 class _WaitStrip extends StatelessWidget {
-  const _WaitStrip({required this.wait, required this.data, required this.onTap});
+  const _WaitStrip({
+    required this.wait,
+    required this.data,
+    required this.onTap,
+  });
 
   final TowerWait wait;
   final TowerData data;
@@ -576,7 +592,9 @@ class _WaitStrip extends StatelessWidget {
     final session = wait.sessionId == null
         ? null
         : data.sessions
-              .where((s) => s.id == wait.sessionId && s.serverId == wait.serverId)
+              .where(
+                (s) => s.id == wait.sessionId && s.serverId == wait.serverId,
+              )
               .firstOrNull;
     final computer = data.computers
         .where((c) => c.id == wait.serverId)
@@ -646,12 +664,19 @@ class _WaitStrip extends StatelessWidget {
                 children: [
                   Text(
                     device.code,
-                    style: Ts.mono(p, color: p.text, size: 16).copyWith(
-                      letterSpacing: 3,
-                    ),
+                    style: Ts.mono(
+                      p,
+                      color: p.text,
+                      size: 16,
+                    ).copyWith(letterSpacing: 3),
                   ),
                   const Spacer(),
-                  Act('Deny', dense: true, color: p.fail, onTap: () => data.denyDevice(device)),
+                  Act(
+                    'Deny',
+                    dense: true,
+                    color: p.fail,
+                    onTap: () => data.denyDevice(device),
+                  ),
                   const SizedBox(width: 8),
                   Act(
                     'Approve',

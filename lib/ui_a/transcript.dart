@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -68,10 +69,13 @@ class TranscriptState extends State<Transcript> {
       isProcessing: data.isProcessing,
     );
     final extra = data.hasMoreHistory ? 1 : 0;
-    final list = ListView.builder(
+    Widget list(double width) => ListView.builder(
       controller: controller,
       reverse: true,
-      padding: const EdgeInsets.only(top: 12, bottom: 12),
+      padding: EdgeInsets.symmetric(
+        horizontal: math.max(14.0, (width - widget.maxWidth) / 2),
+        vertical: 12,
+      ),
       itemCount: rows.length + extra,
       itemBuilder: (context, i) {
         if (i == rows.length) {
@@ -87,7 +91,9 @@ class TranscriptState extends State<Transcript> {
           );
         }
         final row = rows[rows.length - 1 - i];
-        final previous = rows.length - 2 - i >= 0 ? rows[rows.length - 2 - i] : null;
+        final previous = rows.length - 2 - i >= 0
+            ? rows[rows.length - 2 - i]
+            : null;
         final child = switch (row) {
           CondensedWorkRow() => Tape(row: row, key: ValueKey(row.keySeed)),
           CondensedVisibleRow(:final message) => EntryView(
@@ -96,28 +102,26 @@ class TranscriptState extends State<Transcript> {
             key: ValueKey(row.keySeed),
           ),
         };
-        return Center(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxWidth: widget.maxWidth),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              child: child,
-            ),
-          ),
-        );
+        return child;
       },
     );
     if (rows.isEmpty && !data.isLoadingHistory) {
       return Center(
         child: Text(
-          data.isDraftSession ? 'New session. First message starts it.' : 'No messages',
+          data.isDraftSession
+              ? 'New session. First message starts it.'
+              : 'No messages',
           style: Ts.meta(p),
         ),
       );
     }
     return Stack(
       children: [
-        Positioned.fill(child: SelectionArea(child: list)),
+        Positioned.fill(
+          child: SelectionArea(
+            child: LayoutBuilder(builder: (context, box) => list(box.maxWidth)),
+          ),
+        ),
         if (_away)
           Positioned(
             right: 12,
@@ -221,9 +225,10 @@ class _PromptEntryState extends State<PromptEntry> {
         : m.textContent;
     final long = '\n'.allMatches(text).length > 10 || text.length > 900;
     final state = switch (m.delivery) {
-      MessageDelivery.queued => m.isPending && m.injectionPriority != null
-          ? 'queued ${m.injectionPriority}'
-          : 'sending',
+      MessageDelivery.queued =>
+        m.isPending && m.injectionPriority != null
+            ? 'queued ${m.injectionPriority}'
+            : 'sending',
       MessageDelivery.failed => 'failed',
       MessageDelivery.received => m.isPending ? 'received' : null,
       null => null,
@@ -245,7 +250,9 @@ class _PromptEntryState extends State<PromptEntry> {
             text,
             maxLines: long && !_full ? 10 : null,
             overflow: long && !_full ? TextOverflow.fade : null,
-            style: Ts.body(p).copyWith(color: p.prompt, fontWeight: FontWeight.w500),
+            style: Ts.body(
+              p,
+            ).copyWith(color: p.prompt, fontWeight: FontWeight.w500),
           ),
           if (m.attachments.isNotEmpty) ...[
             const SizedBox(height: 6),
@@ -283,14 +290,21 @@ class _PromptEntryState extends State<PromptEntry> {
                 const SizedBox(width: 10),
                 InkWell(
                   onTap: () => data.retract(m.id),
-                  child: Text('retract', style: Ts.mono(p, color: p.accent, size: 11.5)),
+                  child: Text(
+                    'retract',
+                    style: Ts.mono(p, color: p.accent, size: 11.5),
+                  ),
                 ),
               ],
               if (failed) ...[
                 const SizedBox(width: 10),
                 InkWell(
-                  onTap: () => Clipboard.setData(ClipboardData(text: m.textContent)),
-                  child: Text('copy', style: Ts.mono(p, color: p.accent, size: 11.5)),
+                  onTap: () =>
+                      Clipboard.setData(ClipboardData(text: m.textContent)),
+                  child: Text(
+                    'copy',
+                    style: Ts.mono(p, color: p.accent, size: 11.5),
+                  ),
                 ),
               ],
               if (state == null)
@@ -358,7 +372,8 @@ class Prose extends StatelessWidget {
           onTapLink: (_, href, _) {
             if (href == null) return;
             final uri = Uri.tryParse(href);
-            if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+            if (uri != null &&
+                (uri.scheme == 'http' || uri.scheme == 'https')) {
               unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
             }
           },
@@ -383,7 +398,9 @@ Future<void> _messageActions(BuildContext context, ChatMessage m) {
         child: Container(
           height: 46,
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: p.line)),
+          ),
           child: Row(
             children: [
               Icon(icon, size: 18, color: stub ? p.muted : p.text),
@@ -488,7 +505,11 @@ class PlanBlock extends StatelessWidget {
           ],
           const SizedBox(height: 4),
           for (final raw in steps)
-            if (raw is Map) StepLine(text: raw['step']?.toString() ?? '', status: raw['status']?.toString() ?? ''),
+            if (raw is Map)
+              StepLine(
+                text: raw['step']?.toString() ?? '',
+                status: raw['status']?.toString() ?? '',
+              ),
         ],
       ),
     );
@@ -515,14 +536,19 @@ class StepLine extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SizedBox(width: 18, child: Text(glyph, style: Ts.mono(p, color: color, size: 12.5))),
+          SizedBox(
+            width: 18,
+            child: Text(glyph, style: Ts.mono(p, color: color, size: 12.5)),
+          ),
           Expanded(
             child: Text(
               text,
               style: Ts.body(p).copyWith(
                 fontSize: 13,
                 color: status == 'completed' ? p.muted : p.text,
-                decoration: status == 'deleted' ? TextDecoration.lineThrough : null,
+                decoration: status == 'deleted'
+                    ? TextDecoration.lineThrough
+                    : null,
               ),
             ),
           ),
@@ -549,20 +575,25 @@ class _Record extends StatelessWidget {
     bool stub = false;
     switch (m.type) {
       case MessageType.question:
-        label = m.answered ? 'answered' : (m.expired ? 'expired' : 'waiting');
+        label = 'question';
         final q = m.questions?.firstOrNull?.question ?? '';
         final a = m.answers?.values.join(', ') ?? '';
-        text = a.isEmpty ? q : '$q  →  $a';
+        text = a.isNotEmpty
+            ? '$q  ›  $a'
+            : '$q  ${m.expired ? '(expired)' : '(waiting below)'}';
         if (!m.answered && !m.expired) color = p.wait;
       case MessageType.secureInput:
-        final status = input['status']?.toString() ?? (m.answered ? 'saved' : 'pending');
-        label = 'secret $status';
-        text = input['label']?.toString() ?? '';
+        final status =
+            input['status']?.toString() ?? (m.answered ? 'saved' : 'pending');
+        label = 'secret';
+        text = '${input['label'] ?? ''}  $status';
         if (status == 'pending' && !m.answered) color = p.wait;
       case MessageType.computerAccess:
         final r = ComputerAccessRequest.fromJson(input);
-        label = 'access ${r?.status ?? ''}';
-        text = r == null ? '' : '${r.askerLabel} → ${r.targetName}  ${r.actionLabel}';
+        label = 'access';
+        text = r == null
+            ? ''
+            : '${r.askerLabel} to ${r.targetName}  ${r.actionLabel}  ${r.status}';
         if (r?.pending ?? false) color = p.wait;
       case MessageType.htmlPlan:
         label = 'html plan';
@@ -573,8 +604,9 @@ class _Record extends StatelessWidget {
         text = m.textContent;
         stub = true;
       case MessageType.memory:
-        label = 'memory ${input['action'] ?? ''}';
-        text = '${input['name'] ?? m.textContent}  ${input['description'] ?? ''}';
+        label = 'memory';
+        text =
+            '${input['name'] ?? m.textContent}  ${input['description'] ?? ''}';
         stub = true;
       case MessageType.browserSession:
         label = 'browser';
@@ -584,7 +616,11 @@ class _Record extends StatelessWidget {
         final name = normalizeSocketAgentToolName(m.toolName ?? '');
         label = name.toLowerCase();
         text = switch (name) {
-          'SendFile' => (input['file_path'] ?? input['path'] ?? '').toString().split(RegExp(r'[\\/]')).last,
+          'SendFile' =>
+            (input['file_path'] ?? input['path'] ?? '')
+                .toString()
+                .split(RegExp(r'[\\/]'))
+                .last,
           'Speak' => (input['text'] ?? '').toString(),
           _ => (input['title'] ?? input['body'] ?? '').toString(),
         };
@@ -594,7 +630,7 @@ class _Record extends StatelessWidget {
           MessageType.claudeAuth ||
           MessageType.outlookAuth ||
           MessageType.ibsAuth:
-        label = m.answered ? 'signed in' : (m.expired ? 'sign-in expired' : 'sign-in');
+        label = 'sign-in';
         text = m.textContent.isEmpty ? (m.toolName ?? '') : m.textContent;
         if (!m.answered && !m.expired) color = p.wait;
       default:
@@ -607,7 +643,7 @@ class _Record extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 96,
+            width: 84,
             child: Text(
               label.toUpperCase(),
               style: Ts.label(p, color),
@@ -623,10 +659,7 @@ class _Record extends StatelessWidget {
               style: Ts.meta(p).copyWith(color: p.text.withValues(alpha: 0.85)),
             ),
           ),
-          if (stub) ...[
-            const SizedBox(width: 6),
-            const NotWired(),
-          ],
+          if (stub) ...[const SizedBox(width: 6), const NotWired()],
         ],
       ),
     );

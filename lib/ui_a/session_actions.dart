@@ -23,7 +23,8 @@ class SessionActionList extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = Tw.of(context);
     final data = context.watch<TowerData>();
-    final s = data.sessions
+    final s =
+        data.sessions
             .where((x) => x.id == session.id && x.serverId == session.serverId)
             .firstOrNull ??
         session;
@@ -47,7 +48,9 @@ class SessionActionList extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: Ts.body(p).copyWith(color: enabled ? (color ?? p.text) : p.muted),
+              style: Ts.body(
+                p,
+              ).copyWith(color: enabled ? (color ?? p.text) : p.muted),
             ),
           ),
           if (note != null) Text(note, style: Ts.meta(p)),
@@ -59,7 +62,9 @@ class SessionActionList extends StatelessWidget {
         child: Container(
           height: 46,
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: p.line)),
+          ),
           child: content,
         ),
       );
@@ -120,7 +125,9 @@ class SessionActionList extends StatelessWidget {
             row(
               Icons.all_inclusive,
               'Keep permanently',
-              note: s.expiresAt == null ? null : '${leftText(s.expiresAt!)} left',
+              note: s.expiresAt == null
+                  ? null
+                  : '${leftText(s.expiresAt!)} left',
               onTap: offline ? null : () => data.makePermanent(s),
             ),
           row(Icons.folder_copy_outlined, 'Move to project', stub: true),
@@ -150,7 +157,8 @@ class SessionActionList extends StatelessWidget {
                     final ok = await confirmTower(
                       context,
                       title: 'Delete session?',
-                      body: 'History is removed from ${s.serverName}. '
+                      body:
+                          'History is removed from ${s.serverName}. '
                           'This cannot be undone.',
                       action: 'Delete',
                     );

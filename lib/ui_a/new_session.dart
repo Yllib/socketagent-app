@@ -27,7 +27,8 @@ class _NewSessionState extends State<NewSession> {
     super.initState();
     final data = context.read<TowerData>();
     final online = data.computers.where((c) => c.online).toList();
-    _server = online.where((c) => c.id == data.openServerId).firstOrNull?.id ??
+    _server =
+        online.where((c) => c.id == data.openServerId).firstOrNull?.id ??
         online.firstOrNull?.id ??
         data.computers.firstOrNull?.id;
     _select(data, _server);
@@ -55,31 +56,44 @@ class _NewSessionState extends State<NewSession> {
     final computers = [...data.computers]
       ..sort((a, b) => (b.online ? 1 : 0).compareTo(a.online ? 1 : 0));
     final server = _server;
-    final backends = server == null ? const <String>[] : data.backendsFor(server);
-    final folders = server == null ? const <String>[] : data.recentFolders(server);
-    final canStart = server != null &&
+    final backends = server == null
+        ? const <String>[]
+        : data.backendsFor(server);
+    final folders = server == null
+        ? const <String>[]
+        : data.recentFolders(server);
+    final canStart =
+        server != null &&
         _backend != null &&
-        (data.computers.where((c) => c.id == server).firstOrNull?.online ?? false);
+        (data.computers.where((c) => c.id == server).firstOrNull?.online ??
+            false);
 
-    Widget choice(String label, bool on, VoidCallback? onTap, {Widget? lead}) => InkWell(
-      onTap: onTap,
-      child: Container(
-        height: 36,
-        margin: const EdgeInsets.only(right: 6, bottom: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: BoxDecoration(
-          color: on ? p.accent.withValues(alpha: 0.15) : null,
-          border: Border.all(color: on ? p.accent : p.line),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (lead != null) ...[lead, const SizedBox(width: 6)],
-            Text(label, style: TextStyle(fontSize: 13, color: onTap == null ? p.muted : p.text)),
-          ],
-        ),
-      ),
-    );
+    Widget choice(String label, bool on, VoidCallback? onTap, {Widget? lead}) =>
+        InkWell(
+          onTap: onTap,
+          child: Container(
+            height: 36,
+            margin: const EdgeInsets.only(right: 6, bottom: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: on ? p.accent.withValues(alpha: 0.15) : null,
+              border: Border.all(color: on ? p.accent : p.line),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (lead != null) ...[lead, const SizedBox(width: 6)],
+                Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: onTap == null ? p.muted : p.text,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(context).bottom),
@@ -98,8 +112,13 @@ class _NewSessionState extends State<NewSession> {
                     choice(
                       c.name,
                       c.id == server,
-                      c.online ? () => setState(() => _select(data, c.id)) : null,
-                      lead: LiveMark(color: c.online ? computerColor(p, c.color) : p.muted, hollow: !c.online),
+                      c.online
+                          ? () => setState(() => _select(data, c.id))
+                          : null,
+                      lead: LiveMark(
+                        color: c.online ? computerColor(p, c.color) : p.muted,
+                        hollow: !c.online,
+                      ),
                     ),
                 ],
               ),
@@ -110,7 +129,11 @@ class _NewSessionState extends State<NewSession> {
               child: Wrap(
                 children: [
                   for (final b in backends)
-                    choice(b, b == _backend, () => setState(() => _backend = b)),
+                    choice(
+                      b,
+                      b == _backend,
+                      () => setState(() => _backend = b),
+                    ),
                 ],
               ),
             ),
@@ -142,7 +165,11 @@ class _NewSessionState extends State<NewSession> {
                           f,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: Ts.mono(p, color: _folder.text == f ? p.accent : p.muted, size: 12),
+                          style: Ts.mono(
+                            p,
+                            color: _folder.text == f ? p.accent : p.muted,
+                            size: 12,
+                          ),
                         ),
                       ),
                     ],
@@ -151,15 +178,25 @@ class _NewSessionState extends State<NewSession> {
               ),
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 4, 14, 0),
-              child: Stubbed(child: Act('Browse folders', dense: true, onTap: () {})),
+              child: Stubbed(
+                child: Act('Browse folders', dense: true, onTap: () {}),
+              ),
             ),
             const SectionLabel('Lifetime'),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 14),
               child: Row(
                 children: [
-                  choice('Permanent', !_fleeting, () => setState(() => _fleeting = false)),
-                  choice('Fleeting, 6h idle', _fleeting, () => setState(() => _fleeting = true)),
+                  choice(
+                    'Permanent',
+                    !_fleeting,
+                    () => setState(() => _fleeting = false),
+                  ),
+                  choice(
+                    'Fleeting, 6h idle',
+                    _fleeting,
+                    () => setState(() => _fleeting = true),
+                  ),
                 ],
               ),
             ),

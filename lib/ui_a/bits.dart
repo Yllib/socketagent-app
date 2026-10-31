@@ -1,50 +1,11 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'clock.dart';
 import 'data.dart';
+
+export 'clock.dart';
 import 'theme.dart';
-
-/// A once-a-second clock that runs only while something listens. Elapsed
-/// counters subscribe while mounted, so an idle fleet never ticks.
-class SecondClock extends ChangeNotifier {
-  SecondClock._();
-  static final instance = SecondClock._();
-
-  Timer? _timer;
-  int _listeners = 0;
-
-  /// Tests freeze time so renders are stable.
-  static DateTime Function() now = DateTime.now;
-
-  @override
-  void addListener(VoidCallback listener) {
-    super.addListener(listener);
-    _listeners++;
-    _timer ??= Timer.periodic(const Duration(seconds: 1), (_) {
-      notifyListeners();
-    });
-  }
-
-  @override
-  void removeListener(VoidCallback listener) {
-    super.removeListener(listener);
-    _listeners--;
-    if (_listeners <= 0) {
-      _listeners = 0;
-      _timer?.cancel();
-      _timer = null;
-    }
-  }
-
-  /// Stops the timer. Tests call this so no timer outlives them.
-  static void freeze(DateTime at) {
-    now = () => at;
-    instance._timer?.cancel();
-    instance._timer = null;
-  }
-}
 
 /// "4s", "3:12", "1:04:09".
 String clockText(Duration d) {
@@ -84,14 +45,16 @@ String shortPath(String path) {
   if (path.isEmpty) return '';
   var p = path.replaceAll('\\', '/');
   p = p.replaceFirst(RegExp(r'^/(home|Users)/[^/]+'), '~');
-  p = p.replaceFirst(RegExp(r'^[A-Za-z]:/Users/[^/]+', caseSensitive: false), '~');
+  p = p.replaceFirst(
+    RegExp(r'^[A-Za-z]:/Users/[^/]+', caseSensitive: false),
+    '~',
+  );
   final parts = p.split('/').where((s) => s.isNotEmpty).toList();
   if (parts.length <= 2) return p;
   return '…/${parts.sublist(parts.length - 2).join('/')}';
 }
 
-String harnessLabel(String? backend) =>
-    backend == 'codex' ? 'codex' : 'claude';
+String harnessLabel(String? backend) => backend == 'codex' ? 'codex' : 'claude';
 
 /// Ticking elapsed time since [start]. Repaints once a second, alone.
 class Elapsed extends StatelessWidget {
@@ -107,10 +70,8 @@ class Elapsed extends StatelessWidget {
     return RepaintBoundary(
       child: ListenableBuilder(
         listenable: SecondClock.instance,
-        builder: (context, _) => Text(
-          clockText(SecondClock.now().difference(from)),
-          style: style,
-        ),
+        builder: (context, _) =>
+            Text(clockText(SecondClock.now().difference(from)), style: style),
       ),
     );
   }
@@ -249,7 +210,10 @@ class NotWired extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(border: Border.all(color: p.wait)),
-      child: Text('NOT WIRED', style: Ts.label(p, p.wait).copyWith(fontSize: 9)),
+      child: Text(
+        'NOT WIRED',
+        style: Ts.label(p, p.wait).copyWith(fontSize: 9),
+      ),
     );
   }
 }
@@ -329,9 +293,9 @@ Widget Function(Widget) _carry(BuildContext context) {
 /// Pushes [page] as a full route wrapped in the current Tower palette.
 Future<T?> pushTower<T>(BuildContext context, Widget page) {
   final carry = _carry(context);
-  return Navigator.of(context).push<T>(
-    MaterialPageRoute(builder: (_) => carry(page)),
-  );
+  return Navigator.of(
+    context,
+  ).push<T>(MaterialPageRoute(builder: (_) => carry(page)));
 }
 
 /// Shows a bottom sheet in the Tower palette.

@@ -28,9 +28,17 @@ class WaitCard extends StatelessWidget {
         message: m,
         key: ValueKey(m.id),
       ),
-      WaitKind.secret when m != null => SecretCard(message: m, key: ValueKey(m.id)),
-      WaitKind.access when m != null => AccessCard(message: m, key: ValueKey(m.id)),
-      WaitKind.device when wait.device != null => DeviceCard(device: wait.device!),
+      WaitKind.secret when m != null => SecretCard(
+        message: m,
+        key: ValueKey(m.id),
+      ),
+      WaitKind.access when m != null => AccessCard(
+        message: m,
+        key: ValueKey(m.id),
+      ),
+      WaitKind.device when wait.device != null => DeviceCard(
+        device: wait.device!,
+      ),
       _ => SignInCard(wait: wait),
     };
   }
@@ -104,7 +112,9 @@ class _QuestionCardState extends State<QuestionCard> {
 
   /// One single-select question answers on the first tap.
   bool get _instant =>
-      _items.length == 1 && !_items.first.multiSelect && _items.first.options.isNotEmpty;
+      _items.length == 1 &&
+      !_items.first.multiSelect &&
+      _items.first.options.isNotEmpty;
 
   Map<String, String> _answers() {
     final out = <String, String>{};
@@ -147,7 +157,10 @@ class _QuestionCardState extends State<QuestionCard> {
           if ((q.header ?? '').isNotEmpty)
             Text(q.header!.toUpperCase(), style: Ts.label(p, p.muted)),
           const SizedBox(height: 2),
-          Text(q.question, style: Ts.title(p).copyWith(fontSize: 15, height: 1.3)),
+          Text(
+            q.question,
+            style: Ts.title(p).copyWith(fontSize: 15, height: 1.3),
+          ),
           const SizedBox(height: 8),
           for (final o in q.options)
             _OptionRow(
@@ -164,7 +177,9 @@ class _QuestionCardState extends State<QuestionCard> {
                       setState(() {
                         final set = _picked.putIfAbsent(q.question, () => {});
                         if (q.multiSelect) {
-                          set.contains(o.label) ? set.remove(o.label) : set.add(o.label);
+                          set.contains(o.label)
+                              ? set.remove(o.label)
+                              : set.add(o.label);
                         } else {
                           set
                             ..clear()
@@ -184,11 +199,14 @@ class _QuestionCardState extends State<QuestionCard> {
               style: Ts.body(p),
               onChanged: (_) => setState(() {}),
               decoration: InputDecoration(
-                hintText: q.options.isEmpty ? 'Answer' : 'Other answer or context',
+                hintText: q.options.isEmpty
+                    ? 'Answer'
+                    : 'Other answer or context',
                 contentPadding: const EdgeInsets.symmetric(vertical: 9),
               ),
               onSubmitted: _instant
-                  ? (v) => _send({if (v.trim().isNotEmpty) q.question: v.trim()})
+                  ? (v) =>
+                        _send({if (v.trim().isNotEmpty) q.question: v.trim()})
                   : null,
             ),
           ),
@@ -420,7 +438,10 @@ class _SecretCardState extends State<SecretCard> {
                 IconButton(
                   tooltip: _show ? 'Hide' : 'Show',
                   onPressed: () => setState(() => _show = !_show),
-                  icon: Icon(_show ? Icons.visibility_off : Icons.visibility, size: 18),
+                  icon: Icon(
+                    _show ? Icons.visibility_off : Icons.visibility,
+                    size: 18,
+                  ),
                 ),
             ],
           ),
@@ -437,7 +458,11 @@ class _SecretCardState extends State<SecretCard> {
         const SizedBox(height: 10),
         Row(
           children: [
-            Act('Cancel', color: p.muted, onTap: () => data.cancelSecret(requestId)),
+            Act(
+              'Cancel',
+              color: p.muted,
+              onTap: () => data.cancelSecret(requestId),
+            ),
             const Spacer(),
             Act(
               'Save to computer',
@@ -504,26 +529,31 @@ class _AccessCardState extends State<AccessCard> {
     if (r == null) return const SizedBox.shrink();
     final access = _access ?? r.access;
     void decide(String decision) => unawaited(
-      data.answerAccess(r.requestId, decision, access: r.isLink ? access : null),
-    );
-    Widget box(String label, bool on, ComputerAccess Function(bool) next) => InkWell(
-      onTap: () => setState(() => _access = next(!on)),
-      child: Padding(
-        padding: const EdgeInsets.only(right: 14, top: 4, bottom: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              on ? Icons.check_box : Icons.check_box_outline_blank,
-              size: 16,
-              color: on ? p.wait : p.muted,
-            ),
-            const SizedBox(width: 6),
-            Text(label, style: Ts.body(p)),
-          ],
-        ),
+      data.answerAccess(
+        r.requestId,
+        decision,
+        access: r.isLink ? access : null,
       ),
     );
+    Widget box(String label, bool on, ComputerAccess Function(bool) next) =>
+        InkWell(
+          onTap: () => setState(() => _access = next(!on)),
+          child: Padding(
+            padding: const EdgeInsets.only(right: 14, top: 4, bottom: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  on ? Icons.check_box : Icons.check_box_outline_blank,
+                  size: 16,
+                  color: on ? p.wait : p.muted,
+                ),
+                const SizedBox(width: 6),
+                Text(label, style: Ts.body(p)),
+              ],
+            ),
+          ),
+        );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -540,7 +570,12 @@ class _AccessCardState extends State<AccessCard> {
             style: Ts.title(p).copyWith(fontSize: 15, height: 1.3),
             children: [
               TextSpan(text: r.askerLabel),
-              TextSpan(text: r.isLink ? '  link to  ' : '  ${r.actionLabel.toLowerCase()} on  ', style: Ts.body(p).copyWith(color: p.muted)),
+              TextSpan(
+                text: r.isLink
+                    ? '  link to  '
+                    : '  ${r.actionLabel.toLowerCase()} on  ',
+                style: Ts.body(p).copyWith(color: p.muted),
+              ),
               TextSpan(text: r.targetName),
             ],
           ),
@@ -567,9 +602,33 @@ class _AccessCardState extends State<AccessCard> {
           const SizedBox(height: 6),
           Wrap(
             children: [
-              box('Read', access.read, (v) => ComputerAccess(read: v, agents: access.agents, commands: access.commands)),
-              box('Commands', access.commands, (v) => ComputerAccess(read: access.read, agents: access.agents, commands: v)),
-              box('Agents', access.agents, (v) => ComputerAccess(read: access.read, agents: v, commands: access.commands)),
+              box(
+                'Read',
+                access.read,
+                (v) => ComputerAccess(
+                  read: v,
+                  agents: access.agents,
+                  commands: access.commands,
+                ),
+              ),
+              box(
+                'Commands',
+                access.commands,
+                (v) => ComputerAccess(
+                  read: access.read,
+                  agents: access.agents,
+                  commands: v,
+                ),
+              ),
+              box(
+                'Agents',
+                access.agents,
+                (v) => ComputerAccess(
+                  read: access.read,
+                  agents: v,
+                  commands: access.commands,
+                ),
+              ),
             ],
           ),
         ],
@@ -590,9 +649,18 @@ class _AccessCardState extends State<AccessCard> {
               ),
             ] else ...[
               if (r.hasAction)
-                Act('This action', color: p.wait, onTap: () => decide('action')),
+                Act(
+                  'This action',
+                  color: p.wait,
+                  onTap: () => decide('action'),
+                ),
               Act('Today', color: p.wait, onTap: () => decide('today')),
-              Act('Link', filled: true, color: p.wait, onTap: () => decide('linked')),
+              Act(
+                'Link',
+                filled: true,
+                color: p.wait,
+                onTap: () => decide('linked'),
+              ),
             ],
           ],
         ),
@@ -609,13 +677,18 @@ class DeviceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = Tw.of(context);
     final data = context.read<TowerData>();
-    final computer = data.computers.where((c) => c.id == device.serverId).firstOrNull;
+    final computer = data.computers
+        .where((c) => c.id == device.serverId)
+        .firstOrNull;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _CardHead(kind: WaitKind.device, extra: computer?.name),
         const SizedBox(height: 8),
-        Text('${device.name}  ${device.platform}', style: Ts.title(p).copyWith(fontSize: 15)),
+        Text(
+          '${device.name}  ${device.platform}',
+          style: Ts.title(p).copyWith(fontSize: 15),
+        ),
         const SizedBox(height: 8),
         Text(
           device.code,
@@ -629,7 +702,12 @@ class DeviceCard extends StatelessWidget {
           children: [
             Act('Deny', color: p.fail, onTap: () => data.denyDevice(device)),
             const SizedBox(width: 8),
-            Act('Approve', filled: true, color: p.wait, onTap: () => data.approveDevice(device)),
+            Act(
+              'Approve',
+              filled: true,
+              color: p.wait,
+              onTap: () => data.approveDevice(device),
+            ),
           ],
         ),
       ],
@@ -655,11 +733,21 @@ class SignInCard extends StatelessWidget {
         Text(wait.title, style: Ts.title(p).copyWith(fontSize: 15)),
         if (wait.detail.isNotEmpty) ...[
           const SizedBox(height: 2),
-          Text(wait.detail, style: Ts.meta(p), maxLines: 4, overflow: TextOverflow.ellipsis),
+          Text(
+            wait.detail,
+            style: Ts.meta(p),
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
         if (url != null && url.isNotEmpty) ...[
           const SizedBox(height: 6),
-          Text(url, style: Ts.mono(p, size: 11), maxLines: 2, overflow: TextOverflow.ellipsis),
+          Text(
+            url,
+            style: Ts.mono(p, size: 11),
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+          ),
         ],
         const SizedBox(height: 10),
         Wrap(
@@ -672,10 +760,20 @@ class SignInCard extends StatelessWidget {
                 'Open link',
                 color: p.wait,
                 onTap: () => unawaited(
-                  launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication),
+                  launchUrl(
+                    Uri.parse(url),
+                    mode: LaunchMode.externalApplication,
+                  ),
                 ),
               ),
-            Stubbed(child: Act('Finish sign-in', filled: true, color: p.wait, onTap: () {})),
+            Stubbed(
+              child: Act(
+                'Finish sign-in',
+                filled: true,
+                color: p.wait,
+                onTap: () {},
+              ),
+            ),
           ],
         ),
       ],

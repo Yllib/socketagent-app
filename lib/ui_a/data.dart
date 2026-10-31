@@ -5,6 +5,7 @@ import '../models/computer_access.dart';
 import '../models/device_registry.dart';
 import '../models/message.dart';
 import '../services/websocket_service.dart';
+import 'clock.dart';
 
 export '../models/message.dart';
 export '../services/websocket_service.dart' show ConnectionStatus;
@@ -165,6 +166,7 @@ abstract class TowerData extends ChangeNotifier {
   void stopTask(String taskId);
   void backgroundTask(String toolUseId);
   bool get canBackgroundTasks;
+
   /// Hides a finished sub-agent or workflow on every device.
   void dismissTask(String id, String kind);
   void requestFullOutput(ChatMessage message);
@@ -211,7 +213,7 @@ List<TowerWait> collectWaits(TowerData data) {
   final waits = <TowerWait>[];
   final sid = data.openSessionId;
   final server = data.openServerId;
-  final now = DateTime.now();
+  final now = SecondClock.now();
   for (final m in data.messages) {
     switch (m.type) {
       case MessageType.question when !m.answered && !m.expired:
@@ -234,7 +236,8 @@ List<TowerWait> collectWaits(TowerData data) {
           ),
         );
       case MessageType.secureInput
-          when !m.answered && (m.toolInput?['status'] ?? 'pending') == 'pending':
+          when !m.answered &&
+              (m.toolInput?['status'] ?? 'pending') == 'pending':
         waits.add(
           TowerWait(
             kind: WaitKind.secret,
@@ -283,9 +286,10 @@ List<TowerWait> collectWaits(TowerData data) {
           ),
         );
       case MessageType.backendAuth ||
-          MessageType.claudeAuth ||
-          MessageType.outlookAuth ||
-          MessageType.ibsAuth when !m.answered && !m.expired:
+              MessageType.claudeAuth ||
+              MessageType.outlookAuth ||
+              MessageType.ibsAuth
+          when !m.answered && !m.expired:
         waits.add(
           TowerWait(
             kind: WaitKind.signIn,

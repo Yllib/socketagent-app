@@ -38,7 +38,10 @@ ToolLine describeTool(ChatMessage m) {
   final input = m.toolInput ?? const <String, dynamic>{};
   final desc = _str(input['description']);
   String path() => _str(
-    input['file_path'] ?? input['path'] ?? input['notebook_path'] ?? input['file'],
+    input['file_path'] ??
+        input['path'] ??
+        input['notebook_path'] ??
+        input['file'],
   );
 
   if (name == 'bash' ||
@@ -47,7 +50,11 @@ ToolLine describeTool(ChatMessage m) {
       name.contains('commandexecution') ||
       name == 'powershell') {
     final cmd = _str(input['command'] ?? input['cmd']);
-    return ToolLine(r'$', cmd.replaceFirst(RegExp(r'^bash -lc '), ''), note: desc);
+    return ToolLine(
+      r'$',
+      cmd.replaceFirst(RegExp(r'^bash -lc '), ''),
+      note: desc,
+    );
   }
   if (name == 'edit' ||
       name == 'multiedit' ||
@@ -70,7 +77,9 @@ ToolLine describeTool(ChatMessage m) {
     }
     var target = path();
     if (target.isEmpty && patch.isNotEmpty) {
-      final match = RegExp(r'\*\*\* (?:Update|Add|Delete) File: (.+)').firstMatch(patch);
+      final match = RegExp(
+        r'\*\*\* (?:Update|Add|Delete) File: (.+)',
+      ).firstMatch(patch);
       target = match?.group(1) ?? 'patch';
     }
     return ToolLine(
@@ -100,7 +109,11 @@ ToolLine describeTool(ChatMessage m) {
     return const ToolLine('☰', 'task list');
   }
   if (name == 'browsersession') {
-    return ToolLine('▣', _str(input['url'] ?? input['action']), note: 'browser');
+    return ToolLine(
+      '▣',
+      _str(input['url'] ?? input['action']),
+      note: 'browser',
+    );
   }
   final first = input.entries
       .where((e) => !e.key.startsWith('_') && e.value is String)
@@ -154,8 +167,9 @@ class _TapeState extends State<Tape> {
         )
         .toList();
     if (lines.isEmpty) return const SizedBox.shrink();
-    final failures =
-        lines.where((m) => m.type == MessageType.toolCall && toolFailed(m)).length;
+    final failures = lines
+        .where((m) => m.type == MessageType.toolCall && toolFailed(m))
+        .length;
     final defaultOpen = !data.condensedTools || lines.length <= 3;
     final open = _open ?? defaultOpen;
     final visible = open ? lines : [lines.last];
@@ -263,7 +277,8 @@ class _TapeLineState extends State<TapeLine> {
   Widget _thinking(TowerPalette p, ChatMessage m) {
     final secs = m.thinkingDurationMs / 1000;
     final parts = [
-      if (m.thinkingDurationMs > 0) '${secs.toStringAsFixed(secs < 10 ? 1 : 0)}s',
+      if (m.thinkingDurationMs > 0)
+        '${secs.toStringAsFixed(secs < 10 ? 1 : 0)}s',
       if (m.thinkingTokens > 0) '${m.thinkingTokens} tok',
     ].join(' · ');
     final text = m.textContent.trim();
@@ -290,7 +305,9 @@ class _TapeLineState extends State<TapeLine> {
               padding: const EdgeInsets.fromLTRB(26, 0, 8, 6),
               child: Text(
                 text,
-                style: Ts.meta(p).copyWith(fontStyle: FontStyle.italic, height: 1.4),
+                style: Ts.meta(
+                  p,
+                ).copyWith(fontStyle: FontStyle.italic, height: 1.4),
               ),
             ),
         ],
@@ -305,7 +322,10 @@ class _TapeLineState extends State<TapeLine> {
         : (m.toolOutput ?? m.toolName ?? '');
     return _row(
       p,
-      Text(failed ? '✗' : '•', style: Ts.mono(p, color: failed ? p.fail : p.muted)),
+      Text(
+        failed ? '✗' : '•',
+        style: Ts.mono(p, color: failed ? p.fail : p.muted),
+      ),
       Text(
         text.replaceAll('\n', ' '),
         maxLines: 2,
@@ -327,17 +347,15 @@ class _TapeLineState extends State<TapeLine> {
         : p.accent.withValues(alpha: 0.8);
     final Widget trail;
     if (running) {
-      trail = Elapsed(
-        m.timestamp,
-        style: Ts.mono(p, color: p.run, size: 11.5),
-      );
+      trail = Elapsed(m.timestamp, style: Ts.mono(p, color: p.run, size: 11.5));
     } else if (m.isBackgrounded) {
       trail = Text('bg', style: Ts.mono(p, color: p.run, size: 11.5));
     } else {
       trail = Text(
         [
           line.extra,
-          if (m.toolElapsedSeconds >= 1) '${m.toolElapsedSeconds.toStringAsFixed(0)}s',
+          if (m.toolElapsedSeconds >= 1)
+            '${m.toolElapsedSeconds.toStringAsFixed(0)}s',
           if (failed) '✗',
         ].where((s) => s.isNotEmpty).join(' '),
         style: Ts.mono(p, color: failed ? p.fail : p.muted, size: 11.5),
@@ -364,10 +382,17 @@ class _TapeLineState extends State<TapeLine> {
                 children: [
                   TextSpan(
                     text: line.arg.replaceAll('\n', ' ⏎ '),
-                    style: Ts.mono(p, color: p.text.withValues(alpha: 0.9), size: 12),
+                    style: Ts.mono(
+                      p,
+                      color: p.text.withValues(alpha: 0.9),
+                      size: 12,
+                    ),
                   ),
                   if (line.note.isNotEmpty)
-                    TextSpan(text: '  ${line.note}', style: Ts.mono(p, size: 11.5)),
+                    TextSpan(
+                      text: '  ${line.note}',
+                      style: Ts.mono(p, size: 11.5),
+                    ),
                 ],
               ),
               maxLines: _open ? 6 : 1,
@@ -397,23 +422,39 @@ class _TapeLineState extends State<TapeLine> {
                 else
                   SelectableText(
                     shownLines.join('\n'),
-                    style: Ts.mono(p, color: p.text.withValues(alpha: 0.85), size: 11.5),
+                    style: Ts.mono(
+                      p,
+                      color: p.text.withValues(alpha: 0.85),
+                      size: 11.5,
+                    ),
                   ),
                 Wrap(
                   spacing: 8,
                   children: [
                     if (outLines.length > 24 && !_all)
-                      _miniAct(p, 'all ${outLines.length} lines', () => setState(() => _all = true)),
+                      _miniAct(
+                        p,
+                        'all ${outLines.length} lines',
+                        () => setState(() => _all = true),
+                      ),
                     if (m.fullOutputBytes != null && m.fullOutput == null)
                       _miniAct(
                         p,
                         m.fullOutputLoading
                             ? 'loading'
                             : 'full output ${(m.fullOutputBytes! / 1024).toStringAsFixed(0)} KB',
-                        m.fullOutputLoading ? null : () => data.requestFullOutput(m),
+                        m.fullOutputLoading
+                            ? null
+                            : () => data.requestFullOutput(m),
                       ),
-                    if (running && data.canBackgroundTasks && m.toolUseId != null)
-                      _miniAct(p, 'background', () => data.backgroundTask(m.toolUseId!)),
+                    if (running &&
+                        data.canBackgroundTasks &&
+                        m.toolUseId != null)
+                      _miniAct(
+                        p,
+                        'background',
+                        () => data.backgroundTask(m.toolUseId!),
+                      ),
                   ],
                 ),
               ],
@@ -438,14 +479,20 @@ class _ToolImage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bytes = base64Decode(base64.contains(',') ? base64.split(',').last : base64);
+    final bytes = base64Decode(
+      base64.contains(',') ? base64.split(',').last : base64,
+    );
     return Align(
       alignment: Alignment.centerLeft,
       child: GestureDetector(
         onTap: () => pushTower<void>(context, ImageViewer(bytes: bytes)),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 160, maxWidth: 280),
-          child: Image.memory(bytes, fit: BoxFit.contain, gaplessPlayback: true),
+          child: Image.memory(
+            bytes,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+          ),
         ),
       ),
     );

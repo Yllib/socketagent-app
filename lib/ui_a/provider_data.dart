@@ -71,7 +71,8 @@ class ProviderTowerData extends TowerData {
         (prefs) => prefs.setString(
           _seenKey,
           jsonEncode({
-            for (final e in _seen.entries) e.key: e.value.millisecondsSinceEpoch,
+            for (final e in _seen.entries)
+              e.key: e.value.millisecondsSinceEpoch,
           }),
         ),
       ),
@@ -234,11 +235,7 @@ class ProviderTowerData extends TowerData {
     if (!_isOpen(session)) {
       chat.resumeSession(session.id, serverId: session.serverId);
     }
-    chat.setViewingSession(
-      session.id,
-      serverId: session.serverId,
-      owner: this,
-    );
+    chat.setViewingSession(session.id, serverId: session.serverId, owner: this);
     chat.markScheduledTaskReadForSession(
       session.id,
       serverId: session.serverId,
@@ -364,8 +361,7 @@ class ProviderTowerData extends TowerData {
       chat.makeSessionPermanent(session.id, serverId: session.serverId);
 
   @override
-  List<String> backendsFor(String serverId) =>
-      chat.backendsForServer(serverId);
+  List<String> backendsFor(String serverId) => chat.backendsForServer(serverId);
   @override
   List<String> recentFolders(String serverId) =>
       chat.getRecentCwds(serverId: serverId);
@@ -375,6 +371,9 @@ class ProviderTowerData extends TowerData {
 
   @override
   String defaultFolder(String serverId) =>
-      chat.serverConfigs.where((c) => c.id == serverId).firstOrNull?.defaultCwd ??
+      chat.serverConfigs
+          .where((c) => c.id == serverId)
+          .firstOrNull
+          ?.defaultCwd ??
       '';
 }

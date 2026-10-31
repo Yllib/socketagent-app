@@ -158,7 +158,9 @@ class _TowerShellState extends State<TowerShell> {
     final list = widget.data.sessions;
     if (list.isEmpty) return;
     final i = list.indexWhere(
-      (s) => s.id == widget.data.openSessionId && s.serverId == widget.data.openServerId,
+      (s) =>
+          s.id == widget.data.openSessionId &&
+          s.serverId == widget.data.openServerId,
     );
     final next = list[(i + delta).clamp(0, list.length - 1)];
     _open(next);
@@ -170,10 +172,8 @@ class _TowerShellState extends State<TowerShell> {
       value: widget.data,
       child: ListenableBuilder(
         listenable: widget.themes,
-        builder: (context, _) => Tw.wrap(
-          widget.themes.palette,
-          Builder(builder: _layout),
-        ),
+        builder: (context, _) =>
+            Tw.wrap(widget.themes.palette, Builder(builder: _layout)),
       ),
     );
   }
@@ -185,7 +185,9 @@ class _TowerShellState extends State<TowerShell> {
     final medium = width >= 760;
     final hasSession =
         widget.data.openSessionId != null || widget.data.isDraftSession;
-    final overlay = p.isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark;
+    final overlay = p.isDark
+        ? SystemUiOverlayStyle.light
+        : SystemUiOverlayStyle.dark;
 
     Widget board({required bool desktop}) => Board(
       key: _boardKey,
@@ -206,7 +208,9 @@ class _TowerShellState extends State<TowerShell> {
         },
         child: showSession
             ? SessionView(
-                key: ValueKey('${widget.data.openServerId}|${widget.data.openSessionId}'),
+                key: ValueKey(
+                  '${widget.data.openServerId}|${widget.data.openSessionId}',
+                ),
                 onBack: _back,
                 onInspector: () => _inspectorSheet(context),
               )
@@ -215,7 +219,9 @@ class _TowerShellState extends State<TowerShell> {
     } else {
       final center = hasSession
           ? SessionView(
-              key: ValueKey('${widget.data.openServerId}|${widget.data.openSessionId}'),
+              key: ValueKey(
+                '${widget.data.openServerId}|${widget.data.openSessionId}',
+              ),
               onBack: null,
               desktop: true,
               onInspector: wide
@@ -227,11 +233,14 @@ class _TowerShellState extends State<TowerShell> {
         bindings: {
           const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
               _boardKey.currentState?.searchFocus.requestFocus(),
-          const SingleActivator(LogicalKeyboardKey.keyN, control: true): () => _new(context),
+          const SingleActivator(LogicalKeyboardKey.keyN, control: true): () =>
+              _new(context),
           const SingleActivator(LogicalKeyboardKey.keyI, control: true): () =>
               setState(() => _inspector = !_inspector),
-          const SingleActivator(LogicalKeyboardKey.arrowDown, alt: true): () => _step(1),
-          const SingleActivator(LogicalKeyboardKey.arrowUp, alt: true): () => _step(-1),
+          const SingleActivator(LogicalKeyboardKey.arrowDown, alt: true): () =>
+              _step(1),
+          const SingleActivator(LogicalKeyboardKey.arrowUp, alt: true): () =>
+              _step(-1),
         },
         child: Focus(
           autofocus: true,
@@ -243,10 +252,7 @@ class _TowerShellState extends State<TowerShell> {
               Expanded(child: center),
               if (wide && hasSession && _inspector) ...[
                 VerticalDivider(width: 1, thickness: 1, color: p.line),
-                SizedBox(
-                  width: 340,
-                  child: Inspector(onOpenSession: _open),
-                ),
+                SizedBox(width: 340, child: Inspector(onOpenSession: _open)),
               ],
             ],
           ),
@@ -276,7 +282,10 @@ class _Idle extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          SizedBox(width: 90, child: Text(k, style: Ts.mono(p, color: p.accent, size: 12))),
+          SizedBox(
+            width: 90,
+            child: Text(k, style: Ts.mono(p, color: p.accent, size: 12)),
+          ),
           Text(what, style: Ts.meta(p)),
         ],
       ),

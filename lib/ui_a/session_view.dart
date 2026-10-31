@@ -85,7 +85,9 @@ class _Header extends StatelessWidget {
     ].where((x) => x.isNotEmpty).join('  ');
     return Container(
       height: 54,
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: p.line)),
+      ),
       child: Row(
         children: [
           if (onBack != null)
@@ -112,7 +114,9 @@ class _Header extends StatelessWidget {
                   children: [
                     if (computer != null) ...[
                       LiveMark(
-                        color: computer.online ? computerColor(p, computer.color) : p.muted,
+                        color: computer.online
+                            ? computerColor(p, computer.color)
+                            : p.muted,
                         hollow: !computer.online,
                       ),
                       const SizedBox(width: 6),
@@ -159,7 +163,9 @@ class Dock extends StatelessWidget {
   Widget build(BuildContext context) {
     final p = Tw.of(context);
     final data = context.watch<TowerData>();
-    final waits = collectWaits(data).where((w) => w.kind != WaitKind.device).toList();
+    final waits = collectWaits(
+      data,
+    ).where((w) => w.kind != WaitKind.device).toList();
     return Container(
       decoration: BoxDecoration(
         color: p.bg,
@@ -219,23 +225,33 @@ class _WaitPagerState extends State<WaitPager> {
               child: Row(
                 children: [
                   Text(
-                    waits.length == 1 ? 'WAITING ON YOU' : 'WAITING ON YOU  ${i + 1}/${waits.length}',
+                    waits.length == 1
+                        ? 'WAITING ON YOU'
+                        : 'WAITING ON YOU  ${i + 1}/${waits.length}',
                     style: Ts.label(p, p.wait),
                   ),
                   const Spacer(),
                   if (waits.length > 1) ...[
                     IconButton(
                       visualDensity: VisualDensity.compact,
-                      onPressed: i > 0 ? () => setState(() => _index = i - 1) : null,
+                      onPressed: i > 0
+                          ? () => setState(() => _index = i - 1)
+                          : null,
                       icon: const Icon(Icons.chevron_left, size: 18),
                     ),
                     IconButton(
                       visualDensity: VisualDensity.compact,
-                      onPressed: i < waits.length - 1 ? () => setState(() => _index = i + 1) : null,
+                      onPressed: i < waits.length - 1
+                          ? () => setState(() => _index = i + 1)
+                          : null,
                       icon: const Icon(Icons.chevron_right, size: 18),
                     ),
                   ],
-                  Icon(_folded ? Icons.expand_less : Icons.expand_more, size: 18, color: p.muted),
+                  Icon(
+                    _folded ? Icons.expand_less : Icons.expand_more,
+                    size: 18,
+                    color: p.muted,
+                  ),
                 ],
               ),
             ),
@@ -279,7 +295,9 @@ class StatusStrip extends StatelessWidget {
     final agentsLive = tasks
         .where((t) => t['_kind'] != 'bash' && _active(t['status']))
         .length;
-    final bgLive = tasks.where((t) => t['_kind'] == 'bash' && _active(t['status'])).length;
+    final bgLive = tasks
+        .where((t) => t['_kind'] == 'bash' && _active(t['status']))
+        .length;
     final last = data.messages.lastWhere(
       (m) => m.type == MessageType.toolCall,
       orElse: () => ChatMessage(
@@ -314,15 +332,28 @@ class StatusStrip extends StatelessWidget {
       child: Container(
         height: 40,
         padding: const EdgeInsets.only(left: 14),
-        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: p.line)),
+        ),
         child: Row(
           children: [
             LiveMark(color: color, hollow: !running),
             const SizedBox(width: 8),
-            Text(state, style: Ts.label(p, color)),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 120),
+              child: Text(
+                state,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Ts.label(p, color),
+              ),
+            ),
             if (running) ...[
               const SizedBox(width: 8),
-              Elapsed(data.openRunStartedAt, style: Ts.mono(p, color: p.run, size: 12)),
+              Elapsed(
+                data.openRunStartedAt,
+                style: Ts.mono(p, color: p.run, size: 12),
+              ),
             ],
             const SizedBox(width: 10),
             Expanded(
@@ -337,8 +368,13 @@ class StatusStrip extends StatelessWidget {
                 style: Ts.mono(p, size: 11.5),
               ),
             ),
-            if (todos.isNotEmpty) _Count(icon: '☰', text: '$done/${todos.length}'),
-            if (agentsLive > 0) _Count(icon: '◈', text: '$agentsLive', color: p.run),
+            if (todos.isNotEmpty) ...[
+              const SizedBox(width: 10),
+              Icon(Icons.checklist, size: 14, color: p.muted),
+              Text('$done/${todos.length}', style: Ts.mono(p, size: 12)),
+            ],
+            if (agentsLive > 0)
+              _Count(icon: '◈', text: '$agentsLive', color: p.run),
             if (bgLive > 0) _Count(icon: '▸', text: '$bgLive', color: p.run),
             if (running)
               InkWell(
@@ -352,7 +388,14 @@ class StatusStrip extends StatelessWidget {
                     children: [
                       Icon(Icons.stop, size: 16, color: p.fail),
                       const SizedBox(width: 4),
-                      Text('Stop', style: TextStyle(color: p.fail, fontWeight: FontWeight.w700, fontSize: 13)),
+                      Text(
+                        'Stop',
+                        style: TextStyle(
+                          color: p.fail,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -368,8 +411,12 @@ class StatusStrip extends StatelessWidget {
     );
   }
 
-  static bool _active(Object? status) =>
-      const {'running', 'pending', 'in_progress', 'backgrounded'}.contains(status);
+  static bool _active(Object? status) => const {
+    'running',
+    'pending',
+    'in_progress',
+    'backgrounded',
+  }.contains(status);
 }
 
 class _Count extends StatelessWidget {
@@ -383,7 +430,10 @@ class _Count extends StatelessWidget {
     final p = Tw.of(context);
     return Padding(
       padding: const EdgeInsets.only(left: 10),
-      child: Text('$icon$text', style: Ts.mono(p, color: color ?? p.muted, size: 12)),
+      child: Text(
+        '$icon$text',
+        style: Ts.mono(p, color: color ?? p.muted, size: 12),
+      ),
     );
   }
 }
@@ -422,7 +472,10 @@ class ComposerState extends State<Composer> {
 
   void _onChanged(TowerData data, String text) {
     _draftTimer?.cancel();
-    _draftTimer = Timer(const Duration(milliseconds: 500), () => data.saveDraft(text));
+    _draftTimer = Timer(
+      const Duration(milliseconds: 500),
+      () => data.saveDraft(text),
+    );
     setState(() {});
   }
 
@@ -436,7 +489,10 @@ class ComposerState extends State<Composer> {
     controller.clear();
     _draftTimer?.cancel();
     data.saveDraft('');
-    final ok = await data.send(text, priority: data.isProcessing ? _priority : null);
+    final ok = await data.send(
+      text,
+      priority: data.isProcessing ? _priority : null,
+    );
     if (!ok && mounted && controller.text.isEmpty) controller.text = text;
     setState(() {});
   }
@@ -444,18 +500,23 @@ class ComposerState extends State<Composer> {
   KeyEventResult _onKey(TowerData data, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
     final shift = HardwareKeyboard.instance.isShiftPressed;
-    if (event.logicalKey == LogicalKeyboardKey.enter && !shift && widget.desktop) {
+    if (event.logicalKey == LogicalKeyboardKey.enter &&
+        !shift &&
+        widget.desktop) {
       unawaited(_send(data));
       return KeyEventResult.handled;
     }
-    if (event.logicalKey == LogicalKeyboardKey.arrowUp && controller.text.isEmpty) {
+    if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
+        controller.text.isEmpty) {
       final last = data.messages.lastWhere(
         (m) => m.sender == MessageSender.user && m.type == MessageType.text,
         orElse: () => ChatMessage.userText(''),
       );
       if (last.textContent.isNotEmpty) {
         controller.text = last.textContent;
-        controller.selection = TextSelection.collapsed(offset: last.textContent.length);
+        controller.selection = TextSelection.collapsed(
+          offset: last.textContent.length,
+        );
         return KeyEventResult.handled;
       }
     }
@@ -475,7 +536,10 @@ class ComposerState extends State<Composer> {
     final text = controller.text;
     final slash = text.startsWith('/') && !text.contains(' ')
         ? data.slashCommands
-              .where((c) => (c['name'] ?? '').toString().startsWith(text.substring(1)))
+              .where(
+                (c) =>
+                    (c['name'] ?? '').toString().startsWith(text.substring(1)),
+              )
               .take(6)
               .toList()
         : const <Map<String, dynamic>>[];
@@ -496,16 +560,23 @@ class ComposerState extends State<Composer> {
           InkWell(
             onTap: () {
               controller.text = '/${c['name']} ';
-              controller.selection = TextSelection.collapsed(offset: controller.text.length);
+              controller.selection = TextSelection.collapsed(
+                offset: controller.text.length,
+              );
               focus.requestFocus();
               setState(() {});
             },
             child: Container(
               padding: const EdgeInsets.fromLTRB(14, 7, 14, 7),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: p.line)),
+              ),
               child: Row(
                 children: [
-                  Text('/${c['name']}', style: Ts.mono(p, color: p.accent, size: 12.5)),
+                  Text(
+                    '/${c['name']}',
+                    style: Ts.mono(p, color: p.accent, size: 12.5),
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -515,7 +586,10 @@ class ComposerState extends State<Composer> {
                       style: Ts.meta(p),
                     ),
                   ),
-                  Text((c['kind'] ?? '').toString(), style: Ts.mono(p, size: 10.5)),
+                  Text(
+                    (c['kind'] ?? '').toString(),
+                    style: Ts.mono(p, size: 10.5),
+                  ),
                 ],
               ),
             ),
@@ -530,7 +604,11 @@ class ComposerState extends State<Composer> {
               padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
               child: Row(
                 children: [
-                  Icon(Icons.subdirectory_arrow_right, size: 14, color: p.accent),
+                  Icon(
+                    Icons.subdirectory_arrow_right,
+                    size: 14,
+                    color: p.accent,
+                  ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -544,7 +622,8 @@ class ComposerState extends State<Composer> {
               ),
             ),
           ),
-        if (data.fileAttachments.isNotEmpty || data.secretAttachments.isNotEmpty)
+        if (data.fileAttachments.isNotEmpty ||
+            data.secretAttachments.isNotEmpty)
           SizedBox(
             height: 34,
             child: ListView(
@@ -553,12 +632,18 @@ class ComposerState extends State<Composer> {
               children: [
                 for (final f in data.fileAttachments)
                   _AttachChip(
-                    icon: f.isImage ? Icons.image_outlined : Icons.insert_drive_file_outlined,
+                    icon: f.isImage
+                        ? Icons.image_outlined
+                        : Icons.insert_drive_file_outlined,
                     label: f.name,
                     onRemove: () => data.removeFile(f.id),
                   ),
                 for (final s in data.secretAttachments)
-                  _AttachChip(icon: Icons.key, label: s.label, onRemove: () => data.removeSecret(s.id)),
+                  _AttachChip(
+                    icon: Icons.key,
+                    label: s.label,
+                    onRemove: () => data.removeSecret(s.id),
+                  ),
               ],
             ),
           ),
@@ -580,7 +665,9 @@ class ComposerState extends State<Composer> {
                     focusNode: focus,
                     minLines: 1,
                     maxLines: widget.desktop ? 12 : 7,
-                    textInputAction: widget.desktop ? TextInputAction.none : TextInputAction.newline,
+                    textInputAction: widget.desktop
+                        ? TextInputAction.none
+                        : TextInputAction.newline,
                     keyboardType: TextInputType.multiline,
                     style: Ts.body(p).copyWith(fontSize: 15),
                     onChanged: (v) => _onChanged(data, v),
@@ -623,22 +710,36 @@ class ComposerState extends State<Composer> {
           height: 34,
           child: Row(
             children: [
-              const SizedBox(width: 12),
-              _Chip(
-                label: mode?.$2 ?? data.permissionMode ?? 'auto',
-                color: (data.permissionMode == 'superYolo') ? p.wait : null,
-                icon: Icons.shield_outlined,
-                onTap: () => _pickMode(context, data),
+              Expanded(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.only(left: 12),
+                  child: Row(
+                    children: [
+                      _Chip(
+                        label: mode?.$2 ?? data.permissionMode ?? 'auto',
+                        color: (data.permissionMode == 'superYolo')
+                            ? p.wait
+                            : null,
+                        icon: Icons.shield_outlined,
+                        onTap: () => _pickMode(context, data),
+                      ),
+                      _Chip(
+                        label: _modelLabel(data),
+                        onTap: data.models.isEmpty
+                            ? null
+                            : () => _pickModel(context, data),
+                      ),
+                      _Chip(
+                        label: data.effort,
+                        onTap: data.effortLevels.isEmpty
+                            ? null
+                            : () => _pickEffort(context, data),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              _Chip(
-                label: _modelLabel(data),
-                onTap: data.models.isEmpty ? null : () => _pickModel(context, data),
-              ),
-              _Chip(
-                label: data.effort,
-                onTap: data.effortLevels.isEmpty ? null : () => _pickEffort(context, data),
-              ),
-              const Spacer(),
               if (busy)
                 for (final pr in Priority.values)
                   InkWell(
@@ -648,12 +749,20 @@ class ComposerState extends State<Composer> {
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: _priority == pr ? p.run.withValues(alpha: 0.2) : null,
-                        border: Border.all(color: _priority == pr ? p.run : p.line),
+                        color: _priority == pr
+                            ? p.run.withValues(alpha: 0.2)
+                            : null,
+                        border: Border.all(
+                          color: _priority == pr ? p.run : p.line,
+                        ),
                       ),
                       child: Text(
                         pr.name,
-                        style: Ts.mono(p, color: _priority == pr ? p.text : p.muted, size: 11.5),
+                        style: Ts.mono(
+                          p,
+                          color: _priority == pr ? p.text : p.muted,
+                          size: 11.5,
+                        ),
                       ),
                     ),
                   ),
@@ -688,13 +797,20 @@ class ComposerState extends State<Composer> {
         child: Container(
           height: 48,
           padding: const EdgeInsets.symmetric(horizontal: 16),
-          decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: p.line)),
+          ),
           child: Row(
             children: [
               Icon(icon, size: 18, color: onTap == null ? p.muted : p.text),
               const SizedBox(width: 14),
               Expanded(
-                child: Text(label, style: Ts.body(p).copyWith(color: onTap == null ? p.muted : p.text)),
+                child: Text(
+                  label,
+                  style: Ts.body(
+                    p,
+                  ).copyWith(color: onTap == null ? p.muted : p.text),
+                ),
               ),
               if (onTap == null) const NotWired(),
             ],
@@ -705,8 +821,16 @@ class ComposerState extends State<Composer> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          row(Icons.image_outlined, 'Photos', () => unawaited(data.pickFiles(images: true))),
-          row(Icons.insert_drive_file_outlined, 'Files', () => unawaited(data.pickFiles())),
+          row(
+            Icons.image_outlined,
+            'Photos',
+            () => unawaited(data.pickFiles(images: true)),
+          ),
+          row(
+            Icons.insert_drive_file_outlined,
+            'Files',
+            () => unawaited(data.pickFiles()),
+          ),
           row(Icons.key, 'Stored secret', null),
           row(Icons.enhanced_encryption_outlined, 'New secret', null),
           const SizedBox(height: 10),
@@ -715,37 +839,46 @@ class ComposerState extends State<Composer> {
     });
   }
 
-  Future<void> _pickMode(BuildContext context, TowerData data) => _pick(
-    context,
-    title: 'Permission mode',
-    options: [for (final m in modesFor(data.openBackend)) (m.$1, m.$3, m.$2)],
-    current: data.permissionMode ?? 'bypassPermissions',
-    onPick: data.setPermissionMode,
-  );
-
-  Future<void> _pickModel(BuildContext context, TowerData data) => _pick(
-    context,
-    title: 'Model',
-    options: [
-      for (final m in data.models)
-        (
-          (m['value'] ?? m['id']).toString(),
-          (m['displayName'] ?? m['name'] ?? m['value']).toString(),
-          (m['description'] ?? '').toString(),
-        ),
-    ],
-    current: data.model ?? '',
-    onPick: data.setModel,
-  );
-
-  Future<void> _pickEffort(BuildContext context, TowerData data) => _pick(
-    context,
-    title: 'Reasoning effort',
-    options: [for (final e in data.effortLevels) (e, e, '')],
-    current: data.effort,
-    onPick: data.setEffort,
-  );
+  Future<void> _pickMode(BuildContext context, TowerData data) =>
+      pickMode(context, data);
+  Future<void> _pickModel(BuildContext context, TowerData data) =>
+      pickModel(context, data);
+  Future<void> _pickEffort(BuildContext context, TowerData data) =>
+      pickEffort(context, data);
 }
+
+/// Pickers for the agent's permission mode, model and effort. Shared by the
+/// composer chips and the inspector's Steer tab.
+Future<void> pickMode(BuildContext context, TowerData data) => _pick(
+  context,
+  title: 'Permission mode',
+  options: [for (final m in modesFor(data.openBackend)) (m.$1, m.$3, m.$2)],
+  current: data.permissionMode ?? 'bypassPermissions',
+  onPick: data.setPermissionMode,
+);
+
+Future<void> pickModel(BuildContext context, TowerData data) => _pick(
+  context,
+  title: 'Model',
+  options: [
+    for (final m in data.models)
+      (
+        (m['value'] ?? m['id']).toString(),
+        (m['displayName'] ?? m['name'] ?? m['value']).toString(),
+        (m['description'] ?? '').toString(),
+      ),
+  ],
+  current: data.model ?? '',
+  onPick: data.setModel,
+);
+
+Future<void> pickEffort(BuildContext context, TowerData data) => _pick(
+  context,
+  title: 'Reasoning effort',
+  options: [for (final e in data.effortLevels) (e, e, '')],
+  current: data.effort,
+  onPick: data.setEffort,
+);
 
 /// A sheet listing (value, label, note) options with the current one marked.
 Future<void> _pick(
@@ -771,7 +904,9 @@ Future<void> _pick(
               },
               child: Container(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
-                decoration: BoxDecoration(border: Border(bottom: BorderSide(color: p.line))),
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: p.line)),
+                ),
                 child: Row(
                   children: [
                     SizedBox(
@@ -818,7 +953,10 @@ class _Chip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (icon != null) ...[Icon(icon, size: 13, color: c), const SizedBox(width: 3)],
+            if (icon != null) ...[
+              Icon(icon, size: 13, color: c),
+              const SizedBox(width: 3),
+            ],
             Text(label, style: Ts.mono(p, color: c, size: 11.5)),
             if (onTap != null) Icon(Icons.arrow_drop_down, size: 14, color: c),
           ],
@@ -829,7 +967,11 @@ class _Chip extends StatelessWidget {
 }
 
 class _AttachChip extends StatelessWidget {
-  const _AttachChip({required this.icon, required this.label, required this.onRemove});
+  const _AttachChip({
+    required this.icon,
+    required this.label,
+    required this.onRemove,
+  });
   final IconData icon;
   final String label;
   final VoidCallback onRemove;
@@ -848,7 +990,12 @@ class _AttachChip extends StatelessWidget {
           const SizedBox(width: 4),
           ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 160),
-            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: Ts.meta(p)),
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Ts.meta(p),
+            ),
           ),
           InkWell(
             onTap: onRemove,
