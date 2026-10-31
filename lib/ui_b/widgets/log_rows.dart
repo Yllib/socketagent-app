@@ -11,6 +11,7 @@ import '../model/board_model.dart';
 import '../model/log_model.dart';
 import '../model/session_model.dart';
 import '../theme/ui_b_theme.dart';
+import 'answer_sheet.dart';
 import 'clock.dart';
 import 'inbox_card.dart';
 import 'primitives.dart';
@@ -1077,7 +1078,3 @@ class CardRow extends StatelessWidget {
     _ => InboxKind.question,
   };
 }
-
-/// Set by answer_sheet.dart; the log needs it before that file is imported.
-void Function(BuildContext, InboxItem, UiBActions, SessionView?)
-openAnswerSheet = (_, _, _, _) {};

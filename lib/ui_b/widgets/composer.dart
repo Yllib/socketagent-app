@@ -79,8 +79,9 @@ class _ComposerState extends State<Composer> {
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
-    if (!widget.desktop || event is! KeyDownEvent)
+    if (!widget.desktop || event is! KeyDownEvent) {
       return KeyEventResult.ignored;
+    }
     final shift = HardwareKeyboard.instance.isShiftPressed;
     if (event.logicalKey == LogicalKeyboardKey.enter && !shift) {
       _send();

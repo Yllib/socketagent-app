@@ -269,8 +269,9 @@ class SessionScreenState extends State<SessionScreen> {
     final t = UiBTheme.of(context);
     final text = UiBText.of(context);
     final s = widget.session;
-    if (!s.hasMoreHistory && !s.loadingHistory)
+    if (!s.hasMoreHistory && !s.loadingHistory) {
       return const SizedBox(height: 4);
+    }
     return Center(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 6),
