@@ -17,7 +17,7 @@ import '../services/update_service.dart';
 import '../services/websocket_service.dart';
 import '../models/notification_navigation.dart';
 import 'sessions_screen.dart';
-import 'scheduled_tasks_screen.dart';
+import 'tasks/tasks_screen.dart';
 import 'computers/backend_auth.dart' show showBackendSignIn;
 import 'computers/computers_screen.dart';
 import 'settings/settings_v2_screen.dart';
@@ -244,6 +244,11 @@ class MainShellScreenState extends State<MainShellScreen>
       alt: keyboard.isAltPressed,
     );
     if (shortcut == null) return false;
+    if (shortcut == DesktopShortcut.newSession &&
+        _currentIndex == scheduledTasksIndex) {
+      // The Tasks tab makes Ctrl+N a new task through its own focus handler.
+      return false;
+    }
     switch (shortcut) {
       case DesktopShortcut.textLarger:
       case DesktopShortcut.textSmaller:
@@ -428,33 +433,41 @@ class MainShellScreenState extends State<MainShellScreen>
         body: Row(
           children: [
             if (Platform.isWindows) ...[
-              NavigationRail(
-                minWidth: 76,
-                selectedIndex: _currentIndex,
-                onDestinationSelected: _onTabChanged,
-                labelType: NavigationRailLabelType.all,
-                leading: const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
-                  child: Icon(Icons.computer, size: 32),
+              Selector<ChatProvider, int>(
+                selector: (_, provider) => provider.unreadScheduledTaskCount,
+                builder: (context, unreadTasks, _) => NavigationRail(
+                  minWidth: 76,
+                  selectedIndex: _currentIndex,
+                  onDestinationSelected: _onTabChanged,
+                  labelType: NavigationRailLabelType.all,
+                  leading: const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Icon(Icons.computer, size: 32),
+                  ),
+                  destinations: [
+                    const NavigationRailDestination(
+                      icon: Icon(Icons.chat_bubble_outline),
+                      label: Text('Sessions'),
+                    ),
+                    NavigationRailDestination(
+                      icon: unreadTasks > 0
+                          ? Badge(
+                              label: Text('$unreadTasks'),
+                              child: const Icon(Icons.schedule),
+                            )
+                          : const Icon(Icons.schedule),
+                      label: const Text('Tasks'),
+                    ),
+                    const NavigationRailDestination(
+                      icon: Icon(Icons.devices_outlined),
+                      label: Text('Computers'),
+                    ),
+                    const NavigationRailDestination(
+                      icon: Icon(Icons.settings_outlined),
+                      label: Text('Settings'),
+                    ),
+                  ],
                 ),
-                destinations: const [
-                  NavigationRailDestination(
-                    icon: Icon(Icons.chat_bubble_outline),
-                    label: Text('Sessions'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.schedule),
-                    label: Text('Tasks'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.devices_outlined),
-                    label: Text('Computers'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.settings_outlined),
-                    label: Text('Settings'),
-                  ),
-                ],
               ),
               const VerticalDivider(width: 1),
             ],
@@ -468,9 +481,7 @@ class MainShellScreenState extends State<MainShellScreen>
                     _desktopSessions()
                   else
                     const PauseWhileHidden<ChatProvider>(child: SessionsTab()),
-                  const PauseWhileHidden<ChatProvider>(
-                    child: ScheduledTasksScreen(),
-                  ),
+                  const PauseWhileHidden<ChatProvider>(child: TasksScreen()),
                   const PauseWhileHidden<ChatProvider>(child: ComputersTab()),
                   PauseWhileHidden<ChatProvider>(
                     child: SettingsV2Screen(updateService: _updateService),

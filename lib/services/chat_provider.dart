@@ -492,6 +492,10 @@ class _PendingHardStop {
       );
 }
 
+/// A server `error` attributed to the Tasks screens. [serverId] is null when
+/// the message came over the legacy single connection.
+typedef ScheduledTaskError = ({String? serverId, String message});
+
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
@@ -598,6 +602,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, Completer<List<dynamic>>> _archiveHistoryCompleters = {};
   final StreamController<String> _archiveFeedback =
       StreamController.broadcast();
+
+  /// Server errors that belong to the Tasks screens. The protocol sends every
+  /// error as an untagged `error`, so a message counts when it matches a
+  /// known scheduled-task error or lands shortly after a task write to that
+  /// computer.
+  final StreamController<ScheduledTaskError> _scheduledTaskErrors =
+      StreamController.broadcast();
+  final Map<String, DateTime> _lastScheduledTaskWriteAt = {};
   final StreamController<Map<String, dynamic>> _terminalEvents =
       StreamController.broadcast();
   String? _terminalServerId;
@@ -1028,6 +1040,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   List<Map<String, dynamic>> get scheduledTasks => _scheduledTasks;
   int get unreadScheduledTaskCount =>
       _scheduledTasks.where(scheduledTaskHasUnreadResult).length;
+  Stream<ScheduledTaskError> get scheduledTaskErrors =>
+      _scheduledTaskErrors.stream;
+
+  /// Revision of the last task list loaded from [serverId]. It changes with
+  /// every list the server sends after a change, so a save is confirmed once
+  /// it moves and the list carries the edit.
+  String? scheduledTaskRevision(String serverId) =>
+      _scheduledTaskLoadedRevisions[serverId];
   List<ArchiveEntry> get archives => _archives;
   Stream<String> get archiveFeedback => _archiveFeedback.stream;
   Stream<Map<String, dynamic>> get terminalEvents => _terminalEvents.stream;
@@ -7064,6 +7084,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           );
           applyTranscriptPosition(errorMessage, msg);
           _messages.add(errorMessage);
+          _forwardScheduledTaskError(
+            msg['message']?.toString() ?? 'Unknown error',
+            serverId,
+          );
           final errorSessionId = msg['sessionId']?.toString() ?? '';
           // Unscoped errors are frequently produced by file, settings, auth,
           // or history operations. They are not evidence that the visible
@@ -18413,7 +18437,42 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return serverId != null && serverId.isNotEmpty ? serverId : null;
   }
 
-  void scheduleTask({
+  /// Sends a scheduled-task message to [serverId], or the active computer
+  /// when null, and reports whether a live connection took it. An offline
+  /// computer drops the message, so callers must not report success on
+  /// false. Remembers the time so a following `error` can be attributed.
+  bool _sendScheduledTaskMessage(String? serverId, Map<String, dynamic> msg) {
+    final target = serverId ?? _connMgr.activeServerId;
+    if (target != null) _lastScheduledTaskWriteAt[target] = DateTime.now();
+    return serverId != null
+        ? _connMgr.sendToServer(serverId, msg)
+        : _connMgr.send(msg);
+  }
+
+  static const _scheduledTaskErrorWindow = Duration(seconds: 10);
+  static const _knownScheduledTaskErrors = [
+    'The linked session no longer exists on this computer',
+    'Scheduled task not found',
+    'Scheduled task is already running',
+    'Restore the scheduled task before executing it',
+    'Only finished, failed, or cancelled one-off tasks can be archived',
+  ];
+
+  void _forwardScheduledTaskError(String message, String? serverId) {
+    final lastWrite = _lastScheduledTaskWriteAt[serverId ?? ''];
+    final recentWrite =
+        lastWrite != null &&
+        DateTime.now().difference(lastWrite) < _scheduledTaskErrorWindow;
+    final known = _knownScheduledTaskErrors.any(message.contains);
+    if (!recentWrite && !known) return;
+    _scheduledTaskErrors.add((serverId: serverId, message: message));
+  }
+
+  /// Creates a task on [serverId]. Null [effort] and [permissionMode] leave
+  /// the fields unset so the run uses the harness default. Returns whether a
+  /// live connection took the message; the task itself only appears with
+  /// the next `scheduled_task_list`.
+  bool scheduleTask({
     String? name,
     String? linkedSessionId,
     required String prompt,
@@ -18421,8 +18480,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String scheduledTime,
     String? backend,
     String? model,
-    String effort = 'high',
-    String permissionMode = 'bypassPermissions',
+    String? effort,
+    String? permissionMode,
     String? recurrenceType,
     int? customIntervalMs,
     bool reuseSession = false,
@@ -18437,8 +18496,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'cwd': cwd,
       'backend': backend ?? preferredBackendForServer(serverId),
       if (model != null && model.isNotEmpty) 'model': model,
-      'effort': effort,
-      'permissionMode': permissionMode,
+      if (effort != null && effort.isNotEmpty) 'effort': effort,
+      if (permissionMode != null && permissionMode.isNotEmpty)
+        'permissionMode': permissionMode,
       'scheduledTime': scheduledTime,
       'reuseSession': reuseSession,
       'notificationMode': notificationMode,
@@ -18450,14 +18510,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'intervalMs': customIntervalMs,
       };
     }
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
-    }
+    return _sendScheduledTaskMessage(serverId, msg);
   }
 
-  void updateScheduledTask({
+  /// Sends the given fields; null means unchanged, `recurrenceType` 'once'
+  /// clears the recurrence and an empty [model] clears the model. The local
+  /// copy is updated at once. Returns whether a live connection took it.
+  bool updateScheduledTask({
     required String taskId,
     String? name,
     String? prompt,
@@ -18517,34 +18576,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
     }
 
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
-    }
+    return _sendScheduledTaskMessage(serverId, msg);
   }
 
-  void cancelScheduledTask(String taskId) {
-    final msg = {'type': 'cancel_scheduled_task', 'taskId': taskId};
-    final serverId = _serverIdForScheduledTask(taskId);
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
-    }
+  bool cancelScheduledTask(String taskId) {
+    return _sendScheduledTaskMessage(_serverIdForScheduledTask(taskId), {
+      'type': 'cancel_scheduled_task',
+      'taskId': taskId,
+    });
   }
 
-  void executeScheduledTask(String taskId) {
-    final msg = {'type': 'execute_scheduled_task', 'taskId': taskId};
-    final serverId = _serverIdForScheduledTask(taskId);
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
-    }
+  bool executeScheduledTask(String taskId) {
+    return _sendScheduledTaskMessage(_serverIdForScheduledTask(taskId), {
+      'type': 'execute_scheduled_task',
+      'taskId': taskId,
+    });
   }
 
-  void markScheduledTaskRead(
+  bool markScheduledTaskRead(
     String taskId, {
     bool read = true,
     String? serverId,
@@ -18571,16 +18620,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _saveScheduledTaskCacheSoon();
     notifyListeners();
 
-    final msg = {
+    return _sendScheduledTaskMessage(serverId, {
       'type': 'mark_scheduled_task_read',
       'taskId': taskId,
       'read': read,
-    };
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
-    }
+    });
   }
 
   void markScheduledTaskReadForSession(String sessionId, {String? serverId}) {
@@ -18607,15 +18651,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  void archiveScheduledTask(String taskId) {
-    _setScheduledTaskArchived(taskId, true);
+  bool archiveScheduledTask(String taskId) {
+    return _setScheduledTaskArchived(taskId, true);
   }
 
-  void restoreScheduledTask(String taskId) {
-    _setScheduledTaskArchived(taskId, false);
+  bool restoreScheduledTask(String taskId) {
+    return _setScheduledTaskArchived(taskId, false);
   }
 
-  void _setScheduledTaskArchived(String taskId, bool archived) {
+  bool _setScheduledTaskArchived(String taskId, bool archived) {
     final serverId = _serverIdForScheduledTask(taskId);
     final marker = DateTime.now().toUtc().toIso8601String();
 
@@ -18639,31 +18683,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _saveScheduledTaskCacheSoon();
     notifyListeners();
 
-    final msg = {
+    return _sendScheduledTaskMessage(serverId, {
       'type': archived ? 'archive_scheduled_task' : 'restore_scheduled_task',
       'taskId': taskId,
-    };
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
-    }
+    });
   }
 
-  void deleteScheduledTask(String taskId) {
+  /// Removes the task and its run history locally and on its computer.
+  bool deleteScheduledTask(String taskId) {
     final serverId = _serverIdForScheduledTask(taskId);
     _scheduledTasks.removeWhere((t) => t['id'] == taskId);
     for (final tasks in _perServerScheduledTasks.values) {
       tasks.removeWhere((t) => t['id'] == taskId);
     }
     _saveScheduledTaskCacheSoon();
-    final msg = {'type': 'delete_scheduled_task', 'taskId': taskId};
-    if (serverId != null) {
-      _connMgr.sendToServer(serverId, msg);
-    } else {
-      _connMgr.send(msg);
-    }
+    final sent = _sendScheduledTaskMessage(serverId, {
+      'type': 'delete_scheduled_task',
+      'taskId': taskId,
+    });
     notifyListeners();
+    return sent;
   }
 
   void deleteSession(String sessionId, {String? serverId}) {
@@ -20919,6 +20958,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timer.cancel();
     }
     _scheduledTaskRefreshRetries.clear();
+    unawaited(_scheduledTaskErrors.close());
     for (final completer in _codexGoalCompleters.values) {
       if (!completer.isCompleted) {
         completer.completeError(StateError('SocketAgent app is closing.'));

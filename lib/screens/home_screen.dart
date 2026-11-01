@@ -3,9 +3,9 @@ import '../widgets/browser_profile_sheet.dart';
 import '../widgets/extra_folders_dialog.dart';
 import '../widgets/light_backdrop.dart';
 import '../widgets/offline_watermark.dart';
-import '../widgets/linked_scheduled_tasks_panel.dart';
 import '../models/session_scheduled_tasks.dart';
-import 'scheduled_tasks_screen.dart';
+import 'tasks/linked_tasks_strip.dart';
+import 'tasks/tasks_screen.dart';
 import '../widgets/outgoing_queue_notice.dart';
 import 'dart:io';
 import '../services/desktop_clipboard_attachments.dart';
@@ -1055,8 +1055,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     provider.requestScheduledTasks();
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            ScheduledTasksScreen(sessionId: sessionId, serverId: serverId),
+        builder: (_) => TasksScreen(sessionId: sessionId, serverId: serverId),
       ),
     );
   }
@@ -1435,7 +1434,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                           status: provider.conversationRewindStatus!,
                           onDismiss: provider.dismissConversationRewindNotice,
                         ),
-                      LinkedScheduledTasksPanel(
+                      LinkedTasksStrip(
                         tasks: scheduledTasksForSession(
                           provider.scheduledTasks,
                           sessionId: provider.activeSessionId,

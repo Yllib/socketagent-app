@@ -25,6 +25,7 @@ import 'services/session_deep_link.dart';
 import 'models/device_approval_notification.dart';
 import 'models/notification_navigation.dart';
 import 'screens/main_shell_screen.dart';
+import 'screens/tasks/tasks_screen.dart';
 import 'screens/home_screen.dart';
 
 /// Global notifier for assist intent events — HomeScreen listens to this
@@ -398,6 +399,7 @@ class _AppLauncherState extends State<AppLauncher>
           scheduledTaskId,
           serverId: parsed.serverId,
         );
+        TasksScreen.focusTask(scheduledTaskId);
       } else if (sessionId != null) {
         provider.markScheduledTaskReadForSession(
           sessionId,
