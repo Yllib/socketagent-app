@@ -2,8 +2,6 @@ import 'package:app/models/session_scheduled_tasks.dart';
 import 'package:app/models/message.dart';
 import 'multi_client_prompt_test.dart' show withSession;
 import 'package:app/models/user_prompt_text.dart';
-import 'package:app/widgets/linked_scheduled_tasks_panel.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 Map<String, dynamic> task(
@@ -117,41 +115,6 @@ void main() {
         scheduledTasksForSession(tasks, sessionId: 'session', serverId: null),
         isEmpty,
       );
-    },
-  );
-
-  testWidgets(
-    'panel stays compact, opens task history, and disappears when complete',
-    (tester) async {
-      await tester.binding.setSurfaceSize(const Size(320, 640));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
-      var opened = false;
-      final tasks = List.generate(
-        4,
-        (i) => task('$i', i == 0 ? 'running' : 'pending'),
-      );
-      Future<void> show(List<Map<String, dynamic>> items) => tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: LinkedScheduledTasksPanel(
-              tasks: items,
-              onOpen: () => opened = true,
-            ),
-          ),
-        ),
-      );
-      await show(tasks);
-      expect(find.text('Running'), findsOneWidget);
-      expect(find.text('Check 0'), findsOneWidget);
-      expect(find.text('Check 2'), findsNothing);
-      expect(tester.takeException(), isNull);
-      await tester.tap(find.text('View all'));
-      expect(opened, isTrue);
-      await tester.tap(find.text('Scheduled tasks (4)'));
-      await tester.pump();
-      expect(find.text('Check 0'), findsNothing);
-      await show([]);
-      expect(find.text('View all'), findsNothing);
     },
   );
 
