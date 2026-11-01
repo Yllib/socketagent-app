@@ -230,13 +230,6 @@ class TaskChanges {
       carryOver == null &&
       notify == null;
 
-  /// The server cannot clear effort or access once set; it ignores unknown
-  /// values. These name the fields a save would silently fail to reset.
-  List<String> get uncleareable => [
-    if (effort == '') 'effort',
-    if (permissionMode == '') 'access',
-  ];
-
   /// Fields whose change a running task only picks up after the current run.
   List<String> deferredWhileRunning() => [
     if (prompt != null) 'prompt',

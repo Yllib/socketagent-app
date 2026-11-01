@@ -43,11 +43,12 @@ bool scheduledTaskIsArchived(Map<String, dynamic> task) {
   return archivedAt is String && archivedAt.isNotEmpty;
 }
 
+/// Mirrors the server: finished one-offs and any cancelled task.
 bool scheduledTaskCanArchive(Map<String, dynamic> task) {
   if (scheduledTaskIsArchived(task)) return false;
+  final status = task['status']?.toString();
+  if (status == 'cancelled') return true;
   final recurrence = task['recurrence'];
   final recurring = recurrence is Map && recurrence['type'] != 'once';
-  final status = task['status']?.toString();
-  return !recurring &&
-      (status == 'completed' || status == 'failed' || status == 'cancelled');
+  return !recurring && (status == 'completed' || status == 'failed');
 }

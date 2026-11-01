@@ -38,72 +38,75 @@ class TaskDetailPane extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 3),
-              child: TaskStatusIcon(task, size: 18),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: SelectableText(
-                task.displayName,
-                style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w600),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: TaskStatusIcon(task, size: 18),
               ),
-            ),
-          ],
-        ),
-        Padding(
-          padding: const EdgeInsets.only(left: 26, top: 2),
-          child: Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: task.isArchived ? 'Archived' : task.status.label,
-                  style: TextStyle(color: taskStatusColor(context, task)),
+              const SizedBox(width: 8),
+              Expanded(
+                child: SelectableText(
+                  task.displayName,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                TextSpan(text: ' · ${task.recurrenceLabel}'),
-                if (info.multiComputer || offline) ...[
-                  TextSpan(text: ' · ${info.computerName(task.serverId)}'),
-                  if (offline)
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 26, top: 2),
+            child: Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(
+                    text: task.isArchived ? 'Archived' : task.status.label,
+                    style: TextStyle(color: taskStatusColor(context, task)),
+                  ),
+                  TextSpan(text: ' · ${task.recurrenceLabel}'),
+                  if (info.multiComputer || offline) ...[
+                    TextSpan(text: ' · ${info.computerName(task.serverId)}'),
+                    if (offline)
+                      TextSpan(
+                        text: ' offline, as last seen',
+                        style: TextStyle(color: palette.warning),
+                      ),
+                  ],
+                  if (task.hasUnread)
                     TextSpan(
-                      text: ' offline, as last seen',
-                      style: TextStyle(color: palette.warning),
+                      text: ' · unread',
+                      style: TextStyle(color: palette.blue),
                     ),
                 ],
-                if (task.hasUnread)
-                  TextSpan(
-                    text: ' · unread',
-                    style: TextStyle(color: palette.blue),
-                  ),
-              ],
+              ),
+              style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
             ),
-            style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
           ),
-        ),
-        const SizedBox(height: 8),
-        _ActionBar(task: task, actions: actions),
-        const Divider(height: 16),
-        ..._schedule(context, reference),
-        ..._agent(context),
-        const TaskSectionLabel('Prompt'),
-        TaskLongText(task.prompt, collapsedLines: 8),
-        if (task.notify == TaskNotify.quiet || task.carryOver)
-          TaskNote(
-            'At run time the server prepends ${[if (task.notify == TaskNotify.quiet) 'the quiet-mode instruction', if (task.carryOver) 'summaries of the last two runs'].join(' and ')}.',
-          ),
-        if (task.isLinked) ...[
-          const TaskSectionLabel('Linked session'),
-          TaskFactRow(
-            'Results go to',
-            info.sessionTitle(task.serverId, task.linkedSessionId!) ??
-                'original session',
-            onTap: () => actions.openLinkedSession(task),
-          ),
-        ],
-        ..._latest(context, reference),
-        _RunHistory(task: task, actions: actions, now: reference),
+          const SizedBox(height: 8),
+          _ActionBar(task: task, actions: actions),
+          const Divider(height: 16),
+          ..._schedule(context, reference),
+          ..._agent(context),
+          const TaskSectionLabel('Prompt'),
+          TaskLongText(task.prompt, collapsedLines: 8),
+          if (task.notify == TaskNotify.quiet || task.carryOver)
+            TaskNote(
+              'At run time the server prepends ${[if (task.notify == TaskNotify.quiet) 'the quiet-mode instruction', if (task.carryOver) 'summaries of the last two runs'].join(' and ')}.',
+            ),
+          if (task.isLinked) ...[
+            const TaskSectionLabel('Linked session'),
+            TaskFactRow(
+              'Results go to',
+              info.sessionTitle(task.serverId, task.linkedSessionId!) ??
+                  'original session',
+              onTap: () => actions.openLinkedSession(task),
+            ),
+          ],
+          ..._latest(context, reference),
+          _RunHistory(task: task, actions: actions, now: reference),
         ],
       ),
     );
@@ -125,7 +128,11 @@ class TaskDetailPane extends StatelessWidget {
         whenLabel,
         when == null
             ? 'Invalid time "${task.scheduledTimeRaw}". It never runs.'
-            : '${formatWhen(when, now: now)} · ${when.isAfter(now) ? formatRelative(when, now: now) : task.status == TaskStatus.pending ? 'overdue, runs at the next check' : formatRelative(when, now: now)}',
+            : '${formatWhen(when, now: now)} · ${when.isAfter(now)
+                  ? formatRelative(when, now: now)
+                  : task.status == TaskStatus.pending
+                  ? 'overdue, runs at the next check'
+                  : formatRelative(when, now: now)}',
       ),
       if (task.recurrence == TaskRecurrence.custom)
         TaskFactRow(
@@ -148,13 +155,13 @@ class TaskDetailPane extends StatelessWidget {
       if (task.status == TaskStatus.cancelled)
         TaskNote(
           task.isRecurring
-              ? 'Stopped. Edit and save to re-arm the schedule. Run now runs once and leaves it finished.'
+              ? 'Stopped. Edit and save to re-arm the schedule. Run now runs it once and leaves it stopped.'
               : 'Cancelled. Edit and save to re-arm it, or Run now.',
           warn: true,
         ),
       if (task.isFinishedOneOff && !task.isArchived)
         const TaskNote(
-          'Finished. Editing its time does not run it again; Run now does.',
+          'Finished. Set a future time to run it again, or Run now.',
         ),
     ];
   }
@@ -194,7 +201,8 @@ class TaskDetailPane extends StatelessWidget {
     final run = task.latestFinishedRun;
     final text = run?.outcomeText ?? task.error ?? task.resultSummary;
     if (text == null) return const [];
-    final failed = run?.status == RunStatus.failed || task.status == TaskStatus.failed;
+    final failed =
+        run?.status == RunStatus.failed || task.status == TaskStatus.failed;
     final at = run?.completedAt ?? task.lastRunAt;
     return [
       TaskSectionLabel(
@@ -245,15 +253,15 @@ class _ActionBar extends StatelessWidget {
       runSpacing: 2,
       children: [
         for (final command in shown)
-            TaskActionButton(
-              key: Key('task-action-${command.name}'),
-              icon: command.icon,
-              label: command.label(task),
-              danger: command.isDestructive,
-              tooltip: 'Key: ${command.key}',
-              onPressed: () =>
-                  runTaskCommand(command, task, actions, open: () {}),
-            ),
+          TaskActionButton(
+            key: Key('task-action-${command.name}'),
+            icon: command.icon,
+            label: command.label(task),
+            danger: command.isDestructive,
+            tooltip: 'Key: ${command.key}',
+            onPressed: () =>
+                runTaskCommand(command, task, actions, open: () {}),
+          ),
       ],
     );
   }
@@ -298,10 +306,7 @@ class _RunHistoryState extends State<_RunHistory> {
     if (runs.isEmpty) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: const [
-          TaskSectionLabel('Runs'),
-          TaskNote('No runs yet.'),
-        ],
+        children: const [TaskSectionLabel('Runs'), TaskNote('No runs yet.')],
       );
     }
     final failed = runs.where((r) => r.status == RunStatus.failed).length;
@@ -312,9 +317,7 @@ class _RunHistoryState extends State<_RunHistory> {
         TaskSectionLabel(
           'Runs',
           trailing: Text(
-            failed == 0
-                ? '${runs.length}'
-                : '${runs.length} · $failed failed',
+            failed == 0 ? '${runs.length}' : '${runs.length} · $failed failed',
             style: TextStyle(
               fontSize: 12,
               color: failed == 0 ? scheme.onSurfaceVariant : palette.danger,
@@ -328,7 +331,8 @@ class _RunHistoryState extends State<_RunHistory> {
             actions: widget.actions,
             now: widget.now,
             expanded: _expanded == i,
-            onToggle: () => setState(() => _expanded = _expanded == i ? null : i),
+            onToggle: () =>
+                setState(() => _expanded = _expanded == i ? null : i),
           ),
         if (runs.length > _shown)
           TextButton(

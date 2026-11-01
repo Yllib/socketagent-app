@@ -92,8 +92,9 @@ void main() {
     };
   }
 
-  testWidgets('create sends harness defaults unset and the computer folder',
-      (tester) async {
+  testWidgets('create sends harness defaults unset and the computer folder', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider();
     final open = pumpOpener(tester, provider);
     await open();
@@ -130,7 +131,10 @@ void main() {
     expect(call.$2['reuseSession'], false);
     expect(call.$2['notificationMode'], 'completion');
     expect(find.text('New task'), findsNothing, reason: 'closed after save');
-    expect(tasksFeedback.current?.text, startsWith('Saving "Check the build." on tower'));
+    expect(
+      tasksFeedback.current?.text,
+      startsWith('Saving "Check the build." on tower'),
+    );
     expect(tasksFeedback.pendingSaveCount, 1);
     // The next list from tower with the task confirms the save.
     provider.receiveList('tower', [
@@ -143,11 +147,13 @@ void main() {
       },
     ]);
     expect(tasksFeedback.current?.text, 'Saved "Check the build." on tower');
-    expect(tasksFeedback.pendingSaveCount, 0);    settleFeedback();
+    expect(tasksFeedback.pendingSaveCount, 0);
+    settleFeedback();
   });
 
-  testWidgets('create from a session prefills its folder and offers the link',
-      (tester) async {
+  testWidgets('create from a session prefills its folder and offers the link', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider(
       statuses: const {
         'tower': ConnectionStatus.connected,
@@ -165,19 +171,27 @@ void main() {
       findsOneWidget,
     );
     expect(
-      tester.widget<TextField>(find.byKey(const Key('task-editor-folder'))).controller!.text,
+      tester
+          .widget<TextField>(find.byKey(const Key('task-editor-folder')))
+          .controller!
+          .text,
       '/home/billy/agents/socketagent-app',
     );
-    await tester.enterText(find.byKey(const Key('task-editor-prompt')), 'Report back.');
+    await tester.enterText(
+      find.byKey(const Key('task-editor-prompt')),
+      'Report back.',
+    );
     await tester.pump();
     await tester.tap(find.byKey(const Key('task-editor-save')));
     await tester.pumpAndSettle();
     expect(provider.calls.single.$2['linkedSessionId'], 'sess-1');
-    expect(provider.calls.single.$2['serverId'], 'laptop');    settleFeedback();
+    expect(provider.calls.single.$2['serverId'], 'laptop');
+    settleFeedback();
   });
 
-  testWidgets('model list comes from the computer catalog for the harness',
-      (tester) async {
+  testWidgets('model list comes from the computer catalog for the harness', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider();
     provider.catalogs['tower|codex'] = const [
       ModelChoice('gpt-6.1-sol', 'GPT-6.1-Sol'),
@@ -203,8 +217,9 @@ void main() {
     settleFeedback();
   });
 
-  testWidgets('edit sends only the changed field and keeps unset ones unset',
-      (tester) async {
+  testWidgets('edit sends only the changed field and keeps unset ones unset', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider();
     final backup = task(provider, 'backup');
     final open = pumpOpener(tester, provider, edit: backup);
@@ -222,34 +237,48 @@ void main() {
     expect(provider.calls.single.$2, {
       'taskId': 'backup',
       'name': 'Weekly backup audit',
-    });    settleFeedback();
+    });
+    settleFeedback();
   });
 
-  testWidgets('edit of a stopped task keeps its past time and warns on re-arm',
-      (tester) async {
-    final provider = FakeTasksProvider();
-    final triage = task(provider, 'triage');
-    final outcome = pumpOpener(tester, provider, edit: triage);
-    await outcome();
+  testWidgets(
+    'edit of a stopped task keeps its past time and warns on re-arm',
+    (tester) async {
+      final provider = FakeTasksProvider();
+      final triage = task(provider, 'triage');
+      final outcome = pumpOpener(tester, provider, edit: triage);
+      await outcome();
 
-    expect(find.textContaining('Saving any change re-arms it'), findsOneWidget);
-    expect(find.text('in the past'), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('task-editor-name')), 'Inbox triage 2');
-    await tester.tap(find.byKey(const Key('task-editor-save')));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('Saving re-arms this task'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Save').last);
-    await tester.pumpAndSettle();
+      expect(
+        find.textContaining('Saving any change re-arms it'),
+        findsOneWidget,
+      );
+      expect(find.text('in the past'), findsOneWidget);
+      await tester.enterText(
+        find.byKey(const Key('task-editor-name')),
+        'Inbox triage 2',
+      );
+      await tester.tap(find.byKey(const Key('task-editor-save')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Saving re-arms this task'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Save').last);
+      await tester.pumpAndSettle();
 
-    final sent = provider.calls.single.$2;
-    expect(sent.containsKey('scheduledTime'), isFalse,
-        reason: 'the stored time is only sent when the user changes it');
-    expect(sent['name'], 'Inbox triage 2');
-    expect(task(provider, 'triage').status, TaskStatus.pending);    settleFeedback();
-  });
+      final sent = provider.calls.single.$2;
+      expect(
+        sent.containsKey('scheduledTime'),
+        isFalse,
+        reason: 'the stored time is only sent when the user changes it',
+      );
+      expect(sent['name'], 'Inbox triage 2');
+      expect(task(provider, 'triage').status, TaskStatus.pending);
+      settleFeedback();
+    },
+  );
 
-  testWidgets('custom interval rejects zero and warns under 30 minutes',
-      (tester) async {
+  testWidgets('custom interval rejects zero and warns under 30 minutes', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider();
     final open = pumpOpener(tester, provider, edit: task(provider, 'backup'));
     await open();
@@ -261,68 +290,89 @@ void main() {
     await tester.pump();
     await tester.tap(find.byKey(const Key('task-editor-save')));
     await tester.pump();
-    expect(find.text('Custom interval must be at least 1 minute.'), findsOneWidget);
+    expect(
+      find.text('Custom interval must be at least 1 minute.'),
+      findsOneWidget,
+    );
     expect(provider.calls, isEmpty);
 
     await tester.enterText(find.byKey(const Key('task-editor-minutes')), '10');
     await tester.pump();
     expect(find.textContaining('Runs under 30 minutes apart'), findsOneWidget);
-    expect(find.text('Custom interval must be at least 1 minute.'), findsNothing);
+    expect(
+      find.text('Custom interval must be at least 1 minute.'),
+      findsNothing,
+    );
   });
 
   testWidgets('offline computer disables save and says why', (tester) async {
     final provider = FakeTasksProvider();
     final open = pumpOpener(tester, provider, edit: task(provider, 'notes'));
     await open();
-    expect(find.textContaining('laptop is offline. Save is disabled'), findsOneWidget);
     expect(
-      tester.widget<FilledButton>(find.byKey(const Key('task-editor-save'))).onPressed,
+      find.textContaining('laptop is offline. Save is disabled'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('task-editor-save')))
+          .onPressed,
       isNull,
     );
-    expect(find.textContaining('cannot be checked while the computer is offline'),
-        findsOneWidget);
+    expect(
+      find.textContaining('cannot be checked while the computer is offline'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('stored effort cannot go back to default; harness change resets',
-      (tester) async {
+  testWidgets('harness change resets model, effort and access to defaults', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider();
     final open = pumpOpener(tester, provider, edit: task(provider, 'digest'));
     await open();
     expect(find.text('gpt-6.1-sol'), findsOneWidget);
-    expect(find.textContaining('Once set it cannot go back'), findsOneWidget);
 
     await tester.ensureVisible(find.text('Claude'));
     await tester.tap(find.text('Claude'));
     await tester.pump();
-    expect(find.textContaining('resets model, effort and access'), findsOneWidget);
+    expect(
+      find.textContaining('resets model, effort and access'),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('task-editor-save')));
     await tester.pumpAndSettle();
     final sent = provider.calls.single.$2;
     expect(sent['backend'], 'claude');
-    expect(sent['model'], '', reason: 'cleared model travels as an empty string');
-    expect(sent.containsKey('effort'), isFalse,
-        reason: 'the server cannot clear effort, so nothing is sent');
-    expect(sent.containsKey('permissionMode'), isFalse);    settleFeedback();
+    expect(
+      sent['model'],
+      '',
+      reason: 'cleared model travels as an empty string',
+    );
+    expect(sent['effort'], '', reason: 'cleared effort goes back to default');
+    settleFeedback();
   });
 
-  testWidgets('closing with changes asks to discard; wide windows use a dialog',
-      (tester) async {
-    final provider = FakeTasksProvider();
-    final open = pumpOpener(
-      tester,
-      provider,
-      edit: task(provider, 'backup'),
-      size: const Size(1440, 900),
-    );
-    await open();
-    expect(find.byType(Dialog), findsOneWidget);
-    await tester.enterText(find.byKey(const Key('task-editor-name')), 'x');
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    expect(find.text('Discard changes?'), findsOneWidget);
-    await tester.tap(find.text('Keep'));
-    await tester.pumpAndSettle();
-    expect(find.text('Edit task'), findsOneWidget);
-    expect(provider.calls, isEmpty);
-  });
+  testWidgets(
+    'closing with changes asks to discard; wide windows use a dialog',
+    (tester) async {
+      final provider = FakeTasksProvider();
+      final open = pumpOpener(
+        tester,
+        provider,
+        edit: task(provider, 'backup'),
+        size: const Size(1440, 900),
+      );
+      await open();
+      expect(find.byType(Dialog), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('task-editor-name')), 'x');
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.text('Discard changes?'), findsOneWidget);
+      await tester.tap(find.text('Keep'));
+      await tester.pumpAndSettle();
+      expect(find.text('Edit task'), findsOneWidget);
+      expect(provider.calls, isEmpty);
+    },
+  );
 }

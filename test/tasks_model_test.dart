@@ -19,8 +19,11 @@ void main() {
       expect(digest.carryOver, isTrue);
       expect(digest.notify, TaskNotify.quiet);
       expect(digest.runs.length, 107);
-      expect(digest.runs.first.startedAt!.isAfter(digest.runs.last.startedAt!), isTrue,
-          reason: 'runs are newest first');
+      expect(
+        digest.runs.first.startedAt!.isAfter(digest.runs.last.startedAt!),
+        isTrue,
+        reason: 'runs are newest first',
+      );
       expect(digest.hasUnread, isTrue);
       expect(digest.recurrenceLabel, 'Daily');
     });
@@ -62,7 +65,7 @@ void main() {
       expect(triage.recurrenceLabel, 'Every 6h');
       expect(triage.status, TaskStatus.cancelled);
       expect(triage.canCancel, isFalse);
-      expect(triage.canArchive, isFalse, reason: 'recurring cannot archive');
+      expect(triage.canArchive, isTrue, reason: 'cancelled can archive');
       expect(triage.canExecute, isTrue);
       expect(triage.canDelete, isTrue);
 
@@ -90,8 +93,35 @@ void main() {
       })!;
       expect(daily.upcomingRuns(count: 3, now: now), [
         DateTime(2026, 11, 1, 7),
-        DateTime(2026, 11, 1, 7).add(const Duration(days: 1)),
-        DateTime(2026, 11, 1, 7).add(const Duration(days: 2)),
+        DateTime(2026, 11, 2, 7),
+        DateTime(2026, 11, 3, 7),
+      ], reason: 'calendar days keep the clock time');
+
+      // Monthly on the 31st clamps to short months and comes back.
+      final monthly = ScheduledTaskView.fromMap({
+        'id': 'm',
+        'scheduledTime': DateTime(2027, 1, 31, 10).toUtc().toIso8601String(),
+        'recurrence': {'type': 'monthly', 'dayOfMonth': 31},
+      })!;
+      expect(monthly.upcomingRuns(count: 3, now: now), [
+        DateTime(2027, 1, 31, 10),
+        DateTime(2027, 2, 28, 10),
+        DateTime(2027, 3, 31, 10),
+      ]);
+
+      // Weekly on Monday and Thursday from Monday 2 Nov.
+      final weekdays = ScheduledTaskView.fromMap({
+        'id': 'w',
+        'scheduledTime': DateTime(2026, 11, 2, 9).toUtc().toIso8601String(),
+        'recurrence': {
+          'type': 'weekly',
+          'daysOfWeek': [1, 4],
+        },
+      })!;
+      expect(weekdays.upcomingRuns(count: 3, now: now), [
+        DateTime(2026, 11, 2, 9),
+        DateTime(2026, 11, 5, 9),
+        DateTime(2026, 11, 9, 9),
       ]);
 
       // A past anchor runs at the next check, then steps past now.
@@ -116,8 +146,11 @@ void main() {
         'scheduledTime': DateTime(2026, 11, 1).toUtc().toIso8601String(),
         'recurrence': {'type': 'custom', 'intervalMs': 0},
       })!;
-      expect(broken.upcomingRuns(count: 3, now: now).length, 1,
-          reason: 'a zero interval never advances');
+      expect(
+        broken.upcomingRuns(count: 3, now: now).length,
+        1,
+        reason: 'a zero interval never advances',
+      );
     });
 
     test('formatters', () {
@@ -127,7 +160,10 @@ void main() {
       expect(formatInterval(const Duration(days: 2)), '2d');
       expect(formatDuration(const Duration(minutes: 4, seconds: 12)), '4m 12s');
       expect(formatDuration(const Duration(seconds: 41)), '41s');
-      final when = formatWhen(DateTime(2026, 11, 3, 9), now: DateTime(2026, 10, 31));
+      final when = formatWhen(
+        DateTime(2026, 11, 3, 9),
+        now: DateTime(2026, 10, 31),
+      );
       expect(when, 'Tue, Nov 3 09:00');
       expect(
         formatWhen(DateTime(2027, 1, 2, 9), now: DateTime(2026, 10, 31)),
@@ -137,8 +173,14 @@ void main() {
 
     test('access notes flag the modes that stall unattended', () {
       expect(accessNote('default', TaskHarness.claude).canStall, isTrue);
-      expect(accessNote('bypassPermissions', TaskHarness.claude).canStall, isFalse);
-      expect(accessNote('bypassPermissions', TaskHarness.codex).canStall, isTrue);
+      expect(
+        accessNote('bypassPermissions', TaskHarness.claude).canStall,
+        isFalse,
+      );
+      expect(
+        accessNote('bypassPermissions', TaskHarness.codex).canStall,
+        isTrue,
+      );
       expect(accessNote('superYolo', TaskHarness.codex).canStall, isFalse);
       expect(accessLabel('plan', TaskHarness.codex), 'Read only');
       expect(effortsFor(TaskHarness.claude), isNot(contains('xhigh')));
@@ -206,7 +248,10 @@ void main() {
       draft
         ..intervalMinutes = 60
         ..scheduledTime = now.subtract(const Duration(minutes: 1));
-      expect(draft.validate(now: now).single.text, startsWith('Time is in the past'));
+      expect(
+        draft.validate(now: now).single.text,
+        startsWith('Time is in the past'),
+      );
     });
 
     test('diff sends only what changed and keeps unset fields unset', () {
@@ -234,7 +279,6 @@ void main() {
       expect(changes.recurrence, TaskRecurrence.custom);
       expect(draft.intervalMs, 90 * 60000);
       expect(changes.effort, '', reason: 'asked to clear');
-      expect(changes.uncleareable, ['effort']);
       expect(changes.scheduledTime, isNotNull);
       expect(changes.deferredWhileRunning(), ['effort', 'repeat']);
     });

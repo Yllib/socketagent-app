@@ -92,9 +92,8 @@ class ScheduledTaskView {
       if (interval is num && interval.isFinite) intervalMs = interval.toInt();
     }
     final runs = <TaskRun>[
-      for (final rawRun in map['runs'] is List
-          ? map['runs'] as List
-          : const <Object?>[])
+      for (final rawRun
+          in map['runs'] is List ? map['runs'] as List : const <Object?>[])
         if (rawRun is Map) TaskRun.fromMap(rawRun),
     ];
     runs.sort((a, b) {
@@ -146,7 +145,7 @@ class ScheduledTaskView {
   bool get isFinished =>
       status == TaskStatus.completed || status == TaskStatus.failed;
 
-  /// A finished one-off that a new time cannot re-arm; only Run now runs it.
+  /// A finished one-off; saving a future time re-arms it.
   bool get isFinishedOneOff => !isRecurring && isFinished;
 
   bool get canEdit => !isArchived;
@@ -180,9 +179,8 @@ class ScheduledTaskView {
   TaskRun? get latestFinishedRun =>
       runs.where((r) => r.status != RunStatus.running).firstOrNull;
 
-  /// The run times this schedule produces after [from], the way the server
-  /// computes them: fixed 24 h days, 7 x 24 h weeks, calendar months and the
-  /// custom interval, each anchored on the previous time.
+  /// The run times this schedule produces, the way the server computes them
+  /// (see [_advance]), each step taken from the previous time.
   List<DateTime> upcomingRuns({int count = 3, DateTime? now}) {
     final anchor = scheduledTime;
     if (anchor == null || count <= 0) return const [];
@@ -204,34 +202,56 @@ class ScheduledTaskView {
   }
 
   /// One step of the schedule after [from] that is also after [after].
+  /// Mirrors the server's getNextRunTime: local calendar days, so the clock
+  /// time holds across daylight saving; optional weekdays for weekly; months
+  /// that clamp to their last day and return to the anchor day; and custom
+  /// intervals of at least a minute.
   DateTime? _advance(DateTime from, DateTime after) {
-    var next = from;
+    final rule = raw['recurrence'];
+    final weekdays = <int>{
+      if (rule is Map && rule['daysOfWeek'] is List)
+        for (final day in rule['daysOfWeek'] as List)
+          if (day is int) day,
+    };
+    final storedDay = rule is Map ? rule['dayOfMonth'] : null;
+    final dayOfMonth = storedDay is int
+        ? storedDay
+        : (scheduledTime ?? from).toLocal().day;
+    var next = from.toLocal();
     for (var guard = 0; guard < 100000; guard++) {
       final stepped = switch (recurrence) {
         TaskRecurrence.once => null,
-        TaskRecurrence.daily => next.add(const Duration(days: 1)),
-        TaskRecurrence.weekly => next.add(const Duration(days: 7)),
-        TaskRecurrence.monthly => _addMonth(next),
+        TaskRecurrence.daily => _addDays(next, 1),
+        TaskRecurrence.weekly => _addDays(next, weekdays.isEmpty ? 7 : 1),
+        TaskRecurrence.monthly => _addMonth(next, dayOfMonth),
         TaskRecurrence.custom =>
-          intervalMs == null || intervalMs! <= 0
+          intervalMs == null || intervalMs! < 60000
               ? null
               : next.add(Duration(milliseconds: intervalMs!)),
       };
       if (stepped == null) return null;
       next = stepped;
-      if (next.isAfter(after)) return next;
+      final onWeekday = weekdays.isEmpty || weekdays.contains(next.weekday % 7);
+      if (next.isAfter(after) && onWeekday) return next;
     }
     return null;
   }
 
-  static DateTime _addMonth(DateTime time) {
-    final local = time.toLocal();
-    final month = local.month == 12 ? 1 : local.month + 1;
-    final year = local.month == 12 ? local.year + 1 : local.year;
+  static DateTime _addDays(DateTime local, int days) => DateTime(
+    local.year,
+    local.month,
+    local.day + days,
+    local.hour,
+    local.minute,
+    local.second,
+  );
+
+  static DateTime _addMonth(DateTime local, int dayOfMonth) {
+    final lastDay = DateTime(local.year, local.month + 2, 0).day;
     return DateTime(
-      year,
-      month,
-      local.day,
+      local.year,
+      local.month + 1,
+      dayOfMonth < lastDay ? dayOfMonth : lastDay,
       local.hour,
       local.minute,
       local.second,
@@ -434,7 +454,8 @@ String accessLabel(String mode, TaskHarness harness) => switch (mode) {
       canStall: !codex,
     ),
     'default' => (
-      note: 'Asks before edits and commands. Unattended runs stall on the first approval.',
+      note:
+          'Asks before edits and commands. Unattended runs stall on the first approval.',
       canStall: true,
     ),
     'auto' => (
@@ -442,7 +463,8 @@ String accessLabel(String mode, TaskHarness harness) => switch (mode) {
       canStall: true,
     ),
     'acceptEdits' => (
-      note: 'Edits files without asking, still asks before commands. Can stall.',
+      note:
+          'Edits files without asking, still asks before commands. Can stall.',
       canStall: true,
     ),
     'bypassPermissions' => (
@@ -469,7 +491,8 @@ String formatInterval(Duration d) {
 /// Run durations: "4m 12s", "1h 03m", "12s".
 String formatDuration(Duration d) {
   if (d.inMinutes < 1) return '${d.inSeconds}s';
-  if (d.inHours < 1) return '${d.inMinutes}m ${(d.inSeconds % 60).toString().padLeft(2, '0')}s';
+  if (d.inHours < 1)
+    return '${d.inMinutes}m ${(d.inSeconds % 60).toString().padLeft(2, '0')}s';
   return '${d.inHours}h ${(d.inMinutes % 60).toString().padLeft(2, '0')}m';
 }
 

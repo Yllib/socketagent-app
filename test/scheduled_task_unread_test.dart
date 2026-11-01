@@ -62,7 +62,7 @@ void main() {
     expect(scheduledTaskHasUnreadResult(task), isFalse);
   });
 
-  test('only terminal one-off tasks expose swipe archive', () {
+  test('finished one-offs and cancelled tasks expose archive', () {
     expect(scheduledTaskCanArchive({'status': 'completed'}), isTrue);
     expect(scheduledTaskCanArchive({'status': 'failed'}), isTrue);
     expect(scheduledTaskCanArchive({'status': 'cancelled'}), isTrue);
@@ -73,6 +73,13 @@ void main() {
         'recurrence': {'type': 'daily'},
       }),
       isFalse,
+    );
+    expect(
+      scheduledTaskCanArchive({
+        'status': 'cancelled',
+        'recurrence': {'type': 'daily'},
+      }),
+      isTrue,
     );
   });
 }

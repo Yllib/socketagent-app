@@ -510,9 +510,6 @@ class _TaskEditorState extends State<TaskEditor> {
     TaskChanges? changes;
     if (original != null) {
       changes = _draft.diff(original);
-      // The server ignores an empty effort or access, so never send one.
-      if (changes.effort == '') changes.effort = null;
-      if (changes.permissionMode == '') changes.permissionMode = null;
       if (changes.isEmpty) {
         tasksFeedback.show('No changes to "$label"');
         Navigator.of(context).pop(TaskEditorOutcome.cancelled);
@@ -530,15 +527,13 @@ class _TaskEditorState extends State<TaskEditor> {
             'It is running now. Changes to ${deferred.join(', ')} apply after this run ends.',
           );
         }
-        if (changes.scheduledTime != null) {
-          cautions.add(
-            'The time change will be lost: when the run finishes the server keeps the old schedule anchor.',
-          );
-        }
       }
-      if (original.isFinishedOneOff && changes.scheduledTime != null) {
+      final newTime = changes.scheduledTime;
+      if (original.isFinished && newTime != null) {
         cautions.add(
-          'This one-off task already finished. A new time does not run it again; use Run now.',
+          newTime.isAfter(DateTime.now())
+              ? 'Saving re-arms this task. It runs ${formatWhen(newTime)}.'
+              : 'This task already finished and the new time is past, so it does not run again. Pick a future time or use Run now.',
         );
       }
     } else if (issues.any((i) => i.text.startsWith('Time is in the past'))) {
@@ -706,14 +701,11 @@ class _TaskEditorState extends State<TaskEditor> {
         ));
       } else if (current.isRunning) {
         lines.add((
-          'Running now. Name and notify apply at once; everything else after this run. A time change is lost.',
+          'Running now. Name and notify apply at once; everything else after this run.',
           true,
         ));
       } else if (current.isFinishedOneOff) {
-        lines.add((
-          'Finished one-off. A new time does not run it again; use Run now from the task.',
-          true,
-        ));
+        lines.add(('Finished one-off. A future time re-arms it.', true));
       }
     }
     if (lines.isEmpty) return const [];
@@ -1039,8 +1031,6 @@ class _TaskEditorState extends State<TaskEditor> {
           !effortsFor(_draft.harness).contains(_draft.effort))
         _draft.effort,
     ];
-    final storedEffort = _original?.effort;
-    final storedAccess = _original?.permissionMode;
     final knownModels = _knownModels();
     final modelValue = _customModelField
         ? _customModel
@@ -1164,24 +1154,14 @@ class _TaskEditorState extends State<TaskEditor> {
               key: const Key('task-editor-effort'),
               initialValue: _draft.effort,
               isExpanded: true,
-              decoration: _decoration(
-                helper: _isEdit && storedEffort != null
-                    ? 'Effort. Once set it cannot go back to the default; the server ignores an empty effort.'
-                    : 'Effort',
-              ),
+              decoration: _decoration(helper: 'Effort'),
               style: _fieldStyle(context),
               items: [
-                DropdownMenuItem(
+                const DropdownMenuItem(
                   value: '',
-                  enabled: !(_isEdit && storedEffort != null),
                   child: Text(
                     'Harness default',
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: _isEdit && storedEffort != null
-                          ? Theme.of(context).colorScheme.onSurfaceVariant
-                          : null,
-                    ),
+                    style: TextStyle(fontSize: 14),
                   ),
                 ),
                 for (final e in efforts)
@@ -1217,18 +1197,9 @@ class _TaskEditorState extends State<TaskEditor> {
         decoration: _decoration(helper: 'Access'),
         style: _fieldStyle(context),
         items: [
-          DropdownMenuItem(
+          const DropdownMenuItem(
             value: '',
-            enabled: !(_isEdit && storedAccess != null),
-            child: Text(
-              'Harness default',
-              style: TextStyle(
-                fontSize: 14,
-                color: _isEdit && storedAccess != null
-                    ? Theme.of(context).colorScheme.onSurfaceVariant
-                    : null,
-              ),
-            ),
+            child: Text('Harness default', style: TextStyle(fontSize: 14)),
           ),
           for (final m in accessModes)
             DropdownMenuItem(
@@ -1250,10 +1221,6 @@ class _TaskEditorState extends State<TaskEditor> {
             : accessInfo.note,
         warn: accessInfo?.canStall ?? false,
       ),
-      if (_isEdit && storedAccess != null)
-        const TaskNote(
-          'Once set, access cannot go back to the default; the server ignores an empty value.',
-        ),
       const SizedBox(height: 10),
       TextField(
         key: const Key('task-editor-folder'),

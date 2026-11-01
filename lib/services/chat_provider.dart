@@ -18548,7 +18548,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Sends the given fields; null means unchanged, `recurrenceType` 'once'
-  /// clears the recurrence and an empty [model] clears the model. The local
+  /// clears the recurrence and an empty [model], [effort] or [permissionMode]
+  /// goes back to the harness default. The local
   /// copy is updated at once. Returns whether a live connection took it.
   bool updateScheduledTask({
     required String taskId,
@@ -18574,8 +18575,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (cwd != null) msg['cwd'] = cwd;
     if (backend != null) msg['backend'] = backend;
     if (model != null) msg['model'] = model;
-    if (effort != null) msg['effort'] = effort;
-    if (permissionMode != null) msg['permissionMode'] = permissionMode;
+    if (effort != null) msg['effort'] = effort.isEmpty ? null : effort;
+    if (permissionMode != null) {
+      msg['permissionMode'] = permissionMode.isEmpty ? null : permissionMode;
+    }
     if (scheduledTime != null) msg['scheduledTime'] = scheduledTime;
     if (reuseSession != null) msg['reuseSession'] = reuseSession;
     if (notificationMode != null) msg['notificationMode'] = notificationMode;

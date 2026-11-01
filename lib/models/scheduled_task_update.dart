@@ -39,8 +39,17 @@ Map<String, dynamic> applyScheduledTaskUpdate(
     }
   }
 
-  for (final field in ['effort', 'permissionMode', 'scheduledTime']) {
-    if (update.containsKey(field)) task[field] = update[field];
+  for (final field in ['effort', 'permissionMode']) {
+    if (!update.containsKey(field)) continue;
+    final value = update[field];
+    if (value is String && value.isNotEmpty) {
+      task[field] = value;
+    } else {
+      task.remove(field);
+    }
+  }
+  if (update.containsKey('scheduledTime')) {
+    task['scheduledTime'] = update['scheduledTime'];
   }
 
   if (update.containsKey('recurrence')) {
@@ -60,7 +69,18 @@ Map<String, dynamic> applyScheduledTaskUpdate(
         ? 'quiet'
         : 'completion';
   }
-  if (task['status'] == 'cancelled') task['status'] = 'pending';
+  // Mirrors the server: saving re-arms a cancelled task, and a finished one
+  // whose time moved to the future. A re-armed task leaves the archive.
+  final status = task['status'];
+  final newTime = update['scheduledTime'];
+  final movedToFuture =
+      newTime is String &&
+      (DateTime.tryParse(newTime)?.isAfter(DateTime.now()) ?? false);
+  if (status == 'cancelled' ||
+      ((status == 'completed' || status == 'failed') && movedToFuture)) {
+    task['status'] = 'pending';
+    task.remove('archivedAt');
+  }
 
   return task;
 }

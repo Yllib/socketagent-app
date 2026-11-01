@@ -92,7 +92,10 @@ enum TaskCommand {
     return [
       for (final group in groups)
         if (group.any((c) => c.allowedFor(task)))
-          [for (final c in group) if (c.allowedFor(task)) c],
+          [
+            for (final c in group)
+              if (c.allowedFor(task)) c,
+          ],
     ];
   }
 
@@ -202,18 +205,12 @@ class LiveTaskActions implements TaskActions {
     final computer = computerNameFor(provider, task.serverId);
     final mode = task.permissionMode;
     final fullAccess = mode == 'bypassPermissions' || mode == 'superYolo';
-    final stoppedRecurring =
-        task.isRecurring && task.status == TaskStatus.cancelled;
-    if (fullAccess || stoppedRecurring) {
+    if (fullAccess) {
       final ok = await confirmTaskAction(
         context,
         title: 'Run "${task.displayName}" now?',
-        body: [
-          if (fullAccess)
+        body:
             'It starts an agent on $computer right away with ${accessLabel(mode!, task.harness)} access.',
-          if (stoppedRecurring)
-            'This repeating task is stopped. Running it now finishes it for good; the schedule does not come back. Edit and save it instead to re-arm the schedule.',
-        ].join('\n\n'),
         confirmLabel: 'Run now',
       );
       if (!ok || !context.mounted) return;
