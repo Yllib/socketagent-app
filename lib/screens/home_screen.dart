@@ -1723,8 +1723,6 @@ class _ChatScreenState extends State<_ChatScreen> {
       else if (provider.isLoadingNewSessionModels)
         _buildLoadingModelChip(),
       _buildEffortChip(provider),
-      if (provider.activeSessionBackend != 'codex')
-        _buildThinkingChip(provider),
       if (provider.rawMode)
         Tooltip(
           message: 'Turn off raw events',
@@ -2489,19 +2487,54 @@ class _ChatScreenState extends State<_ChatScreen> {
     return text.isNotEmpty ? text : _modelName(value);
   }
 
+  /// Effort for the session. Claude sessions also get "Thinking off" here,
+  /// the one thinking setting that still matters on current models; picking
+  /// any effort level turns adaptive thinking back on.
   Widget _buildEffortChip(ChatProvider provider) {
     final isCodex = provider.activeSessionBackend == 'codex';
-    final color = switch (provider.effort) {
-      'minimal' || 'medium' => Theme.of(context).colorScheme.onSurfaceVariant,
-      'low' => context.palette.shade(Colors.blue, 300),
-      'max' || 'xhigh' || 'ultra' => context.palette.shade(Colors.orange, 300),
-      _ => Theme.of(context).colorScheme.primary, // high
-    };
-    final label = _effortLabel(provider.effort);
+    final thinkingOff = !isCodex && provider.thinking['type'] == 'disabled';
+    final color = thinkingOff
+        ? Theme.of(context).colorScheme.onSurfaceVariant
+        : switch (provider.effort) {
+            'minimal' ||
+            'medium' => Theme.of(context).colorScheme.onSurfaceVariant,
+            'low' => context.palette.shade(Colors.blue, 300),
+            'max' ||
+            'xhigh' ||
+            'ultra' => context.palette.shade(Colors.orange, 300),
+            _ => Theme.of(context).colorScheme.primary, // high
+          };
+    final label = thinkingOff
+        ? _thinkingOffLabel
+        : _effortLabel(provider.effort);
     final options = provider.selectedModelEffortLevels;
 
+    Widget item(String text, bool selected) => Row(
+      children: [
+        if (selected)
+          Icon(
+            Icons.check,
+            size: 16,
+            color: Theme.of(context).colorScheme.primary,
+          )
+        else
+          const SizedBox(width: 16),
+        const SizedBox(width: 8),
+        Text(text),
+      ],
+    );
+
     return PopupMenuButton<String>(
-      onSelected: (value) => provider.setEffort(value),
+      onSelected: (value) {
+        if (value == _thinkingOffValue) {
+          provider.setThinking({'type': 'disabled'});
+          return;
+        }
+        if (!isCodex && provider.thinking['type'] != 'adaptive') {
+          provider.setThinking({'type': 'adaptive'});
+        }
+        provider.setEffort(value);
+      },
       tooltip: isCodex ? 'Reasoning effort: $label' : 'Effort: $label',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
@@ -2511,24 +2544,22 @@ class _ChatScreenState extends State<_ChatScreen> {
           PopupMenuItem(
             value: e,
             height: 36,
-            child: Row(
-              children: [
-                if (e == provider.effort)
-                  Icon(
-                    Icons.check,
-                    size: 16,
-                    color: Theme.of(context).colorScheme.primary,
-                  )
-                else
-                  const SizedBox(width: 16),
-                const SizedBox(width: 8),
-                Text(_effortLabel(e)),
-              ],
-            ),
+            child: item(_effortLabel(e), !thinkingOff && e == provider.effort),
           ),
+        if (!isCodex) ...[
+          const PopupMenuDivider(),
+          PopupMenuItem(
+            value: _thinkingOffValue,
+            height: 36,
+            child: item(_thinkingOffLabel, thinkingOff),
+          ),
+        ],
       ],
     );
   }
+
+  static const _thinkingOffValue = 'thinking-off';
+  static const _thinkingOffLabel = 'Thinking off';
 
   String _effortLabel(String effort) {
     switch (effort) {
@@ -2718,73 +2749,6 @@ class _ChatScreenState extends State<_ChatScreen> {
     ).then((value) {
       if (value != null) provider.setPermissionMode(value);
     });
-  }
-
-  Widget _buildThinkingChip(ChatProvider provider) {
-    final thinkingType = provider.thinking['type'] as String? ?? 'adaptive';
-    Color color;
-    String label;
-    switch (thinkingType) {
-      case 'enabled':
-        color = context.palette.shade(Colors.purple, 300);
-        final budget = provider.thinking['budgetTokens'] as int?;
-        label = budget != null ? 'Think ${(budget / 1000).round()}k' : 'Think';
-        break;
-      case 'disabled':
-        color = Theme.of(context).colorScheme.onSurfaceVariant;
-        label = 'No Think';
-        break;
-      default: // adaptive
-        color = Theme.of(context).colorScheme.primary;
-        label = 'Adaptive';
-    }
-
-    return PopupMenuButton<Map<String, dynamic>>(
-      onSelected: (value) => provider.setThinking(value),
-      tooltip: 'Thinking: $label',
-      padding: EdgeInsets.zero,
-      position: PopupMenuPosition.under,
-      child: _headerControl(label, color: color, dropdown: true),
-      itemBuilder: (context) {
-        final options = <MapEntry<String, Map<String, dynamic>>>[
-          MapEntry('Adaptive', {'type': 'adaptive'}),
-          MapEntry('Extended (10k)', {
-            'type': 'enabled',
-            'budgetTokens': 10000,
-          }),
-          MapEntry('Extended (50k)', {
-            'type': 'enabled',
-            'budgetTokens': 50000,
-          }),
-          MapEntry('Disabled', {'type': 'disabled'}),
-        ];
-        return options.map((opt) {
-          final isSelected =
-              opt.value['type'] == thinkingType &&
-              (opt.value['type'] != 'enabled' ||
-                  opt.value['budgetTokens'] ==
-                      provider.thinking['budgetTokens']);
-          return PopupMenuItem(
-            value: opt.value,
-            height: 36,
-            child: Row(
-              children: [
-                if (isSelected)
-                  Icon(
-                    Icons.check,
-                    size: 16,
-                    color: Theme.of(context).colorScheme.primary,
-                  )
-                else
-                  const SizedBox(width: 16),
-                const SizedBox(width: 8),
-                Text(opt.key),
-              ],
-            ),
-          );
-        }).toList();
-      },
-    );
   }
 
   Widget _buildUsageIndicator(Map<String, dynamic> usage) {
