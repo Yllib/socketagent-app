@@ -10,7 +10,7 @@ import '../widgets/outgoing_queue_notice.dart';
 import 'dart:io';
 import '../services/desktop_clipboard_attachments.dart';
 import '../models/chat_find.dart';
-import '../models/message.dart' show ChatMessage;
+import '../models/message.dart' show ChatMessage, MessageType;
 import '../services/desktop_composer_keys.dart';
 import '../services/desktop_shortcuts.dart';
 import 'package:desktop_drop/desktop_drop.dart';
@@ -47,7 +47,7 @@ import '../widgets/chat_view.dart';
 import '../widgets/conversation_rewind_notice.dart';
 import '../widgets/active_tasks_pane.dart';
 import '../widgets/active_browser_strip.dart';
-import '../widgets/session_actions_sheet.dart';
+import '../widgets/session_details_page.dart';
 import '../widgets/voice_button.dart';
 import '../widgets/secret_manager_sheet.dart';
 import '../widgets/html_plan_manager_sheet.dart';
@@ -55,7 +55,6 @@ import '../widgets/tts_playback_bar.dart';
 import '../widgets/codex_goal_manager_sheet.dart';
 import '../services/work_review_repository.dart';
 import 'work_reviews_screen.dart';
-import 'session_analytics_screen.dart';
 import 'session_memory_screen.dart';
 import '../widgets/session_backend_watermark.dart';
 import '../config/app_palette.dart';
@@ -387,13 +386,6 @@ class _ChatScreenState extends State<_ChatScreen> {
     if (mounted) setState(() {});
   }
 
-  bool _panelHiding(ChatProvider provider, SessionPanel panel) =>
-      _pendingPanelHides.contains(
-        provider.activeSessionServerId,
-        provider.activeSessionId,
-        panel,
-      );
-
   Widget? _panelHideNotice(
     ChatProvider provider,
     SessionPanel panel,
@@ -413,8 +405,40 @@ class _ChatScreenState extends State<_ChatScreen> {
         provider.activeSessionServerId,
         provider.activeSessionId,
         panel,
+        _panelContent(provider, panel),
       ) ??
       false;
+
+  /// What [panel] shows right now, as ids. A hide covers these items only,
+  /// so a new browser, plan, task list or agent brings the panel back.
+  List<String> _panelContent(ChatProvider provider, SessionPanel panel) =>
+      switch (panel) {
+        SessionPanel.browser => [
+          for (final browser in provider.activeBrowserSessions) browser.key,
+        ],
+        SessionPanel.codexPlan => [
+          // Only Codex sessions have plans; skip the scan for the rest.
+          if (provider.activeSessionBackend == 'codex')
+            if (provider.messages.reversed
+                    .where((m) => m.type == MessageType.codexPlan)
+                    .firstOrNull
+                    ?.id
+                case final id?)
+              id,
+        ],
+        SessionPanel.tasks => [
+          for (final todo in provider.todos) '${todo['content'] ?? ''}',
+        ],
+        SessionPanel.activity => provider.activePaneTasks.keys.toList(),
+      };
+
+  /// Panels hidden while they still have something to show.
+  List<SessionPanel> _hiddenPanels(ChatProvider provider) => [
+    for (final panel in SessionPanel.values)
+      if (_panelContent(provider, panel).isNotEmpty &&
+          _panelHidden(provider, panel))
+        panel,
+  ];
 
   void _setPanelHidden(ChatProvider provider, SessionPanel panel, bool hidden) {
     final preferences = _panelPreferences;
@@ -422,8 +446,11 @@ class _ChatScreenState extends State<_ChatScreen> {
     final session = provider.activeSessionId;
     if (preferences == null || server == null || session == null) return;
     if (hidden) {
+      final content = _panelContent(provider, panel);
       _pendingPanelHides.request(server, session, panel, () {
-        unawaited(preferences.setHidden(server, session, panel, true));
+        unawaited(
+          preferences.setHidden(server, session, panel, true, content: content),
+        );
       });
       return;
     }
@@ -1340,14 +1367,23 @@ class _ChatScreenState extends State<_ChatScreen> {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            _sessionHeaderTitle(provider, isPlan: isPlan),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w600,
-                              color: sessionTheme?.textColor,
+                          // The title opens the session details, as in
+                          // chat apps.
+                          child: GestureDetector(
+                            key: const ValueKey('session-header-title'),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: hasSession
+                                ? () => unawaited(_showSessionDetails(provider))
+                                : null,
+                            child: Text(
+                              _sessionHeaderTitle(provider, isPlan: isPlan),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: sessionTheme?.textColor,
+                              ),
                             ),
                           ),
                         ),
@@ -1412,8 +1448,8 @@ class _ChatScreenState extends State<_ChatScreen> {
                         ],
                       ],
                     ),
-                    // Line 3: model, effort, thinking, raw, auto-scroll,
-                    // more. Plain text, no chips.
+                    // Line 3: model, effort, raw, more. Plain text, no
+                    // chips.
                     if (hasSession) _buildHeaderControls(provider),
                   ],
                 ),
@@ -1824,91 +1860,62 @@ class _ChatScreenState extends State<_ChatScreen> {
     ),
   );
 
-  Widget _buildSessionMoreChip(ChatProvider provider) {
-    Offset? pointer;
-    return Builder(
-      builder: (buttonContext) => Tooltip(
-        message: 'Session actions',
-        child: InkWell(
-          onTapDown: (details) => pointer = details.globalPosition,
-          onTapCancel: () => pointer = null,
-          onTap: () {
-            final box = buttonContext.findRenderObject()! as RenderBox;
-            final anchor =
-                pointer ?? box.localToGlobal(Offset(0, box.size.height));
-            pointer = null;
-            unawaited(
-              _showSessionActions(
-                provider,
-                anchor: Platform.isWindows ? anchor : null,
-              ),
-            );
-          },
-          child: _headerControl(
-            'More',
-            leading: Icon(
-              Icons.more_horiz,
-              size: 14,
-              color: _headerControlColor().withAlpha(200),
-            ),
-          ),
+  Widget _buildSessionMoreChip(ChatProvider provider) => Tooltip(
+    message: 'Session details',
+    child: InkWell(
+      onTap: () => unawaited(_showSessionDetails(provider)),
+      child: _headerControl(
+        'More',
+        leading: Icon(
+          Icons.more_horiz,
+          size: 14,
+          color: _headerControlColor().withAlpha(200),
         ),
       ),
-    );
-  }
+    ),
+  );
 
-  Future<void> _showSessionActions(
-    ChatProvider provider, {
-    Offset? anchor,
-  }) async {
+  /// Opens the session details page. It rebuilds as settings change, and
+  /// actions run against the session it was opened for.
+  Future<void> _showSessionDetails(ChatProvider provider) {
     final sessionId = provider.activeSessionId;
     final serverId = provider.activeSessionServerId;
     if (provider.activeSessionBackend == 'codex') {
       provider.requestCodexCollaborationModes();
     }
-    final value = await showSessionActionsMenu(
-      context: context,
-      anchor: anchor,
-      builder: (_) => StatefulBuilder(
-        builder: (_, updateSheet) => ListenableBuilder(
-          listenable: Listenable.merge([provider, _pendingPanelHides]),
-          builder: (_, _) => _sessionActions(
-            provider,
-            onSettingChanged: (action) {
-              if (!mounted ||
-                  sessionId != provider.activeSessionId ||
-                  serverId != provider.activeSessionServerId) {
-                return;
-              }
-              _handleSessionAction(provider, action);
-              updateSheet(() {});
-            },
-          ),
+    return showSessionDetails(
+      context,
+      (_) => ListenableBuilder(
+        listenable: Listenable.merge([provider, _pendingPanelHides]),
+        builder: (_, _) => _sessionDetails(
+          provider,
+          onAction: (action) {
+            if (!mounted ||
+                sessionId != provider.activeSessionId ||
+                serverId != provider.activeSessionServerId) {
+              return;
+            }
+            _handleSessionAction(provider, action);
+          },
         ),
       ),
     );
-    if (!mounted ||
-        value == null ||
-        sessionId != provider.activeSessionId ||
-        serverId != provider.activeSessionServerId) {
-      return;
-    }
-    _handleSessionAction(provider, value);
   }
 
-  Widget _sessionActions(
+  Widget _sessionDetails(
     ChatProvider provider, {
-    ValueChanged<String>? onSettingChanged,
+    required ValueChanged<String> onAction,
   }) {
     final projectPath = _projectFilesPath(provider);
     final hasProject = projectPath != null && projectPath.isNotEmpty;
-    final hasSession = provider.activeSessionId != null;
+    final sessionId = provider.activeSessionId;
+    final hasSession = sessionId != null;
     final codex = provider.activeSessionBackend == 'codex';
     final serverId = provider.activeSessionServerId;
     final activeSession = provider.sessions
         .where(
           (session) =>
-              session.id == provider.activeSessionId &&
+              session.id == sessionId &&
               (serverId == null || session.serverId == serverId),
         )
         .firstOrNull;
@@ -1917,27 +1924,28 @@ class _ChatScreenState extends State<_ChatScreen> {
     final supportsReviews =
         serverId != null && reviews.supportsServer(serverId);
     final reviewCount = serverId == null ? 0 : reviews.pendingCount(serverId);
-    final browserHiding = _panelHiding(provider, SessionPanel.browser);
-    final planHiding = _panelHiding(provider, SessionPanel.codexPlan);
-    final tasksHiding = _panelHiding(provider, SessionPanel.tasks);
-    final activityHiding = _panelHiding(provider, SessionPanel.activity);
-    final activityHidden =
-        _panelHidden(provider, SessionPanel.activity) || activityHiding;
-    final browserHidden =
-        _panelHidden(provider, SessionPanel.browser) || browserHiding;
-    final planHidden =
-        _panelHidden(provider, SessionPanel.codexPlan) || planHiding;
-    final tasksHidden =
-        _panelHidden(provider, SessionPanel.tasks) || tasksHiding;
-    return SessionActionsSheet(
-      onSettingChanged: onSettingChanged,
+    final hiddenPanels = _hiddenPanels(provider);
+    final cwd = provider.activeSessionCwd?.trim() ?? '';
+    final collaborationMode = provider.codexCollaborationModes
+        .where(
+          (mode) =>
+              (mode['id'] as String? ?? 'default') ==
+              provider.codexCollaborationMode,
+        )
+        .firstOrNull;
+    final extraFolders = hasSession
+        ? provider.getAdditionalDirectories(sessionId).length
+        : 0;
+    return SessionDetailsPage(
+      title: _sessionHeaderTitle(provider, isPlan: false),
+      facts: [
+        SessionDetailsFact('Computer', _activeComputerName(provider)),
+        if (cwd.isNotEmpty) SessionDetailsFact('Folder', cwd, copyable: true),
+        SessionDetailsFact('Agent', codex ? 'Codex' : 'Claude'),
+        if (hasSession)
+          SessionDetailsFact('Session ID', sessionId, copyable: true),
+      ],
       quickActions: [
-        if (fleeting)
-          const SessionAction(
-            'make_permanent',
-            'Make permanent',
-            Icons.timer_off_outlined,
-          ),
         SessionAction(
           'project_files',
           'Files',
@@ -1953,241 +1961,186 @@ class _ChatScreenState extends State<_ChatScreen> {
         if (provider.activeBrowserSessions.isNotEmpty ||
             provider.serverSupportsBrowserStart(null))
           const SessionAction('open_browser', 'Browser', Icons.public),
+        if (fleeting)
+          const SessionAction(
+            'make_permanent',
+            'Keep',
+            Icons.timer_off_outlined,
+          ),
       ],
-      groups: [
-        SessionActionGroup(
-          'Project tools',
-          'Instructions and secure credentials',
-          Icons.folder_outlined,
-          [
+      onAction: onAction,
+      sections: [
+        SessionDetailsSection('Open', [
+          SessionAction(
+            'project_instructions',
+            'Project instructions',
+            Icons.description_outlined,
+            subtitle: 'AGENTS.md and CLAUDE.md',
+            enabled: hasProject,
+          ),
+          const SessionAction(
+            'manage_secrets',
+            'Secrets',
+            Icons.password_outlined,
+          ),
+          SessionAction(
+            'session_scheduled_tasks',
+            'Scheduled tasks',
+            Icons.schedule,
+            enabled: hasSession,
+          ),
+          SessionAction(
+            'manage_html_plans',
+            'HTML plans',
+            Icons.view_quilt_outlined,
+            enabled: hasSession,
+          ),
+          if (codex)
             SessionAction(
-              'project_instructions',
-              'Project instructions',
-              Icons.description_outlined,
-              subtitle: 'AGENTS.md and CLAUDE.md',
-              enabled: hasProject,
+              'manage_codex_goal',
+              'Goal',
+              Icons.flag_outlined,
+              enabled: hasSession && provider.activeServerSupportsCodexGoals,
+              subtitle: provider.activeServerSupportsCodexGoals
+                  ? null
+                  : 'Requires an updated computer',
             ),
-            const SessionAction(
-              'manage_secrets',
-              'Manage secrets',
-              Icons.password_outlined,
-            ),
-          ],
-        ),
-        SessionActionGroup(
-          'Plans & progress',
-          'Plans, reviews, memory and activity',
-          Icons.fact_check_outlined,
-          [
+          SessionAction(
+            'work_reviews',
+            'Work reviews',
+            Icons.fact_check_outlined,
+            enabled: supportsReviews,
+            subtitle: reviewCount > 0 ? '$reviewCount awaiting review' : null,
+          ),
+          if (codex)
             SessionAction(
-              'session_scheduled_tasks',
-              'Scheduled tasks',
-              Icons.schedule,
+              'session_memory',
+              'Session memory',
+              Icons.memory_outlined,
+              enabled: hasSession && provider.activeServerSupportsSessionMemory,
+            ),
+        ]),
+        SessionDetailsSection('Settings', [
+          if (hasSession)
+            SessionAction(
+              'notifications_toggle',
+              'Notifications',
+              Icons.notifications_outlined,
+              selected: provider.isNotifEnabled(sessionId),
+            ),
+          SessionAction(
+            'tts_toggle',
+            'Read replies aloud',
+            Icons.volume_up_outlined,
+            selected: provider.ttsEnabled,
+          ),
+          SessionAction(
+            'tts_voice',
+            'Voice',
+            Icons.record_voice_over_outlined,
+            subtitle: _selectedVoiceLabel(provider),
+          ),
+          if (codex)
+            SessionAction(
+              'codex_fast_mode',
+              'Fast mode',
+              Icons.flash_on_outlined,
+              selected: provider.codexFastMode,
+            ),
+          if (codex && provider.codexCollaborationModes.isNotEmpty)
+            SessionAction(
+              'codex_mode',
+              'Collaboration mode',
+              Icons.groups_outlined,
+              subtitle:
+                  collaborationMode?['name'] as String? ??
+                  _formatModeName(provider.codexCollaborationMode),
+            ),
+          if (!codex &&
+              serverId != null &&
+              provider.supportsAdditionalDirectories(serverId))
+            SessionAction(
+              'extra_folders',
+              'Extra folders',
+              Icons.create_new_folder_outlined,
               enabled: hasSession,
+              subtitle: switch (extraFolders) {
+                0 => 'None',
+                1 => '1 folder',
+                final count => '$count folders',
+              },
             ),
+          if (!codex)
             SessionAction(
-              'manage_html_plans',
-              'HTML plans',
-              Icons.view_quilt_outlined,
-              enabled: hasSession,
+              'claude_auto_compact',
+              'Auto compact',
+              Icons.memory_outlined,
+              selected: provider.claudeAutoCompactEnabled,
             ),
-            if (codex)
-              SessionAction(
-                'manage_codex_goal',
-                'Goal',
-                Icons.flag_outlined,
-                enabled: hasSession && provider.activeServerSupportsCodexGoals,
-                subtitle: provider.activeServerSupportsCodexGoals
-                    ? null
-                    : 'Requires an updated computer',
-              ),
+          if (!codex)
             SessionAction(
-              'work_reviews',
-              'Work reviews',
-              Icons.fact_check_outlined,
-              enabled: supportsReviews,
-              subtitle: reviewCount > 0 ? '$reviewCount awaiting review' : null,
+              'claude_auto_compact_window',
+              'Auto-compact window',
+              Icons.straighten_outlined,
+              subtitle: provider.claudeAutoCompactWindowOverride == null
+                  ? provider.claudeAutoCompactWindowEffective == null
+                        ? 'Inherit model default'
+                        : 'Inherit computer: ${provider.claudeAutoCompactWindowEffective} tokens'
+                  : 'Session override: ${provider.claudeAutoCompactWindowOverride} tokens',
             ),
-            if (codex)
-              SessionAction(
-                'session_memory',
-                'Session memory',
-                Icons.memory_outlined,
-                enabled:
-                    hasSession && provider.activeServerSupportsSessionMemory,
-              ),
+          if (hiddenPanels.isNotEmpty)
             SessionAction(
-              'session_analytics',
-              'Session analytics',
-              Icons.insights_outlined,
-              enabled: hasSession,
+              'show_hidden_panels',
+              'Show hidden panels',
+              Icons.visibility_outlined,
+              subtitle: hiddenPanels.map(_panelLabel).join(', '),
             ),
-          ],
-        ),
-        SessionActionGroup(
-          'Voice & notifications',
-          'Speech, voice and session alerts',
-          Icons.volume_up_outlined,
-          [
-            SessionAction(
-              'tts_toggle',
-              'Text to speech',
-              Icons.volume_up_outlined,
-              selected: provider.ttsEnabled,
-              subtitle: provider.ttsEnabled ? 'On' : 'Off',
-            ),
-            SessionAction(
-              'tts_voice',
-              'Voice',
-              Icons.record_voice_over_outlined,
-              subtitle: _selectedVoiceLabel(provider),
-            ),
-            if (hasSession)
-              SessionAction(
-                'notifications_toggle',
-                'Session notifications',
-                Icons.notifications_outlined,
-                selected: provider.isNotifEnabled(provider.activeSessionId!),
-                subtitle: provider.isNotifEnabled(provider.activeSessionId!)
-                    ? 'On'
-                    : 'Muted',
-              ),
-          ],
-        ),
-        SessionActionGroup(
-          'Session settings',
-          'Visible panels and agent behavior',
-          Icons.tune,
-          [
-            SessionAction(
-              browserHidden ? 'show_browser_strip' : 'hide_browser_strip',
-              'Browser strip',
-              Icons.public,
-              selected: !browserHidden,
-              enabled: hasSession && _panelPreferences != null,
-              subtitle: browserHiding
-                  ? 'Hiding… Tap to cancel'
-                  : browserHidden
-                  ? 'Hidden. Tap to show'
-                  : 'Shown when a browser is active. Tap to hide',
-            ),
-            if (codex)
-              SessionAction(
-                planHidden ? 'show_codex_plan' : 'hide_codex_plan',
-                'Codex plan',
-                Icons.fact_check_outlined,
-                selected: !planHidden,
-                enabled: hasSession && _panelPreferences != null,
-                subtitle: planHiding
-                    ? 'Hiding… Tap to cancel'
-                    : planHidden
-                    ? 'Hidden. Tap to show'
-                    : 'Shown. Tap to hide',
-              ),
-            SessionAction(
-              tasksHidden ? 'show_tasks' : 'hide_tasks',
-              'Tasks panel',
-              Icons.checklist,
-              selected: !tasksHidden,
-              enabled: hasSession && _panelPreferences != null,
-              subtitle: tasksHiding
-                  ? 'Hiding… Tap to cancel'
-                  : tasksHidden
-                  ? 'Hidden. Tap to show'
-                  : 'Shown. Tap to hide',
-            ),
-            SessionAction(
-              activityHidden ? 'show_activity' : 'hide_activity',
-              'Activity panel',
-              Icons.account_tree_outlined,
-              selected: !activityHidden,
-              enabled: hasSession && _panelPreferences != null,
-              subtitle: activityHiding
-                  ? 'Hiding… Tap to cancel'
-                  : activityHidden
-                  ? 'Hidden. Tap to show'
-                  : 'Agents and background work. Tap to hide',
-            ),
-            SessionAction(
-              'raw_mode',
-              'Raw events',
-              Icons.code,
-              selected: provider.rawMode,
-              enabled: hasSession,
-              subtitle: provider.rawMode
-                  ? 'Showing SDK events. Tap to return to chat'
-                  : 'Show the SDK event stream instead of the chat',
-            ),
-            if (codex)
-              SessionAction(
-                'codex_fast_mode',
-                'Fast mode',
-                Icons.flash_on_outlined,
-                selected: provider.codexFastMode,
-                subtitle: provider.codexFastMode ? 'On' : 'Off',
-              ),
-            if (!codex &&
-                serverId != null &&
-                provider.supportsAdditionalDirectories(serverId))
-              SessionAction(
-                'extra_folders',
-                'Extra folders',
-                Icons.create_new_folder_outlined,
-                enabled: hasSession,
-                subtitle: switch (hasSession
-                    ? provider
-                          .getAdditionalDirectories(provider.activeSessionId!)
-                          .length
-                    : 0) {
-                  0 => 'None',
-                  1 => '1 folder',
-                  final count => '$count folders',
-                },
-              ),
-            if (!codex)
-              SessionAction(
-                'claude_auto_compact',
-                'Auto compact',
-                Icons.memory_outlined,
-                selected: provider.claudeAutoCompactEnabled,
-                subtitle: provider.claudeAutoCompactEnabled ? 'On' : 'Off',
-              ),
-            if (!codex)
-              SessionAction(
-                'claude_auto_compact_window',
-                'Auto-compact window',
-                Icons.straighten_outlined,
-                subtitle: provider.claudeAutoCompactWindowOverride == null
-                    ? provider.claudeAutoCompactWindowEffective == null
-                          ? 'Inherit model default'
-                          : 'Inherit computer: ${provider.claudeAutoCompactWindowEffective} tokens'
-                    : 'Session override: ${provider.claudeAutoCompactWindowOverride} tokens',
-              ),
-            if (codex)
-              for (final mode in provider.codexCollaborationModes)
-                SessionAction(
-                  'codex_mode:${mode['id'] as String? ?? 'default'}',
+        ]),
+      ],
+    );
+  }
+
+  static String _panelLabel(SessionPanel panel) => switch (panel) {
+    SessionPanel.browser => 'Browser',
+    SessionPanel.codexPlan => 'Plan',
+    SessionPanel.tasks => 'Tasks',
+    SessionPanel.activity => 'Activity',
+  };
+
+  void _showCodexModePicker(ChatProvider provider) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: ListView(
+          shrinkWrap: true,
+          children: [
+            for (final mode in provider.codexCollaborationModes)
+              ListTile(
+                title: Text(
                   mode['name'] as String? ??
                       _formatModeName(mode['id'] as String? ?? 'default'),
-                  Icons.groups_outlined,
-                  subtitle: 'Codex collaboration mode',
-                  selected:
-                      (mode['id'] as String? ?? 'default') ==
-                      provider.codexCollaborationMode,
                 ),
+                trailing:
+                    (mode['id'] as String? ?? 'default') ==
+                        provider.codexCollaborationMode
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () {
+                  provider.setCodexCollaborationMode(
+                    mode['id'] as String? ?? 'default',
+                  );
+                  Navigator.pop(sheetContext);
+                },
+              ),
           ],
         ),
-      ],
+      ),
     );
   }
 
   void _handleSessionAction(ChatProvider provider, String value) {
     final projectPath = _projectFilesPath(provider);
     final serverId = provider.activeSessionServerId;
-    if (value.startsWith('codex_mode:')) {
-      provider.setCodexCollaborationMode(value.substring('codex_mode:'.length));
-      return;
-    }
     switch (value) {
       case 'make_permanent':
         final sessionId = provider.activeSessionId;
@@ -2195,32 +2148,18 @@ class _ChatScreenState extends State<_ChatScreen> {
           provider.makeSessionPermanent(sessionId, serverId: serverId);
         }
         break;
-      case 'hide_activity':
-        _setPanelHidden(provider, SessionPanel.activity, true);
-        break;
-      case 'show_activity':
-        _setPanelHidden(provider, SessionPanel.activity, false);
-        break;
-      case 'hide_tasks':
-        _setPanelHidden(provider, SessionPanel.tasks, true);
-        break;
-      case 'show_tasks':
-        _setPanelHidden(provider, SessionPanel.tasks, false);
-        break;
       case 'open_browser':
         unawaited(_openActiveBrowser(provider.activeBrowserSessions));
         break;
-      case 'hide_browser_strip':
-        _setPanelHidden(provider, SessionPanel.browser, true);
+      case 'show_hidden_panels':
+        for (final panel in _hiddenPanels(provider)) {
+          _setPanelHidden(provider, panel, false);
+        }
         break;
-      case 'hide_codex_plan':
-        _setPanelHidden(provider, SessionPanel.codexPlan, true);
-        break;
-      case 'show_browser_strip':
-        _setPanelHidden(provider, SessionPanel.browser, false);
-        break;
-      case 'show_codex_plan':
-        _setPanelHidden(provider, SessionPanel.codexPlan, false);
+      case 'codex_mode':
+        Future.microtask(() {
+          if (mounted) _showCodexModePicker(provider);
+        });
         break;
       case 'project_files':
         _openProjectFiles(provider, projectPath);
@@ -2260,11 +2199,6 @@ class _ChatScreenState extends State<_ChatScreen> {
             }
           });
         }
-        break;
-      case 'session_analytics':
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const SessionAnalyticsScreen()),
-        );
         break;
       case 'session_memory':
         Navigator.of(
@@ -2313,9 +2247,6 @@ class _ChatScreenState extends State<_ChatScreen> {
         break;
       case 'codex_fast_mode':
         provider.setCodexFastMode(!provider.codexFastMode);
-        break;
-      case 'raw_mode':
-        provider.toggleRawMode();
         break;
       case 'claude_auto_compact':
         provider.setClaudeAutoCompactEnabled(

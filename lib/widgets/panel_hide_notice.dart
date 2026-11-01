@@ -39,7 +39,7 @@ class PanelHideNotice extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  'Restore: More → Session settings',
+                  'Back when something new shows up',
                   style: TextStyle(
                     fontSize: 10,
                     height: 1.2,

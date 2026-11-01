@@ -107,7 +107,7 @@ void main() {
       await tester.tap(find.byTooltip('Hide tasks'));
       await tester.pump();
       expect(find.text('Hiding tasks…'), findsOneWidget);
-      expect(find.text('Restore: More → Session settings'), findsOneWidget);
+      expect(find.text('Back when something new shows up'), findsOneWidget);
       await tester.pump(const Duration(seconds: 4));
       expect(hidden, isFalse);
       await tester.tap(find.text('Cancel'));
