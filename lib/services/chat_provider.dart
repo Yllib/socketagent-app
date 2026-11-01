@@ -27,6 +27,7 @@ import 'resumable_http_download.dart';
 import 'file_open_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/model_catalog.dart';
 import '../models/session_projects.dart';
 import '../models/message.dart';
 import '../models/conversation_rewind_status.dart';
@@ -871,10 +872,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   String? _sessionModel;
   List<Map<String, dynamic>> _supportedModels = [];
   List<Map<String, dynamic>> _mcpServers = [];
+
   /// Sign-in URLs awaited per MCP server, answered by mcp_login_started.
   final Map<String, Completer<String>> _mcpLoginUrls = {};
+
   /// MCP servers with a sign-in running, from the tap until mcp_login_result.
   final Set<String> _mcpLoginsPending = {};
+
   /// Why the last sign-in per MCP server failed.
   final Map<String, String> _mcpLoginErrors = {};
   bool _rawMode = false;
@@ -1975,10 +1979,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           .whereType<Map>()
           .map((command) => Map<String, dynamic>.from(command))
           .where((command) => command['agent'] == 'codex')
-          .map((command) => {
-            ...command,
-            'name': _cleanSlashName((command['name'] ?? '').toString()),
-          })
+          .map(
+            (command) => {
+              ...command,
+              'name': _cleanSlashName((command['name'] ?? '').toString()),
+            },
+          )
           .where((command) => (command['name'] as String).isNotEmpty)
           .toList();
       final merged = <String, Map<String, dynamic>>{};
@@ -1996,7 +2002,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         final kindOrder =
             (a['kind'] == 'command' ? 0 : 1) - (b['kind'] == 'command' ? 0 : 1);
         if (kindOrder != 0) return kindOrder;
-        return (a['name'] as String? ?? '').compareTo(b['name'] as String? ?? '');
+        return (a['name'] as String? ?? '').compareTo(
+          b['name'] as String? ?? '',
+        );
       });
       return result;
     }
@@ -7248,6 +7256,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'reminder':
           _handleReminder(msg, serverId);
+          break;
+        case 'model_catalog':
+          final backend = msg['backend'];
+          if (serverId != null && backend is String) {
+            _modelCatalogs['$serverId|$backend'] = parseModelCatalog(
+              msg['models'],
+            );
+            notifyListeners();
+          }
           break;
         case 'scheduled_task_list':
           if (serverId != null) {
@@ -17818,7 +17835,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     Duration timeout = const Duration(minutes: 3),
   }) async {
     final owner = resolveDownloadServerId(serverId, _connMgr.activeServerId);
-    final id = '$_previewDownloadPrefix${_stableFileTransferId('$owner:$path')}';
+    final id =
+        '$_previewDownloadPrefix${_stableFileTransferId('$owner:$path')}';
     final existing = _fileBytesCompleters[id];
     if (existing != null) return existing.future;
     final completer = Completer<String?>();
@@ -18472,6 +18490,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// the fields unset so the run uses the harness default. Returns whether a
   /// live connection took the message; the task itself only appears with
   /// the next `scheduled_task_list`.
+  /// Model lists per computer and harness, from `get_model_catalog`. A key is
+  /// absent until the computer answers, and the list is empty when it has no
+  /// cached catalog for that harness.
+  final Map<String, List<ModelChoice>> _modelCatalogs = {};
+
+  List<ModelChoice>? modelCatalog(String serverId, String backend) =>
+      _modelCatalogs['$serverId|$backend'];
+
+  /// Asks [serverId] for [backend]'s models without opening a session.
+  void requestModelCatalog(String serverId, String backend) {
+    _connMgr.sendToServer(serverId, {
+      'type': 'get_model_catalog',
+      'backend': backend,
+    });
+  }
+
   bool scheduleTask({
     String? name,
     String? linkedSessionId,

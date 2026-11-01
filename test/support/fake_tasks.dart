@@ -1,6 +1,7 @@
 // Fixed scheduled-task data and a provider that records writes, for the
 // Tasks screen, editor and render tests. Shapes follow the server's store:
 // raw maps with `_serverId` added, full run histories included.
+import 'package:app/models/model_catalog.dart';
 import 'dart:async';
 
 import 'package:app/models/message.dart';
@@ -443,6 +444,19 @@ class FakeTasksProvider extends ChatProvider {
 
   @override
   void requestRecentCwds({String? serverId}) {}
+
+  /// Model lists by `serverId|backend`, and every catalog request made.
+  final Map<String, List<ModelChoice>> catalogs = {};
+  final List<String> catalogRequests = [];
+
+  @override
+  List<ModelChoice>? modelCatalog(String serverId, String backend) =>
+      catalogs['$serverId|$backend'];
+
+  @override
+  void requestModelCatalog(String serverId, String backend) {
+    catalogRequests.add('$serverId|$backend');
+  }
 
   @override
   void requestScheduledTasks() {}

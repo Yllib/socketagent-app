@@ -11,6 +11,7 @@ import '../../widgets/folder_browser_screen.dart';
 import 'task_actions.dart' show confirmTaskAction;
 import 'task_draft.dart';
 import 'task_feedback.dart';
+import '../../models/model_catalog.dart';
 import 'task_model.dart';
 import 'task_widgets.dart';
 
@@ -69,7 +70,8 @@ String defaultCwdForServer(ChatProvider provider, String? serverId) {
   if (own.isNotEmpty) return own;
   final global = provider.defaultCwd.trim();
   if (global.isNotEmpty &&
-      (serverId == null || serverId == provider.serverConfigs.firstOrNull?.id)) {
+      (serverId == null ||
+          serverId == provider.serverConfigs.firstOrNull?.id)) {
     return global;
   }
   return '';
@@ -150,7 +152,7 @@ class _TaskEditorState extends State<TaskEditor> {
     _hours = TextEditingController(text: '${_draft.intervalMinutes ~/ 60}');
     _minutes = TextEditingController(text: '${_draft.intervalMinutes % 60}');
     _customModelField =
-        _draft.model.isNotEmpty && !_knownModels().contains(_draft.model);
+        _draft.model.isNotEmpty && !_isKnownModel(_knownModels(), _draft.model);
     _prompt.addListener(() => _update(() => _draft.prompt = _prompt.text));
     _name.addListener(() => _update(() => _draft.name = _name.text));
     _cwd.addListener(() {
@@ -162,6 +164,7 @@ class _TaskEditorState extends State<TaskEditor> {
     _minutes.addListener(_readInterval);
     provider.addListener(_onProvider);
     provider.requestRecentCwds(serverId: _draft.serverId);
+    provider.requestModelCatalog(_draft.serverId, _draft.harness.wire);
     _scheduleFolderCheck(immediate: true);
   }
 
@@ -267,32 +270,34 @@ class _TaskEditorState extends State<TaskEditor> {
 
   // Option lists -----------------------------------------------------------
 
-  /// Models worth offering for the draft's harness: the stored one, those
-  /// other tasks on the same harness use, and the open chat's catalog when
-  /// it runs the same harness. There is no sessionless catalog request.
-  List<String> _knownModels() {
-    final models = <String>{};
-    for (final task in parseScheduledTasks(provider.scheduledTasks)) {
-      if (task.harness == _draft.harness && task.model != null) {
-        models.add(task.model!);
+  /// Models for the draft's computer and harness, in the computer's catalog
+  /// order. Models other tasks on the harness use, and the stored one, are
+  /// added so a model the catalog lacks still shows and stays selected.
+  List<ModelChoice> _knownModels() {
+    final byValue = <String, ModelChoice>{
+      for (final choice
+          in provider.modelCatalog(_draft.serverId, _draft.harness.wire) ??
+              const <ModelChoice>[])
+        choice.value: choice,
+    };
+    void add(String? value) {
+      if (value != null && value.isNotEmpty) {
+        byValue.putIfAbsent(value, () => ModelChoice(value, value));
       }
     }
-    if (provider.activeSessionBackend == _draft.harness.wire) {
-      for (final model in provider.supportedModels) {
-        final value = model['value'] ?? model['id'];
-        if (value is String && value.isNotEmpty && value != 'default') {
-          models.add(value);
-        }
-      }
+
+    for (final task in parseScheduledTasks(provider.scheduledTasks)) {
+      if (task.harness == _draft.harness) add(task.model);
     }
     final original = _original;
-    if (original != null &&
-        original.harness == _draft.harness &&
-        original.model != null) {
-      models.add(original.model!);
+    if (original != null && original.harness == _draft.harness) {
+      add(original.model);
     }
-    return models.toList()..sort();
+    return byValue.values.toList();
   }
+
+  bool _isKnownModel(List<ModelChoice> models, String value) =>
+      models.any((m) => m.value == value);
 
   List<TaskHarness> _harnesses() {
     final wires = provider.backendsForServer(_draft.serverId).toSet();
@@ -315,7 +320,8 @@ class _TaskEditorState extends State<TaskEditor> {
     }
     choices.addAll(provider.getRecentCwds(serverId: _draft.serverId));
     for (final session in provider.sessions) {
-      if (session.serverId == _draft.serverId && session.cwd.trim().isNotEmpty) {
+      if (session.serverId == _draft.serverId &&
+          session.cwd.trim().isNotEmpty) {
         choices.add(session.cwd.trim());
       }
     }
@@ -353,6 +359,7 @@ class _TaskEditorState extends State<TaskEditor> {
     _customModelField = false;
     _cwd.text = _draft.cwd;
     provider.requestRecentCwds(serverId: serverId);
+    provider.requestModelCatalog(serverId, _draft.harness.wire);
     _scheduleFolderCheck(immediate: true);
   }
 
@@ -366,6 +373,7 @@ class _TaskEditorState extends State<TaskEditor> {
     });
     _model.text = '';
     _customModelField = false;
+    provider.requestModelCatalog(_draft.serverId, harness.wire);
   }
 
   void _setRecurrence(TaskRecurrence recurrence) {
@@ -430,7 +438,9 @@ class _TaskEditorState extends State<TaskEditor> {
     final time = switch (choice) {
       _QuickTime.inAnHour => now.add(const Duration(hours: 1)),
       _QuickTime.tonight => today.add(const Duration(hours: 20)),
-      _QuickTime.tomorrowMorning => today.add(const Duration(days: 1, hours: 9)),
+      _QuickTime.tomorrowMorning => today.add(
+        const Duration(days: 1, hours: 9),
+      ),
       _QuickTime.nextMonday => today.add(
         Duration(days: 8 - today.weekday, hours: 9),
       ),
@@ -449,10 +459,8 @@ class _TaskEditorState extends State<TaskEditor> {
   Future<void> _browseFolder() async {
     final picked = await Navigator.of(context).push<String>(
       MaterialPageRoute(
-        builder: (_) => FolderBrowserScreen(
-          provider: provider,
-          serverId: _draft.serverId,
-        ),
+        builder: (_) =>
+            FolderBrowserScreen(provider: provider, serverId: _draft.serverId),
       ),
     );
     if (picked == null || picked.isEmpty) return;
@@ -533,9 +541,7 @@ class _TaskEditorState extends State<TaskEditor> {
           'This one-off task already finished. A new time does not run it again; use Run now.',
         );
       }
-    } else if (issues.any(
-      (i) => i.text.startsWith('Time is in the past'),
-    )) {
+    } else if (issues.any((i) => i.text.startsWith('Time is in the past'))) {
       cautions.add(
         'The time is in the past, so it runs within 30 seconds of saving.',
       );
@@ -809,7 +815,8 @@ class _TaskEditorState extends State<TaskEditor> {
               ),
         style: const TextStyle(fontSize: 14),
         decoration: _decoration(
-          hint: 'Optional. Lists and run sessions show the first prompt line otherwise',
+          hint:
+              'Optional. Lists and run sessions show the first prompt line otherwise',
         ),
       ),
     ];
@@ -842,7 +849,9 @@ class _TaskEditorState extends State<TaskEditor> {
             key: const Key('task-editor-date'),
             onPressed: _pickDate,
             icon: const Icon(Icons.calendar_today_outlined, size: 16),
-            label: Text(formatWhen(time, now: now).split(' ').take(3).join(' ')),
+            label: Text(
+              formatWhen(time, now: now).split(' ').take(3).join(' '),
+            ),
           ),
           OutlinedButton.icon(
             key: const Key('task-editor-time'),
@@ -855,8 +864,14 @@ class _TaskEditorState extends State<TaskEditor> {
             icon: const Icon(Icons.more_time, size: 20),
             onSelected: _quickTime,
             itemBuilder: (_) => const [
-              PopupMenuItem(value: _QuickTime.inAnHour, child: Text('In 1 hour')),
-              PopupMenuItem(value: _QuickTime.tonight, child: Text('Tonight 20:00')),
+              PopupMenuItem(
+                value: _QuickTime.inAnHour,
+                child: Text('In 1 hour'),
+              ),
+              PopupMenuItem(
+                value: _QuickTime.tonight,
+                child: Text('Tonight 20:00'),
+              ),
               PopupMenuItem(
                 value: _QuickTime.tomorrowMorning,
                 child: Text('Tomorrow 09:00'),
@@ -947,7 +962,9 @@ class _TaskEditorState extends State<TaskEditor> {
   })!;
 
   List<Widget> _deliveryFields() {
-    final linkTitle = _sessionTitle(widget.linkSessionId ?? _draft.linkSessionId);
+    final linkTitle = _sessionTitle(
+      widget.linkSessionId ?? _draft.linkSessionId,
+    );
     return [
       const TaskSectionLabel('Carry-over and notify'),
       SwitchListTile(
@@ -968,17 +985,16 @@ class _TaskEditorState extends State<TaskEditor> {
       Padding(
         padding: const EdgeInsets.only(top: 6),
         child: SegmentedButton<TaskNotify>(
-              key: const Key('task-editor-notify'),
-              showSelectedIcon: false,
-              expandedInsets: EdgeInsets.zero,
-              style: _segmentedStyle(context),
-              segments: [
-                for (final n in TaskNotify.values)
-                  ButtonSegment(value: n, label: Text(n.label)),
-              ],
-              selected: {_draft.notify},
-              onSelectionChanged: (set) =>
-                  _update(() => _draft.notify = set.first),
+          key: const Key('task-editor-notify'),
+          showSelectedIcon: false,
+          expandedInsets: EdgeInsets.zero,
+          style: _segmentedStyle(context),
+          segments: [
+            for (final n in TaskNotify.values)
+              ButtonSegment(value: n, label: Text(n.label)),
+          ],
+          selected: {_draft.notify},
+          onSelectionChanged: (set) => _update(() => _draft.notify = set.first),
         ),
       ),
       TaskNote(
@@ -994,7 +1010,8 @@ class _TaskEditorState extends State<TaskEditor> {
           controlAffinity: ListTileControlAffinity.leading,
           value: _draft.linkSessionId != null,
           onChanged: (v) => _update(
-            () => _draft.linkSessionId = v == true ? widget.linkSessionId : null,
+            () =>
+                _draft.linkSessionId = v == true ? widget.linkSessionId : null,
           ),
           title: Text(
             'Send each result to ${linkTitle ?? 'this session'}',
@@ -1027,7 +1044,7 @@ class _TaskEditorState extends State<TaskEditor> {
     final knownModels = _knownModels();
     final modelValue = _customModelField
         ? _customModel
-        : knownModels.contains(_draft.model)
+        : _isKnownModel(knownModels, _draft.model)
         ? _draft.model
         : '';
     final access = _draft.permissionMode;
@@ -1072,18 +1089,18 @@ class _TaskEditorState extends State<TaskEditor> {
         children: [
           Flexible(
             child: SegmentedButton<TaskHarness>(
-            key: const Key('task-editor-harness'),
-            showSelectedIcon: false,
-            expandedInsets: EdgeInsets.zero,
-            style: _segmentedStyle(context),
-            segments: [
-              for (final h in harnesses)
-                ButtonSegment(value: h, label: Text(h.label)),
-            ],
-            selected: {_draft.harness},
-            onSelectionChanged: harnesses.length < 2
-                ? null
-                : (set) => _setHarness(set.first),
+              key: const Key('task-editor-harness'),
+              showSelectedIcon: false,
+              expandedInsets: EdgeInsets.zero,
+              style: _segmentedStyle(context),
+              segments: [
+                for (final h in harnesses)
+                  ButtonSegment(value: h, label: Text(h.label)),
+              ],
+              selected: {_draft.harness},
+              onSelectionChanged: harnesses.length < 2
+                  ? null
+                  : (set) => _setHarness(set.first),
             ),
           ),
           if (_original != null && _original!.harness != _draft.harness)
@@ -1109,16 +1126,22 @@ class _TaskEditorState extends State<TaskEditor> {
               items: [
                 const DropdownMenuItem(
                   value: '',
-                  child: Text('Harness default', style: TextStyle(fontSize: 14)),
+                  child: Text(
+                    'Harness default',
+                    style: TextStyle(fontSize: 14),
+                  ),
                 ),
                 for (final m in knownModels)
                   DropdownMenuItem(
-                    value: m,
-                    child: Text(m, style: const TextStyle(fontSize: 14)),
+                    value: m.value,
+                    child: Text(m.label, style: const TextStyle(fontSize: 14)),
                   ),
                 const DropdownMenuItem(
                   value: _customModel,
-                  child: Text('Custom model ID', style: TextStyle(fontSize: 14)),
+                  child: Text(
+                    'Custom model ID',
+                    style: TextStyle(fontSize: 14),
+                  ),
                 ),
               ],
               onChanged: (v) {
@@ -1126,7 +1149,8 @@ class _TaskEditorState extends State<TaskEditor> {
                 setState(() {
                   _customModelField = v == _customModel;
                   if (!_customModelField) _model.text = v;
-                  if (_customModelField && knownModels.contains(_model.text)) {
+                  if (_customModelField &&
+                      _isKnownModel(knownModels, _model.text)) {
                     _model.text = '';
                   }
                   _dirty = true;
@@ -1166,7 +1190,8 @@ class _TaskEditorState extends State<TaskEditor> {
                     child: Text(e, style: const TextStyle(fontSize: 14)),
                   ),
               ],
-              onChanged: (v) => v == null ? null : _update(() => _draft.effort = v),
+              onChanged: (v) =>
+                  v == null ? null : _update(() => _draft.effort = v),
             ),
           ),
         ],
@@ -1272,9 +1297,12 @@ class _TaskEditorState extends State<TaskEditor> {
         ),
       ),
       switch (_folderCheck) {
-        _FolderCheck.unknown => online
-            ? const SizedBox.shrink()
-            : const TaskNote('Folder cannot be checked while the computer is offline.'),
+        _FolderCheck.unknown =>
+          online
+              ? const SizedBox.shrink()
+              : const TaskNote(
+                  'Folder cannot be checked while the computer is offline.',
+                ),
         _FolderCheck.checking => const TaskNote('Checking the folder exists'),
         _FolderCheck.exists => TaskNote(
           'Folder exists on ${_computer(_draft.serverId)}.',
@@ -1298,7 +1326,10 @@ class _TaskEditorState extends State<TaskEditor> {
       TaskFactRow('Computer', _computer(task.serverId)),
       if (created != null) TaskFactRow('Created', formatWhen(created)),
       if (createdBy != null || task.createdBySessionId != null)
-        TaskFactRow('Created by', createdBy ?? 'session ${task.createdBySessionId}'),
+        TaskFactRow(
+          'Created by',
+          createdBy ?? 'session ${task.createdBySessionId}',
+        ),
       TaskFactRow(
         'Runs',
         lastRun?.startedAt == null

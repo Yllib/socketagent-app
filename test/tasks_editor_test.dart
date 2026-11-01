@@ -1,4 +1,5 @@
 import 'package:app/config/app_theme.dart';
+import 'package:app/models/model_catalog.dart';
 import 'package:app/screens/tasks/task_editor.dart';
 import 'package:app/screens/tasks/task_feedback.dart';
 import 'package:app/screens/tasks/task_model.dart';
@@ -173,6 +174,33 @@ void main() {
     await tester.pumpAndSettle();
     expect(provider.calls.single.$2['linkedSessionId'], 'sess-1');
     expect(provider.calls.single.$2['serverId'], 'laptop');    settleFeedback();
+  });
+
+  testWidgets('model list comes from the computer catalog for the harness',
+      (tester) async {
+    final provider = FakeTasksProvider();
+    provider.catalogs['tower|codex'] = const [
+      ModelChoice('gpt-6.1-sol', 'GPT-6.1-Sol'),
+      ModelChoice('gpt-6-astra', 'GPT-6-Astra'),
+    ];
+    // Tall enough that the model field is clear of the save bar.
+    final open = pumpOpener(tester, provider, size: const Size(412, 2400));
+    await open();
+    expect(provider.catalogRequests, contains('tower|codex'));
+
+    await tester.enterText(
+      find.byKey(const Key('task-editor-prompt')),
+      'Check the build.',
+    );
+    await tester.tap(find.byKey(const Key('task-editor-model')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('GPT-6-Astra').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('task-editor-save')));
+    await tester.pumpAndSettle();
+
+    expect(provider.calls.single.$2['model'], 'gpt-6-astra');
+    settleFeedback();
   });
 
   testWidgets('edit sends only the changed field and keeps unset ones unset',
