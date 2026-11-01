@@ -18,7 +18,6 @@ class ComputerSummary {
     this.waitingCount = 0,
     this.sessionCount = 0,
     this.version,
-    this.backends = const [],
     this.pushRegistered,
     this.warnings = const [],
     this.limitedInstall = false,
@@ -37,9 +36,6 @@ class ComputerSummary {
 
   /// SocketAgent server version, when the computer has reported one.
   final String? version;
-
-  /// Harnesses the computer runs, such as claude and codex.
-  final List<String> backends;
 
   /// Whether this phone receives push from the computer. Null when push does
   /// not apply: not Android, disabled for this computer, or offline.
@@ -125,7 +121,6 @@ ComputerSummary _summarize(
     waitingCount: waiting,
     sessionCount: sessions.length,
     version: build.versionLabel.isEmpty ? null : build.versionLabel,
-    backends: provider.backendsForServer(config.id),
     pushRegistered:
         !pushApplies || !online || provider.isPushDisabledForServer(config.id)
         ? null

@@ -91,7 +91,6 @@ void main() {
     expect(tower.version, 'v1.1.14');
     expect(tower.sessionCount, 2);
     expect(tower.runningCount, 1);
-    expect(tower.backends, ['claude', 'codex']);
     expect(tower.pushRegistered, isFalse);
 
     final studio = summaries.last;
@@ -123,12 +122,13 @@ void main() {
 
     expect(find.text('1 of 2 online'), findsOneWidget);
     expect(find.text('tower'), findsOneWidget);
-    expect(find.text('connected'), findsOneWidget);
+    expect(find.text('connected'), findsNothing, reason: 'an icon says it');
+    expect(find.byIcon(Icons.lan_outlined), findsOneWidget);
     expect(find.text('10.0.0.4:8787'), findsOneWidget);
     expect(find.text('v1.1.14'), findsOneWidget);
     expect(find.text('2 sessions'), findsOneWidget);
     expect(find.text('1 running'), findsOneWidget);
-    expect(find.text('claude + codex'), findsOneWidget);
+    expect(find.text('claude + codex'), findsNothing);
 
     expect(find.text('studio'), findsOneWidget);
     expect(find.text('offline, expected online'), findsOneWidget);

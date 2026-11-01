@@ -247,7 +247,6 @@ void main() {
       dpr: 1,
       provider: provider,
     );
-    expect(find.text('push on'), findsNWidgets(2));
     expect(find.text('push not registered'), findsNothing);
     await capture(tester, 'desktop', 1);
     await tester.pumpWidget(const SizedBox());

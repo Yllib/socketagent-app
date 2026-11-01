@@ -252,7 +252,24 @@ class ComputerRow extends StatelessWidget {
           children: [
             Row(
               children: [
-                _StatusDot(color: statusColor, hollow: !c.online),
+                // Online: an icon for the link in use. Offline: a hollow dot.
+                SizedBox(
+                  width: 16,
+                  child: c.online
+                      ? Tooltip(
+                          message: c.config.useRelay ? 'Via relay' : 'Direct',
+                          child: Icon(
+                            c.config.useRelay
+                                ? Icons.cloud_outlined
+                                : Icons.lan_outlined,
+                            size: 16,
+                            color: statusColor,
+                          ),
+                        )
+                      : Center(
+                          child: _StatusDot(color: statusColor, hollow: true),
+                        ),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   c.name,
@@ -263,12 +280,14 @@ class ComputerRow extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    c.statusLabel,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, color: statusColor),
-                  ),
+                  child: c.online
+                      ? const SizedBox.shrink()
+                      : Text(
+                          c.statusLabel,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 13, color: statusColor),
+                        ),
                 ),
                 if (c.runningCount > 0)
                   Text(
@@ -303,11 +322,7 @@ class ComputerRow extends StatelessWidget {
                   '${c.sessionCount} session${c.sessionCount == 1 ? '' : 's'}',
                   style: meta,
                 ),
-                if (c.backends.isNotEmpty)
-                  Text(c.backends.join(' + '), style: meta),
-                if (c.pushRegistered == true)
-                  Text('push on', style: meta)
-                else if (c.pushRegistered == false)
+                if (c.pushRegistered == false)
                   Text(
                     'push not registered',
                     style: meta.copyWith(color: palette.warning),
