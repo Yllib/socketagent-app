@@ -135,6 +135,10 @@ class ToolOutputBlock extends StatefulWidget {
   onExpansionChanged;
   final ValueChanged<bool>? onImageInspectionChanged;
 
+  /// Renders the header row alone, for the copy the chat pins over the top
+  /// of the viewport while the card's own header is scrolled away.
+  final bool headerOnly;
+
   /// Moves this card's running Bash command to the background, by its
   /// tool use id. Null hides the menu, as when the server cannot do it.
   final ValueChanged<String>? onBackgroundTask;
@@ -148,6 +152,7 @@ class ToolOutputBlock extends StatefulWidget {
     this.onExpansionChanged,
     this.onImageInspectionChanged,
     this.onBackgroundTask,
+    this.headerOnly = false,
   });
 
   @override
@@ -350,6 +355,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
     final diffStats = diffSource == null ? null : _diffStats(diffSource);
 
     final accentColor = widget.greenTheme ? context.palette.green : _toolAccent;
+    final showBody = _expanded && !widget.headerOnly;
 
     // Always expandable if there's content to show
     final writeContent = _isWriteTool
@@ -375,7 +381,9 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
         toolUseId.isNotEmpty;
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: widget.headerOnly
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: isBg ? context.palette.panelHigh : context.palette.panel,
         borderRadius: BorderRadius.circular(12),
@@ -507,7 +515,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
             ),
           ),
           // Bash: show formatted command + output when expanded
-          if (_isBash && _expanded) ...[
+          if (_isBash && showBody) ...[
             Container(
               decoration: BoxDecoration(
                 border: Border(
@@ -548,7 +556,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               _buildFullOutputToggle(),
           ],
           // Diff view for Edit tool
-          if (_isEditTool && editDiff != null && _expanded)
+          if (_isEditTool && editDiff != null && showBody)
             _withCopyButton(
               widget.message.toolInput?['new_string'] as String? ?? '',
               Container(
@@ -567,7 +575,7 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               ),
             ),
           // Unified diff view for Codex ApplyPatch/file_change output
-          if (_isApplyPatchTool && patchDiff != null && _expanded)
+          if (_isApplyPatchTool && patchDiff != null && showBody)
             Container(
               constraints: const BoxConstraints(maxHeight: 300),
               decoration: BoxDecoration(
@@ -583,26 +591,25 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
               ),
             ),
           // Write: show file content when expanded
-          if (_isWriteTool && writeContent != null && _expanded)
+          if (_isWriteTool && writeContent != null && showBody)
             _buildWriteContent(writeContent),
           // TaskOutput: show parsed content
-          if (_isTaskOutput && hasOutput && _expanded)
-            _buildTaskOutputContent(),
+          if (_isTaskOutput && hasOutput && showBody) _buildTaskOutputContent(),
           // Regular output (for non-Bash, non-Edit, non-TaskOutput, non-Write tools)
           if (!_isBash &&
               !_isEditTool &&
               !_isApplyPatchTool &&
               !_isWriteTool &&
               !_isTaskOutput &&
-              _expanded) ...[
+              showBody) ...[
             if (_visibleToolInput.isNotEmpty)
               _buildStructuredInputContainer(_visibleToolInput),
             if (hasOutput) _buildOutputContainer(output),
           ],
           // Inline image (visible when expanded)
-          if (_hasImage && _expanded) _buildInlineImage(),
+          if (_hasImage && showBody) _buildInlineImage(),
           // Placeholder for images loading from history
-          if (_expanded &&
+          if (showBody &&
               widget.message.toolImageFilePath != null &&
               widget.message.toolImageFilePath!.isNotEmpty &&
               !_hasImage)

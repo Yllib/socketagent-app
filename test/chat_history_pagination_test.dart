@@ -790,7 +790,11 @@ void main() {
     final cardTopBefore = tester.getTopLeft(find.byType(ToolOutputBlock)).dy;
     final pixelsBefore = position.pixels;
 
-    await tester.tap(find.byType(ToolOutputBlock));
+    // The header's left end: the jump-to-latest button sits over the card's
+    // center while the reader is away from the end.
+    await tester.tapAt(
+      tester.getTopLeft(find.byType(ToolOutputBlock)) + const Offset(40, 14),
+    );
     await tester.pump();
     await tester.pump();
 

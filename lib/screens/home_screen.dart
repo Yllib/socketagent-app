@@ -1734,7 +1734,6 @@ class _ChatScreenState extends State<_ChatScreen> {
             ),
           ),
         ),
-      _buildFollowLatestChip(),
       _buildSessionMoreChip(provider),
     ];
     return Align(
@@ -1809,19 +1808,6 @@ class _ChatScreenState extends State<_ChatScreen> {
               ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildFollowLatestChip() {
-    final following = _followLatest;
-    return Tooltip(
-      message: following
-          ? 'Auto-scroll is on. Tap to turn it off.'
-          : 'Auto-scroll is off. Tap to jump to the bottom and turn it on.',
-      child: InkWell(
-        onTap: () => setState(() => _followLatest = !following),
-        child: _headerControl('AUTO', active: following),
       ),
     );
   }

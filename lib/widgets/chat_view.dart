@@ -197,6 +197,90 @@ class _PinnedCondensedGroup {
   int get hashCode => Object.hash(rowKey, identityHashCode(row));
 }
 
+/// An expanded tool card whose header scrolled out of view, with where its
+/// pinned copy goes inside the chat stack.
+class _PinnedToolCard {
+  const _PinnedToolCard({
+    required this.stateId,
+    required this.message,
+    required this.greenTheme,
+    required this.top,
+    required this.left,
+    required this.width,
+  });
+
+  final String stateId;
+  final ChatMessage message;
+  final bool greenTheme;
+  final double top;
+  final double left;
+  final double width;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _PinnedToolCard &&
+      other.stateId == stateId &&
+      identical(other.message, message) &&
+      other.greenTheme == greenTheme &&
+      other.top == top &&
+      other.left == left &&
+      other.width == width;
+
+  @override
+  int get hashCode => Object.hash(
+    stateId,
+    identityHashCode(message),
+    greenTheme,
+    top,
+    left,
+    width,
+  );
+}
+
+/// Records a tool card's element under its state id while it is mounted, so
+/// the view can find the card when its header needs pinning. A registry
+/// instead of a GlobalKey, so a card that happens to render twice cannot
+/// crash the list.
+class _ToolCardAnchor extends StatefulWidget {
+  const _ToolCardAnchor({
+    required this.stateId,
+    required this.registry,
+    required this.child,
+  });
+
+  final String stateId;
+  final Map<String, BuildContext> registry;
+  final Widget child;
+
+  @override
+  State<_ToolCardAnchor> createState() => _ToolCardAnchorState();
+}
+
+class _ToolCardAnchorState extends State<_ToolCardAnchor> {
+  @override
+  void didUpdateWidget(covariant _ToolCardAnchor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.stateId != widget.stateId &&
+        identical(oldWidget.registry[oldWidget.stateId], context)) {
+      oldWidget.registry.remove(oldWidget.stateId);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (identical(widget.registry[widget.stateId], context)) {
+      widget.registry.remove(widget.stateId);
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    widget.registry[widget.stateId] = context;
+    return widget.child;
+  }
+}
+
 class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   late final ChatScrollController _scroll;
 
@@ -207,6 +291,14 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   final Map<String, Set<String>> _expandedCondensedRowsBySession = {};
   final _pinnedCondensedGroup = ValueNotifier<_PinnedCondensedGroup?>(null);
   final _pinnedCondensedHeaderKey = GlobalKey();
+
+  /// Mounted tool cards by [_cardStateId], and what each was built from.
+  final Map<String, BuildContext> _toolCardContexts = {};
+  final Map<String, ({ChatMessage message, bool greenTheme})> _toolCardSpecs =
+      {};
+  final _pinnedToolCard = ValueNotifier<_PinnedToolCard?>(null);
+  final _pinnedToolHeaderKey = GlobalKey();
+  final _chatStackKey = GlobalKey();
   final Map<String, GlobalKey> _messageRowKeys = {};
 
   /// Scroll anchors for task cards, by row key, with the row key each tool
@@ -323,7 +415,70 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   void _onScroll() {
     if (!_scroll.hasClients) return;
     _scheduleOlderHistoryCheck();
+    _updatePinnedHeaders();
+  }
+
+  void _updatePinnedHeaders() {
     _updatePinnedCondensedGroup();
+    _updatePinnedToolCard();
+  }
+
+  /// Vertical margin of a tool card, as set by [ToolOutputBlock].
+  static const double _toolCardMargin = 4;
+
+  /// Pins a copy of an expanded tool card's header while the card's own
+  /// header is above the viewport, right below the pinned group header when
+  /// there is one, so a long card can be collapsed from anywhere inside it.
+  void _updatePinnedToolCard() {
+    final expanded = _expandedCards;
+    final stackBox = _chatStackKey.currentContext?.findRenderObject();
+    if (expanded.isEmpty || !_scroll.hasClients || stackBox is! RenderBox) {
+      _pinnedToolCard.value = null;
+      return;
+    }
+    double heightOf(GlobalKey key, double fallback) {
+      final box = key.currentContext?.findRenderObject();
+      return box is RenderBox && box.hasSize ? box.size.height : fallback;
+    }
+
+    final pinTop = _pinnedCondensedGroup.value == null
+        ? 0.0
+        : heightOf(_pinnedCondensedHeaderKey, 31);
+    final headerHeight = heightOf(_pinnedToolHeaderKey, 34);
+    final pixels = _scroll.position.pixels;
+    _PinnedToolCard? next;
+    for (final stateId in expanded) {
+      final box = _toolCardContexts[stateId]?.findRenderObject();
+      final spec = _toolCardSpecs[stateId];
+      if (box is! RenderBox || spec == null) continue;
+      final reveal = _revealOffsetFor(box);
+      if (reveal == null) continue;
+      final top = reveal - pixels + _toolCardMargin;
+      final bottom = reveal - pixels + box.size.height - _toolCardMargin;
+      if (top >= pinTop || bottom <= pinTop + headerHeight) continue;
+      final left = box.localToGlobal(Offset.zero, ancestor: stackBox).dx;
+      next = _PinnedToolCard(
+        stateId: stateId,
+        message: spec.message,
+        greenTheme: spec.greenTheme,
+        top: pinTop,
+        left: left + _condensedCardMarginHorizontal,
+        width: box.size.width - 2 * _condensedCardMarginHorizontal,
+      );
+      break;
+    }
+    if (_pinnedToolCard.value != next) _pinnedToolCard.value = next;
+  }
+
+  /// Collapses a tool card from its pinned header and leaves the collapsed
+  /// card where the pinned header was.
+  void _collapseToolCardFromPinnedHeader(_PinnedToolCard pinned) {
+    final box = _toolCardContexts[pinned.stateId]?.findRenderObject();
+    if (box is RenderBox) {
+      _scroll.revealAfterLayout(box, inset: pinned.top);
+    }
+    _pinnedToolCard.value = null;
+    _setCardExpanded(pinned.message, false);
   }
 
   /// Vertical margin of a condensed work card, so the pinned header and the
@@ -396,7 +551,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       if (!expanded.remove(rowKey)) expanded.add(rowKey);
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _updatePinnedCondensedGroup();
+      if (mounted) _updatePinnedHeaders();
     });
   }
 
@@ -783,7 +938,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       // Not synchronously: this runs during build and the pinned header's
       // ValueListenableBuilder may not rebuild from inside it.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _updatePinnedCondensedGroup();
+        if (mounted) _updatePinnedHeaders();
       });
       if (widget.followLatest && !_hasTranscriptTarget) {
         _scroll.follow();
@@ -919,7 +1074,12 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final changed = expanded
         ? _expandedCards.add(id)
         : _expandedCards.remove(id);
-    if (changed && mounted) setState(() {});
+    if (changed && mounted) {
+      setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _updatePinnedToolCard();
+      });
+    }
   }
 
   /// [stateOwner] keeps a card that mirrors another message's content, like a
@@ -930,13 +1090,19 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     ChatMessage? stateOwner,
   }) {
     final owner = stateOwner ?? msg;
-    return ToolOutputBlock(
-      message: msg,
-      greenTheme: greenTheme,
-      expanded: _expandedCards.contains(_cardStateId(owner)),
-      onExpansionChanged: (expanded, {required hasImage}) =>
-          _setCardExpanded(owner, expanded),
-      onBackgroundTask: widget.onBackgroundTask,
+    final stateId = _cardStateId(owner);
+    _toolCardSpecs[stateId] = (message: msg, greenTheme: greenTheme);
+    return _ToolCardAnchor(
+      stateId: stateId,
+      registry: _toolCardContexts,
+      child: ToolOutputBlock(
+        message: msg,
+        greenTheme: greenTheme,
+        expanded: _expandedCards.contains(stateId),
+        onExpansionChanged: (expanded, {required hasImage}) =>
+            _setCardExpanded(owner, expanded),
+        onBackgroundTask: widget.onBackgroundTask,
+      ),
     );
   }
 
@@ -962,6 +1128,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     _scroll.followingListenable.removeListener(_onFollowingChanged);
     _scroll.dispose();
     _pinnedCondensedGroup.dispose();
+    _pinnedToolCard.dispose();
     super.dispose();
   }
 
@@ -1081,6 +1248,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               child: LightBackdrop(
                 child: SizedBox.expand(
                   child: Stack(
+                    key: _chatStackKey,
                     fit: StackFit.expand,
                     children: [
                       // Own layer, so the pinned header appearing or
@@ -1175,6 +1343,34 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                           ),
                         ),
                       ),
+                      ValueListenableBuilder<_PinnedToolCard?>(
+                        valueListenable: _pinnedToolCard,
+                        builder: (context, pinned, _) => pinned == null
+                            ? const Positioned(
+                                top: 0,
+                                left: 0,
+                                child: SizedBox.shrink(),
+                              )
+                            : Positioned(
+                                top: pinned.top,
+                                left: pinned.left,
+                                width: pinned.width,
+                                child: RepaintBoundary(
+                                  child: ToolOutputBlock(
+                                    key: _pinnedToolHeaderKey,
+                                    message: pinned.message,
+                                    greenTheme: pinned.greenTheme,
+                                    expanded: true,
+                                    headerOnly: true,
+                                    onExpansionChanged:
+                                        (_, {required hasImage}) =>
+                                            _collapseToolCardFromPinnedHeader(
+                                              pinned,
+                                            ),
+                                  ),
+                                ),
+                              ),
+                      ),
                       Positioned.fill(
                         child: RepaintBoundary(
                           child: ChatScrollbar(
@@ -1186,6 +1382,17 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                             onSeekRow: _seekRow,
                             onSeekEnd: _endSeekRow,
                           ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        right: 0,
+                        bottom: 12,
+                        child: ValueListenableBuilder<bool>(
+                          valueListenable: _scroll.followingListenable,
+                          builder: (context, following, _) => following
+                              ? const SizedBox.shrink()
+                              : Center(child: _buildScrollToBottomButton()),
                         ),
                       ),
                     ],
@@ -1352,6 +1559,32 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
         : EverySecond(builder: header);
   }
 
+  /// Shown while the reader is away from the end of the transcript. Tapping
+  /// it jumps to the end and turns following back on.
+  Widget _buildScrollToBottomButton() {
+    final scheme = Theme.of(context).colorScheme;
+    return Tooltip(
+      message: 'Jump to latest',
+      child: Material(
+        key: const ValueKey('chat-scroll-to-bottom'),
+        color: scheme.surfaceContainerHigh,
+        shape: CircleBorder(side: BorderSide(color: scheme.outlineVariant)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: _scroll.follow,
+          child: Padding(
+            padding: const EdgeInsets.all(8),
+            child: Icon(
+              Icons.arrow_downward,
+              size: 20,
+              color: scheme.onSurface,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   /// Copy of an expanded group's header, pinned over the top of the viewport
   /// so the group can be collapsed from anywhere inside it.
   Widget _buildPinnedCondensedHeader(_PinnedCondensedGroup pinned) {
@@ -1379,7 +1612,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
   bool _handleScrollMetricsNotification(
     ScrollMetricsNotification notification,
   ) {
-    if (notification.depth == 0) _updatePinnedCondensedGroup();
+    if (notification.depth == 0) _updatePinnedHeaders();
     return false;
   }
 
