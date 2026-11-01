@@ -1,7 +1,12 @@
 import 'dart:convert';
 
+/// Scheduled-task messages, handled from every computer, not only the
+/// active one: lists and updates, save results and run histories.
 bool isScheduledTaskStateMessage(String? type) {
-  return type == 'scheduled_task_list' || type == 'scheduled_task_update';
+  return type == 'scheduled_task_list' ||
+      type == 'scheduled_task_update' ||
+      type == 'scheduled_task_save_result' ||
+      type == 'scheduled_task_runs';
 }
 
 bool scheduledTaskRevisionNeedsRefresh(

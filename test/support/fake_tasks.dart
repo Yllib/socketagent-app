@@ -30,8 +30,7 @@ const seedPrompt =
 
 Keep it short. Use NotifyUser only if something is on fire; otherwise stay quiet and leave the digest in the session.''';
 
-const seedResult =
-    '''Digest for Friday morning.
+const seedResult = '''Digest for Friday morning.
 
 Decisions needed
 - The relay certificate expires in nine days. Renewal needs the DNS token you keep offline.
@@ -67,7 +66,9 @@ List<Map<String, dynamic>> seedRuns({
       if (failed)
         'error': 'Agent exited before a final message (exit code 1).'
       else
-        'resultSummary': i == 0 ? latest : 'Run ${count - i}: nothing needed attention.',
+        'resultSummary': i == 0
+            ? latest
+            : 'Run ${count - i}: nothing needed attention.',
       if (linked) 'callbackSessionId': 'sess-1',
       if (linked) 'callbackStatus': i == 0 ? 'pending' : 'delivered',
     });
@@ -133,7 +134,8 @@ List<Map<String, dynamic>> seedTasks() {
         lastEnd: DateTime(2026, 10, 26, 6, 5),
         step: const Duration(days: 7),
         sessionPrefix: 'bk',
-        latest: 'Manifest matches: 48,211 files. Spot-checked 3 archives, all open cleanly.',
+        latest:
+            'Manifest matches: 48,211 files. Spot-checked 3 archives, all open cleanly.',
       ),
     },
     {
@@ -162,7 +164,8 @@ List<Map<String, dynamic>> seedTasks() {
         lastEnd: DateTime(2026, 10, 20, 6, 2),
         step: const Duration(hours: 6),
         sessionPrefix: 'tri',
-        latest: 'Filed 14 messages. Flagged one from Rubano Enterprises about the invoice schedule.',
+        latest:
+            'Filed 14 messages. Flagged one from Rubano Enterprises about the invoice schedule.',
       ),
     },
     {
@@ -246,7 +249,8 @@ List<Map<String, dynamic>> seedTasks() {
       'id': 'lint',
       '_serverId': 'laptop',
       'name': 'Nightly lint',
-      'prompt': 'Run the linter and fix anything trivial. Open a PR if there are changes.',
+      'prompt':
+          'Run the linter and fix anything trivial. Open a PR if there are changes.',
       'cwd': '/home/billy/work/web',
       'backend': 'claude',
       'effort': 'low',
@@ -472,6 +476,14 @@ class FakeTasksProvider extends ChatProvider {
   @override
   Stream<ScheduledTaskError> get scheduledTaskErrors => errors.stream;
 
+  /// Stands in for the computers' `scheduled_task_save_result` replies.
+  final StreamController<ScheduledTaskSaveResult> saveResults =
+      StreamController.broadcast(sync: true);
+
+  @override
+  Stream<ScheduledTaskSaveResult> get scheduledTaskSaveResults =>
+      saveResults.stream;
+
   @override
   String? scheduledTaskRevision(String serverId) => revisions[serverId];
 
@@ -488,9 +500,11 @@ class FakeTasksProvider extends ChatProvider {
     String? permissionMode,
     String? recurrenceType,
     int? customIntervalMs,
+    List<int>? daysOfWeek,
     bool reuseSession = false,
     String notificationMode = 'completion',
     String? serverId,
+    String? requestId,
   }) {
     calls.add((
       'scheduleTask',
@@ -506,9 +520,11 @@ class FakeTasksProvider extends ChatProvider {
         'permissionMode': permissionMode,
         'recurrenceType': recurrenceType,
         'customIntervalMs': customIntervalMs,
+        'daysOfWeek': daysOfWeek,
         'reuseSession': reuseSession,
         'notificationMode': notificationMode,
         'serverId': serverId,
+        'requestId': requestId,
       },
     ));
     return _online(serverId);
@@ -527,8 +543,10 @@ class FakeTasksProvider extends ChatProvider {
     String? scheduledTime,
     String? recurrenceType,
     int? customIntervalMs,
+    List<int>? daysOfWeek,
     bool? reuseSession,
     String? notificationMode,
+    String? requestId,
   }) {
     final msg = <String, dynamic>{
       'name': ?name,
@@ -544,7 +562,12 @@ class FakeTasksProvider extends ChatProvider {
       if (recurrenceType != null)
         'recurrence': recurrenceType == 'once'
             ? null
-            : {'type': recurrenceType, 'intervalMs': ?customIntervalMs},
+            : {
+                'type': recurrenceType,
+                'intervalMs': ?customIntervalMs,
+                'daysOfWeek': ?daysOfWeek,
+              },
+      'requestId': ?requestId,
     };
     calls.add(('updateScheduledTask', {'taskId': taskId, ...msg}));
     final index = tasks.indexWhere((t) => t['id'] == taskId);
@@ -553,6 +576,31 @@ class FakeTasksProvider extends ChatProvider {
       notifyListeners();
     }
     return _online(_serverOf(taskId));
+  }
+
+  /// Full histories a test answers with; see [answerRuns].
+  final Map<String, List<Map<String, dynamic>>> fullRuns = {};
+
+  @override
+  List<Map<String, dynamic>>? scheduledTaskRuns(
+    String serverId,
+    String taskId,
+  ) => fullRuns[taskId];
+
+  /// Task ids the detail page asked full run histories for. Kept out of
+  /// [calls], which records user actions.
+  final List<String> runRequests = [];
+
+  @override
+  bool requestScheduledTaskRuns(String serverId, String taskId) {
+    runRequests.add(taskId);
+    return true;
+  }
+
+  /// Stands in for a computer's `scheduled_task_runs` reply.
+  void answerRuns(String taskId, List<Map<String, dynamic>> runs) {
+    fullRuns[taskId] = runs;
+    notifyListeners();
   }
 
   @override
@@ -617,12 +665,16 @@ class FakeTasksProvider extends ChatProvider {
 
   @override
   void resumeSession(String sessionId, {String? serverId}) {
-    calls.add(('resumeSession', {'sessionId': sessionId, 'serverId': serverId}));
+    calls.add((
+      'resumeSession',
+      {'sessionId': sessionId, 'serverId': serverId},
+    ));
   }
 
   @override
   void dispose() {
     unawaited(errors.close());
+    unawaited(saveResults.close());
     super.dispose();
   }
 }

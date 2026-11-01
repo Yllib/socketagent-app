@@ -153,6 +153,59 @@ void main() {
       );
     });
 
+    test('weekdays: label, first run and change detection', () {
+      final weekly = ScheduledTaskView.fromMap({
+        'id': 'w',
+        // Saturday 7 Nov 2026.
+        'scheduledTime': DateTime(2026, 11, 7, 9).toUtc().toIso8601String(),
+        'recurrence': {
+          'type': 'weekly',
+          'daysOfWeek': [4, 1, 9],
+        },
+      })!;
+      expect(weekly.daysOfWeek, [1, 4], reason: 'sorted, out-of-range dropped');
+      expect(weekly.recurrenceLabel, 'Mon, Thu');
+      expect(weekdayList(const [0, 1, 2, 3, 4, 5, 6]), 'Every day');
+
+      final draft = TaskDraft.fromTask(weekly);
+      expect(draft.firstRun, DateTime(2026, 11, 9, 9), reason: 'next Monday');
+      expect(draft.diff(weekly).recurrence, isNull);
+
+      // A plain weekly task runs on its time's weekday; choosing that day
+      // explicitly is no change, adding another is.
+      final plain = ScheduledTaskView.fromMap({
+        'id': 'p',
+        'scheduledTime': DateTime(2026, 11, 9, 9).toUtc().toIso8601String(),
+        'recurrence': {'type': 'weekly'},
+      })!;
+      final plainDraft = TaskDraft.fromTask(plain)..weekdays = [1];
+      expect(plainDraft.diff(plain).recurrence, isNull);
+      plainDraft.weekdays = [1, 4];
+      expect(plainDraft.diff(plain).recurrence, TaskRecurrence.weekly);
+      expect(plainDraft.daysOfWeek, [1, 4]);
+    });
+
+    test('fetched runs replace short listed summaries', () {
+      final start = DateTime.utc(2026, 11, 1, 9);
+      TaskRun run(int i, String status, String summary) => TaskRun.fromMap({
+        'startedAt': start.add(Duration(days: i)).toIso8601String(),
+        'status': status,
+        'resultSummary': summary,
+      });
+      final listed = [run(2, 'running', ''), run(1, 'completed', 'Short…')];
+      expect(mergeTaskRuns(listed, null), listed);
+      final merged = mergeTaskRuns(listed, [
+        run(0, 'completed', 'Oldest, only fetched'),
+        run(1, 'completed', 'Short and then the full text'),
+        run(2, 'completed', 'Stale? No, listed says running'),
+      ]);
+      expect(
+        merged.map((r) => r.resultSummary),
+        [null, 'Short and then the full text', 'Oldest, only fetched'],
+        reason: 'newest first; the listed running run is newer than the fetch',
+      );
+    });
+
     test('formatters', () {
       expect(formatInterval(const Duration(hours: 6)), '6h');
       expect(formatInterval(const Duration(minutes: 90)), '1h 30m');

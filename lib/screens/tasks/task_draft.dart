@@ -18,6 +18,7 @@ class TaskDraft {
     required this.carryOver,
     required this.notify,
     this.linkSessionId,
+    this.weekdays = const [],
   });
 
   /// Defaults for a new task: once, an hour from now, every agent setting at
@@ -73,6 +74,7 @@ class TaskDraft {
     carryOver: task.carryOver,
     notify: task.notify,
     linkSessionId: task.linkedSessionId,
+    weekdays: task.daysOfWeek,
   );
 
   /// A copy of [source] for a new task, on [serverId] with [cwd]. The time
@@ -113,6 +115,9 @@ class TaskDraft {
   DateTime scheduledTime;
   TaskRecurrence recurrence;
   int intervalMinutes;
+
+  /// Weekly only: 0=Sunday to 6=Saturday. Empty means the time's weekday.
+  List<int> weekdays;
   bool carryOver;
   TaskNotify notify;
 
@@ -124,8 +129,34 @@ class TaskDraft {
 
   bool get isRecurring => recurrence != TaskRecurrence.once;
 
-  /// The wire string for [scheduledTime].
-  String get scheduledTimeIso => scheduledTime.toUtc().toIso8601String();
+  /// The days a weekly task runs on, sorted.
+  List<int> get effectiveWeekdays =>
+      weekdays.isEmpty ? [scheduledTime.weekday % 7] : ([...weekdays]..sort());
+
+  /// What a weekly schedule sends as `daysOfWeek`; null for other repeats.
+  List<int>? get daysOfWeek =>
+      recurrence == TaskRecurrence.weekly ? effectiveWeekdays : null;
+
+  /// The first run: [scheduledTime], moved for a weekly task to the first
+  /// chosen weekday on or after it, as the server does.
+  DateTime get firstRun {
+    final days = daysOfWeek;
+    var time = scheduledTime;
+    if (days == null) return time;
+    while (!days.contains(time.weekday % 7)) {
+      time = DateTime(
+        time.year,
+        time.month,
+        time.day + 1,
+        time.hour,
+        time.minute,
+      );
+    }
+    return time;
+  }
+
+  /// The wire string for [firstRun].
+  String get scheduledTimeIso => firstRun.toUtc().toIso8601String();
 
   /// Blocking errors first, then warnings. Save is refused while any error
   /// stands; warnings are shown and may ask for confirmation.
@@ -181,12 +212,17 @@ class TaskDraft {
     }
     final originalTime = original.scheduledTime;
     if (originalTime == null ||
-        !_sameMinute(scheduledTime, originalTime.toLocal())) {
-      changes.scheduledTime = scheduledTime;
+        !_sameMinute(firstRun, originalTime.toLocal())) {
+      changes.scheduledTime = firstRun;
     }
+    final originalDays = original.daysOfWeek.isEmpty && originalTime != null
+        ? [originalTime.toLocal().weekday % 7]
+        : original.daysOfWeek;
     if (recurrence != original.recurrence ||
         (recurrence == TaskRecurrence.custom &&
-            intervalMs != original.intervalMs)) {
+            intervalMs != original.intervalMs) ||
+        (recurrence == TaskRecurrence.weekly &&
+            effectiveWeekdays.join(',') != originalDays.join(','))) {
       changes.recurrence = recurrence;
     }
     if (carryOver != original.carryOver) changes.carryOver = carryOver;

@@ -234,10 +234,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(provider.calls.single.$1, 'updateScheduledTask');
-    expect(provider.calls.single.$2, {
-      'taskId': 'backup',
-      'name': 'Weekly backup audit',
-    });
+    final sent = Map.of(provider.calls.single.$2);
+    expect(sent.remove('requestId'), isA<String>());
+    expect(sent, {'taskId': 'backup', 'name': 'Weekly backup audit'});
     settleFeedback();
   });
 
@@ -350,6 +349,70 @@ void main() {
       reason: 'cleared model travels as an empty string',
     );
     expect(sent['effort'], '', reason: 'cleared effort goes back to default');
+    settleFeedback();
+  });
+
+  testWidgets('weekday chips add days to a weekly task', (tester) async {
+    final provider = FakeTasksProvider();
+    final open = pumpOpener(
+      tester,
+      provider,
+      edit: task(provider, 'backup'),
+      size: const Size(412, 2400),
+    );
+    await open();
+    // The backup runs Mondays, from its time's weekday.
+    FilterChip chip(int day) =>
+        tester.widget<FilterChip>(find.byKey(Key('task-editor-weekday-$day')));
+    expect(chip(1).selected, isTrue);
+    await tester.tap(find.byKey(const Key('task-editor-weekday-4')));
+    await tester.pump();
+    expect(find.textContaining('Runs on Mon, Thu at this time'), findsOneWidget);
+    // The last chosen day cannot be turned off.
+    await tester.tap(find.byKey(const Key('task-editor-weekday-1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('task-editor-weekday-4')));
+    await tester.pump();
+    expect(chip(4).selected, isTrue);
+    await tester.tap(find.byKey(const Key('task-editor-weekday-1')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('task-editor-save')));
+    await tester.pumpAndSettle();
+    final sent = provider.calls.single.$2;
+    expect(sent['recurrence'], {
+      'type': 'weekly',
+      'daysOfWeek': [1, 4],
+    });
+    expect(sent['requestId'], isA<String>());
+    settleFeedback();
+  });
+
+  testWidgets('a refused save shows the computer\'s reason', (tester) async {
+    final provider = FakeTasksProvider();
+    final open = pumpOpener(tester, provider);
+    await open();
+    await tester.enterText(
+      find.byKey(const Key('task-editor-prompt')),
+      'Check the build.',
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('task-editor-save')));
+    await tester.pumpAndSettle();
+    final requestId = provider.calls.single.$2['requestId'];
+    expect(requestId, isA<String>());
+    expect(tasksFeedback.current?.kind, TaskNoticeKind.pending);
+    provider.saveResults.add((
+      serverId: 'tower',
+      requestId: requestId as String,
+      taskId: null,
+      error: 'Folder not found on this computer: /home/billy/agents',
+    ));
+    expect(tasksFeedback.current?.kind, TaskNoticeKind.error);
+    expect(
+      tasksFeedback.current?.text,
+      contains('Folder not found on this computer'),
+    );
+    expect(tasksFeedback.pendingSaveCount, 0);
     settleFeedback();
   });
 

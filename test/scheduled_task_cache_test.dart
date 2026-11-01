@@ -5,6 +5,8 @@ void main() {
   test('task state responses remain routable from inactive servers', () {
     expect(isScheduledTaskStateMessage('scheduled_task_list'), isTrue);
     expect(isScheduledTaskStateMessage('scheduled_task_update'), isTrue);
+    expect(isScheduledTaskStateMessage('scheduled_task_save_result'), isTrue);
+    expect(isScheduledTaskStateMessage('scheduled_task_runs'), isTrue);
     expect(isScheduledTaskStateMessage('scheduled_task_notification'), isFalse);
   });
 

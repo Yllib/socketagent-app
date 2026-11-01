@@ -268,7 +268,8 @@ class _ActionBar extends StatelessWidget {
 }
 
 /// Newest first, 20 at a time. Each run expands to its full text and a
-/// button for its session when one exists.
+/// button for its session when one exists. The task list carries only recent
+/// runs with short summaries, so opening this fetches the full history.
 class _RunHistory extends StatefulWidget {
   const _RunHistory({
     required this.task,
@@ -290,17 +291,50 @@ class _RunHistoryState extends State<_RunHistory> {
   int? _expanded;
 
   @override
+  void initState() {
+    super.initState();
+    _fetchRuns();
+  }
+
+  void _fetchRuns() {
+    final task = widget.task;
+    if (task.serverId.isEmpty) return;
+    context.read<ChatProvider>().requestScheduledTaskRuns(
+      task.serverId,
+      task.id,
+    );
+  }
+
+  @override
   void didUpdateWidget(covariant _RunHistory oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.task.id != widget.task.id) {
       _shown = _page;
       _expanded = null;
+      _fetchRuns();
+      return;
+    }
+    // A run that started or finished since the fetch has a new summary.
+    final before = oldWidget.task.runs.firstOrNull;
+    final after = widget.task.runs.firstOrNull;
+    if (after != null &&
+        (before?.startedAt != after.startedAt ||
+            before?.status != after.status)) {
+      _fetchRuns();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final runs = widget.task.runs;
+    final task = widget.task;
+    final fetched = context.watch<ChatProvider>().scheduledTaskRuns(
+      task.serverId,
+      task.id,
+    );
+    final runs = mergeTaskRuns(task.runs, fetched?.map(TaskRun.fromMap));
+    final total = runs.length > task.runs.length + task.runsOmitted
+        ? runs.length
+        : task.runs.length + task.runsOmitted;
     final scheme = Theme.of(context).colorScheme;
     final palette = context.palette;
     if (runs.isEmpty) {
@@ -317,7 +351,7 @@ class _RunHistoryState extends State<_RunHistory> {
         TaskSectionLabel(
           'Runs',
           trailing: Text(
-            failed == 0 ? '${runs.length}' : '${runs.length} · $failed failed',
+            failed == 0 ? '$total' : '$total · $failed failed',
             style: TextStyle(
               fontSize: 12,
               color: failed == 0 ? scheme.onSurfaceVariant : palette.danger,
@@ -347,6 +381,8 @@ class _RunHistoryState extends State<_RunHistory> {
               style: const TextStyle(fontSize: 12),
             ),
           ),
+        if (runs.length < total && runs.length <= _shown)
+          TaskNote('Loading ${total - runs.length} older runs'),
       ],
     );
   }

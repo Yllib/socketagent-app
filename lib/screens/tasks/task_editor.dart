@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' show Random;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -376,6 +377,14 @@ class _TaskEditorState extends State<TaskEditor> {
     provider.requestModelCatalog(_draft.serverId, harness.wire);
   }
 
+  /// Turns a weekday on or off. The last chosen day stays on.
+  void _toggleWeekday(int day) {
+    final days = {..._draft.effectiveWeekdays};
+    if (!days.remove(day)) days.add(day);
+    if (days.isEmpty) return;
+    _update(() => _draft.weekdays = days.toList()..sort());
+  }
+
   void _setRecurrence(TaskRecurrence recurrence) {
     _update(() {
       final wasOnce = _draft.recurrence == TaskRecurrence.once;
@@ -551,6 +560,10 @@ class _TaskEditorState extends State<TaskEditor> {
       if (!ok || !mounted) return;
     }
     setState(() => _saving = true);
+    final requestId = List.generate(
+      12,
+      (_) => Random.secure().nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
     final bool sent;
     final bool Function(ScheduledTaskView) match;
     if (original != null && changes != null) {
@@ -567,8 +580,10 @@ class _TaskEditorState extends State<TaskEditor> {
         scheduledTime: c.scheduledTime?.toUtc().toIso8601String(),
         recurrenceType: c.recurrence?.wire,
         customIntervalMs: _draft.intervalMs,
+        daysOfWeek: _draft.daysOfWeek,
         reuseSession: c.carryOver,
         notificationMode: c.notify?.wire,
+        requestId: requestId,
       );
       final wantTime = c.scheduledTime?.toUtc().toIso8601String();
       match = (task) =>
@@ -592,9 +607,11 @@ class _TaskEditorState extends State<TaskEditor> {
             : _draft.permissionMode,
         recurrenceType: _draft.recurrence.wire,
         customIntervalMs: _draft.intervalMs,
+        daysOfWeek: _draft.daysOfWeek,
         reuseSession: _draft.carryOver,
         notificationMode: _draft.notify.wire,
         serverId: serverId,
+        requestId: requestId,
       );
       match = (task) =>
           task.prompt == _draft.prompt &&
@@ -616,6 +633,7 @@ class _TaskEditorState extends State<TaskEditor> {
       serverId: serverId,
       label: label,
       match: match,
+      requestId: requestId,
     );
     Navigator.of(context).pop(TaskEditorOutcome.saved);
   }
@@ -929,13 +947,36 @@ class _TaskEditorState extends State<TaskEditor> {
             ],
           ),
         ),
+      if (_draft.recurrence == TaskRecurrence.weekly)
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final day in const [1, 2, 3, 4, 5, 6, 0])
+                FilterChip(
+                  key: Key('task-editor-weekday-$day'),
+                  label: Text(weekdayShort(day)),
+                  showCheckmark: false,
+                  visualDensity: VisualDensity.compact,
+                  selected: _draft.effectiveWeekdays.contains(day),
+                  onSelected: (_) => _toggleWeekday(day),
+                ),
+            ],
+          ),
+        ),
+      if (!_sameMinute(_draft.firstRun, time))
+        TaskNote(
+          'First run ${formatWhen(_draft.firstRun, now: now)}, the first chosen day.',
+        ),
       if (_draft.isRecurring && upcoming.length > 1)
         TaskNote(
           'Then ${upcoming.skip(1).map((t) => formatWhen(t, now: now)).join(', ')}. '
           '${switch (_draft.recurrence) {
-            TaskRecurrence.daily => 'Adds exactly 24 h, so the clock time shifts an hour across a daylight saving change.',
-            TaskRecurrence.weekly => 'Every 7 days on this weekday.',
-            TaskRecurrence.monthly => 'Same day next month; the 29th to 31st drift.',
+            TaskRecurrence.daily => 'Same clock time every day, across daylight saving changes too.',
+            TaskRecurrence.weekly => 'Runs on ${weekdayList(_draft.effectiveWeekdays)} at this time.',
+            TaskRecurrence.monthly => 'Same day each month. A 29th to 31st runs on the last day of shorter months.',
             _ => 'Runs missed while the computer is off are skipped.',
           }}',
         ),
@@ -950,8 +991,18 @@ class _TaskEditorState extends State<TaskEditor> {
       'recurrence': {
         'type': _draft.recurrence.wire,
         if (_draft.intervalMs != null) 'intervalMs': _draft.intervalMs,
+        'daysOfWeek': ?_draft.daysOfWeek,
+        if (_draft.recurrence == TaskRecurrence.monthly)
+          'dayOfMonth': _draft.firstRun.day,
       },
   })!;
+
+  static bool _sameMinute(DateTime a, DateTime b) =>
+      a.year == b.year &&
+      a.month == b.month &&
+      a.day == b.day &&
+      a.hour == b.hour &&
+      a.minute == b.minute;
 
   List<Widget> _deliveryFields() {
     final linkTitle = _sessionTitle(

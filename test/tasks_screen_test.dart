@@ -211,6 +211,32 @@ void main() {
     expect(provider.calls.last.$1, 'restoreScheduledTask');
   });
 
+  testWidgets('detail fetches the runs the list left out', (tester) async {
+    final provider = FakeTasksProvider(
+      statuses: const {
+        'tower': ConnectionStatus.connected,
+        'laptop': ConnectionStatus.connected,
+      },
+    );
+    final backup = provider.tasks.firstWhere((t) => t['id'] == 'backup');
+    final allRuns = List<Map<String, dynamic>>.from(backup['runs'] as List);
+    backup['runs'] = allRuns.sublist(0, 5);
+    backup['runsOmitted'] = allRuns.length - 5;
+    await pump(tester, provider, size: desktop);
+
+    await tester.tap(find.text('Weekly backup check'));
+    await tester.pump();
+    expect(provider.runRequests, contains('backup'));
+    final runCount = find.textContaining(RegExp(r'^17\b'));
+    expect(runCount, findsOneWidget, reason: 'listed plus left out');
+    expect(find.text('Loading 12 older runs'), findsOneWidget);
+
+    provider.answerRuns('backup', allRuns);
+    await tester.pump();
+    expect(find.textContaining('older runs'), findsNothing);
+    expect(runCount, findsOneWidget);
+  });
+
   testWidgets('session view shows only linked tasks and offers New task',
       (tester) async {
     await pump(

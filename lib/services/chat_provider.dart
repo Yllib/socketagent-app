@@ -497,6 +497,15 @@ class _PendingHardStop {
 /// the message came over the legacy single connection.
 typedef ScheduledTaskError = ({String? serverId, String message});
 
+/// A computer's answer to a task save that carried a request id. [error]
+/// means nothing was saved.
+typedef ScheduledTaskSaveResult = ({
+  String? serverId,
+  String requestId,
+  String? taskId,
+  String? error,
+});
+
 class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const String _legacyCancelPrepend =
       '[The user cancelled your previous action. Follow their instructions below.]';
@@ -610,6 +619,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// computer.
   final StreamController<ScheduledTaskError> _scheduledTaskErrors =
       StreamController.broadcast();
+  final StreamController<ScheduledTaskSaveResult> _scheduledTaskSaveResults =
+      StreamController.broadcast();
+
+  /// Full run histories fetched with `get_scheduled_task_runs`, keyed
+  /// `serverId|taskId`, oldest first as the server stores them.
+  final Map<String, List<Map<String, dynamic>>> _scheduledTaskRuns = {};
   final Map<String, DateTime> _lastScheduledTaskWriteAt = {};
   final StreamController<Map<String, dynamic>> _terminalEvents =
       StreamController.broadcast();
@@ -1046,6 +1061,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _scheduledTasks.where(scheduledTaskHasUnreadResult).length;
   Stream<ScheduledTaskError> get scheduledTaskErrors =>
       _scheduledTaskErrors.stream;
+  Stream<ScheduledTaskSaveResult> get scheduledTaskSaveResults =>
+      _scheduledTaskSaveResults.stream;
+
+  /// The full run history of a task once [requestScheduledTaskRuns] got an
+  /// answer, else null.
+  List<Map<String, dynamic>>? scheduledTaskRuns(
+    String serverId,
+    String taskId,
+  ) => _scheduledTaskRuns['$serverId|$taskId'];
+
+  /// Asks [serverId] for one task's full run history.
+  bool requestScheduledTaskRuns(String serverId, String taskId) =>
+      _connMgr.sendToServer(serverId, {
+        'type': 'get_scheduled_task_runs',
+        'taskId': taskId,
+      });
 
   /// Revision of the last task list loaded from [serverId]. It changes with
   /// every list the server sends after a change, so a save is confirmed once
@@ -7288,6 +7319,34 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           } else {
             _scheduledTasks = tasks;
           }
+          notifyListeners();
+          break;
+        case 'scheduled_task_save_result':
+          final requestId = msg['requestId'];
+          if (requestId is! String) break;
+          final taskId = msg['taskId'] is String
+              ? msg['taskId'] as String
+              : null;
+          final error = msg['error'] is String ? msg['error'] as String : null;
+          // A refused edit leaves the optimistic local copy wrong; reload.
+          if (error != null && taskId != null && serverId != null) {
+            _connMgr.sendToServer(serverId, {'type': 'list_scheduled_tasks'});
+          }
+          _scheduledTaskSaveResults.add((
+            serverId: serverId,
+            requestId: requestId,
+            taskId: taskId,
+            error: error,
+          ));
+          break;
+        case 'scheduled_task_runs':
+          final taskId = msg['taskId'];
+          final runs = msg['runs'];
+          if (serverId == null || taskId is! String || runs is! List) break;
+          _scheduledTaskRuns['$serverId|$taskId'] = [
+            for (final run in runs)
+              if (run is Map) Map<String, dynamic>.from(run),
+          ];
           notifyListeners();
           break;
         case 'scheduled_task_update':
@@ -18486,10 +18545,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _scheduledTaskErrors.add((serverId: serverId, message: message));
   }
 
-  /// Creates a task on [serverId]. Null [effort] and [permissionMode] leave
-  /// the fields unset so the run uses the harness default. Returns whether a
-  /// live connection took the message; the task itself only appears with
-  /// the next `scheduled_task_list`.
   /// Model lists per computer and harness, from `get_model_catalog`. A key is
   /// absent until the computer answers, and the list is empty when it has no
   /// cached catalog for that harness.
@@ -18506,6 +18561,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Creates a task on [serverId]. Null [effort] and [permissionMode] leave
+  /// the fields unset so the run uses the harness default. Returns whether a
+  /// live connection took the message. With [requestId] the computer answers
+  /// with `scheduled_task_save_result` (see [scheduledTaskSaveResults]).
   bool scheduleTask({
     String? name,
     String? linkedSessionId,
@@ -18518,12 +18577,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? permissionMode,
     String? recurrenceType,
     int? customIntervalMs,
+    List<int>? daysOfWeek,
     bool reuseSession = false,
     String notificationMode = 'completion',
     String? serverId,
+    String? requestId,
   }) {
     final msg = <String, dynamic>{
       'type': 'schedule_task',
+      'requestId': ?requestId,
       'linkedSessionId': ?linkedSessionId,
       if (name != null && name.trim().isNotEmpty) 'name': name.trim(),
       'prompt': prompt,
@@ -18542,6 +18604,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         'type': recurrenceType,
         if (recurrenceType == 'custom' && customIntervalMs != null)
           'intervalMs': customIntervalMs,
+        if (recurrenceType == 'weekly' && daysOfWeek != null)
+          'daysOfWeek': daysOfWeek,
       };
     }
     return _sendScheduledTaskMessage(serverId, msg);
@@ -18549,8 +18613,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Sends the given fields; null means unchanged, `recurrenceType` 'once'
   /// clears the recurrence and an empty [model], [effort] or [permissionMode]
-  /// goes back to the harness default. The local
-  /// copy is updated at once. Returns whether a live connection took it.
+  /// goes back to the harness default. The local copy is updated at once.
+  /// Returns whether a live connection took it. With [requestId] the computer
+  /// answers with `scheduled_task_save_result`.
   bool updateScheduledTask({
     required String taskId,
     String? name,
@@ -18563,12 +18628,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String? scheduledTime,
     String? recurrenceType,
     int? customIntervalMs,
+    List<int>? daysOfWeek,
     bool? reuseSession,
     String? notificationMode,
+    String? requestId,
   }) {
     final msg = <String, dynamic>{
       'type': 'update_scheduled_task',
       'taskId': taskId,
+      'requestId': ?requestId,
     };
     if (name != null) msg['name'] = name.trim();
     if (prompt != null) msg['prompt'] = prompt;
@@ -18590,6 +18658,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'type': recurrenceType,
           if (recurrenceType == 'custom' && customIntervalMs != null)
             'intervalMs': customIntervalMs,
+          if (recurrenceType == 'weekly' && daysOfWeek != null)
+            'daysOfWeek': daysOfWeek,
         };
       }
     }
@@ -20996,6 +21066,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _scheduledTaskRefreshRetries.clear();
     unawaited(_scheduledTaskErrors.close());
+    unawaited(_scheduledTaskSaveResults.close());
     for (final completer in _codexGoalCompleters.values) {
       if (!completer.isCompleted) {
         completer.completeError(StateError('SocketAgent app is closing.'));

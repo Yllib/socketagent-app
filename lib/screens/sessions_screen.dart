@@ -27,6 +27,8 @@ import 'home_screen.dart';
 import 'main_shell_screen.dart';
 import 'onboarding_screen.dart';
 import 'session_browser_screen.dart';
+import 'tasks/task_editor.dart' show showTaskEditor, TaskEditorOutcome;
+import 'tasks/task_feedback.dart' show showTaskSaveSnackBar;
 import '../config/app_palette.dart';
 import '../widgets/light_backdrop.dart';
 import '../widgets/second_ticker.dart';
@@ -44,6 +46,7 @@ enum _SessionMenuAction {
   makePermanent,
   fork,
   teleport,
+  scheduleTask,
   startFresh,
   tools,
   archive,
@@ -2925,6 +2928,12 @@ class _SessionsTabState extends State<SessionsTab> {
             label: 'Teleport session',
             icon: Icons.move_up_outlined,
           ),
+          const AdaptiveSheetAction(
+            value: _SessionMenuAction.scheduleTask,
+            label: 'Schedule a task that reports here',
+            subtitle: 'Each result continues this session',
+            icon: Icons.schedule_send_outlined,
+          ),
           if (session.backend == 'codex')
             AdaptiveSheetAction(
               value: _SessionMenuAction.startFresh,
@@ -2982,6 +2991,15 @@ class _SessionsTabState extends State<SessionsTab> {
         await _forkSession(context, session);
       case _SessionMenuAction.teleport:
         _showTeleportSessionSheet(context, session);
+      case _SessionMenuAction.scheduleTask:
+        final outcome = await showTaskEditor(
+          context,
+          serverId: session.serverId.isEmpty ? null : session.serverId,
+          linkSessionId: session.id,
+        );
+        if (outcome == TaskEditorOutcome.saved && context.mounted) {
+          showTaskSaveSnackBar(context);
+        }
       case _SessionMenuAction.startFresh:
         await _confirmStartFreshThread(context, session);
       case _SessionMenuAction.tools:

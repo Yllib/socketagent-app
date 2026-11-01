@@ -37,6 +37,8 @@ class ScheduledTaskView {
     required this.archivedAt,
     required this.runs,
     required this.raw,
+    this.daysOfWeek = const [],
+    this.runsOmitted = 0,
   });
 
   final String id;
@@ -58,6 +60,10 @@ class ScheduledTaskView {
   final TaskRecurrence recurrence;
   final int? intervalMs;
 
+  /// Weekly only: 0=Sunday to 6=Saturday, sorted. Empty repeats on the
+  /// scheduled time's weekday.
+  final List<int> daysOfWeek;
+
   /// Wire field `reuseSession`. The server prepends the last two run
   /// summaries to the prompt; it never reuses a session.
   final bool carryOver;
@@ -74,8 +80,12 @@ class ScheduledTaskView {
   final DateTime? lastReadAt;
   final DateTime? archivedAt;
 
-  /// Newest first.
+  /// Newest first. The task list carries only the newest runs, with short
+  /// summaries; `get_scheduled_task_runs` returns the full history.
   final List<TaskRun> runs;
+
+  /// Older runs the list left out.
+  final int runsOmitted;
   final Map<String, dynamic> raw;
 
   /// Null when the map has no id. Everything else falls back to a safe value
@@ -86,10 +96,18 @@ class ScheduledTaskView {
     final recurrenceMap = map['recurrence'];
     var recurrence = TaskRecurrence.once;
     int? intervalMs;
+    var daysOfWeek = const <int>[];
     if (recurrenceMap is Map) {
       recurrence = TaskRecurrence.parse(_string(recurrenceMap['type']));
       final interval = recurrenceMap['intervalMs'];
       if (interval is num && interval.isFinite) intervalMs = interval.toInt();
+      final days = recurrenceMap['daysOfWeek'];
+      if (days is List) {
+        daysOfWeek = {
+          for (final day in days)
+            if (day is int && day >= 0 && day <= 6) day,
+        }.toList()..sort();
+      }
     }
     final runs = <TaskRun>[
       for (final rawRun
@@ -102,6 +120,7 @@ class ScheduledTaskView {
       return bt.compareTo(at);
     });
     final runCount = map['runCount'];
+    final runsOmitted = map['runsOmitted'];
     final scheduledTimeRaw = _string(map['scheduledTime']) ?? '';
     return ScheduledTaskView(
       id: id,
@@ -134,6 +153,8 @@ class ScheduledTaskView {
       archivedAt: _time(map['archivedAt']),
       runs: runs,
       raw: map,
+      daysOfWeek: daysOfWeek,
+      runsOmitted: runsOmitted is int && runsOmitted > 0 ? runsOmitted : 0,
     );
   }
 
@@ -171,9 +192,12 @@ class ScheduledTaskView {
   }
 
   /// "Once", "Daily", "Weekly", "Monthly" or "Every 6h".
-  String get recurrenceLabel => recurrence == TaskRecurrence.custom
-      ? 'Every ${formatInterval(Duration(milliseconds: intervalMs ?? 0))}'
-      : recurrence.label;
+  String get recurrenceLabel => switch (recurrence) {
+    TaskRecurrence.custom =>
+      'Every ${formatInterval(Duration(milliseconds: intervalMs ?? 0))}',
+    TaskRecurrence.weekly when daysOfWeek.isNotEmpty => weekdayList(daysOfWeek),
+    _ => recurrence.label,
+  };
 
   /// The newest finished run, or null before the first run ends.
   TaskRun? get latestFinishedRun =>
@@ -208,11 +232,7 @@ class ScheduledTaskView {
   /// intervals of at least a minute.
   DateTime? _advance(DateTime from, DateTime after) {
     final rule = raw['recurrence'];
-    final weekdays = <int>{
-      if (rule is Map && rule['daysOfWeek'] is List)
-        for (final day in rule['daysOfWeek'] as List)
-          if (day is int) day,
-    };
+    final weekdays = daysOfWeek.toSet();
     final storedDay = rule is Map ? rule['dayOfMonth'] : null;
     final dayOfMonth = storedDay is int
         ? storedDay
@@ -268,6 +288,43 @@ class ScheduledTaskView {
     if (notify == TaskNotify.quiet) 'quiet',
     if (carryOver) 'carry-over',
   ].join(' · ');
+}
+
+/// A task's runs for display, newest first: the [listed] runs from the task
+/// list (newest only, short summaries) merged with a [fetched] full history.
+/// A fetched run replaces a listed one with the same start and status, for
+/// its full summary; a listed run that moved on since the fetch stays.
+List<TaskRun> mergeTaskRuns(List<TaskRun> listed, Iterable<TaskRun>? fetched) {
+  if (fetched == null) return listed;
+  final byStart = <DateTime, TaskRun>{
+    for (final run in fetched)
+      if (run.startedAt != null) run.startedAt!: run,
+  };
+  for (final run in listed) {
+    final start = run.startedAt;
+    if (start == null) continue;
+    final full = byStart[start];
+    if (full == null || full.status != run.status) byStart[start] = run;
+  }
+  final merged = byStart.values.toList()
+    ..sort((a, b) => b.startedAt!.compareTo(a.startedAt!));
+  return [...merged, ...listed.where((run) => run.startedAt == null)];
+}
+
+const _weekdayShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/// Short name of a weekday numbered as the server does, 0=Sunday.
+String weekdayShort(int day) => _weekdayShort[day % 7];
+
+/// "Mon, Thu" for server weekday numbers, Monday first; "Every day" for all
+/// seven.
+String weekdayList(Iterable<int> days) {
+  final set = days.toSet();
+  if (set.length == 7) return 'Every day';
+  return [
+    for (final day in const [1, 2, 3, 4, 5, 6, 0])
+      if (set.contains(day)) weekdayShort(day),
+  ].join(', ');
 }
 
 /// One execution of a task, newest first in [ScheduledTaskView.runs].

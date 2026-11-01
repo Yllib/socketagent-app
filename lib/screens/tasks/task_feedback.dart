@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 
 import '../../services/chat_provider.dart';
 import 'task_model.dart';
@@ -78,15 +78,17 @@ class TasksFeedback extends ChangeNotifier {
     });
   }
 
-  /// Watches for [serverId]'s next list to carry a task matching [match].
-  /// There is no save acknowledgement in the protocol, so this is the only
-  /// confirmation: the list revision must move and the task must be there.
-  /// Reports success or, after a timeout, that the computer never confirmed.
+  /// Reports the outcome of a save. The computer's
+  /// `scheduled_task_save_result` for [requestId] decides it, including a
+  /// refusal with its reason. Servers from before that message only show the
+  /// result in their task list, so a new list revision carrying a task that
+  /// fits [match] also counts. With neither, it times out.
   void trackSave(
     ChatProvider provider, {
     required String serverId,
     required String label,
     required bool Function(ScheduledTaskView task) match,
+    String? requestId,
   }) {
     final computer = computerNameFor(provider, serverId);
     show('Saving "$label" on $computer', kind: TaskNoticeKind.pending);
@@ -96,9 +98,17 @@ class TasksFeedback extends ChangeNotifier {
       serverId: serverId,
       revisionAtSave: provider.scheduledTaskRevision(serverId),
       match: match,
+      requestId: requestId,
       onConfirmed: () {
         _pending.remove(pending);
         show('Saved "$label" on $computer');
+      },
+      onRefused: (error) {
+        _pending.remove(pending);
+        show(
+          '$computer did not save "$label": $error',
+          kind: TaskNoticeKind.error,
+        );
       },
       onTimeout: () {
         _pending.remove(pending);
@@ -141,11 +151,26 @@ class _PendingSave {
     required this.serverId,
     required this.revisionAtSave,
     required this.match,
+    required this.requestId,
     required this.onConfirmed,
+    required this.onRefused,
     required this.onTimeout,
     required Duration timeout,
   }) {
     provider.addListener(_check);
+    if (requestId != null) {
+      _results = provider.scheduledTaskSaveResults
+          .where((r) => r.requestId == requestId)
+          .listen((result) {
+            final error = result.error;
+            cancel();
+            if (error == null) {
+              onConfirmed();
+            } else {
+              onRefused(error);
+            }
+          });
+    }
     _timer = Timer(timeout, () {
       cancel();
       onTimeout();
@@ -157,9 +182,12 @@ class _PendingSave {
   final String serverId;
   final String? revisionAtSave;
   final bool Function(ScheduledTaskView task) match;
+  final String? requestId;
   final VoidCallback onConfirmed;
+  final void Function(String error) onRefused;
   final VoidCallback onTimeout;
   late final Timer _timer;
+  StreamSubscription<ScheduledTaskSaveResult>? _results;
   bool _done = false;
 
   void _check() {
@@ -178,12 +206,27 @@ class _PendingSave {
     if (_done) return;
     _done = true;
     _timer.cancel();
+    unawaited(_results?.cancel());
     provider.removeListener(_check);
   }
 }
 
 /// The shared strip state. One per app, like the provider it binds to.
 final tasksFeedback = TasksFeedback();
+
+/// Follows a save started outside the Tasks screens, which have no feedback
+/// strip, in a snack bar that updates from saving to saved or refused.
+void showTaskSaveSnackBar(BuildContext context) {
+  ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+    SnackBar(
+      duration: const Duration(seconds: 8),
+      content: ListenableBuilder(
+        listenable: tasksFeedback,
+        builder: (_, _) => Text(tasksFeedback.current?.text ?? ''),
+      ),
+    ),
+  );
+}
 
 /// The configured name of a computer, or a short id when it is gone.
 String computerNameFor(ChatProvider provider, String serverId) {
