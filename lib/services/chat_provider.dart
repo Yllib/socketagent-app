@@ -5476,9 +5476,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'html_plan_operation_result',
       'html_plan_revision_list',
       'html_plan_revision',
-      'work_review_snapshot',
-      'work_review_list_result',
-      'work_review_operation_result',
       'server_settings',
       'backend_install_progress',
       'backend_auth_callback_result',
@@ -5603,7 +5600,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             type == 'user_message_uuid' ||
             type == 'file' ||
             type == 'html_plan' ||
-            type == 'work_review_card' ||
             type == 'browser_session_open' ||
             type == 'monitor_output' ||
             type == 'text' ||
@@ -5687,9 +5683,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'html_plan':
           _handleHtmlPlan(msg);
-          break;
-        case 'work_review_card':
-          _handleWorkReviewCard(msg, serverId);
           break;
         case 'html_plan_list':
           _handleHtmlPlanList(msg);
@@ -7756,7 +7749,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             type == 'user_message_uuid' ||
             type == 'file' ||
             type == 'html_plan' ||
-            type == 'work_review_card' ||
             type == 'browser_session_open' ||
             type == 'text' ||
             type == 'thinking');
@@ -10166,7 +10158,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final isSubagentTool =
         (tool == 'Task' || tool == 'Agent') &&
         !_codexAgentControlTypes.contains(subagentType);
-    if (tool == 'HtmlPlan' || tool == 'WorkReview') {
+    if (tool == 'HtmlPlan') {
       if (toolUseId.isNotEmpty) {
         _toolEventReconciler.discard(toolUseId);
         _suppressedToolUseIds.add(toolUseId);
@@ -10835,31 +10827,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       (message) =>
           message.type == MessageType.htmlPlan &&
           message.toolUseId == plan.planId,
-    );
-    if (existingCard >= 0) {
-      _messages[existingCard] = card;
-    } else {
-      _closeLiveStreamsForParent(null);
-      _messages.add(card);
-    }
-    notifyListeners();
-  }
-
-  void _handleWorkReviewCard(Map<String, dynamic> msg, String? serverId) {
-    final reviewId =
-        (msg['reviewId'] ??
-                (msg['review'] is Map
-                    ? (msg['review'] as Map)['reviewId']
-                    : null) ??
-                '')
-            .toString();
-    if (reviewId.isEmpty) return;
-    final card = ChatMessage.workReview(msg, serverId: serverId);
-    applyTranscriptPosition(card, msg);
-    final existingCard = _messages.indexWhere(
-      (message) =>
-          message.type == MessageType.workReview &&
-          message.toolUseId == reviewId,
     );
     if (existingCard >= 0) {
       _messages[existingCard] = card;
@@ -14106,10 +14073,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
             break;
           }
-          if (toolName == 'WorkReview') {
-            if (toolUseId.isNotEmpty) skippedToolUseIds.add(toolUseId);
-            break;
-          }
           final toolCallMsg = ChatMessage.toolCall(
             tool: toolName,
             input: toolInput,
@@ -14389,40 +14352,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 loaded[existingIndex] = planMessage;
               } else {
                 loaded.add(planMessage);
-              }
-            }
-          }
-          break;
-        case 'work_review':
-        case 'work_review_card':
-          final rawReview =
-              entry['workReview'] ??
-              entry['toolInput'] ??
-              entry['review'] ??
-              entry;
-          if (rawReview is Map) {
-            final payload = Map<String, dynamic>.from(rawReview);
-            final reviewId =
-                (payload['reviewId'] ??
-                        (payload['review'] is Map
-                            ? (payload['review'] as Map)['reviewId']
-                            : null) ??
-                        '')
-                    .toString();
-            if (reviewId.isNotEmpty) {
-              final reviewMessage = ChatMessage.workReview(
-                payload,
-                serverId: serverId,
-              );
-              final existingIndex = loaded.indexWhere(
-                (message) =>
-                    message.type == MessageType.workReview &&
-                    message.toolUseId == reviewId,
-              );
-              if (existingIndex >= 0) {
-                loaded[existingIndex] = reviewMessage;
-              } else {
-                loaded.add(reviewMessage);
               }
             }
           }

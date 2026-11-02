@@ -248,15 +248,6 @@ Map<String, dynamic>? transcriptCacheEntryFromServerEvent(
         if (event['subagentStatus'] != null)
           'subagentStatus': event['subagentStatus'],
       };
-    case 'work_review_card':
-      return {
-        ...base,
-        'role': 'work_review',
-        'content': '',
-        'workReview': event['review'] is Map
-            ? Map<String, dynamic>.from(event['review'] as Map)
-            : Map<String, dynamic>.from(event),
-      };
     case 'browser_session_open':
       final profile = event['profile']?.toString() ?? '';
       final url = event['url']?.toString() ?? '';

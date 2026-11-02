@@ -181,7 +181,6 @@ void main() {
         toolUseId: 'send-file',
       ),
       ChatMessage.htmlPlan({'planId': 'plan-1', 'title': 'Plan'}),
-      ChatMessage.workReview({'reviewId': 'review-1', 'title': 'Review'}),
       ChatMessage.backendAuth(
         serverId: 'computer-1',
         backend: 'codex',

@@ -53,8 +53,6 @@ import '../widgets/secret_manager_sheet.dart';
 import '../widgets/html_plan_manager_sheet.dart';
 import '../widgets/tts_playback_bar.dart';
 import '../widgets/codex_goal_manager_sheet.dart';
-import '../services/work_review_repository.dart';
-import 'work_reviews_screen.dart';
 import 'session_memory_screen.dart';
 import '../widgets/session_backend_watermark.dart';
 import '../config/app_palette.dart';
@@ -1920,10 +1918,6 @@ class _ChatScreenState extends State<_ChatScreen> {
         )
         .firstOrNull;
     final fleeting = activeSession?.isFleeting == true;
-    final reviews = context.read<WorkReviewRepository>();
-    final supportsReviews =
-        serverId != null && reviews.supportsServer(serverId);
-    final reviewCount = serverId == null ? 0 : reviews.pendingCount(serverId);
     final hiddenPanels = _hiddenPanels(provider);
     final cwd = provider.activeSessionCwd?.trim() ?? '';
     final collaborationMode = provider.codexCollaborationModes
@@ -2005,13 +1999,6 @@ class _ChatScreenState extends State<_ChatScreen> {
                   ? null
                   : 'Requires an updated computer',
             ),
-          SessionAction(
-            'work_reviews',
-            'Work reviews',
-            Icons.fact_check_outlined,
-            enabled: supportsReviews,
-            subtitle: reviewCount > 0 ? '$reviewCount awaiting review' : null,
-          ),
           if (codex)
             SessionAction(
               'session_memory',
@@ -2204,21 +2191,6 @@ class _ChatScreenState extends State<_ChatScreen> {
         Navigator.of(
           context,
         ).push(MaterialPageRoute(builder: (_) => const SessionMemoryScreen()));
-        break;
-      case 'work_reviews':
-        if (serverId != null) {
-          final config = provider.serverConfigs
-              .where((item) => item.id == serverId)
-              .firstOrNull;
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => WorkReviewsScreen(
-                serverId: serverId,
-                serverLabel: config?.name,
-              ),
-            ),
-          );
-        }
         break;
       case 'terminal':
         _openTerminal(provider, projectPath);

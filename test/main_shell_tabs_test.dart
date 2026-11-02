@@ -2,7 +2,6 @@ import 'package:app/screens/main_shell_screen.dart';
 import 'package:app/services/chat_provider.dart';
 import 'package:app/services/desktop_workspace_controller.dart';
 import 'package:app/services/theme_mode_controller.dart';
-import 'package:app/services/work_review_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -30,15 +29,11 @@ void main() {
     final provider = FakeComputersProvider(
       configs: [fakeConfig('tower', 'tower', host: '10.0.0.4')],
     );
-    final reviews = WorkReviewRepository(
-      transport: ConnectionManagerWorkReviewTransport(provider.connMgr),
-    );
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider(create: (_) => DesktopWorkspaceController()),
           ChangeNotifierProvider<ChatProvider>(create: (_) => provider),
-          ChangeNotifierProvider<WorkReviewRepository>.value(value: reviews),
           ChangeNotifierProvider(create: (_) => ThemeModeController()),
         ],
         child: MaterialApp(home: MainShellScreen(initialIndex: initialIndex)),

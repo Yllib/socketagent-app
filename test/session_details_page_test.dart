@@ -29,7 +29,7 @@ Future<List<String>> _open(WidgetTester tester, Size size) async {
                   ],
                   sections: [
                     const SessionDetailsSection('Open', [
-                      SessionAction('reviews', 'Work reviews', Icons.check),
+                      SessionAction('terminal', 'Terminal', Icons.terminal),
                     ]),
                     SessionDetailsSection('Settings', [
                       SessionAction(
@@ -72,10 +72,10 @@ void main() {
     await tester.tap(find.byType(Switch));
     await tester.pump();
     expect(tester.widget<Switch>(find.byType(Switch)).value, isTrue);
-    await tester.tap(find.text('Work reviews'));
+    await tester.tap(find.text('Terminal'));
     await tester.tap(find.byKey(const ValueKey('session-quick-files')));
     await tester.pump();
-    expect(actions, ['notify', 'reviews', 'files']);
+    expect(actions, ['notify', 'terminal', 'files']);
     expect(find.text('Fix the build'), findsOneWidget);
   });
 

@@ -13,7 +13,6 @@ import 'package:app/services/chat_provider.dart';
 import 'package:app/services/desktop_workspace_controller.dart';
 import 'package:app/services/theme_mode_controller.dart';
 import 'package:app/services/websocket_service.dart' show ConnectionStatus;
-import 'package:app/services/work_review_repository.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -159,9 +158,6 @@ Future<void> pumpAt(
   tester.view.devicePixelRatio = dpr;
   addTearDown(tester.view.reset);
   await tester.runAsync(loadFonts);
-  final reviews = WorkReviewRepository(
-    transport: ConnectionManagerWorkReviewTransport(provider.connMgr),
-  );
   await tester.pumpWidget(
     RepaintBoundary(
       key: captureKey,
@@ -172,7 +168,6 @@ Future<void> pumpAt(
             create: (_) => provider,
             lazy: false,
           ),
-          ChangeNotifierProvider<WorkReviewRepository>.value(value: reviews),
           ChangeNotifierProvider(
             create: (_) => ThemeModeController(ThemeMode.dark),
           ),

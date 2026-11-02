@@ -16,7 +16,6 @@ import 'services/theme_mode_controller.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'widgets/desktop_window_frame.dart';
 import 'widgets/desktop_startup.dart';
-import 'services/work_review_repository.dart';
 import 'services/notification_service.dart';
 import 'services/push_notification_service.dart';
 import 'services/firebase_project_configuration_service.dart';
@@ -57,7 +56,6 @@ Future<Widget> _initializeApp() async {
   await NotificationService().initialize();
   final chatProvider = ChatProvider();
   chatProvider.connMgr.watchNetworkChanges();
-  WorkReviewRepository? workReviews;
   try {
     await chatProvider.settingsReady;
     final themeMode = await ThemeModeController.load();
@@ -66,18 +64,9 @@ Future<Widget> _initializeApp() async {
         chatProvider.verifyGooglePlayPurchase,
       );
     }
-    workReviews = WorkReviewRepository(
-      transport: ConnectionManagerWorkReviewTransport(chatProvider.connMgr),
-    );
-    await workReviews.initialize();
     if (Platform.isAndroid) await PushNotificationService().initialize();
-    return ClaudeAssistantApp(
-      chatProvider: chatProvider,
-      workReviews: workReviews,
-      themeMode: themeMode,
-    );
+    return ClaudeAssistantApp(chatProvider: chatProvider, themeMode: themeMode);
   } catch (_) {
-    workReviews?.dispose();
     chatProvider.dispose();
     rethrow;
   }
@@ -104,13 +93,11 @@ Future<void> _verifyDistribution() async {
 
 class ClaudeAssistantApp extends StatelessWidget {
   final ChatProvider chatProvider;
-  final WorkReviewRepository workReviews;
   final ThemeModeController themeMode;
 
   const ClaudeAssistantApp({
     super.key,
     required this.chatProvider,
-    required this.workReviews,
     required this.themeMode,
   });
 
@@ -120,7 +107,6 @@ class ClaudeAssistantApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => DesktopWorkspaceController()),
         ChangeNotifierProvider.value(value: chatProvider),
-        ChangeNotifierProvider.value(value: workReviews),
         ChangeNotifierProvider.value(value: themeMode),
       ],
       child: Consumer<ThemeModeController>(

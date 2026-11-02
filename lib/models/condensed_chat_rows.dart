@@ -194,7 +194,6 @@ bool isCondensedConversationMessage(ChatMessage message) {
     case MessageType.codexPlan:
     case MessageType.codexCommand:
     case MessageType.htmlPlan:
-    case MessageType.workReview:
     case MessageType.runBoundary:
       return true;
     case MessageType.toolCall:
