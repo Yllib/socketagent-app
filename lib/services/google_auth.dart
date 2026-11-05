@@ -49,6 +49,10 @@ abstract class GoogleAuth {
   static GoogleAuth forPlatform(SecureStorageService storage) =>
       Platform.isAndroid
       ? GoogleSignInAuth()
+      // iOS has no OAuth client yet. An empty ID makes the Account screen
+      // say sign-in isn't set up, and restore and sign-in never start.
+      : Platform.isIOS
+      ? DesktopGoogleAuth(storage: storage, clientId: '')
       : DesktopGoogleAuth(storage: storage);
 }
 
