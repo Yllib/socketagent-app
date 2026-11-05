@@ -219,10 +219,14 @@ void main() {
     final received = <Map<String, dynamic>>[];
     await withSession(
       (provider, send) async {
+        // An open session has a cwd, but its queued prompt carries none.
+        await send({'type': 'cwd_changed', 'newCwd': '/work'});
         provider.queueSecureAttachment(label: 'API_KEY', value: 'hunter2');
         final sending = provider.sendPrompt('use this key');
         final store = await stored.future.timeout(const Duration(seconds: 5));
         expect(store['value'], 'hunter2');
+        // The server rejects the whole frame when an optional field is null.
+        expect(store.values, isNot(contains(null)));
         expect(received.where((m) => m['type'] == 'prompt'), isEmpty);
         await send({
           'type': 'secret_operation_result',

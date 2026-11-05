@@ -15724,12 +15724,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'clientRequestId': requestId,
       if (envHint != null && envHint.trim().isNotEmpty)
         'envHint': envHint.trim(),
-      if ((targetSessionId ?? _activeSessionId) != null)
-        'sessionId': targetServerId != null
-            ? targetSessionId
-            : _activeSessionId,
-      if ((targetCwd ?? _activeSessionCwd) != null)
-        'cwd': targetServerId != null ? targetCwd : _activeSessionCwd,
+      // Never send null: the server rejects the whole frame without a reply.
+      'sessionId': ?(targetServerId != null
+          ? targetSessionId
+          : _activeSessionId),
+      'cwd': ?(targetServerId != null ? targetCwd : _activeSessionCwd),
     };
     final sent = targetServerId != null
         ? _connMgr.sendToServer(targetServerId, payload)
