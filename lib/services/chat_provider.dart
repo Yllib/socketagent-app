@@ -911,6 +911,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final SecretInventoryRequestTracker _secretInventoryRequestTracker =
       SecretInventoryRequestTracker();
   final Map<String, Completer<SecretMetadata>> _secretWriteCompleters = {};
+
+  /// rerun_windows_setup_elevated requests by requestId. Each completes with
+  /// null when setup started, or the reason it did not.
+  final Map<String, Completer<String?>> _windowsSetupElevations = {};
   final Map<String, Completer<void>> _secretDeleteCompleters = {};
   List<HtmlPlan> _htmlPlans = [];
   bool _htmlPlansLoading = false;
@@ -1879,6 +1883,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// True when a Windows computer was installed without administrator rights.
   bool isLimitedWindowsInstall(String serverId) =>
       _serverRuntimeInfo[serverId]?['windowsElevated'] == false;
+
+  /// Whether [serverId] can rerun its own setup as administrator.
+  bool canRerunWindowsSetupElevated(String serverId) =>
+      _serverRuntimeInfo[serverId]?['windowsSetupElevationVersion'] is int;
+
+  /// Asks [serverId] to rerun its setup as administrator. Windows shows its
+  /// consent prompt on that computer, so someone there has to approve it.
+  /// Returns null once setup is running, or why it is not.
+  Future<String?> rerunWindowsSetupElevated(String serverId) {
+    final requestId = 'elevate_${DateTime.now().microsecondsSinceEpoch}';
+    final completer = Completer<String?>();
+    _windowsSetupElevations[requestId] = completer;
+    final sent = _connMgr.sendToServer(serverId, {
+      'type': 'rerun_windows_setup_elevated',
+      'requestId': requestId,
+    });
+    if (!sent) {
+      _windowsSetupElevations.remove(requestId);
+      return Future.value('${_computerName(serverId)} is offline');
+    }
+    // The computer waits up to 10 minutes for someone to answer the prompt.
+    return completer.future.timeout(
+      const Duration(minutes: 11),
+      onTimeout: () {
+        _windowsSetupElevations.remove(requestId);
+        return '${_computerName(serverId)} did not answer';
+      },
+    );
+  }
 
   /// Problems on the computer to fix by hand. See [ComputerIssue].
   List<ComputerIssue> issuesForServer(String serverId) =>
@@ -6307,6 +6340,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
             break;
           }
+        case 'windows_setup_elevation_result':
+          _windowsSetupElevations
+              .remove(msg['requestId'])
+              ?.complete(
+                msg['ok'] == true
+                    ? null
+                    : msg['error'] as String? ?? 'Setup did not start',
+              );
+          break;
         case 'recent_cwds':
           final cwds = (msg['cwds'] as List?)?.cast<String>() ?? [];
           final key = serverId ?? '';
@@ -16508,6 +16550,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     final elevated = msg['windowsElevated'];
     if (elevated is bool) existing['windowsElevated'] = elevated;
+    final elevation = msg['windowsSetupElevationVersion'];
+    if (elevation is int) existing['windowsSetupElevationVersion'] = elevation;
 
     final pid = msg['serverPid'];
     if (pid != null) existing['pid'] = pid;

@@ -132,7 +132,13 @@ class _ComputerDetailScreenState extends State<ComputerDetailScreen>
             padding: const EdgeInsets.only(bottom: 28),
             children: [
               _Header(summary: summary, buildInfo: build),
-              if (summary.limitedInstall) const _LimitedInstallRow(),
+              if (summary.limitedInstall)
+                _LimitedInstallRow(
+                  config: config,
+                  canFix:
+                      connected &&
+                      provider.canRerunWindowsSetupElevated(config.id),
+                ),
               _Section(
                 title: 'Connection',
                 children: [
@@ -1197,10 +1203,39 @@ class _KeyValueBlock extends StatelessWidget {
   }
 }
 
-/// Warns that a Windows computer runs without administrator rights and copies
-/// the setup command that fixes it.
-class _LimitedInstallRow extends StatelessWidget {
-  const _LimitedInstallRow();
+/// Warns that a Windows computer runs without administrator rights. Fix has
+/// the computer rerun its own setup as administrator; copying the setup
+/// command is the fallback for computers that cannot.
+class _LimitedInstallRow extends StatefulWidget {
+  const _LimitedInstallRow({required this.config, required this.canFix});
+
+  final ServerConfig config;
+  final bool canFix;
+
+  @override
+  State<_LimitedInstallRow> createState() => _LimitedInstallRowState();
+}
+
+class _LimitedInstallRowState extends State<_LimitedInstallRow> {
+  bool _waiting = false;
+
+  Future<void> _fix() async {
+    final messenger = ScaffoldMessenger.of(context);
+    final provider = context.read<ChatProvider>();
+    final name = widget.config.name;
+    setState(() => _waiting = true);
+    messenger.showSnackBar(
+      SnackBar(content: Text('Approve the administrator prompt on $name')),
+    );
+    final error = await provider.rerunWindowsSetupElevated(widget.config.id);
+    if (!mounted) return;
+    setState(() => _waiting = false);
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(error ?? 'Setup is running as administrator on $name'),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1212,20 +1247,33 @@ class _LimitedInstallRow extends StatelessWidget {
         'Limited install, not administrator',
         style: TextStyle(color: error, fontWeight: FontWeight.w600),
       ),
-      subtitle: const Text(
+      subtitle: Text(
         'Agents cannot install software or change system settings, and the '
-        'firewall may block direct connections. Rerun setup in PowerShell '
-        'opened as administrator. Pairing is kept.',
+        'firewall may block direct connections. '
+        '${widget.canFix ? 'Fix reruns setup as administrator; someone at the computer approves the prompt.' : 'Rerun setup in PowerShell opened as administrator.'}'
+        ' Pairing is kept.',
       ),
-      trailing: IconButton(
-        tooltip: 'Copy setup command',
-        icon: const Icon(Icons.copy),
-        onPressed: () {
-          Clipboard.setData(const ClipboardData(text: windowsInstallCommand));
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Setup command copied')));
-        },
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (widget.canFix)
+            TextButton(
+              onPressed: _waiting ? null : _fix,
+              child: Text(_waiting ? 'Waiting' : 'Fix'),
+            ),
+          IconButton(
+            tooltip: 'Copy setup command',
+            icon: const Icon(Icons.copy),
+            onPressed: () {
+              Clipboard.setData(
+                const ClipboardData(text: windowsInstallCommand),
+              );
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Setup command copied')),
+              );
+            },
+          ),
+        ],
       ),
     );
   }
