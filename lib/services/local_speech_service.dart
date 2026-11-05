@@ -3,6 +3,7 @@ import 'dart:io';
 import 'asr_model_manager.dart';
 import 'moonshine_speech_service.dart';
 import 'sherpa_speech_service.dart';
+import 'speech_service.dart';
 import 'speech_input.dart';
 import 'speech_recognition_settings.dart';
 
@@ -64,7 +65,10 @@ class LocalSpeechService implements SpeechInput {
   Future<bool> _initialize() async {
     if (_disposed) return false;
     if (_engine == null) {
-      _engine = settings.model.isMoonshine
+      // iOS dictates with Apple's recognizer instead of a downloaded model.
+      _engine = Platform.isIOS
+          ? SpeechService()
+          : settings.model.isMoonshine
           ? MoonshineSpeechService(manager, settings)
           : SherpaSpeechService(manager, settings: settings);
       _resultSub = _engine!.onResult.listen(_results.add);
@@ -74,6 +78,9 @@ class LocalSpeechService implements SpeechInput {
       }
       if (_engine case final MoonshineSpeechService moonshine) {
         _errorSub = moonshine.onError.listen(_errors.add);
+      }
+      if (_engine case final SpeechService apple) {
+        _errorSub = apple.onError.listen(_errors.add);
       }
     }
     return _engine!.initialize();
@@ -89,7 +96,9 @@ class LocalSpeechService implements SpeechInput {
     try {
       if (!await initialize()) {
         throw StateError(
-          'Download the selected speech model in Voice & Speech.',
+          Platform.isIOS
+              ? 'Allow microphone and speech recognition for SocketAgent in Settings.'
+              : 'Download the selected speech model in Voice & Speech.',
         );
       }
       await _engine!.startListening(

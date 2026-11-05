@@ -683,7 +683,9 @@ class _ChatScreenState extends State<_ChatScreen> {
     if (_pttStartChecking) return;
     _pttStartChecking = true;
     try {
-      final installed = await provider.asrModelManager.isModelInstalled();
+      // iOS uses Apple's recognizer, which needs no download.
+      final installed =
+          Platform.isIOS || await provider.asrModelManager.isModelInstalled();
       if (!mounted || !_pttPressed) return;
       if (!installed) {
         ScaffoldMessenger.of(context).showSnackBar(

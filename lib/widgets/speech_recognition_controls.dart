@@ -212,17 +212,27 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.mic_none),
-          title: const Text('Recognition model'),
-          subtitle: Text(
-            '${_settings.model.label}${_ready && !_installed.contains(_settings.model) ? ' · Download needed' : ''}',
+        // iOS dictates with Apple's recognizer: no models to pick or tune.
+        if (Platform.isIOS)
+          const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.mic_none),
+            title: Text('Recognition'),
+            subtitle: Text('Apple speech recognition'),
+          )
+        else ...[
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.mic_none),
+            title: const Text('Recognition model'),
+            subtitle: Text(
+              '${_settings.model.label}${_ready && !_installed.contains(_settings.model) ? ' · Download needed' : ''}',
+            ),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _open(SpeechSettingsView.models, 'Recognition model'),
           ),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _open(SpeechSettingsView.models, 'Recognition model'),
-        ),
-        _progress(),
+          _progress(),
+        ],
         // The control goes full width under its label; as a trailing widget
         // it overflows a narrow phone at large text sizes.
         const Padding(
@@ -250,13 +260,15 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
                   },
           ),
         ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Fine-tune dictation'),
-          subtitle: const Text('Pauses, sensitivity and word updates'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _open(SpeechSettingsView.tuning, 'Fine-tune dictation'),
-        ),
+        if (!Platform.isIOS)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Fine-tune dictation'),
+            subtitle: const Text('Pauses, sensitivity and word updates'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () =>
+                _open(SpeechSettingsView.tuning, 'Fine-tune dictation'),
+          ),
         if (Platform.isAndroid)
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
