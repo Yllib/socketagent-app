@@ -12,6 +12,15 @@ flutter build ipa --release --dart-define=SOCKETAGENT_DISTRIBUTION=ios
 Signing is automatic: team `ULPR2WMWUG`, bundle ID `com.socketagent.app`.
 Plugins come from CocoaPods (`pubspec.yaml` turns Swift Package Manager off).
 
+## App Store IPA
+
+`scripts/build-ios-ipa.sh` archives and exports `build/ios/ipa/SocketAgent.ipa`
+with an App Store Connect API key, read from `ASC_KEY_ID`, `ASC_ISSUER_ID` and
+`ASC_KEY_PATH`. The export signs manually (`ios/ExportOptions.plist`) with the
+Apple Distribution certificate and the "SocketAgent App Store" profile, which
+must be installed in Xcode. Automatic export does not work with this key: it
+asks for cloud-managed distribution certificates, which the key may not use.
+
 ## What differs from Android
 
 - Dictation uses Apple speech recognition through `speech_to_text`. There
