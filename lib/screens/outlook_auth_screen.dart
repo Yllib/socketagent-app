@@ -9,7 +9,6 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../services/desktop_web_user_agent.dart';
 import '../services/browser_credential_permission.dart';
 import '../services/outlook_auth_session_state.dart';
-import '../services/window_security_service.dart';
 import '../config/app_palette.dart';
 
 /// Protected WebView that captures only the exact approved OWA service
@@ -55,7 +54,6 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
         .where((uri) => uri.scheme == 'https' && uri.host.isNotEmpty)
         .map((uri) => uri.origin)
         .toSet();
-    WindowSecurityService.enableScreenshotProtection();
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..addJavaScriptChannel(
@@ -317,12 +315,6 @@ class _OutlookAuthScreenState extends State<OutlookAuthScreen> {
   }
 
   void _cancelAndClose() => Navigator.of(context).pop(null);
-
-  @override
-  void dispose() {
-    WindowSecurityService.disableScreenshotProtection();
-    super.dispose();
-  }
 
   Widget _status(String label, bool complete) {
     return Row(

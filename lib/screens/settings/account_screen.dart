@@ -11,7 +11,6 @@ import '../../services/account_service.dart';
 import '../../services/chat_provider.dart';
 import '../../services/device_unlock.dart';
 import '../../services/google_auth.dart';
-import '../../services/window_security_service.dart';
 import 'settings_v2_screen.dart';
 
 /// The message shown for a failed account action.
@@ -430,18 +429,6 @@ class RecoveryKeyScreen extends StatefulWidget {
 }
 
 class _RecoveryKeyScreenState extends State<RecoveryKeyScreen> {
-  @override
-  void initState() {
-    super.initState();
-    unawaited(WindowSecurityService.enableScreenshotProtection());
-  }
-
-  @override
-  void dispose() {
-    unawaited(WindowSecurityService.disableScreenshotProtection());
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(

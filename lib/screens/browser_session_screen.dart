@@ -11,7 +11,6 @@ import 'package:provider/provider.dart';
 import '../models/active_browser_session.dart';
 import '../services/browser_keyboard.dart';
 import '../services/chat_provider.dart';
-import '../services/window_security_service.dart';
 import '../widgets/browser_prompts.dart';
 import '../widgets/browser_profile_sheet.dart';
 import '../config/app_palette.dart';
@@ -135,7 +134,6 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
     _desktopLayout = _browserSize.width > _browserSize.height;
     _url = widget.initialUrl;
     _runtimeRequired = widget.initialRuntimeRequired;
-    WindowSecurityService.enableScreenshotProtection();
     WidgetsBinding.instance.addObserver(this);
     _subscription = _provider.browserFrameEvents.listen(_handleEvent);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -163,7 +161,6 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
       timer.cancel();
     }
     WidgetsBinding.instance.removeObserver(this);
-    WindowSecurityService.disableScreenshotProtection();
     super.dispose();
   }
 

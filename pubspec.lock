@@ -393,14 +393,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.1.1"
-  flag_secure:
-    dependency: "direct main"
-    description:
-      name: flag_secure
-      sha256: fb72ef841bff1bf895f2c5fb7a38f4e4afd10c8ca84922ecd6bbeb9fbd015ac7
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.0.2"
   flex_color_picker:
     dependency: "direct main"
     description:
@@ -1490,14 +1482,6 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "1.4.0"
-  universal_io:
-    dependency: transitive
-    description:
-      name: universal_io
-      sha256: f63cbc48103236abf48e345e07a03ce5757ea86285ed313a6a032596ed9301e2
-      url: "https://pub.dev"
-    source: hosted
-    version: "2.3.1"
   universal_platform:
     dependency: transitive
     description:

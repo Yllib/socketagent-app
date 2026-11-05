@@ -27,7 +27,6 @@ class FlutterWindow : public Win32Window {
 
  private:
   std::unique_ptr<DesktopShell> desktop_shell_;
-  std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> security_channel_;
 
   // The project to run.
   flutter::DartProject project_;

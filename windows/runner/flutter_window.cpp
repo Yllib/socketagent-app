@@ -1,7 +1,6 @@
 #include "flutter_window.h"
 
 #include <optional>
-#include <flutter/standard_method_codec.h>
 
 #include "flutter/generated_plugin_registrant.h"
 
@@ -30,30 +29,6 @@ bool FlutterWindow::OnCreate() {
   desktop_shell_ = std::make_unique<DesktopShell>(GetHandle(),
       flutter_controller_->view()->GetNativeWindow(),
       flutter_controller_->engine()->messenger());
-  security_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
-      flutter_controller_->engine()->messenger(),
-      "com.socketagent.app/window_security",
-      &flutter::StandardMethodCodec::GetInstance());
-  security_channel_->SetMethodCallHandler(
-      [this](const auto& call, auto result) {
-        if (call.method_name() != "setScreenshotProtection") {
-          result->NotImplemented();
-          return;
-        }
-        const auto* enabled = call.arguments()
-            ? std::get_if<bool>(call.arguments()) : nullptr;
-        if (!enabled) {
-          result->Error("INVALID_ARGUMENT", "Expected a boolean");
-          return;
-        }
-        // WDA_EXCLUDEFROMCAPTURE on Windows 10 2004 and newer.
-        if (::SetWindowDisplayAffinity(GetHandle(), *enabled ? 0x11 : WDA_NONE)) {
-          result->Success();
-        } else {
-          result->Error("UNAVAILABLE", "Windows could not protect this window");
-        }
-      });
-
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     desktop_shell_->ShowInitial();
   });
@@ -68,7 +43,6 @@ bool FlutterWindow::OnCreate() {
 
 void FlutterWindow::OnDestroy() {
   desktop_shell_.reset();
-  security_channel_.reset();
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

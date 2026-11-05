@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../services/desktop_web_user_agent.dart';
-import '../services/window_security_service.dart';
 
 /// WebView screen that loads the server-approved IBS page and captures cookies
 /// only for the exact HTTPS origins supplied with the authorization request.
@@ -39,8 +38,6 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
         .where((uri) => uri.scheme == 'https' && uri.host.isNotEmpty)
         .map((uri) => uri.origin)
         .toSet();
-    // Enable FLAG_SECURE to prevent screenshots during SSO auth
-    WindowSecurityService.enableScreenshotProtection();
     // Keep the protected WebView cookie jar so a recent company SSO/MFA session
     // can be reused. Expired application sessions are still rejected by the
     // server-side validation and naturally return to the sign-in flow.
@@ -200,13 +197,6 @@ class _IBSAuthScreenState extends State<IBSAuthScreen> {
   }
 
   void _cancelAndClose() => Navigator.of(context).pop(null);
-
-  @override
-  void dispose() {
-    // Re-enable screenshots when leaving auth screen
-    WindowSecurityService.disableScreenshotProtection();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
