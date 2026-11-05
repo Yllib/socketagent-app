@@ -415,9 +415,12 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                       if (Platform.isAndroid)
                         _NotificationSummaryTile()
                       else
-                        const _DetailRow(
+                        _DetailRow(
                           icon: Icons.notifications_outlined,
-                          title: 'Desktop notifications',
+                          // iOS has no push yet, so the same applies there.
+                          title: Platform.isIOS
+                              ? 'Notifications'
+                              : 'Desktop notifications',
                           trailing: 'While the app is open',
                         ),
                       if (Platform.isWindows) const _StartWithWindowsTile(),
