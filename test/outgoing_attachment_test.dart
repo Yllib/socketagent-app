@@ -213,6 +213,9 @@ void main() {
 
   test('a queued secret is saved on the computer before its prompt', () async {
     final stored = Completer<Map<String, dynamic>>();
+    // sendPrompt returns once the frame is written, which can be before the
+    // fake server has read it.
+    final prompted = Completer<Map<String, dynamic>>();
     final received = <Map<String, dynamic>>[];
     await withSession(
       (provider, send) async {
@@ -236,7 +239,10 @@ void main() {
           },
         });
         await sending.timeout(const Duration(seconds: 5));
-        final prompt = received.singleWhere((m) => m['type'] == 'prompt');
+        final prompt = await prompted.future.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(received.where((m) => m['type'] == 'prompt'), hasLength(1));
         expect(
           prompt['text'],
           startsWith('[Attached secret: {"label":"API_KEY"'),
@@ -253,6 +259,9 @@ void main() {
         received.add(event);
         if (event['type'] == 'secure_input_store' && !stored.isCompleted) {
           stored.complete(event);
+        }
+        if (event['type'] == 'prompt' && !prompted.isCompleted) {
+          prompted.complete(event);
         }
       },
     );
