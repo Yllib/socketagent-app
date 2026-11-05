@@ -79,6 +79,14 @@ Future<void> _verifyDistribution() async {
     }
     return;
   }
+  if (Platform.isIOS) {
+    if (AppBuild.distribution != AppDistribution.ios) {
+      throw StateError(
+        'Build iOS with --dart-define=SOCKETAGENT_DISTRIBUTION=ios.',
+      );
+    }
+    return;
+  }
   const channel = MethodChannel('com.socketagent.app/intent');
   final nativeDistribution = await channel.invokeMethod<String>(
     'getDistribution',

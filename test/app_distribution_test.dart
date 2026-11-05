@@ -5,7 +5,8 @@ void main() {
   test('APK installs are available on Android distributions', () {
     expect(
       AppBuild.supportsApkInstalls,
-      AppBuild.distribution != AppDistribution.windows,
+      AppBuild.distribution == AppDistribution.direct ||
+          AppBuild.distribution == AppDistribution.play,
     );
   });
 
