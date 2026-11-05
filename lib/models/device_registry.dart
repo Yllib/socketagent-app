@@ -43,8 +43,9 @@ class ComputerAccess {
   }
 }
 
-/// Whether a linked computer's actions need the user's approval. An approval
-/// card can allow one action or the rest of that chat.
+/// Whether an AI connector's actions need the user's approval. An approval
+/// card can allow one action or the rest of that chat. Linked computers
+/// never ask: the link is the approval, so the app always sends `never`.
 enum LinkConfirm {
   ask('ask', 'Ask'),
   never('never', 'Never ask');
@@ -221,7 +222,6 @@ class ComputerLink {
     required this.targetPubkey,
     required this.online,
     required this.access,
-    required this.confirm,
     required this.ticketExpiresAt,
     this.expiresAt,
     this.relayUrl = '',
@@ -232,7 +232,6 @@ class ComputerLink {
   final String targetPubkey;
   final bool online;
   final ComputerAccess access;
-  final LinkConfirm confirm;
   final DateTime? ticketExpiresAt;
 
   /// When the link ends. Null lasts until removed.
@@ -254,7 +253,6 @@ class ComputerLink {
       targetPubkey: target,
       online: raw['online'] == true,
       access: ComputerAccess.fromJson(raw['access']),
-      confirm: LinkConfirm.fromWire(raw['confirm']),
       ticketExpiresAt: expires is num
           ? DateTime.fromMillisecondsSinceEpoch(expires.toInt())
           : expires is String

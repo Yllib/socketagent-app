@@ -116,7 +116,6 @@ void main() {
       targetPubkey: 'B',
       online: true,
       access: const ComputerAccess(),
-      confirm: LinkConfirm.ask,
       ticketExpiresAt: expires,
     );
     expect(link(null).needsTicketRefresh(now), isTrue);

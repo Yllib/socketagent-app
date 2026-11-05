@@ -21,7 +21,6 @@ class ComputerAccessCard extends StatefulWidget {
 
 class _ComputerAccessCardState extends State<ComputerAccessCard> {
   ComputerAccess? _access;
-  LinkConfirm _confirm = LinkConfirm.ask;
   bool _busy = false;
   String? _error;
 
@@ -40,7 +39,6 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
         request.requestId,
         decision,
         access: _access ?? request.access,
-        confirm: _confirm,
       );
     } catch (error) {
       if (mounted) {
@@ -162,27 +160,6 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
                         : (v) => setState(
                             () => _access = access.copyWith(commands: v),
                           ),
-                  ),
-                ],
-              ),
-              Row(
-                children: [
-                  Text('Confirm', style: TextStyle(color: palette.textMuted)),
-                  const SizedBox(width: 12),
-                  DropdownButton<LinkConfirm>(
-                    value: _confirm,
-                    isDense: true,
-                    underline: const SizedBox.shrink(),
-                    items: [
-                      for (final option in LinkConfirm.values)
-                        DropdownMenuItem(
-                          value: option,
-                          child: Text(option.label),
-                        ),
-                    ],
-                    onChanged: _busy
-                        ? null
-                        : (v) => setState(() => _confirm = v ?? _confirm),
                   ),
                 ],
               ),

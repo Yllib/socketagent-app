@@ -78,14 +78,13 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
         sourceId: source.id,
         targetId: target.id,
         access: choice.access,
-        confirm: choice.confirm,
       );
     } catch (error) {
       if (mounted) setState(() => _error = _text(error));
     }
   }
 
-  /// Changes access and confirm on an existing link, from either end.
+  /// Changes access on an existing link, from either end.
   Future<void> _edit(
     ChatProvider provider, {
     required String sourcePubkey,
@@ -93,7 +92,6 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
     required String targetPubkey,
     required String targetName,
     required ComputerAccess access,
-    required LinkConfirm confirm,
     DateTime? expiresAt,
   }) async {
     final choice = await showDialog<_LinkChoice>(
@@ -102,7 +100,6 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
         title: 'What $sourceName may do on $targetName',
         action: 'Save',
         access: access,
-        confirm: confirm,
       ),
     );
     if (choice == null || !mounted) return;
@@ -113,7 +110,6 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
         sourceName: sourceName,
         targetPubkey: targetPubkey,
         access: choice.access,
-        confirm: choice.confirm,
         expiresAt: expiresAt,
       );
     } catch (error) {
@@ -209,7 +205,6 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                   subtitle: Text(
                     [
                       '${grant.access?.label}',
-                      '${grant.confirm?.label.toLowerCase()}',
                       if (grant.expiresAt case final ends?)
                         linkExpiryLabel(ends, DateTime.now()),
                     ].join(' · '),
@@ -224,7 +219,6 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                           targetPubkey: config.serverPubkey,
                           targetName: config.name,
                           access: grant.access ?? const ComputerAccess(),
-                          confirm: grant.confirm ?? LinkConfirm.ask,
                           expiresAt: grant.expiresAt,
                         )
                       : null,
@@ -271,7 +265,6 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                       [
                         link.online ? 'online' : 'offline',
                         link.access.label,
-                        link.confirm.label.toLowerCase(),
                         if (link.expiresAt case final ends?)
                           linkExpiryLabel(ends, DateTime.now()),
                         if (link.ticketExpiresAt case final at?)
@@ -285,7 +278,6 @@ class _ComputerLinksScreenState extends State<ComputerLinksScreen> {
                       targetPubkey: link.targetPubkey,
                       targetName: link.name.isEmpty ? 'Computer' : link.name,
                       access: link.access,
-                      confirm: link.confirm,
                       expiresAt: link.expiresAt,
                     ),
                     trailing: IconButton(
@@ -347,15 +339,14 @@ class _Heading extends StatelessWidget {
 }
 
 class _LinkChoice {
-  const _LinkChoice(this.source, this.access, this.confirm);
+  const _LinkChoice(this.source, this.access);
 
   /// The picked computer for a new link; null when editing one.
   final ServerConfig? source;
   final ComputerAccess access;
-  final LinkConfirm confirm;
 }
 
-/// Access and confirm for a link. With [sources] it creates a link and asks
+/// Access for a link. With [sources] it creates a link and asks
 /// which computer gets access; without, it edits an existing one.
 class _LinkDialog extends StatefulWidget {
   const _LinkDialog({
@@ -363,14 +354,12 @@ class _LinkDialog extends StatefulWidget {
     required this.action,
     this.sources = const [],
     this.access = const ComputerAccess(),
-    this.confirm = LinkConfirm.ask,
   });
 
   final String title;
   final String action;
   final List<ServerConfig> sources;
   final ComputerAccess access;
-  final LinkConfirm confirm;
 
   @override
   State<_LinkDialog> createState() => _LinkDialogState();
@@ -379,7 +368,6 @@ class _LinkDialog extends StatefulWidget {
 class _LinkDialogState extends State<_LinkDialog> {
   late ServerConfig? _source = widget.sources.firstOrNull;
   late ComputerAccess _access = widget.access;
-  late LinkConfirm _confirm = widget.confirm;
 
   @override
   Widget build(BuildContext context) {
@@ -425,16 +413,6 @@ class _LinkDialogState extends State<_LinkDialog> {
             onChanged: (v) =>
                 setState(() => _access = _access.copyWith(commands: v == true)),
           ),
-          const SizedBox(height: 8),
-          DropdownButtonFormField<LinkConfirm>(
-            initialValue: _confirm,
-            decoration: const InputDecoration(labelText: 'Before each action'),
-            items: [
-              for (final option in LinkConfirm.values)
-                DropdownMenuItem(value: option, child: Text(option.label)),
-            ],
-            onChanged: (value) => setState(() => _confirm = value ?? _confirm),
-          ),
         ],
       ),
       actions: [
@@ -443,9 +421,8 @@ class _LinkDialogState extends State<_LinkDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(
-            context,
-          ).pop(_LinkChoice(_source, _access, _confirm)),
+          onPressed: () =>
+              Navigator.of(context).pop(_LinkChoice(_source, _access)),
           child: Text(widget.action),
         ),
       ],

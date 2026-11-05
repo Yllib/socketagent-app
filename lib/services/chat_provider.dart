@@ -8732,20 +8732,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String sourceId,
     required String targetId,
     required ComputerAccess access,
-    required LinkConfirm confirm,
     DateTime? expiresAt,
   }) async {
     final (source, target) = _linkPair(sourceId, targetId);
     await _authorizeComputer(target, source, {
       'access': access.toJson(),
-      'confirm': confirm.wire,
+      'confirm': LinkConfirm.never.wire,
       if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
     });
     await _connectComputerLink(
       source,
       target,
       access: access,
-      confirm: confirm,
       expiresAt: expiresAt,
     );
   }
@@ -8765,7 +8763,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         agents: false,
         commands: false,
       ).toJson(),
-      'confirm': LinkConfirm.ask.wire,
+      'confirm': LinkConfirm.never.wire,
       'oneTime': {'digest': digest},
     });
     final links = await loadComputerLinks(sourceId);
@@ -8774,7 +8772,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       source,
       target,
       access: const ComputerAccess(read: false, agents: false, commands: false),
-      confirm: LinkConfirm.ask,
       // The target's grant lasts 15 minutes.
       expiresAt: DateTime.now().add(const Duration(minutes: 15)),
     );
@@ -8820,7 +8817,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     ServerConfig source,
     ServerConfig target, {
     required ComputerAccess access,
-    required LinkConfirm confirm,
     DateTime? expiresAt,
   }) async {
     final sourceId = source.id;
@@ -8847,7 +8843,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       linkRoom: linkRoom,
       ticket: ticket,
       access: access,
-      confirm: confirm,
       expiresAt: expiresAt,
     );
     unawaited(loadComputerLinks(sourceId).catchError((_) => <ComputerLink>[]));
@@ -8864,7 +8859,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String sourceName,
     required String targetPubkey,
     required ComputerAccess access,
-    required LinkConfirm confirm,
     DateTime? expiresAt,
   }) async {
     final target = _configForKey(targetPubkey);
@@ -8877,7 +8871,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'kind': 'computer',
       'name': sourceName,
       'access': access.toJson(),
-      'confirm': confirm.wire,
+      'confirm': LinkConfirm.never.wire,
       if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
     }, 'device_approve_result');
     if (authorized['ok'] == false) {
@@ -8927,7 +8921,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String linkRoom,
     required ComputerLinkTicket ticket,
     required ComputerAccess access,
-    required LinkConfirm confirm,
     DateTime? expiresAt,
   }) async {
     final msg = {
@@ -8939,7 +8932,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'ticket': ticket.ticket,
       'ticketExpiresAt': ticket.expiresAt,
       'access': access.toJson(),
-      'confirm': confirm.wire,
+      'confirm': LinkConfirm.never.wire,
       if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
     };
     try {
@@ -9066,7 +9059,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           linkRoom: linkRoom,
           ticket: ticket,
           access: link.access,
-          confirm: link.confirm,
           expiresAt: link.expiresAt,
         );
       }
@@ -9239,7 +9231,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String requestId,
     String decision, {
     ComputerAccess? access,
-    LinkConfirm confirm = LinkConfirm.ask,
   }) async {
     final idx = _messages.indexWhere(
       (m) => m.type == MessageType.computerAccess && m.questionId == requestId,
@@ -9291,7 +9282,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           sourceId: sourceId,
           targetId: target.id,
           access: granted,
-          confirm: confirm,
           expiresAt: decision == 'today'
               ? nextLocalMidnight(DateTime.now())
               : null,
