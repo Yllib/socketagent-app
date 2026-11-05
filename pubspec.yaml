@@ -74,6 +74,10 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # iOS plugins come from CocoaPods. Swift Package Manager stalled this build
+  # on a keychain prompt while fetching binary packages.
+  config:
+    enable-swift-package-manager: false
   assets:
     - assets/app_icon.png
     - assets/backend_logos/
