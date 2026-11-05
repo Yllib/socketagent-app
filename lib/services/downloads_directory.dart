@@ -43,7 +43,10 @@ Future<Directory> downloadsDirectory() async {
   if (cached != null) return cached;
 
   String? platformDownloads;
-  if (!Platform.isAndroid && !Platform.isIOS) {
+  if (Platform.isIOS) {
+    // Info.plist shares Documents, so downloads show up in the Files app.
+    platformDownloads = (await getApplicationDocumentsDirectory()).path;
+  } else if (!Platform.isAndroid) {
     try {
       platformDownloads = (await getDownloadsDirectory())?.path;
     } catch (_) {
