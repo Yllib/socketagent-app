@@ -307,8 +307,10 @@ class _ComputerDetailScreenState extends State<ComputerDetailScreen>
                   title: 'Notifications',
                   children: _notificationRows(provider, config, connected),
                 ),
-              if (plugins.contains('outlook-auth') ||
-                  plugins.contains('ibs-auth'))
+              // The work sign-in screens are not part of the iOS app.
+              if (!Platform.isIOS &&
+                  (plugins.contains('outlook-auth') ||
+                      plugins.contains('ibs-auth')))
                 _Section(
                   title: 'Integrations',
                   children: [

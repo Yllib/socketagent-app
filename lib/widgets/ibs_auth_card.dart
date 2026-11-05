@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../screens/ibs_auth_screen.dart';
@@ -79,13 +80,16 @@ class IBSAuthCard extends StatelessWidget {
                     ? (resultMessage ?? 'IBS and My Sheet are ready.')
                     : failed
                     ? (resultMessage ?? 'IBS authorization failed.')
+                    : Platform.isIOS
+                    ? 'Your IBS session has expired. Sign in from SocketAgent on Android or Windows.'
                     : 'Your IBS session has expired. Sign in to continue.',
                 style: TextStyle(
                   fontSize: 14,
                   color: theme.colorScheme.onSecondaryContainer.withAlpha(200),
                 ),
               ),
-              if (!isCompleted && !isPending) ...[
+              // The work sign-in screens are not part of the iOS app.
+              if (!isCompleted && !isPending && !Platform.isIOS) ...[
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,

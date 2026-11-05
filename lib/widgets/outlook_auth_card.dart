@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/message.dart';
 import '../screens/outlook_auth_screen.dart';
@@ -62,13 +63,16 @@ class OutlookAuthCard extends StatelessWidget {
               Text(
                 isCompleted
                     ? 'Authentication complete.'
+                    : Platform.isIOS
+                    ? 'Your authentication has expired. Sign in from SocketAgent on Android or Windows.'
                     : 'Your authentication has expired. Sign in to continue.',
                 style: TextStyle(
                   fontSize: 14,
                   color: theme.colorScheme.onSecondaryContainer.withAlpha(200),
                 ),
               ),
-              if (!isCompleted) ...[
+              // The work sign-in screens are not part of the iOS app.
+              if (!isCompleted && !Platform.isIOS) ...[
                 const SizedBox(height: 12),
                 Align(
                   alignment: Alignment.centerRight,
