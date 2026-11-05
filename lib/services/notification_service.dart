@@ -176,6 +176,12 @@ class NotificationService {
     );
     const initSettings = InitializationSettings(
       android: androidSettings,
+      // Permission is requested below, only when [requestPermissions] is set.
+      iOS: DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      ),
       windows: WindowsInitializationSettings(
         appName: 'SocketAgent Desktop',
         appUserModelId: 'RubanoEnterprises.SocketAgent',
@@ -209,6 +215,11 @@ class NotificationService {
           AndroidFlutterLocalNotificationsPlugin
         >();
     if (requestPermissions) {
+      await _iosPlugin?.requestPermissions(
+        alert: true,
+        badge: true,
+        sound: true,
+      );
       await androidPlugin?.requestNotificationsPermission();
       if (AppBuild.supportsExactAlarms) {
         await androidPlugin?.requestExactAlarmsPermission();
@@ -299,8 +310,17 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
+    final iosPlugin = _iosPlugin;
+    if (iosPlugin != null) {
+      return (await iosPlugin.checkPermissions())?.isEnabled ?? false;
+    }
     return await androidPlugin?.areNotificationsEnabled() ?? true;
   }
+
+  IOSFlutterLocalNotificationsPlugin? get _iosPlugin => _plugin
+      .resolvePlatformSpecificImplementation<
+        IOSFlutterLocalNotificationsPlugin
+      >();
 
   Future<bool> requestNotificationPermission() async {
     await initialize(requestPermissions: false);
@@ -308,6 +328,7 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
         >();
+    await _iosPlugin?.requestPermissions(alert: true, badge: true, sound: true);
     await androidPlugin?.requestNotificationsPermission();
     return areNotificationsEnabled();
   }
@@ -437,6 +458,8 @@ class NotificationService {
   /// [payload] is the tap target to use when neither the shade nor this
   /// process knows the card's own, such as after an app restart.
   Future<bool> markSessionCompletionRead(int id, {required String payload}) {
+    // iOS has no quiet channel to repost on; the card simply stays.
+    if (Platform.isIOS) return Future<bool>.value(true);
     return _enqueueForId(id, () async {
       if (!_isInitialized) await initialize();
 
@@ -520,7 +543,9 @@ class NotificationService {
   }
 
   Future<void> _refreshCompletedSessionSummary() {
-    if (Platform.isWindows) return Future<void>.value();
+    // Group summaries and progress cards are Android shade features. On iOS
+    // every repost would be a fresh banner, so they are skipped there.
+    if (Platform.isWindows || Platform.isIOS) return Future<void>.value();
     final refresh = _groupRefreshTail.then((_) async {
       try {
         final active = await _plugin.getActiveNotifications();
@@ -550,7 +575,7 @@ class NotificationService {
   }
 
   Future<bool> syncActiveSessionSummary(int count) {
-    if (Platform.isWindows) return Future<bool>.value(true);
+    if (Platform.isWindows || Platform.isIOS) return Future<bool>.value(true);
     return _enqueueForId(activeSessionsSummaryId, () async {
       if (!_isInitialized) await initialize();
       try {
@@ -690,7 +715,7 @@ class NotificationService {
     List<AndroidNotificationAction>? actions,
     String? groupKey,
   }) {
-    if (Platform.isWindows) return Future<bool>.value(true);
+    if (Platform.isWindows || Platform.isIOS) return Future<bool>.value(true);
     return _enqueueForId(id, () async {
       if (!_isInitialized) await initialize();
 
