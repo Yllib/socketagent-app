@@ -328,7 +328,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
           appBar: AppBar(
             title: const Text('Settings'),
             actions: [
-              _buildUpdateAction(context),
+              if (updateService.selfUpdates) _buildUpdateAction(context),
               // Seven quick taps on the version open owner access.
               GestureDetector(
                 key: const Key('app-version-row'),

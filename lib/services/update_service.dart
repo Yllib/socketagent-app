@@ -76,6 +76,9 @@ class UpdateService extends ChangeNotifier {
   bool get _fromPlay => distribution == AppDistribution.play;
   bool get isDesktopUpdate => distribution == AppDistribution.windows;
 
+  /// iOS updates come only from the App Store, so the app never checks.
+  bool get selfUpdates => distribution != AppDistribution.ios;
+
   UpdateInfo? _updateInfo;
   double? _downloadProgress;
   bool _isDownloading = false;
@@ -100,6 +103,7 @@ class UpdateService extends ChangeNotifier {
   /// Checks Google Play on Play builds and the public release metadata on
   /// GitHub everywhere else.
   Future<UpdateInfo?> checkForUpdate() async {
+    if (!selfUpdates) return null;
     if (_isDownloading || _isOpeningInstaller) return _updateInfo;
     if (_fromPlay) return _checkPlay();
     _finishInstallerLaunchState();
