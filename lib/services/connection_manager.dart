@@ -46,13 +46,16 @@ ConnectionMode connectionModeForServerId(
   return fallback;
 }
 
-/// The route for an auto-routed computer: direct when a LAN address answered,
-/// otherwise the relay if this phone may use it. Without relay access the LAN
-/// is the only way in, so keep retrying it.
+/// The route for an auto-routed computer: the relay when it connected while
+/// the LAN search ran, since it answered first, then direct when a LAN
+/// address answered, otherwise the relay if this phone may use it. Without
+/// relay access the LAN is the only way in, so keep retrying it.
 ConnectionMode chooseAutoRoute({
   required String? directHost,
   required bool canRelay,
+  bool relayConnectedFirst = false,
 }) {
+  if (canRelay && relayConnectedFirst) return ConnectionMode.relay;
   if (directHost != null) return ConnectionMode.direct;
   return canRelay ? ConnectionMode.relay : ConnectionMode.direct;
 }
@@ -89,6 +92,13 @@ class ConnectionManager {
   final Map<String, DateTime> _lastRouted = {};
   // Computers whose relay turned this phone away. Cleared with a new token.
   final Set<String> _relayRefused = {};
+  // Auto-routed computers waiting on the relay, with the next direct check.
+  final Map<String, Timer> _relayWatch = {};
+
+  /// How long a relay socket may wait for its computer before the phone
+  /// checks direct again. Doubles on each check that finds nothing, up to a
+  /// minute. Replaced in tests.
+  Duration relayPatience = const Duration(seconds: 5);
   StreamSubscription<List<ConnectivityResult>>? _networkChanges;
   Set<ConnectivityResult>? _lastNetwork;
   // Auto-routed computers whose socket belongs to a network the phone left.
@@ -96,6 +106,7 @@ class ConnectionManager {
   /// Sockets asked to reconnect, keyed by when the request's reason began.
   /// A socket that connected after that moment already satisfies it.
   final Map<String, DateTime> _staleSince = {};
+
   /// When the current burst of network-change reports began.
   DateTime? _networkChangedAt;
 
@@ -364,15 +375,9 @@ class ConnectionManager {
   }
 
   Future<void> _route(ServerConfig config) async {
-    // An encrypted direct socket signs in with the token or, once the
-    // computer has approved it, with this device's key.
-    final canDirect =
-        config.serverPubkey.isNotEmpty &&
-        (config.token.isNotEmpty || _deviceKeyDirect.contains(config.id));
-    final canRelay =
-        config.isRelayPaired &&
-        _subscriberToken.isNotEmpty &&
-        !_relayRefused.contains(config.id);
+    final started = DateTime.now();
+    final canDirect = _canDirect(config);
+    final canRelay = _canRelay(config);
     String? directHost;
     if (canDirect) {
       final network = await _networkKind();
@@ -386,15 +391,20 @@ class ConnectionManager {
         );
       }
     }
-    final mode = canDirect || canRelay
-        ? chooseAutoRoute(directHost: directHost, canRelay: canRelay)
-        : connectionModeForServerConfig(config);
-
     // The config may have changed while the search ran.
     final staleSince = _staleSince.remove(config.id);
     final latest = _configs[config.id];
     final ws = _connections[config.id];
     if (latest == null || !latest.autoRoute || ws == null) return;
+    // The search races the socket's own attempt.
+    final mode = canDirect || canRelay
+        ? chooseAutoRoute(
+            directHost: directHost,
+            canRelay: canRelay,
+            relayConnectedFirst:
+                ws.mode == ConnectionMode.relay && ws.connectedAfter(started),
+          )
+        : connectionModeForServerConfig(config);
     final stale = staleSince != null && !ws.connectedAfter(staleSince);
     final next = latest.copyWith(
       useRelay: mode == ConnectionMode.relay,
@@ -413,6 +423,17 @@ class ConnectionManager {
     if (live) ws.connect(force: true);
     onRouteChanged?.call(next);
   }
+
+  // An encrypted direct socket signs in with the token or, once the
+  // computer has approved it, with this device's key.
+  bool _canDirect(ServerConfig config) =>
+      config.serverPubkey.isNotEmpty &&
+      (config.token.isNotEmpty || _deviceKeyDirect.contains(config.id));
+
+  bool _canRelay(ServerConfig config) =>
+      config.isRelayPaired &&
+      _subscriberToken.isNotEmpty &&
+      !_relayRefused.contains(config.id);
 
   Future<_NetworkKind> _networkKind() async {
     try {
@@ -469,12 +490,21 @@ class ConnectionManager {
       // provider has had a chance to migrate them away.
       if (!connectedIdentities.add(config.connectionIdentity)) continue;
       final ws = entry.value;
-      if (config.autoRoute) {
+      if (!config.autoRoute) {
+        ws.connect();
+        continue;
+      }
+      // Connect on the last route at once while the route search runs, and
+      // keep whichever answers first. A route this phone can't use waits for
+      // the search instead.
+      final usable = config.useRelay ? _canRelay(config) : _canDirect(config);
+      if (usable) {
+        ws.connect();
+        unawaited(routeServer(config.id, force: true));
+      } else {
         unawaited(
           routeServer(config.id, force: true).then((_) => ws.connect()),
         );
-      } else {
-        ws.connect();
       }
     }
   }
@@ -533,6 +563,14 @@ class ConnectionManager {
 
     _statusSubs[serverId] = ws.statusStream.listen((status) {
       _statusController.add(ServerStatusUpdate(serverId, status));
+      if (status == ConnectionStatus.connected) {
+        _relayWatch.remove(serverId)?.cancel();
+      } else if (status == ConnectionStatus.connecting &&
+          ws.mode == ConnectionMode.relay &&
+          _configs[serverId]?.autoRoute == true &&
+          !_relayWatch.containsKey(serverId)) {
+        _watchRelay(serverId, ws, relayPatience);
+      }
       // A dropped connection may mean the phone left or joined the
       // computer's network. Only when the socket plans to retry: an
       // intentional disconnect must stay disconnected.
@@ -545,7 +583,29 @@ class ConnectionManager {
     });
   }
 
+  /// While [ws] waits on the relay for its computer, checks direct every
+  /// [wait], backing off, and switches when the computer answers there. The
+  /// relay socket keeps waiting in the room otherwise, so it opens the moment
+  /// the computer joins.
+  void _watchRelay(String serverId, WebSocketService ws, Duration wait) {
+    _relayWatch[serverId] = Timer(wait, () async {
+      _relayWatch.remove(serverId);
+      bool waiting() =>
+          _connections[serverId] == ws &&
+          ws.mode == ConnectionMode.relay &&
+          ws.status == ConnectionStatus.connecting &&
+          _configs[serverId]?.autoRoute == true;
+      if (!waiting()) return;
+      await routeServer(serverId, force: true);
+      if (!waiting() || _relayWatch.containsKey(serverId)) return;
+      final next = wait * 2;
+      const limit = Duration(minutes: 1);
+      _watchRelay(serverId, ws, next > limit ? limit : next);
+    });
+  }
+
   void _removeServer(String id) {
+    _relayWatch.remove(id)?.cancel();
     _messageSubs[id]?.cancel();
     _messageSubs.remove(id);
     _statusSubs[id]?.cancel();
@@ -573,6 +633,10 @@ class ConnectionManager {
 
   void dispose() {
     _networkChanges?.cancel();
+    for (final timer in _relayWatch.values) {
+      timer.cancel();
+    }
+    _relayWatch.clear();
     for (final sub in _messageSubs.values) {
       sub.cancel();
     }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:app/models/server_config.dart';
 import 'package:app/services/connection_manager.dart';
@@ -94,6 +95,27 @@ void main() {
     expect(await finder.find(autoConfig(), searchLan: false), isNull);
   });
 
+  test('the route that answers first wins', () {
+    // The LAN answered before the relay connected.
+    expect(
+      chooseAutoRoute(directHost: '192.168.1.20', canRelay: true),
+      ConnectionMode.direct,
+    );
+    // The relay connected while the LAN search ran.
+    expect(
+      chooseAutoRoute(
+        directHost: '192.168.1.20',
+        canRelay: true,
+        relayConnectedFirst: true,
+      ),
+      ConnectionMode.relay,
+    );
+    expect(
+      chooseAutoRoute(directHost: null, canRelay: false),
+      ConnectionMode.direct,
+    );
+  });
+
   test('saved computers keep their route choice when auto routing arrives', () {
     final relay = ServerConfig.fromJson({
       ...autoConfig().toJson()..remove('autoRoute'),
@@ -171,6 +193,57 @@ void main() {
         await manager.routeServer('computer', force: true);
         expect(saved.single.useRelay, isFalse);
         expect(manager.getConnection('computer')!.mode, ConnectionMode.direct);
+      },
+    );
+
+    test(
+      'switches to direct when the relay waits on a computer the LAN reaches',
+      () async {
+        // A relay that accepts the phone but never sees the computer join,
+        // and a computer that accepts a direct socket and stays quiet.
+        final sockets = <WebSocket>[];
+        Future<HttpServer> quietServer() async {
+          final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          server.listen((request) async {
+            sockets.add(await WebSocketTransformer.upgrade(request));
+          });
+          return server;
+        }
+
+        final relay = await quietServer();
+        final direct = await quietServer();
+        addTearDown(() async {
+          for (final socket in sockets) {
+            await socket.close();
+          }
+          await relay.close(force: true);
+          await direct.close(force: true);
+        });
+
+        var lanAnswers = false;
+        manager
+          ..setSubscriberToken('subscriber')
+          ..relayPatience = const Duration(milliseconds: 50)
+          ..routeFinder = LocalRouteFinder(
+            discover: (_) => const Stream.empty(),
+            reachable: (host, _) async => lanAnswers && host == '127.0.0.1',
+          );
+        await manager.setServers([
+          autoConfig(host: '127.0.0.1').copyWith(
+            port: direct.port,
+            relayUrl: 'ws://127.0.0.1:${relay.port}',
+          ),
+        ]);
+        manager.connectAll();
+        final ws = manager.getConnection('computer')!;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+        expect(ws.mode, ConnectionMode.relay);
+        expect(sockets, hasLength(1));
+
+        lanAnswers = true;
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(ws.mode, ConnectionMode.direct);
+        expect(saved.last.useRelay, isFalse);
       },
     );
 
