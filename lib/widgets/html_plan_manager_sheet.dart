@@ -109,9 +109,9 @@ class _HtmlPlanManagerSheetState extends State<HtmlPlanManagerSheet> {
         revision: plan.currentRevision,
       );
       if (saved != null && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Exported ${plan.title}')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Exported ${plan.title}')));
       }
     } catch (error) {
       if (mounted) {
@@ -131,9 +131,9 @@ class _HtmlPlanManagerSheetState extends State<HtmlPlanManagerSheet> {
       );
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not share plan: $error')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Could not share plan: $error')));
       }
     }
   }

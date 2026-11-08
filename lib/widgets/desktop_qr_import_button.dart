@@ -14,15 +14,28 @@ class DesktopQrImportButton extends StatelessWidget {
     label: const Text('Open QR image'),
     onPressed: () async {
       try {
-        final picked = await FilePicker.pickFile(type: FileType.custom, allowedExtensions: ['png', 'jpg', 'jpeg']);
+        final picked = await FilePicker.pickFile(
+          type: FileType.custom,
+          allowedExtensions: ['png', 'jpg', 'jpeg'],
+        );
         final path = picked?.path;
         if (path == null) return;
         final file = File(path);
-        if (await file.length() > 20 * 1024 * 1024) throw const FormatException('Choose a QR image smaller than 20 MB.');
+        if (await file.length() > 20 * 1024 * 1024)
+          throw const FormatException('Choose a QR image smaller than 20 MB.');
         final text = await compute(decodeDesktopQr, await file.readAsBytes());
         if (context.mounted) await onDecoded(text);
       } catch (error) {
-        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error is FormatException ? error.message : 'Could not import that QR image.')));
+        if (context.mounted)
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                error is FormatException
+                    ? error.message
+                    : 'Could not import that QR image.',
+              ),
+            ),
+          );
       }
     },
   );

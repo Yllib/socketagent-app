@@ -138,16 +138,25 @@ void main() {
     await tester.tap(find.text('Morning digest'));
     await tester.pumpAndSettle();
     await capture(tester, 'phone-detail', phoneDpr);
-    await tester.drag(find.byType(SingleChildScrollView).last, const Offset(0, -900));
+    await tester.drag(
+      find.byType(SingleChildScrollView).last,
+      const Offset(0, -900),
+    );
     await tester.pump();
     await capture(tester, 'phone-detail-runs', phoneDpr);
 
-    await tester.drag(find.byType(SingleChildScrollView).last, const Offset(0, 900));
+    await tester.drag(
+      find.byType(SingleChildScrollView).last,
+      const Offset(0, 900),
+    );
     await tester.pump();
     await tester.tap(find.byKey(const Key('task-action-edit')));
     await tester.pumpAndSettle();
     await capture(tester, 'phone-editor-top', phoneDpr);
-    await tester.drag(find.byType(SingleChildScrollView).last, const Offset(0, -700));
+    await tester.drag(
+      find.byType(SingleChildScrollView).last,
+      const Offset(0, -700),
+    );
     await tester.pump();
     await capture(tester, 'phone-editor-agent', phoneDpr);
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);

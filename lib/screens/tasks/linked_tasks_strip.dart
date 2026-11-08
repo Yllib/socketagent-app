@@ -47,7 +47,9 @@ class LinkedTasksStrip extends StatelessWidget {
                 style: TextStyle(color: palette.success),
               )
             : TextSpan(
-                text: when == null ? '' : ' ${formatRelative(when, now: reference)}',
+                text: when == null
+                    ? ''
+                    : ' ${formatRelative(when, now: reference)}',
               ),
       );
     }

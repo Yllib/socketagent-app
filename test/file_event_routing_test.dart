@@ -17,12 +17,9 @@ void main() {
 
   test('historical SendFile restores its immutable delivery path', () {
     expect(
-      resolveHistoricalSendFileDownloadPath(
-        <String, dynamic>{
-          'fileDeliveryPath': '/data/send-files/send_123/app-release.apk',
-        },
-        '/workspace/build/app-release.apk',
-      ),
+      resolveHistoricalSendFileDownloadPath(<String, dynamic>{
+        'fileDeliveryPath': '/data/send-files/send_123/app-release.apk',
+      }, '/workspace/build/app-release.apk'),
       '/data/send-files/send_123/app-release.apk',
     );
     expect(

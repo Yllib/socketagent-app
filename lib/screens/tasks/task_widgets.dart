@@ -161,11 +161,7 @@ class _TaskLongTextState extends State<TaskLongText> {
                       overflow: TextOverflow.ellipsis,
                     ),
             ),
-            Positioned(
-              right: 0,
-              top: -6,
-              child: CopyButton(text: widget.text),
-            ),
+            Positioned(right: 0, top: -6, child: CopyButton(text: widget.text)),
           ],
         ),
         if (long)

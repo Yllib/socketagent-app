@@ -4,9 +4,24 @@ import 'package:app/widgets/context_window_breakdown.dart';
 
 /// Verbatim from a stored `lastContextUsage`, on a CLI that reports `kind`.
 const _withKind = [
-  {'name': 'System prompt', 'tokens': 6575, 'color': 'promptBorder', 'kind': 'used'},
-  {'name': 'System tools', 'tokens': 12081, 'color': 'inactive', 'kind': 'used'},
-  {'name': 'MCP tools', 'tokens': 303, 'color': 'cyan_FOR_SUBAGENTS_ONLY', 'kind': 'used'},
+  {
+    'name': 'System prompt',
+    'tokens': 6575,
+    'color': 'promptBorder',
+    'kind': 'used',
+  },
+  {
+    'name': 'System tools',
+    'tokens': 12081,
+    'color': 'inactive',
+    'kind': 'used',
+  },
+  {
+    'name': 'MCP tools',
+    'tokens': 303,
+    'color': 'cyan_FOR_SUBAGENTS_ONLY',
+    'kind': 'used',
+  },
   {
     'name': 'MCP tools (deferred)',
     'tokens': 19199,
@@ -23,17 +38,42 @@ const _withKind = [
   },
   {'name': 'Memory files', 'tokens': 2990, 'color': 'claude', 'kind': 'used'},
   {'name': 'Skills', 'tokens': 3858, 'color': 'warning', 'kind': 'used'},
-  {'name': 'Messages', 'tokens': 70248, 'color': 'purple_FOR_SUBAGENTS_ONLY', 'kind': 'used'},
-  {'name': 'Autocompact buffer', 'tokens': 33000, 'color': 'inactive', 'kind': 'buffer'},
-  {'name': 'Free space', 'tokens': 225945, 'color': 'promptBorder', 'kind': 'free'},
+  {
+    'name': 'Messages',
+    'tokens': 70248,
+    'color': 'purple_FOR_SUBAGENTS_ONLY',
+    'kind': 'used',
+  },
+  {
+    'name': 'Autocompact buffer',
+    'tokens': 33000,
+    'color': 'inactive',
+    'kind': 'buffer',
+  },
+  {
+    'name': 'Free space',
+    'tokens': 225945,
+    'color': 'promptBorder',
+    'kind': 'free',
+  },
 ];
 
 /// The same session from an older CLI, which sends no `kind` at all.
 const _withoutKind = [
   {'name': 'System prompt', 'tokens': 6265, 'color': 'promptBorder'},
   {'name': 'System tools', 'tokens': 13822, 'color': 'inactive'},
-  {'name': 'MCP tools (deferred)', 'tokens': 19502, 'color': 'inactive', 'isDeferred': true},
-  {'name': 'System tools (deferred)', 'tokens': 25699, 'color': 'inactive', 'isDeferred': true},
+  {
+    'name': 'MCP tools (deferred)',
+    'tokens': 19502,
+    'color': 'inactive',
+    'isDeferred': true,
+  },
+  {
+    'name': 'System tools (deferred)',
+    'tokens': 25699,
+    'color': 'inactive',
+    'isDeferred': true,
+  },
   {'name': 'Skills', 'tokens': 2059, 'color': 'warning'},
   {'name': 'Messages', 'tokens': 182796, 'color': 'purple_FOR_SUBAGENTS_ONLY'},
   {'name': 'Autocompact buffer', 'tokens': 33000, 'color': 'inactive'},

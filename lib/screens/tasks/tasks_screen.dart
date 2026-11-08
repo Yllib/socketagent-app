@@ -36,7 +36,8 @@ enum TaskFilter {
       !task.isArchived && (task.hasUnread || task.status == TaskStatus.failed),
     TaskFilter.recurring => !task.isArchived && task.isRecurring,
     TaskFilter.oneOff => !task.isArchived && !task.isRecurring,
-    TaskFilter.stopped => !task.isArchived && task.status == TaskStatus.cancelled,
+    TaskFilter.stopped =>
+      !task.isArchived && task.status == TaskStatus.cancelled,
     TaskFilter.archived => task.isArchived,
   };
 }
@@ -118,7 +119,8 @@ class _TasksScreenState extends State<TasksScreen> {
     sessionTitle: (serverId, sessionId) => provider.sessions
         .where(
           (s) =>
-              s.id == sessionId && (s.serverId.isEmpty || s.serverId == serverId),
+              s.id == sessionId &&
+              (s.serverId.isEmpty || s.serverId == serverId),
         )
         .firstOrNull
         ?.title,
@@ -203,7 +205,8 @@ class _TasksScreenState extends State<TasksScreen> {
 
   Rect? _rowRect(String taskId) {
     final box =
-        GlobalObjectKey(taskId).currentContext?.findRenderObject() as RenderBox?;
+        GlobalObjectKey(taskId).currentContext?.findRenderObject()
+            as RenderBox?;
     if (box == null || !box.hasSize) return null;
     final origin = box.localToGlobal(Offset.zero);
     return Rect.fromLTWH(origin.dx + 48, origin.dy + 8, box.size.width - 96, 1);
@@ -304,10 +307,9 @@ class _TasksScreenState extends State<TasksScreen> {
         final all = _allTasks(provider);
         final sections = _sections(all);
         _visible = [for (final s in sections) ...s.tasks];
-        if (_focusedIndex >= _visible.length) _focusedIndex = _visible.length - 1;
-        final selected = _visible
-            .where((t) => t.id == _selectedId)
-            .firstOrNull;
+        if (_focusedIndex >= _visible.length)
+          _focusedIndex = _visible.length - 1;
+        final selected = _visible.where((t) => t.id == _selectedId).firstOrNull;
         final attention = all.where(TaskFilter.attention.matches).length;
         final offlineComputers = {
           for (final t in _visible)
@@ -398,9 +400,11 @@ class _TasksScreenState extends State<TasksScreen> {
                       filter: _filter,
                       attention: attention,
                       archived: all.where((t) => t.isArchived).length,
-                      computers: _sessionView ? const [] : provider.serverConfigs
-                          .map((c) => (id: c.id, name: c.name))
-                          .toList(),
+                      computers: _sessionView
+                          ? const []
+                          : provider.serverConfigs
+                                .map((c) => (id: c.id, name: c.name))
+                                .toList(),
                       computerFilter: _computerFilter,
                       onFilter: (f) => setState(() {
                         _filter = f;
@@ -603,9 +607,9 @@ class _FilterBar extends StatelessWidget {
                       computerFilter == null
                           ? 'All'
                           : computers
-                                .where((c) => c.id == computerFilter)
-                                .map((c) => c.name)
-                                .firstOrNull ??
+                                    .where((c) => c.id == computerFilter)
+                                    .map((c) => c.name)
+                                    .firstOrNull ??
                                 computerFilter!,
                       style: TextStyle(
                         fontSize: 13,

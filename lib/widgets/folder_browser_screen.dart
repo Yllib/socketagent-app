@@ -36,7 +36,8 @@ class _FolderBrowserScreenState extends State<FolderBrowserScreen> {
       if (!mounted) return;
       setState(() {
         _currentPath = result['path'] as String? ?? path;
-        _directories = (result['directories'] as List?)
+        _directories =
+            (result['directories'] as List?)
                 ?.map((e) => e.toString())
                 .toList() ??
             [];
@@ -69,14 +70,16 @@ class _FolderBrowserScreenState extends State<FolderBrowserScreen> {
     final theme = Theme.of(context);
     final serverName = widget.serverId != null
         ? widget.provider.serverConfigs
-            .where((c) => c.id == widget.serverId)
-            .firstOrNull
-            ?.name
+              .where((c) => c.id == widget.serverId)
+              .firstOrNull
+              ?.name
         : null;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(serverName != null ? 'Browse · $serverName' : 'Browse Folders'),
+        title: Text(
+          serverName != null ? 'Browse · $serverName' : 'Browse Folders',
+        ),
         actions: [
           TextButton.icon(
             onPressed: _currentPath.isNotEmpty
@@ -115,64 +118,81 @@ class _FolderBrowserScreenState extends State<FolderBrowserScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null && _directories.isEmpty
-                    ? Center(
-                        child: Padding(
+                ? Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Text(
+                        'Error: $_error',
+                        style: TextStyle(color: theme.colorScheme.error),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  )
+                : ListView(
+                    children: [
+                      if (_parentPath.isNotEmpty || _currentPath.isNotEmpty)
+                        ListTile(
+                          leading: Icon(
+                            Icons.arrow_upward,
+                            size: 20,
+                            color: theme.colorScheme.primary,
+                          ),
+                          title: const Text(
+                            '..',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                          subtitle: Text(
+                            _parentPath.isEmpty ? 'Root' : _parentPath,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurface.withAlpha(128),
+                            ),
+                          ),
+                          onTap: () => _loadDirectory(_parentPath),
+                        ),
+                      ..._directories.map((dir) {
+                        final sep = _currentPath.contains('\\') ? '\\' : '/';
+                        final fullPath =
+                            _currentPath.endsWith(sep) ||
+                                _currentPath.endsWith('/')
+                            ? '$_currentPath$dir'
+                            : '$_currentPath$sep$dir';
+                        return ListTile(
+                          leading: Icon(
+                            Icons.folder_outlined,
+                            size: 20,
+                            color: theme.colorScheme.primary,
+                          ),
+                          title: Text(
+                            dir,
+                            style: const TextStyle(fontSize: 14),
+                          ),
+                          trailing: IconButton(
+                            icon: Icon(
+                              Icons.check_circle_outline,
+                              size: 20,
+                              color: theme.colorScheme.primary,
+                            ),
+                            tooltip: 'Select this folder',
+                            onPressed: () => Navigator.pop(context, fullPath),
+                          ),
+                          onTap: () => _loadDirectory(fullPath),
+                        );
+                      }),
+                      if (_directories.isEmpty && !_loading)
+                        Padding(
                           padding: const EdgeInsets.all(24),
                           child: Text(
-                            'Error: $_error',
-                            style: TextStyle(color: theme.colorScheme.error),
+                            'No subdirectories',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: theme.colorScheme.onSurface.withAlpha(128),
+                            ),
                             textAlign: TextAlign.center,
                           ),
                         ),
-                      )
-                    : ListView(
-                        children: [
-                          if (_parentPath.isNotEmpty || _currentPath.isNotEmpty)
-                            ListTile(
-                              leading: Icon(Icons.arrow_upward,
-                                  size: 20, color: theme.colorScheme.primary),
-                              title: const Text('..', style: TextStyle(fontSize: 14)),
-                              subtitle: Text(
-                                _parentPath.isEmpty ? 'Root' : _parentPath,
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: theme.colorScheme.onSurface.withAlpha(128),
-                                ),
-                              ),
-                              onTap: () => _loadDirectory(_parentPath),
-                            ),
-                          ..._directories.map((dir) {
-                            final sep = _currentPath.contains('\\') ? '\\' : '/';
-                            final fullPath = _currentPath.endsWith(sep) || _currentPath.endsWith('/')
-                                ? '$_currentPath$dir'
-                                : '$_currentPath$sep$dir';
-                            return ListTile(
-                              leading: Icon(Icons.folder_outlined,
-                                  size: 20, color: theme.colorScheme.primary),
-                              title: Text(dir, style: const TextStyle(fontSize: 14)),
-                              trailing: IconButton(
-                                icon: Icon(Icons.check_circle_outline,
-                                    size: 20, color: theme.colorScheme.primary),
-                                tooltip: 'Select this folder',
-                                onPressed: () => Navigator.pop(context, fullPath),
-                              ),
-                              onTap: () => _loadDirectory(fullPath),
-                            );
-                          }),
-                          if (_directories.isEmpty && !_loading)
-                            Padding(
-                              padding: const EdgeInsets.all(24),
-                              child: Text(
-                                'No subdirectories',
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  color: theme.colorScheme.onSurface.withAlpha(128),
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                        ],
-                      ),
+                    ],
+                  ),
           ),
         ],
       ),

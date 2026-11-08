@@ -23,13 +23,23 @@ void main() {
     expect(
       backendWarningFor([
         backend('claude', 'ok'),
-        backend('codex', 'error', kind: 'auth', reason: 'Codex is not signed in'),
+        backend(
+          'codex',
+          'error',
+          kind: 'auth',
+          reason: 'Codex is not signed in',
+        ),
       ]),
       isNull,
     );
     expect(
       backendWarningFor([
-        backend('claude', 'error', kind: 'auth', reason: 'Claude is not signed in'),
+        backend(
+          'claude',
+          'error',
+          kind: 'auth',
+          reason: 'Claude is not signed in',
+        ),
         backend('codex', 'ok'),
       ]),
       isNull,
@@ -51,7 +61,12 @@ void main() {
   // summary that would blame authentication for it.
   test('a non-auth failure reports itself rather than the summary', () {
     final warning = backendWarningFor([
-      backend('claude', 'error', kind: 'install', reason: 'Claude CLI was not found.'),
+      backend(
+        'claude',
+        'error',
+        kind: 'install',
+        reason: 'Claude CLI was not found.',
+      ),
       backend('codex', 'error', kind: 'auth'),
     ]);
     expect(warning!['reason'], 'Claude CLI was not found.');
@@ -60,7 +75,11 @@ void main() {
   test('a working but degraded backend still gets a nudge', () {
     expect(
       backendWarningFor([
-        backend('claude', 'warning', reason: 'Claude is using the system install.'),
+        backend(
+          'claude',
+          'warning',
+          reason: 'Claude is using the system install.',
+        ),
         backend('codex', 'ok'),
       ])!['reason'],
       contains('system install'),
@@ -83,7 +102,10 @@ void main() {
       isNull,
     );
     expect(
-      backendWarningFor([backend('claude', 'error'), backend('codex', 'error')]),
+      backendWarningFor([
+        backend('claude', 'error'),
+        backend('codex', 'error'),
+      ]),
       isNotNull,
     );
   });

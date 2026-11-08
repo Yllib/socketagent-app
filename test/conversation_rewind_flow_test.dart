@@ -14,11 +14,13 @@ Map<String, dynamic> entry(int seq, {String role = 'assistant'}) => {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  FlutterLocalNotificationsPlatform.instance = AndroidFlutterLocalNotificationsPlugin();
-  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
-    const MethodChannel('dexterous.com/flutter/local_notifications'),
-    (call) async => call.method == 'initialize' ? true : null,
-  );
+  FlutterLocalNotificationsPlatform.instance =
+      AndroidFlutterLocalNotificationsPlugin();
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+        const MethodChannel('dexterous.com/flutter/local_notifications'),
+        (call) async => call.method == 'initialize' ? true : null,
+      );
 
   test(
     'rewind keeps retained cards and loaded older pages without a window reset',

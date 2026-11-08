@@ -34,10 +34,7 @@ void main() {
         createdAt: DateTime.fromMillisecondsSinceEpoch(0),
         updatedAt: DateTime.fromMillisecondsSinceEpoch(0),
       );
-      expect(
-        goal.automaticallyContinues,
-        status == CodexGoalStatus.active,
-      );
+      expect(goal.automaticallyContinues, status == CodexGoalStatus.active);
     }
   });
 }

@@ -128,24 +128,26 @@ void main() {
   });
 
   test('browser cards with reused entry ids keep separate sequences', () {
-    final first = ChatMessage.browserSession(
-      profile: 'play-console',
-      label: 'Play Console',
-      url: 'https://play.google.com/console',
-      width: 430,
-      height: 860,
-    )
-      ..entryId = 'temporarily-colliding-entry'
-      ..sessionSeq = 20;
-    final second = ChatMessage.browserSession(
-      profile: 'play-console',
-      label: 'Play Console',
-      url: 'https://play.google.com/console',
-      width: 430,
-      height: 860,
-    )
-      ..entryId = 'temporarily-colliding-entry'
-      ..sessionSeq = 24;
+    final first =
+        ChatMessage.browserSession(
+            profile: 'play-console',
+            label: 'Play Console',
+            url: 'https://play.google.com/console',
+            width: 430,
+            height: 860,
+          )
+          ..entryId = 'temporarily-colliding-entry'
+          ..sessionSeq = 20;
+    final second =
+        ChatMessage.browserSession(
+            profile: 'play-console',
+            label: 'Play Console',
+            url: 'https://play.google.com/console',
+            width: 430,
+            height: 860,
+          )
+          ..entryId = 'temporarily-colliding-entry'
+          ..sessionSeq = 24;
 
     expect(sameBrowserSessionCard(first, second), isFalse);
   });

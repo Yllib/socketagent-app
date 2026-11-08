@@ -23,11 +23,11 @@ class ContentBlock {
 class MessageGroup {
   final DateTime timestamp;
   String? model;
-  Map<String, dynamic>? inputUsage;  // from message_start
-  int? outputTokens;                  // from message_delta
-  String? stopReason;                 // from message_delta
+  Map<String, dynamic>? inputUsage; // from message_start
+  int? outputTokens; // from message_delta
+  String? stopReason; // from message_delta
   final List<ContentBlock> contentBlocks = [];
-  bool complete = false;              // msg_stop received
+  bool complete = false; // msg_stop received
 
   // Tool results from the 'user' event that follows this message
   List<Map<String, dynamic>>? toolResults;
@@ -70,7 +70,7 @@ class SdkItem {
   // For system events
   String? systemSubtype;
   String? sessionId;
-  String? systemStatus;        // e.g. "compacting", null when done
+  String? systemStatus; // e.g. "compacting", null when done
   Map<String, dynamic>? compactMetadata; // trigger, pre_tokens, etc.
   String? taskId;
   String? summary;

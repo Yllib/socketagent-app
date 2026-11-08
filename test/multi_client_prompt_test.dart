@@ -18,31 +18,35 @@ import 'package:pinenacl/x25519.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a prompt sent from another client renders without refetching history', () async {
-    await withSession((provider, send) async {
-      await send({
-        'type': 'user_message_uuid',
-        'uuid': 'uuid-from-desktop',
-        'entryId': 'entry-1',
-        'sessionSeq': 1,
-        'revision': 1,
-        'content': 'check the build',
-      });
+  test(
+    'a prompt sent from another client renders without refetching history',
+    () async {
+      await withSession((provider, send) async {
+        await send({
+          'type': 'user_message_uuid',
+          'uuid': 'uuid-from-desktop',
+          'entryId': 'entry-1',
+          'sessionSeq': 1,
+          'revision': 1,
+          'content': 'check the build',
+        });
 
-      final prompts = provider.messages
-          .where((m) => m.sender == MessageSender.user)
-          .toList();
-      expect(prompts.map((m) => m.textContent), ['check the build']);
-      expect(prompts.single.uuid, 'uuid-from-desktop');
-      expect(prompts.single.isPending, isFalse);
-    });
-  });
+        final prompts = provider.messages
+            .where((m) => m.sender == MessageSender.user)
+            .toList();
+        expect(prompts.map((m) => m.textContent), ['check the build']);
+        expect(prompts.single.uuid, 'uuid-from-desktop');
+        expect(prompts.single.isPending, isFalse);
+      });
+    },
+  );
 
   test('the client that sent the prompt keeps its own bubble', () async {
     await withSession((provider, send) async {
       await provider.sendPrompt('check the build');
-      final local = provider.messages
-          .lastWhere((m) => m.sender == MessageSender.user);
+      final local = provider.messages.lastWhere(
+        (m) => m.sender == MessageSender.user,
+      );
       expect(local.isPending, isTrue);
 
       await send({
@@ -65,33 +69,37 @@ void main() {
     });
   });
 
-  test('a prompt this client is still waiting on is not stamped by another one', () async {
-    await withSession((provider, send) async {
-      await provider.sendPrompt('mine');
-      final mine = provider.messages
-          .lastWhere((m) => m.sender == MessageSender.user);
+  test(
+    'a prompt this client is still waiting on is not stamped by another one',
+    () async {
+      await withSession((provider, send) async {
+        await provider.sendPrompt('mine');
+        final mine = provider.messages.lastWhere(
+          (m) => m.sender == MessageSender.user,
+        );
 
-      // No clientMessageId match, and the text belongs to the other client.
-      await send({
-        'type': 'user_message_uuid',
-        'uuid': 'uuid-from-desktop',
-        'clientMessageId': 'desktop-message-id',
-        'entryId': 'entry-1',
-        'sessionSeq': 1,
-        'revision': 1,
-        'content': 'theirs',
+        // No clientMessageId match, and the text belongs to the other client.
+        await send({
+          'type': 'user_message_uuid',
+          'uuid': 'uuid-from-desktop',
+          'clientMessageId': 'desktop-message-id',
+          'entryId': 'entry-1',
+          'sessionSeq': 1,
+          'revision': 1,
+          'content': 'theirs',
+        });
+
+        expect(mine.uuid, isNull);
+        expect(mine.isPending, isTrue);
+        expect(
+          provider.messages
+              .where((m) => m.sender == MessageSender.user)
+              .map((m) => m.textContent),
+          ['mine', 'theirs'],
+        );
       });
-
-      expect(mine.uuid, isNull);
-      expect(mine.isPending, isTrue);
-      expect(
-        provider.messages
-            .where((m) => m.sender == MessageSender.user)
-            .map((m) => m.textContent),
-        ['mine', 'theirs'],
-      );
-    });
-  });
+    },
+  );
 
   test('a prompt with nothing to show renders nothing', () async {
     await withSession((provider, send) async {
@@ -103,7 +111,10 @@ void main() {
         'revision': 1,
         'content': '[Monitor: build] failed',
       });
-      expect(provider.messages.where((m) => m.sender == MessageSender.user), isEmpty);
+      expect(
+        provider.messages.where((m) => m.sender == MessageSender.user),
+        isEmpty,
+      );
     });
   });
 }
@@ -114,7 +125,8 @@ Future<void> withSession(
   Future<void> Function(
     ChatProvider provider,
     Future<void> Function(Map<String, dynamic> event) send,
-  ) body, {
+  )
+  body, {
   void Function(Map<String, dynamic>)? onClientMessage,
 }) async {
   final cache = await Directory.systemTemp.createTemp('multi-client-test-');
@@ -154,7 +166,9 @@ Future<void> withSession(
         ByteList(base64Decode(envelope['c'] as String)),
         nonce: base64Decode(envelope['n'] as String),
       );
-      onClientMessage(jsonDecode(utf8.decode(plaintext)) as Map<String, dynamic>);
+      onClientMessage(
+        jsonDecode(utf8.decode(plaintext)) as Map<String, dynamic>,
+      );
     });
     if (!connected.isCompleted) connected.complete(socket);
   });

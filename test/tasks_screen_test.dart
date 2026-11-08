@@ -59,24 +59,41 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('fleet view lists tasks by state with computer and offline note',
-      (tester) async {
-    await pump(tester, FakeTasksProvider());
+  testWidgets(
+    'fleet view lists tasks by state with computer and offline note',
+    (tester) async {
+      await pump(tester, FakeTasksProvider());
 
-    expect(find.textContaining(RegExp(r'^Scheduled  \d'), findRichText: true), findsOneWidget);
-    expect(find.textContaining(RegExp(r'^Finished  \d'), findRichText: true), findsOneWidget);
-    expect(find.textContaining(RegExp(r'^Stopped  \d'), findRichText: true), findsOneWidget);
-    expect(find.text('Morning digest'), findsOneWidget);
-    expect(find.text('Inbox triage'), findsOneWidget);
-    expect(find.text('Summarize PR 412'), findsNothing,
-        reason: 'archived tasks stay out of All');
-    // Two unread: the digest and the failed photos run.
-    expect(find.byKey(const Key('task-unread-dot')), findsNWidgets(2));
-    expect(find.textContaining('laptop offline', findRichText: true), findsWidgets);
-    expect(find.byKey(const Key('tasks-offline-note')), findsOneWidget);
-    // Computer appears per row because two are configured.
-    expect(find.textContaining('tower · ', findRichText: true), findsWidgets);
-  });
+      expect(
+        find.textContaining(RegExp(r'^Scheduled  \d'), findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(RegExp(r'^Finished  \d'), findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining(RegExp(r'^Stopped  \d'), findRichText: true),
+        findsOneWidget,
+      );
+      expect(find.text('Morning digest'), findsOneWidget);
+      expect(find.text('Inbox triage'), findsOneWidget);
+      expect(
+        find.text('Summarize PR 412'),
+        findsNothing,
+        reason: 'archived tasks stay out of All',
+      );
+      // Two unread: the digest and the failed photos run.
+      expect(find.byKey(const Key('task-unread-dot')), findsNWidgets(2));
+      expect(
+        find.textContaining('laptop offline', findRichText: true),
+        findsWidgets,
+      );
+      expect(find.byKey(const Key('tasks-offline-note')), findsOneWidget);
+      // Computer appears per row because two are configured.
+      expect(find.textContaining('tower · ', findRichText: true), findsWidgets);
+    },
+  );
 
   testWidgets('filters narrow the list', (tester) async {
     await pump(tester, FakeTasksProvider());
@@ -113,7 +130,9 @@ void main() {
     expect(find.text('No repeating tasks.'), findsOneWidget);
   });
 
-  testWidgets('right-click opens the menu and delete asks first', (tester) async {
+  testWidgets('right-click opens the menu and delete asks first', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider();
     await pump(tester, provider);
 
@@ -125,8 +144,11 @@ void main() {
     expect(find.byKey(const Key('task-menu-edit')), findsOneWidget);
     expect(find.byKey(const Key('task-menu-runNow')), findsOneWidget);
     expect(find.text('Stop repeating'), findsOneWidget);
-    expect(find.byKey(const Key('task-menu-archive')), findsNothing,
-        reason: 'a pending recurring task cannot be archived');
+    expect(
+      find.byKey(const Key('task-menu-archive')),
+      findsNothing,
+      reason: 'a pending recurring task cannot be archived',
+    );
 
     await tester.tap(find.byKey(const Key('task-menu-delete')));
     await tester.pumpAndSettle();
@@ -139,37 +161,40 @@ void main() {
     expect(find.text('Weekly backup check'), findsNothing);
   });
 
-  testWidgets('keyboard: arrows focus, R runs with confirmation, U toggles read',
-      (tester) async {
-    final provider = FakeTasksProvider();
-    await pump(tester, provider, size: desktop);
+  testWidgets(
+    'keyboard: arrows focus, R runs with confirmation, U toggles read',
+    (tester) async {
+      final provider = FakeTasksProvider();
+      await pump(tester, provider, size: desktop);
 
-    // The list takes focus on its own when shown.
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-    await tester.pump();
-    await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
-    await tester.pumpAndSettle();
-    // The digest runs with Yolo access, so Run now asks.
-    expect(find.textContaining('Yolo access'), findsOneWidget);
-    await tester.tap(find.widgetWithText(FilledButton, 'Run now'));
-    await tester.pumpAndSettle();
-    expect(provider.calls.last.$1, 'executeScheduledTask');
-    expect(provider.calls.last.$2, {'taskId': 'digest'});
-    expect(find.byKey(const Key('tasks-feedback')), findsOneWidget);
+      // The list takes focus on its own when shown.
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyR);
+      await tester.pumpAndSettle();
+      // The digest runs with Yolo access, so Run now asks.
+      expect(find.textContaining('Yolo access'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Run now'));
+      await tester.pumpAndSettle();
+      expect(provider.calls.last.$1, 'executeScheduledTask');
+      expect(provider.calls.last.$2, {'taskId': 'digest'});
+      expect(find.byKey(const Key('tasks-feedback')), findsOneWidget);
 
-    await tester.sendKeyEvent(LogicalKeyboardKey.keyU);
-    await tester.pump();
-    expect(provider.calls.last.$1, 'markScheduledTaskRead');
-    expect(provider.calls.last.$2, {'taskId': 'digest', 'read': true});
-    // Enter selects it in the wide layout: the detail pane shows the prompt.
-    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump();
-    expect(find.textContaining('Read the overnight inbox'), findsWidgets);
-    expect(find.byKey(const Key('task-action-edit')), findsOneWidget);
-  });
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyU);
+      await tester.pump();
+      expect(provider.calls.last.$1, 'markScheduledTaskRead');
+      expect(provider.calls.last.$2, {'taskId': 'digest', 'read': true});
+      // Enter selects it in the wide layout: the detail pane shows the prompt.
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+      expect(find.textContaining('Read the overnight inbox'), findsWidgets);
+      expect(find.byKey(const Key('task-action-edit')), findsOneWidget);
+    },
+  );
 
-  testWidgets('actions on an offline computer are refused with a notice',
-      (tester) async {
+  testWidgets('actions on an offline computer are refused with a notice', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider();
     await pump(tester, provider);
 
@@ -184,8 +209,9 @@ void main() {
     );
   });
 
-  testWidgets('desktop detail pane: history pages, archive offers undo',
-      (tester) async {
+  testWidgets('desktop detail pane: history pages, archive offers undo', (
+    tester,
+  ) async {
     final provider = FakeTasksProvider(
       statuses: const {
         'tower': ConnectionStatus.connected,
@@ -198,7 +224,10 @@ void main() {
     await tester.pump();
     expect(find.text('107 · 15 failed'), findsOneWidget);
     expect(find.byKey(const Key('task-runs-more')), findsOneWidget);
-    expect(find.textContaining('At run time the server prepends'), findsOneWidget);
+    expect(
+      find.textContaining('At run time the server prepends'),
+      findsOneWidget,
+    );
 
     await tester.tap(find.text('Nightly lint'));
     await tester.pump();
@@ -237,8 +266,9 @@ void main() {
     expect(runCount, findsOneWidget);
   });
 
-  testWidgets('session view shows only linked tasks and offers New task',
-      (tester) async {
+  testWidgets('session view shows only linked tasks and offers New task', (
+    tester,
+  ) async {
     await pump(
       tester,
       FakeTasksProvider(),
@@ -255,15 +285,19 @@ void main() {
   testWidgets('server errors reach the strip', (tester) async {
     final provider = FakeTasksProvider();
     await pump(tester, provider);
-    provider.errors.add((serverId: 'tower', message: 'Scheduled task not found'));
+    provider.errors.add((
+      serverId: 'tower',
+      message: 'Scheduled task not found',
+    ));
     await tester.pump();
     expect(tasksFeedback.current?.text, 'tower: Scheduled task not found');
     await tester.pump();
     expect(find.text('tower: Scheduled task not found'), findsOneWidget);
   });
 
-  testWidgets('linked strip summarizes pending tasks and opens on tap',
-      (tester) async {
+  testWidgets('linked strip summarizes pending tasks and opens on tap', (
+    tester,
+  ) async {
     var opened = 0;
     await tester.pumpWidget(
       MaterialApp(
@@ -271,7 +305,11 @@ void main() {
         home: Scaffold(
           body: LinkedTasksStrip(
             tasks: seedTasks()
-                .where((t) => t['linkedSessionId'] == 'sess-1' && t['status'] != 'completed')
+                .where(
+                  (t) =>
+                      t['linkedSessionId'] == 'sess-1' &&
+                      t['status'] != 'completed',
+                )
                 .toList(),
             onOpen: () => opened++,
             now: seedNow,
@@ -279,15 +317,29 @@ void main() {
         ),
       ),
     );
-    expect(find.textContaining('2 scheduled tasks', findRichText: true), findsOneWidget);
-    expect(find.textContaining('Deploy smoke test running', findRichText: true), findsOneWidget);
-    expect(find.textContaining(RegExp(r'Write release notes in 1[89]h'), findRichText: true), findsOneWidget);
+    expect(
+      find.textContaining('2 scheduled tasks', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Deploy smoke test running', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining(
+        RegExp(r'Write release notes in 1[89]h'),
+        findRichText: true,
+      ),
+      findsOneWidget,
+    );
     await tester.tap(find.byKey(const Key('linked-tasks-strip')));
     expect(opened, 1);
 
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: LinkedTasksStrip(tasks: const [], onOpen: () {})),
+        home: Scaffold(
+          body: LinkedTasksStrip(tasks: const [], onOpen: () {}),
+        ),
       ),
     );
     expect(find.byKey(const Key('linked-tasks-strip')), findsNothing);

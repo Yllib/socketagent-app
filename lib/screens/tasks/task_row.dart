@@ -188,9 +188,7 @@ class TaskRow extends StatelessWidget {
 
   String _scheduleText(DateTime now) {
     final when = task.scheduledTime;
-    final whenText = when == null
-        ? 'invalid time'
-        : formatWhen(when, now: now);
+    final whenText = when == null ? 'invalid time' : formatWhen(when, now: now);
     if (task.isArchived) {
       return '${task.recurrenceLabel} · archived ${formatRelative(task.archivedAt!, now: now)}';
     }
@@ -232,7 +230,8 @@ Future<void> showTaskMenu(
 }) async {
   final palette = context.palette;
   final hint = TextStyle(fontSize: 11, color: palette.textMuted);
-  final rect = anchor ?? (at == null ? null : Rect.fromLTWH(at.dx, at.dy, 1, 1));
+  final rect =
+      anchor ?? (at == null ? null : Rect.fromLTWH(at.dx, at.dy, 1, 1));
   final command = await showAdaptiveActionSheet<TaskCommand>(
     context: context,
     title: rect == null ? task.displayName : null,

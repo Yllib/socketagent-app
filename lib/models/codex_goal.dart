@@ -63,5 +63,8 @@ DateTime _dateFromEpoch(dynamic value) {
   final epoch = (value as num?)?.toInt() ?? 0;
   if (epoch <= 0) return DateTime.fromMillisecondsSinceEpoch(0);
   final milliseconds = epoch < 100000000000 ? epoch * 1000 : epoch;
-  return DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true).toLocal();
+  return DateTime.fromMillisecondsSinceEpoch(
+    milliseconds,
+    isUtc: true,
+  ).toLocal();
 }

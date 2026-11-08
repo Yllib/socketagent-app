@@ -15,35 +15,38 @@ Map<String, dynamic> entry(int seq, {int revision = 1, String? id}) => {
 void main() {
   final cache = SessionTranscriptCache();
 
-  test('a cache with gaps still yields a cursor listing exactly what it holds', () {
-    // The server persisted rows 3 and 6 (a task state and a run boundary)
-    // that never reached the phone as live events.
-    final snapshot = <String, dynamic>{
-      'offset': 10,
-      'total': 18,
-      'messages': [entry(1), entry(2), entry(4, revision: 7), entry(5)],
-    };
-    expect(cache.resumeCheckpoint(snapshot), (
-      latestSessionSeq: 5,
-      historyOffset: 10,
-      entryCount: 4,
-    ));
-    final cursor = cache.resumeCursor(snapshot)!;
-    expect(cursor.entryRevisions, [
-      [1, 1],
-      [2, 1],
-      [4, 7],
-      [5, 1],
-    ]);
-    expect(
-      cursor.identityDigest,
-      sha256
-          .convert(
-            utf8.encode('1:entry-1\n2:entry-2\n4:entry-4\n5:entry-5\n'),
-          )
-          .toString(),
-    );
-  });
+  test(
+    'a cache with gaps still yields a cursor listing exactly what it holds',
+    () {
+      // The server persisted rows 3 and 6 (a task state and a run boundary)
+      // that never reached the phone as live events.
+      final snapshot = <String, dynamic>{
+        'offset': 10,
+        'total': 18,
+        'messages': [entry(1), entry(2), entry(4, revision: 7), entry(5)],
+      };
+      expect(cache.resumeCheckpoint(snapshot), (
+        latestSessionSeq: 5,
+        historyOffset: 10,
+        entryCount: 4,
+      ));
+      final cursor = cache.resumeCursor(snapshot)!;
+      expect(cursor.entryRevisions, [
+        [1, 1],
+        [2, 1],
+        [4, 7],
+        [5, 1],
+      ]);
+      expect(
+        cursor.identityDigest,
+        sha256
+            .convert(
+              utf8.encode('1:entry-1\n2:entry-2\n4:entry-4\n5:entry-5\n'),
+            )
+            .toString(),
+      );
+    },
+  );
 
   test('the cursor covers only the newest entries of a long cache', () {
     final snapshot = <String, dynamic>{
@@ -114,10 +117,14 @@ void main() {
       ],
     };
     final merged = mergeTranscriptCachePayloads(current, delta);
-    expect(
-      (merged['messages'] as List).map((m) => m['sessionSeq']).toList(),
-      [1, 2, 3, 4, 5, 6],
-    );
+    expect((merged['messages'] as List).map((m) => m['sessionSeq']).toList(), [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+    ]);
     expect((merged['messages'] as List)[1]['revision'], 4);
     expect(merged['offset'], 0);
     expect(merged['total'], 6);

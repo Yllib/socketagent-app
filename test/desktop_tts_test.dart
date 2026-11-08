@@ -59,60 +59,56 @@ void main() {
     },
   );
 
-  testWidgets(
-    'switching unused sources never starts or stops native audio',
-    (tester) async {
-      final provider = ChatProvider();
-      await tester.pumpAndSettle();
-      calls.clear();
-      await provider.setTtsEngineMode(TtsEngineMode.kokoroDevice);
-      expect(provider.ttsEngineMode, TtsEngineMode.kokoroDevice);
-      await provider.setTtsEngineMode(TtsEngineMode.system);
-      expect(provider.ttsEngineMode, TtsEngineMode.system);
-      expect(calls, isEmpty);
-      provider.dispose();
-      await tester.pumpAndSettle();
-    },
-    variant: TargetPlatformVariant.only(TargetPlatform.windows),
-  );
+  testWidgets('switching unused sources never starts or stops native audio', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    await tester.pumpAndSettle();
+    calls.clear();
+    await provider.setTtsEngineMode(TtsEngineMode.kokoroDevice);
+    expect(provider.ttsEngineMode, TtsEngineMode.kokoroDevice);
+    await provider.setTtsEngineMode(TtsEngineMode.system);
+    expect(provider.ttsEngineMode, TtsEngineMode.system);
+    expect(calls, isEmpty);
+    provider.dispose();
+    await tester.pumpAndSettle();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
-  testWidgets(
-    'stalled speech cleanup is bounded and the latest source wins',
-    (tester) async {
-      final provider = ChatProvider();
-      await tester.pumpAndSettle();
-      var speaking = false;
-      unawaited(
-        provider.activeTtsEngine.speak('Preview').then((_) => speaking = true),
-      );
-      await tester.pumpAndSettle();
-      expect(speaking, isTrue);
-      final stopped = Completer<int>();
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(
-            channel,
-            (call) async => call.method == 'stop' ? stopped.future : 1,
-          );
-      var finished = false;
-      unawaited(provider.setTtsEngineMode(TtsEngineMode.kokoroDevice));
-      unawaited(
-        provider
-            .setTtsEngineMode(TtsEngineMode.kokoroServer)
-            .then((_) => finished = true),
-      );
-      await tester.pump();
-      expect(finished, isFalse);
-      await tester.pump(const Duration(seconds: 2));
-      expect(finished, isTrue);
-      expect(provider.ttsEngineMode, TtsEngineMode.kokoroServer);
-      stopped.complete(1);
-      await tester.pumpAndSettle();
-      expect(provider.ttsEngineMode, TtsEngineMode.kokoroServer);
-      provider.dispose();
-      await tester.pumpAndSettle();
-    },
-    variant: TargetPlatformVariant.only(TargetPlatform.windows),
-  );
+  testWidgets('stalled speech cleanup is bounded and the latest source wins', (
+    tester,
+  ) async {
+    final provider = ChatProvider();
+    await tester.pumpAndSettle();
+    var speaking = false;
+    unawaited(
+      provider.activeTtsEngine.speak('Preview').then((_) => speaking = true),
+    );
+    await tester.pumpAndSettle();
+    expect(speaking, isTrue);
+    final stopped = Completer<int>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          channel,
+          (call) async => call.method == 'stop' ? stopped.future : 1,
+        );
+    var finished = false;
+    unawaited(provider.setTtsEngineMode(TtsEngineMode.kokoroDevice));
+    unawaited(
+      provider
+          .setTtsEngineMode(TtsEngineMode.kokoroServer)
+          .then((_) => finished = true),
+    );
+    await tester.pump();
+    expect(finished, isFalse);
+    await tester.pump(const Duration(seconds: 2));
+    expect(finished, isTrue);
+    expect(provider.ttsEngineMode, TtsEngineMode.kokoroServer);
+    stopped.complete(1);
+    await tester.pumpAndSettle();
+    expect(provider.ttsEngineMode, TtsEngineMode.kokoroServer);
+    provider.dispose();
+    await tester.pumpAndSettle();
+  }, variant: TargetPlatformVariant.only(TargetPlatform.windows));
 
   test('failed initialization can retry', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;

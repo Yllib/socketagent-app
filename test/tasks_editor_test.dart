@@ -367,7 +367,10 @@ void main() {
     expect(chip(1).selected, isTrue);
     await tester.tap(find.byKey(const Key('task-editor-weekday-4')));
     await tester.pump();
-    expect(find.textContaining('Runs on Mon, Thu at this time'), findsOneWidget);
+    expect(
+      find.textContaining('Runs on Mon, Thu at this time'),
+      findsOneWidget,
+    );
     // The last chosen day cannot be turned off.
     await tester.tap(find.byKey(const Key('task-editor-weekday-1')));
     await tester.pump();

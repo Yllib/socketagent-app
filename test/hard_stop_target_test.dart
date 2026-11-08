@@ -12,13 +12,16 @@ void main() {
     );
   });
 
-  test('Stop falls back to the active session when no session is being viewed', () {
-    expect(
-      selectHardStopSessionId(
-        viewingSessionId: null,
-        activeSessionId: 'active-session',
-      ),
-      'active-session',
-    );
-  });
+  test(
+    'Stop falls back to the active session when no session is being viewed',
+    () {
+      expect(
+        selectHardStopSessionId(
+          viewingSessionId: null,
+          activeSessionId: 'active-session',
+        ),
+        'active-session',
+      );
+    },
+  );
 }

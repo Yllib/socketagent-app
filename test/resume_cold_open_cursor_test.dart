@@ -21,30 +21,37 @@ void main() {
 
         // What an earlier app run left on disk. Sequence 2 is a row the server
         // persisted without a live event, so the cache has a gap there.
-        await SessionTranscriptCache().save('multi-client-server', 'shared-session', {
-          'offset': 0,
-          'total': 3,
-          'historyKind': 'initial',
-          'messages': [
-            {
-              'role': 'user',
-              'content': 'cached prompt',
-              'entryId': 'prompt',
-              'sessionSeq': 1,
-              'revision': 1,
-            },
-            {
-              'role': 'assistant',
-              'content': 'cached reply',
-              'entryId': 'reply',
-              'sessionSeq': 3,
-              'revision': 5,
-            },
-          ],
-        });
+        await SessionTranscriptCache().save(
+          'multi-client-server',
+          'shared-session',
+          {
+            'offset': 0,
+            'total': 3,
+            'historyKind': 'initial',
+            'messages': [
+              {
+                'role': 'user',
+                'content': 'cached prompt',
+                'entryId': 'prompt',
+                'sessionSeq': 1,
+                'revision': 1,
+              },
+              {
+                'role': 'assistant',
+                'content': 'cached reply',
+                'entryId': 'reply',
+                'sessionSeq': 3,
+                'revision': 5,
+              },
+            ],
+          },
+        );
         requests.clear();
 
-        provider.resumeSession('shared-session', serverId: 'multi-client-server');
+        provider.resumeSession(
+          'shared-session',
+          serverId: 'multi-client-server',
+        );
         while (requests.isEmpty) {
           await Future<void>.delayed(const Duration(milliseconds: 10));
         }

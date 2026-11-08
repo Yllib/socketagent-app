@@ -15,8 +15,21 @@ void main() {
   });
 
   test('rejects links without enough context to resume an SDK session', () {
-    expect(SessionDeepLink.parse('socketagent://session?sessionId=thread_123'), isNull);
-    expect(SessionDeepLink.parse('https://example.com/session?sessionId=thread_123&cwd=%2Ftmp'), isNull);
-    expect(SessionDeepLink.parse('socketagent://session?sessionId=thread_123&cwd=%2Ftmp&backend=other'), isNull);
+    expect(
+      SessionDeepLink.parse('socketagent://session?sessionId=thread_123'),
+      isNull,
+    );
+    expect(
+      SessionDeepLink.parse(
+        'https://example.com/session?sessionId=thread_123&cwd=%2Ftmp',
+      ),
+      isNull,
+    );
+    expect(
+      SessionDeepLink.parse(
+        'socketagent://session?sessionId=thread_123&cwd=%2Ftmp&backend=other',
+      ),
+      isNull,
+    );
   });
 }
