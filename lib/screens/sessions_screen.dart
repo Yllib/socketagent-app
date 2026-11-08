@@ -3416,12 +3416,17 @@ class _SessionsTabState extends State<SessionsTab> {
               }
             }
 
+            // The sheet's safe area leaves the bottom open, so clear the
+            // system navigation bar here. With the keyboard up, padding is
+            // zero and the inset covers it instead.
             return Padding(
               padding: EdgeInsets.fromLTRB(
                 20,
                 12,
                 20,
-                20 + MediaQuery.viewInsetsOf(sheetContext).bottom,
+                20 +
+                    MediaQuery.paddingOf(sheetContext).bottom +
+                    MediaQuery.viewInsetsOf(sheetContext).bottom,
               ),
               child: SingleChildScrollView(
                 child: Column(
