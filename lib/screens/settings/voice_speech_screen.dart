@@ -8,6 +8,7 @@ import '../../services/moonshine_speech_service.dart';
 import '../../services/tts_engine.dart';
 import '../../widgets/speech_recognition_controls.dart';
 import 'settings_v2_screen.dart';
+import '../../widgets/app_bottom_sheet.dart';
 
 class VoiceSpeechScreen extends StatelessWidget {
   const VoiceSpeechScreen({super.key});
@@ -91,7 +92,7 @@ Future<T?> _choose<T>(
   bool searchable = false,
 }) {
   var query = '';
-  return showModalBottomSheet<T>(
+  return showAppBottomSheet<T>(
     context: context,
     backgroundColor: Theme.of(context).colorScheme.surface,
     isScrollControlled: true,

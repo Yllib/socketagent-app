@@ -1,5 +1,6 @@
 import 'package:flex_color_picker/flex_color_picker.dart';
 import 'package:flutter/material.dart';
+import 'app_bottom_sheet.dart';
 
 /// Every prompt route carries this name, so a prompt the page withdraws can
 /// be closed without touching anything else on the navigator.
@@ -54,7 +55,7 @@ Future<BrowserPromptAnswer> _select(
   final options = (prompt['options'] as List? ?? const [])
       .whereType<Map<String, dynamic>>()
       .toList();
-  final value = await showModalBottomSheet<String>(
+  final value = await showAppBottomSheet<String>(
     context: context,
     routeSettings: _promptRoute,
     backgroundColor: Theme.of(context).colorScheme.surface,

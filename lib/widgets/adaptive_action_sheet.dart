@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_bottom_sheet.dart';
 
 const BoxConstraints adaptiveActionSheetConstraints = BoxConstraints(
   maxWidth: 560,
@@ -91,7 +92,7 @@ Future<T?> showAdaptiveActionSheet<T>({
       ],
     );
   }
-  return showModalBottomSheet<T>(
+  return showAppBottomSheet<T>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,

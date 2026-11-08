@@ -16,6 +16,7 @@ import 'markdown_blocks.dart';
 import 'message_timestamp.dart';
 import 'message_attachments.dart';
 import '../config/app_palette.dart';
+import 'app_bottom_sheet.dart';
 
 class MessageBubble extends StatelessWidget {
   static TextStyle _codeStyle(AppPalette palette) => GoogleFonts.jetBrainsMono(
@@ -424,7 +425,7 @@ class MessageBubble extends StatelessWidget {
   }
 
   void _showMessageActions(BuildContext context) {
-    showModalBottomSheet<void>(
+    showAppBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -506,7 +507,7 @@ class MessageBubble extends StatelessWidget {
   }
 
   Future<void> _showReportSheet(BuildContext context) async {
-    final category = await showModalBottomSheet<AiResponseReportCategory>(
+    final category = await showAppBottomSheet<AiResponseReportCategory>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -602,7 +603,7 @@ class MessageBubble extends StatelessWidget {
 
   void _showRewindSheet(BuildContext context) {
     final uuid = message.uuid!;
-    showModalBottomSheet(
+    showAppBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,

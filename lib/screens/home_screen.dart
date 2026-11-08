@@ -57,6 +57,7 @@ import 'session_memory_screen.dart';
 import '../widgets/session_backend_watermark.dart';
 import '../config/app_palette.dart';
 import '../widgets/second_ticker.dart';
+import '../widgets/app_bottom_sheet.dart';
 
 /// One row of the context dialog, optionally opening onto its own rows.
 ///
@@ -486,7 +487,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       await _openBrowserSession(browsers.single);
       return;
     }
-    final selected = await showModalBottomSheet<ActiveBrowserSession>(
+    final selected = await showAppBottomSheet<ActiveBrowserSession>(
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (sheetContext) => SafeArea(
@@ -1067,7 +1068,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   }
 
   Future<void> _showSecretManager(ChatProvider provider) {
-    return showModalBottomSheet<void>(
+    return showAppBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -1088,7 +1089,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   }
 
   Future<void> _showHtmlPlanManager(ChatProvider provider) {
-    return showModalBottomSheet<void>(
+    return showAppBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -2097,7 +2098,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   };
 
   void _showCodexModePicker(ChatProvider provider) {
-    showModalBottomSheet<void>(
+    showAppBottomSheet<void>(
       context: context,
       builder: (sheetContext) => SafeArea(
         child: ListView(
@@ -3267,7 +3268,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       return;
     }
 
-    showModalBottomSheet(
+    showAppBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (ctx) {
@@ -3346,7 +3347,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   }
 
   void _showKokoroVoicePicker(BuildContext context, ChatProvider provider) {
-    showModalBottomSheet(
+    showAppBottomSheet(
       context: context,
       builder: (ctx) {
         return Column(
@@ -3419,7 +3420,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       } catch (_) {}
     }
     if (!context.mounted) return;
-    await showModalBottomSheet<void>(
+    await showAppBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) => AnimatedBuilder(

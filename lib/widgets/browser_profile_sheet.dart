@@ -6,6 +6,7 @@ import '../models/active_browser_session.dart';
 import '../models/traced_error.dart';
 import '../services/chat_provider.dart';
 import 'error_trace_row.dart';
+import 'app_bottom_sheet.dart';
 
 /// Opens a new browser on the default profile for the active session,
 /// without the agent. Returns the running browser, or null after showing why
@@ -59,7 +60,7 @@ Future<void> showBrowserProfileSheet(
   ChatProvider provider,
   ActiveBrowserSession browser,
 ) {
-  return showModalBottomSheet<void>(
+  return showAppBottomSheet<void>(
     context: context,
     backgroundColor: Theme.of(context).colorScheme.surface,
     isScrollControlled: true,

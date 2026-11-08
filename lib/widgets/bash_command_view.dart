@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../config/app_palette.dart';
+import 'app_bottom_sheet.dart';
 
 enum ShellTokenKind {
   command,
@@ -900,7 +901,7 @@ class _BashCommandViewState extends State<BashCommandView> {
 
   void _showCommandInfo(String command) {
     final info = commandInfoFor(command);
-    showModalBottomSheet<void>(
+    showAppBottomSheet<void>(
       context: context,
       builder: (sheetContext) => SafeArea(
         child: Padding(

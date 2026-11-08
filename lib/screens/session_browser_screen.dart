@@ -7,6 +7,7 @@ import '../services/chat_provider.dart';
 import '../services/websocket_service.dart';
 import '../util/format.dart';
 import '../config/app_palette.dart';
+import '../widgets/app_bottom_sheet.dart';
 
 enum SessionBrowserMode { create, resume }
 
@@ -224,7 +225,7 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
 
   Future<void> _chooseComputer() async {
     final provider = context.read<ChatProvider>();
-    final selected = await showModalBottomSheet<String>(
+    final selected = await showAppBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (sheetContext) =>

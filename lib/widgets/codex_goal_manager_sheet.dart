@@ -6,12 +6,13 @@ import '../models/codex_goal.dart';
 import '../services/chat_provider.dart';
 import '../util/format.dart';
 import '../config/app_palette.dart';
+import 'app_bottom_sheet.dart';
 
 Future<void> showCodexGoalManagerSheet(
   BuildContext context,
   ChatProvider provider,
 ) {
-  return showModalBottomSheet<void>(
+  return showAppBottomSheet<void>(
     context: context,
     useSafeArea: true,
     isScrollControlled: true,

@@ -33,6 +33,7 @@ import '../config/app_palette.dart';
 import '../widgets/light_backdrop.dart';
 import '../widgets/second_ticker.dart';
 import '../widgets/fleeting_time_left.dart';
+import '../widgets/app_bottom_sheet.dart';
 
 /// Teleport asks before sending a transcript at least this large, uncompressed.
 const _largeTranscriptBytes = 100 * 1024 * 1024;
@@ -737,7 +738,7 @@ class _SessionsTabState extends State<SessionsTab> {
     );
     bool fleeting = false;
 
-    showModalBottomSheet(
+    showAppBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Theme.of(context).colorScheme.surface,
@@ -3285,7 +3286,7 @@ class _SessionsTabState extends State<SessionsTab> {
           resume?['targetCwd'] as String? ?? initialCwdFor(destinationServerId),
     );
 
-    showModalBottomSheet<void>(
+    showAppBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -3416,17 +3417,12 @@ class _SessionsTabState extends State<SessionsTab> {
               }
             }
 
-            // The sheet's safe area leaves the bottom open, so clear the
-            // system navigation bar here. With the keyboard up, padding is
-            // zero and the inset covers it instead.
             return Padding(
               padding: EdgeInsets.fromLTRB(
                 20,
                 12,
                 20,
-                20 +
-                    MediaQuery.paddingOf(sheetContext).bottom +
-                    MediaQuery.viewInsetsOf(sheetContext).bottom,
+                20 + MediaQuery.viewInsetsOf(sheetContext).bottom,
               ),
               child: SingleChildScrollView(
                 child: Column(
@@ -4557,7 +4553,7 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
           : provider.serverConfigs.firstOrNull?.id);
   String selectedBackend = provider.preferredBackendForServer(selectedServer);
 
-  return showModalBottomSheet<({String? serverId, String backend})>(
+  return showAppBottomSheet<({String? serverId, String backend})>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,

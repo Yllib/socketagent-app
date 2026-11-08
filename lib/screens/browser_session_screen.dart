@@ -14,6 +14,7 @@ import '../services/chat_provider.dart';
 import '../widgets/browser_prompts.dart';
 import '../widgets/browser_profile_sheet.dart';
 import '../config/app_palette.dart';
+import '../widgets/app_bottom_sheet.dart';
 
 enum _BrowserClipboardAction { pasteIntoPage, sendToBrowser, copyToPhone }
 
@@ -398,7 +399,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
   }
 
   Future<void> _showTabs() async {
-    final selected = await showModalBottomSheet<String>(
+    final selected = await showAppBottomSheet<String>(
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       builder: (sheetContext) => SafeArea(

@@ -13,6 +13,7 @@ import '../services/config_handoff.dart';
 import '../services/config_transfer.dart';
 import '../services/device_name.dart';
 import 'adaptive_action_sheet.dart';
+import 'app_bottom_sheet.dart';
 
 /// Writes [bytes] somewhere the user picks. Returns false when they cancel.
 /// Swapped in tests, where no file dialog can open.
@@ -45,7 +46,7 @@ Future<void> shareCredentials(
 }) async {
   final provider = context.read<ChatProvider>();
   final canOfferRelay = provider.subscriberToken.isNotEmpty;
-  final choice = await showModalBottomSheet<_ShareChoice>(
+  final choice = await showAppBottomSheet<_ShareChoice>(
     context: context,
     constraints: adaptiveActionSheetConstraints,
     builder: (_) => _ShareSheet(

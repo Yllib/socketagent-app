@@ -8,6 +8,7 @@ import '../../services/websocket_service.dart';
 import '../../widgets/adaptive_action_sheet.dart';
 import 'skill_edit_screen.dart';
 import '../../config/app_palette.dart';
+import '../../widgets/app_bottom_sheet.dart';
 
 /// A skill entry tagged with which server it came from.
 class _ServerSkill {
@@ -1374,7 +1375,7 @@ class _SkillsScreenState extends State<SkillsScreen> {
       }
     });
 
-    showModalBottomSheet(
+    showAppBottomSheet(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,

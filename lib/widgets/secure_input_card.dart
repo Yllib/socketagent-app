@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/composer_attachment.dart';
 import '../models/message.dart';
 import '../config/app_palette.dart';
+import 'app_bottom_sheet.dart';
 
 class SecureInputCard extends StatefulWidget {
   final ChatMessage message;
@@ -81,7 +82,7 @@ class _SecureInputCardState extends State<SecureInputCard> {
   Future<void> _chooseStoredSecret() async {
     final secrets = _rankedSecrets;
     if (secrets.isEmpty || _requestId.isEmpty) return;
-    final selected = await showModalBottomSheet<SecretMetadata>(
+    final selected = await showAppBottomSheet<SecretMetadata>(
       context: context,
       builder: (context) => SafeArea(
         child: ListView(
