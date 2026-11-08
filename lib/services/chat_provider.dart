@@ -6517,6 +6517,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           if (lcEvent == 'start' && lcModel != null && lcModel.isNotEmpty) {
             _sessionModel = lcModel;
           }
+          // Claude Code reports a start after each compaction; the session
+          // continues and the compaction marker already shows it.
+          if (lcEvent == 'start' && msg['source'] == 'compact') break;
           // Show as a subtle system notification in chat
           final lcReason = msg['reason'] as String? ?? '';
           String lcText;
@@ -7495,9 +7498,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           _closeLiveStreamsForParent(null);
           final trigger = msg['trigger'] as String? ?? 'auto';
           final preTokens = (msg['preTokens'] as num?)?.toInt() ?? 0;
-          _messages.add(
-            ChatMessage.compactBoundary(trigger: trigger, preTokens: preTokens),
+          // The history row's position lets a reload replace this marker
+          // instead of showing it twice.
+          final boundary = ChatMessage.compactBoundary(
+            trigger: trigger,
+            preTokens: preTokens,
           );
+          applyTranscriptPosition(boundary, msg);
+          _messages.add(boundary);
           notifyListeners();
           break;
         case 'bash_backgrounded':
@@ -13392,6 +13400,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             if (lifecycleMatch != null) {
               final lcEvent = lifecycleMatch.group(1)!;
               final lcDetail = lifecycleMatch.group(2)!;
+              // Saved by older servers after each compaction.
+              if (lcEvent == 'start' &&
+                  lcDetail.split(':').first == 'compact') {
+                break;
+              }
               String lcText;
               if (lcEvent == 'start') {
                 // Detail format: "source:model" or just "source"

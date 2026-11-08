@@ -195,6 +195,7 @@ bool isCondensedConversationMessage(ChatMessage message) {
     case MessageType.codexCommand:
     case MessageType.htmlPlan:
     case MessageType.runBoundary:
+    case MessageType.compactBoundary:
       return true;
     case MessageType.toolCall:
       // These tool cards are themselves user-facing outputs. Everything else
@@ -219,7 +220,6 @@ bool isCondensedConversationMessage(ChatMessage message) {
             'Could not start the backend. Recovery will retry automatically.',
           }.contains(message.textContent.trim());
     case MessageType.toolResult:
-    case MessageType.compactBoundary:
     case MessageType.toolSummary:
     case MessageType.thinking:
     case MessageType.monitorOutput:

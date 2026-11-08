@@ -216,6 +216,20 @@ void main() {
     expect(rows[2], isA<CondensedWorkRow>());
   });
 
+  test('compaction markers stay visible and split work blocks', () {
+    final rows = buildCondensedChatRows([
+      _tool('before', 'Read', 1),
+      ChatMessage.compactBoundary(trigger: 'auto', preTokens: 325000),
+      _tool('after', 'Bash', 2),
+    ], messageKey: _key);
+
+    expect(rows, hasLength(3));
+    expect(
+      (rows[1] as CondensedVisibleRow).message.type,
+      MessageType.compactBoundary,
+    );
+  });
+
   testWidgets('collapsed ledger expands to the existing tailored cards', (
     tester,
   ) async {
