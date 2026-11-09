@@ -7,6 +7,11 @@
 /// makes the server resend what changed. Values the app already holds cost
 /// only a hash on reset, and the app replays its stored copy.
 ///
+/// Set versions only grow, resets included. Every reset restarts the chain
+/// at 0, so a transition answering an older reset (its `setVersion` is below
+/// the last reset's) is stale and ignored. Without that, two resets in flight
+/// make the second answer look like a gap, which sends another reset, forever.
+///
 /// Value views (session list, status) are fixed for the connection. The
 /// transcript view follows the open session through [watchTranscript] and
 /// arrives as row patches, which this class folds into a row store.
@@ -21,6 +26,7 @@ class ViewSync {
 
   int _transition = 0;
   int _setVersion = 0;
+  int _resetVersion = 0;
   final Map<String, String> _hashes = {};
   final Map<String, Map<String, dynamic>> _values = {};
 
@@ -35,7 +41,7 @@ class ViewSync {
   /// The transcript resumes from the rows this client holds.
   Map<String, dynamic> resetMessage() {
     _transition = 0;
-    _setVersion = 1;
+    _resetVersion = ++_setVersion;
     return {
       'type': 'view_set',
       'version': _setVersion,
@@ -91,6 +97,8 @@ class ViewSync {
   ViewSyncResult? apply(Map<String, dynamic> message) {
     final start = (message['start'] as num?)?.toInt();
     final end = (message['end'] as num?)?.toInt();
+    final setVersion = (message['setVersion'] as num?)?.toInt() ?? 0;
+    if (setVersion < _resetVersion) return const ViewSyncResult({}, null);
     if (start != _transition || end == null) return null;
     _transition = end;
     final values = <String, Map<String, dynamic>>{};

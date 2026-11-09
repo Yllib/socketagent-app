@@ -3,11 +3,13 @@ import 'package:app/services/view_sync.dart';
 
 Map<String, dynamic> transition(
   int start,
-  List<Map<String, dynamic>> updates,
-) => {
+  List<Map<String, dynamic>> updates, {
+  int setVersion = 1,
+}) => {
   'type': 'view_transition',
   'start': start,
   'end': start + 1,
+  'setVersion': setVersion,
   'updates': updates,
 };
 
@@ -52,7 +54,7 @@ void main() {
             .apply(
               transition(0, [
                 {'queryId': 1, 'hash': 'h1'},
-              ]),
+              ], setVersion: 2),
             )
             ?.values,
         {'sessions': value},
@@ -131,13 +133,13 @@ void main() {
     final confirmed = sync.apply(
       transition(0, [
         {'queryId': resumed['queryId'], 'hash': 'p2'},
-      ]),
+      ], setVersion: 2),
     );
     expect(confirmed?.transcript?.rows.length, 2);
 
     // Switching sessions drops the old query and starts the new one empty.
     final switched = sync.watchTranscript('s2')!;
-    expect(switched['version'], 2);
+    expect(switched['version'], 3);
     expect(switched['remove'], [resumed['queryId']]);
     final added = (switched['add'] as List).single as Map;
     expect(added['args'], {'sessionId': 's2'});
@@ -153,7 +155,7 @@ void main() {
           'meta': {'fromSeq': 3},
           'upsert': [row('z', 9, 1)],
         },
-      ]),
+      ], setVersion: 3),
     );
     expect(late?.transcript, isNull);
   });
@@ -171,5 +173,34 @@ void main() {
       ),
       isNull,
     );
+  });
+
+  test('an answer to an older reset is ignored, not treated as a gap', () {
+    final sync = ViewSync(const ['sessions']);
+    expect(sync.resetMessage()['version'], 1);
+    expect(sync.resetMessage()['version'], 2);
+    final value = {'sessions': <Object>[]};
+    // The first reset's answer arrives after the second reset went out.
+    expect(
+      sync
+          .apply(
+            transition(0, [
+              {'queryId': 1, 'hash': 'h1', 'value': value},
+            ], setVersion: 1),
+          )
+          ?.values,
+      isEmpty,
+    );
+    expect(
+      sync
+          .apply(
+            transition(0, [
+              {'queryId': 1, 'hash': 'h1', 'value': value},
+            ], setVersion: 2),
+          )
+          ?.values,
+      {'sessions': value},
+    );
+    expect(sync.apply(transition(1, const [], setVersion: 2)), isNotNull);
   });
 }
