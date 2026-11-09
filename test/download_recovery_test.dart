@@ -217,6 +217,43 @@ void main() {
     },
   );
 
+  test('a file the server no longer has is not retried on relaunch', () async {
+    final requests = <Map<String, dynamic>>[];
+    final computer = await TestComputer.start((socket, msg, send) {
+      if (msg['type'] != 'request_file') return;
+      requests.add(msg);
+      send(socket, {
+        'type': 'file_error',
+        'fileId': msg['fileId'],
+        'transferToken': msg['transferToken'],
+        'message': 'File not found: /test/gone.mp4',
+      });
+    });
+    var provider = ChatProvider();
+    try {
+      await provider.settingsReady;
+      await provider.addServer(computer.config);
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+      await provider.downloadFileManagerFile(
+        path: '/test/gone.mp4',
+        fileName: 'gone.mp4',
+        serverId: 'download-test',
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      expect(requests, hasLength(1));
+
+      provider.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+      provider = ChatProvider();
+      await provider.settingsReady;
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      expect(requests, hasLength(1), reason: 'a failed download stays failed');
+    } finally {
+      provider.dispose();
+      await computer.close();
+    }
+  });
+
   test(
     'a chat image preview cut off by a reconnect is not saved as a download',
     () async {

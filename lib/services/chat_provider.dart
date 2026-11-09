@@ -20779,7 +20779,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (error is DownloadHttpException &&
           error.status != 404 &&
           !error.retryable) {
-        _failDownload(fileId, error.toString());
+        _failDownload(fileId, error.toString(), permanent: true);
         return true;
       }
       if (error is FileSystemException) {
@@ -20953,7 +20953,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       r'not found|not allowed|permission|not a file|denied',
       caseSensitive: false,
     ).hasMatch(error)) {
-      _failDownload(id, error);
+      _failDownload(id, error, permanent: true);
     } else {
       _retrySocketFileDownload(id, error);
     }
@@ -21045,11 +21045,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Stops a download and keeps its saved bytes. A [permanent] failure (the
+  /// file is gone or not allowed) is saved as failed, so launching the app
+  /// does not resume it and fail again; the user can still retry it.
   void _failDownload(
     String id,
     String error, {
     bool reconnect = false,
     bool notify = true,
+    bool permanent = false,
   }) {
     if (_downloadsDisposed) return;
     _cancelDownloadWatchdog(id);
@@ -21063,7 +21067,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (reconnect && !_isPreviewDownload(id)) _resumeDownloadIds.add(id);
     final part = _downloadParts[id];
     if (part != null) {
-      part.metadata['state'] = 'paused';
+      part.metadata['state'] = permanent ? 'failed' : 'paused';
       unawaited(part.save().catchError((Object _) {}));
     }
     if (preview != null) {
