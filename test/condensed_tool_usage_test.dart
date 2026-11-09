@@ -195,15 +195,17 @@ void main() {
     expect(isCondensedConversationMessage(ChatMessage.thinking()), isFalse);
   });
 
-  test('model and mode change cards stay outside condensed work', () {
-    ChatMessage notice(String kind) => ChatMessage(
-      id: kind,
-      sender: MessageSender.system,
-      type: MessageType.taskNotification,
-      timestamp: DateTime(2026, 1, 1, 12, 0, 2),
-      textContent: kind,
-      toolName: kind,
-    );
+  test('session and user action notices stay outside condensed work', () {
+    ChatMessage notice(String kind, {Map<String, dynamic>? input}) =>
+        ChatMessage(
+          id: kind,
+          sender: MessageSender.system,
+          type: MessageType.taskNotification,
+          timestamp: DateTime(2026, 1, 1, 12, 0, 2),
+          textContent: kind,
+          toolName: kind,
+          toolInput: input,
+        );
     final rows = buildCondensedChatRows([
       _tool('before', 'Read', 1),
       notice('model_change'),
@@ -212,8 +214,25 @@ void main() {
 
     expect(rows, hasLength(3));
     expect((rows[1] as CondensedVisibleRow).message.toolName, 'model_change');
-    for (final kind in ['model_old', 'model_refusal', 'permission_mode']) {
+    for (final kind in [
+      'model_old',
+      'model_refusal',
+      'permission_mode',
+      'secure_attached',
+      'outlook_auth_failure',
+      'stopping',
+      'delegation_question',
+    ]) {
       expect(isCondensedConversationMessage(notice(kind)), isTrue);
+    }
+    // A rewind or sign-in result shares its kind with background task
+    // notices, which stay in the ledger.
+    for (final kind in ['success', 'failed', 'cancelled']) {
+      expect(
+        isCondensedConversationMessage(notice(kind, input: actionResultNotice)),
+        isTrue,
+      );
+      expect(isCondensedConversationMessage(notice(kind)), isFalse);
     }
     expect(isCondensedConversationMessage(notice('completed')), isFalse);
   });

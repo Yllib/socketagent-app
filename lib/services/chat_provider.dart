@@ -27,6 +27,7 @@ import 'resumable_http_download.dart';
 import 'file_open_service.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/condensed_chat_rows.dart' show actionResultNotice;
 import '../models/model_catalog.dart';
 import '../models/session_projects.dart';
 import '../models/message.dart';
@@ -6659,6 +6660,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   ? 'Codex thread compaction started'
                   : 'Codex compaction failed: ${msg['error'] ?? 'unknown error'}',
               toolName: msg['success'] == true ? 'success' : 'failed',
+              toolInput: actionResultNotice,
             ),
           );
           notifyListeners();
@@ -6675,6 +6677,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   ? 'Rolled back $turns Codex turn${turns == 1 ? '' : 's'}'
                   : 'Codex rollback failed: ${msg['error'] ?? 'unknown error'}',
               toolName: msg['success'] == true ? 'success' : 'failed',
+              toolInput: actionResultNotice,
             ),
           );
           notifyListeners();
@@ -7241,6 +7244,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                   ? 'Authentication successful. You can send your message again.'
                   : 'Authentication failed.',
               toolName: success ? 'success' : 'failed',
+              toolInput: actionResultNotice,
             ),
           );
           notifyListeners();
@@ -12596,6 +12600,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           timestamp: DateTime.now(),
           textContent: error ?? 'Authenticating with Claude...',
           toolName: error != null ? 'failed' : 'info',
+          toolInput: actionResultNotice,
         ),
       );
     }
@@ -12617,6 +12622,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         timestamp: DateTime.now(),
         textContent: text,
         toolName: success ? 'success' : 'failed',
+        toolInput: actionResultNotice,
       ),
     );
     notifyListeners();
@@ -12878,6 +12884,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           timestamp: DateTime.now(),
           textContent: 'Branch failed: ${error ?? 'unknown error'}',
           toolName: 'failed',
+          toolInput: actionResultNotice,
         ),
       );
       notifyListeners();
@@ -13606,6 +13613,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                       ? 'Authentication successful. You can send your message again.'
                       : 'Authentication failed.',
                   toolName: success ? 'success' : 'failed',
+                  toolInput: actionResultNotice,
                 ),
               );
               break;
@@ -15770,6 +15778,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           timestamp: DateTime.now(),
           textContent: 'Action cancelled',
           toolName: 'cancelled',
+          toolInput: actionResultNotice,
         ),
       );
       _dropLegacyCancelPrepends();

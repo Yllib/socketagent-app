@@ -175,6 +175,14 @@ class CondensedWorkMetrics {
   }
 }
 
+/// `toolInput` of a notice that answers something the user did (sign-in,
+/// rewind, branch, Codex compact or rollback, cancel), so it stays outside
+/// the condensed ledger. These reuse the `success`, `failed` and `cancelled`
+/// kinds that background task notices also use.
+const Map<String, dynamic> actionResultNotice = {
+  'notificationKind': 'action_result',
+};
+
 bool isCondensedConversationMessage(ChatMessage message) {
   switch (message.type) {
     case MessageType.text:
@@ -206,21 +214,30 @@ bool isCondensedConversationMessage(ChatMessage message) {
         'ScheduleReminder',
       }.contains(message.toolName);
     case MessageType.taskNotification:
-      // Setting changes and model warnings describe the session, not the
-      // agent's work, so they stay readable outside the ledger.
+      // Setting changes, model warnings, the user's own actions and their
+      // results describe the session, not the agent's work, so they stay
+      // readable outside the ledger.
       if (const {
         'model_change',
         'model_old',
         'model_refusal',
         'permission_mode',
         'codex_mode',
+        'secure_attached',
+        'secure_input_saved',
+        'outlook_auth_success',
+        'outlook_auth_failure',
+        'ibs_auth_success',
+        'ibs_auth_failure',
+        'stopping',
+        'delegation_question',
+        'manual',
+        'restarted',
       }.contains(message.toolName)) {
         return true;
       }
-      if (message.toolName == 'restarted' ||
-          message.toolInput?['notificationKind'] == 'server_recovery') {
-        return true;
-      }
+      final kind = message.toolInput?['notificationKind'];
+      if (kind == 'server_recovery' || kind == 'action_result') return true;
       // Older servers saved recovery notices as plain info notifications.
       return message.toolName == 'info' &&
           const {
