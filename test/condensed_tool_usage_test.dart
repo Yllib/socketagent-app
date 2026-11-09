@@ -195,6 +195,29 @@ void main() {
     expect(isCondensedConversationMessage(ChatMessage.thinking()), isFalse);
   });
 
+  test('model and mode change cards stay outside condensed work', () {
+    ChatMessage notice(String kind) => ChatMessage(
+      id: kind,
+      sender: MessageSender.system,
+      type: MessageType.taskNotification,
+      timestamp: DateTime(2026, 1, 1, 12, 0, 2),
+      textContent: kind,
+      toolName: kind,
+    );
+    final rows = buildCondensedChatRows([
+      _tool('before', 'Read', 1),
+      notice('model_change'),
+      _tool('after', 'Bash', 3),
+    ], messageKey: _key);
+
+    expect(rows, hasLength(3));
+    expect((rows[1] as CondensedVisibleRow).message.toolName, 'model_change');
+    for (final kind in ['model_old', 'model_refusal', 'permission_mode']) {
+      expect(isCondensedConversationMessage(notice(kind)), isTrue);
+    }
+    expect(isCondensedConversationMessage(notice('completed')), isFalse);
+  });
+
   test('run duration boundaries stay visible and split work blocks', () {
     final boundary = ChatMessage.runBoundary({
       'runId': '358',

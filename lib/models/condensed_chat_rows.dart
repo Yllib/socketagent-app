@@ -206,6 +206,17 @@ bool isCondensedConversationMessage(ChatMessage message) {
         'ScheduleReminder',
       }.contains(message.toolName);
     case MessageType.taskNotification:
+      // Setting changes and model warnings describe the session, not the
+      // agent's work, so they stay readable outside the ledger.
+      if (const {
+        'model_change',
+        'model_old',
+        'model_refusal',
+        'permission_mode',
+        'codex_mode',
+      }.contains(message.toolName)) {
+        return true;
+      }
       if (message.toolName == 'restarted' ||
           message.toolInput?['notificationKind'] == 'server_recovery') {
         return true;
