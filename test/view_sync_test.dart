@@ -11,6 +11,14 @@ Map<String, dynamic> transition(
   'updates': updates,
 };
 
+Map<String, dynamic> row(String entryId, int seq, int revision) => {
+  'entryId': entryId,
+  'sessionSeq': seq,
+  'revision': revision,
+  'role': 'assistant',
+  'content': '$entryId r$revision',
+};
+
 void main() {
   test(
     'applies a chained value and replays it when a reset confirms the hash',
@@ -23,11 +31,13 @@ void main() {
 
       final value = {'sessions': <Object>[]};
       expect(
-        sync.apply(
-          transition(0, [
-            {'queryId': 1, 'hash': 'h1', 'value': value},
-          ]),
-        ),
+        sync
+            .apply(
+              transition(0, [
+                {'queryId': 1, 'hash': 'h1', 'value': value},
+              ]),
+            )
+            ?.values,
         {'sessions': value},
       );
 
@@ -38,11 +48,13 @@ void main() {
         'knownHash': 'h1',
       });
       expect(
-        sync.apply(
-          transition(0, [
-            {'queryId': 1, 'hash': 'h1'},
-          ]),
-        ),
+        sync
+            .apply(
+              transition(0, [
+                {'queryId': 1, 'hash': 'h1'},
+              ]),
+            )
+            ?.values,
         {'sessions': value},
       );
     },
@@ -51,7 +63,7 @@ void main() {
   test('a gap in the chain asks for a reset', () {
     final sync = ViewSync(const ['sessions']);
     sync.resetMessage();
-    expect(sync.apply(transition(0, const [])), isEmpty);
+    expect(sync.apply(transition(0, const []))?.values, isEmpty);
     expect(sync.apply(transition(5, const [])), isNull);
   });
 
@@ -70,5 +82,94 @@ void main() {
       'queryId': 1,
       'view': 'status',
     });
+  });
+
+  test('the transcript follows the open session and folds row patches', () {
+    final sync = ViewSync(const ['sessions'], transcripts: true);
+    expect(sync.watchTranscript('s1'), isNull, reason: 'not connected yet');
+    final reset = sync.resetMessage();
+    final query = (reset['add'] as List).last as Map;
+    expect(query['view'], 'transcript');
+    expect(query['args'], {'sessionId': 's1'});
+    final queryId = query['queryId'];
+
+    final first = sync.apply(
+      transition(0, [
+        {
+          'queryId': queryId,
+          'hash': 'p1',
+          'meta': {'fromSeq': 3},
+          'upsert': [row('b', 4, 1), row('a', 3, 1)],
+          'remove': <String>[],
+        },
+      ]),
+    );
+    expect(first?.transcript?.sessionId, 's1');
+    expect(first?.transcript?.rows.map((r) => r['entryId']), ['a', 'b']);
+
+    final patched = sync.apply(
+      transition(1, [
+        {
+          'queryId': queryId,
+          'hash': 'p2',
+          'meta': {'fromSeq': 3},
+          'upsert': [row('b', 4, 2), row('c', 5, 1)],
+          'remove': ['a'],
+        },
+      ]),
+    );
+    expect(
+      patched?.transcript?.rows.map((r) => '${r['entryId']}:${r['revision']}'),
+      ['b:2', 'c:1'],
+    );
+
+    // A reconnect resumes from the pinned start and the rows held.
+    final resumed = (sync.resetMessage()['add'] as List).last as Map;
+    expect(resumed['args'], {'sessionId': 's1', 'fromSeq': 3});
+    expect(resumed['knownHash'], 'p2');
+    expect(resumed['known'], ['b:2', 'c:1']);
+    final confirmed = sync.apply(
+      transition(0, [
+        {'queryId': resumed['queryId'], 'hash': 'p2'},
+      ]),
+    );
+    expect(confirmed?.transcript?.rows.length, 2);
+
+    // Switching sessions drops the old query and starts the new one empty.
+    final switched = sync.watchTranscript('s2')!;
+    expect(switched['version'], 2);
+    expect(switched['remove'], [resumed['queryId']]);
+    final added = (switched['add'] as List).single as Map;
+    expect(added['args'], {'sessionId': 's2'});
+    expect(added.containsKey('known'), isFalse);
+    expect(sync.watchTranscript('s2'), isNull);
+
+    // A late patch for the old query is ignored.
+    final late = sync.apply(
+      transition(1, [
+        {
+          'queryId': resumed['queryId'],
+          'hash': 'x',
+          'meta': {'fromSeq': 3},
+          'upsert': [row('z', 9, 1)],
+        },
+      ]),
+    );
+    expect(late?.transcript, isNull);
+  });
+
+  test('a transcript confirmation the app cannot match asks for a reset', () {
+    final sync = ViewSync(const [], transcripts: true);
+    sync.watchTranscript('s1');
+    final queryId =
+        ((sync.resetMessage()['add'] as List).single as Map)['queryId'];
+    expect(
+      sync.apply(
+        transition(0, [
+          {'queryId': queryId, 'hash': 'never-held'},
+        ]),
+      ),
+      isNull,
+    );
   });
 }

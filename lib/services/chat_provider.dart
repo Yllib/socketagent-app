@@ -2525,6 +2525,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   @override
   void notifyListeners() {
+    _watchTranscriptViews();
     if (_pendingInjectedMessageCount > 0) {
       _keepPendingInjectedMessagesAtEnd();
     }
@@ -13298,6 +13299,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final isDelta = decision.kind == SessionHistoryKind.delta;
     final isAppend = decision.kind == SessionHistoryKind.append || isDelta;
     final isPrepend = decision.kind == SessionHistoryKind.older;
+    final isView = decision.kind == SessionHistoryKind.view;
     if (historySessionId != null &&
         _locallyClearedSessions.contains(historySessionId) &&
         rawMessages.isNotEmpty) {
@@ -13308,7 +13310,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     final transcriptKey = _activeTranscriptKey(serverId);
     if (transcriptKey != null && historySessionId == _activeSessionId) {
-      if (isAppend || isPrepend) {
+      if (isAppend || isPrepend || isView) {
         _visibleTranscript.record(transcriptKey, rawMessages);
       } else {
         _visibleTranscript.replace(transcriptKey, rawMessages);
@@ -13357,6 +13359,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             );
             // Restore uuid directly from history entry (for rewind support)
             userMsg.uuid = entry['uuid'] as String?;
+            userMsg.clientMessageId = entry['clientMessageId'] as String?;
             loaded.add(userMsg);
           }
           break;
@@ -14472,6 +14475,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (msg['receiptReplay'] == true) {
       _historyOffset = _historyOffset.clamp(0, offset).toInt();
       _isLoadingHistory = false;
+    } else if (isView) {
+      // Older pages the user loaded stay, so keep the oldest boundary.
+      _historyOffset = _messages.isEmpty
+          ? offset
+          : _historyOffset.clamp(0, offset).toInt();
     } else if (isRewind) {
       _historyOffset = _messages.isEmpty
           ? offset
@@ -14527,6 +14535,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Prepend older messages before existing ones
       _messages = [...loaded, ..._messages];
       _isLoadingMore = false;
+    } else if (isView) {
+      _messages = reconcileViewTranscript(
+        loaded,
+        liveBeforeSnapshot,
+        fromSeq:
+            (msg['fromSeq'] as num?)?.toInt() ??
+            (rawMessages.firstOrNull?['sessionSeq'] as num?)?.toInt() ??
+            1,
+      );
+      _isLoadingHistory = false;
     } else if (isRewind) {
       _messages = reconcileRewoundTranscript(
         loaded,
@@ -14595,7 +14613,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         ..addAll(historyWorkflowTasks);
       _isLoadingHistory = false;
     }
-    if (isAppend && msg.containsKey('taskStates')) {
+    if ((isAppend || isView) && msg.containsKey('taskStates')) {
       _backgroundTasks.removeWhere(
         (_, state) => state['source'] == 'claude_sdk',
       );
@@ -14607,7 +14625,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _messages = dedupeNativeLiveAssistantTwins(
       preservePositionedTranscriptMembership(
         orderByTranscriptPosition(dedupeStableTranscriptMessages(_messages)),
-        isRewind ? const [] : liveBeforeSnapshot,
+        // A view page is exact for its range, so a row it lacks is gone.
+        isRewind || isView ? const [] : liveBeforeSnapshot,
       ),
     );
     _recountPendingInjectedMessages();
@@ -14896,21 +14915,38 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Subscribes a freshly connected server's socket to its session list and
-  /// status views, when the server has them. Older servers keep sending the
-  /// session_list and status_sync broadcasts instead.
+  /// status views, and to the open session's transcript on views version 2.
+  /// Older servers keep sending the old broadcasts instead.
   void _subscribeToViews(String serverId, Object? capability) {
     final version = capability is Map
         ? (capability['version'] as num?)?.toInt() ?? 0
         : 0;
+    final existing = _viewSyncs[serverId];
     if (version < 1) {
       _viewSyncs.remove(serverId);
       return;
     }
-    final sync = _viewSyncs.putIfAbsent(
-      serverId,
-      () => ViewSync(const ['sessions', 'status']),
-    );
+    final sync = existing != null && existing.transcripts == (version >= 2)
+        ? existing
+        : ViewSync(const ['sessions', 'status'], transcripts: version >= 2);
+    _viewSyncs[serverId] = sync;
+    sync.watchTranscript(_transcriptViewSessionFor(serverId));
     _connMgr.sendToServer(serverId, sync.resetMessage());
+  }
+
+  /// The session whose transcript [serverId]'s view should follow.
+  String? _transcriptViewSessionFor(String serverId) {
+    final owner = _activeSessionServerId ?? _connMgr.activeServerId;
+    return owner == serverId ? _activeSessionId : null;
+  }
+
+  /// Moves each server's transcript view to the open session. Runs on every
+  /// notify, where it costs one comparison per server when nothing moved.
+  void _watchTranscriptViews() {
+    for (final MapEntry(key: serverId, value: sync) in _viewSyncs.entries) {
+      final set = sync.watchTranscript(_transcriptViewSessionFor(serverId));
+      if (set != null) _connMgr.sendToServer(serverId, set);
+    }
   }
 
   /// Shows the values a view transition carries through the handlers the
@@ -14926,12 +14962,60 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.sendToServer(serverId, sync.resetMessage());
       return;
     }
-    if (changed['sessions'] case final sessions?) {
+    if (changed.values['sessions'] case final sessions?) {
       await _handleSessionList(sessions, serverId);
     }
-    if (changed['status'] case final status?) {
+    if (changed.values['status'] case final status?) {
       await _handleServerMessage({...status, 'type': 'status_sync'}, serverId);
     }
+    if (changed.transcript case final page?) {
+      _queueTranscriptView(page, serverId);
+    }
+  }
+
+  ({TranscriptPage page, String serverId})? _pendingTranscriptView;
+  Timer? _transcriptViewTimer;
+  DateTime _lastTranscriptViewAt = DateTime.fromMillisecondsSinceEpoch(0);
+  String? _lastTranscriptViewSuggestion;
+
+  /// Rebuilding the chat from a page converts every row, so a burst of
+  /// transitions during a busy turn shows at most one page per 150 ms.
+  void _queueTranscriptView(TranscriptPage page, String serverId) {
+    _pendingTranscriptView = (page: page, serverId: serverId);
+    if (_transcriptViewTimer != null) return;
+    final wait =
+        const Duration(milliseconds: 150) -
+        DateTime.now().difference(_lastTranscriptViewAt);
+    _transcriptViewTimer = Timer(
+      wait.isNegative ? Duration.zero : wait,
+      _showTranscriptView,
+    );
+  }
+
+  /// Shows the latest transcript page through the history handler, which
+  /// converts its rows and reconciles them with the visible chat.
+  void _showTranscriptView() {
+    _transcriptViewTimer = null;
+    final pending = _pendingTranscriptView;
+    _pendingTranscriptView = null;
+    if (pending == null || _outgoingDisposed) return;
+    _lastTranscriptViewAt = DateTime.now();
+    final (:page, :serverId) = pending;
+    final meta = page.meta;
+    // The suggestion is shown once when it changes, so a chip the user
+    // dismissed does not come back with the next row.
+    final suggestion = meta['promptSuggestion'] as String?;
+    final newSuggestion = suggestion != _lastTranscriptViewSuggestion;
+    _lastTranscriptViewSuggestion = suggestion;
+    _handleSessionHistory({
+      ...meta,
+      'type': 'session_history',
+      'sessionId': page.sessionId,
+      'historyKind': 'view',
+      'messages': page.rows,
+      'todos': meta['todos'] ?? const <Object>[],
+      'promptSuggestion': newSuggestion ? suggestion : null,
+    }, serverId: serverId);
   }
 
   Future<void> _handleSessionList(
@@ -21017,6 +21101,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     account.dispose();
     _outgoingDisposed = true;
     _outgoingTimer?.cancel();
+    _transcriptViewTimer?.cancel();
     for (final upload in _outgoingUploadCompleters.values) {
       if (!upload.isCompleted) upload.completeError(StateError('App closed'));
     }

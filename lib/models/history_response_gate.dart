@@ -1,4 +1,4 @@
-enum SessionHistoryKind { initial, delta, older, append }
+enum SessionHistoryKind { initial, delta, older, append, view }
 
 class SessionHistoryDecision {
   const SessionHistoryDecision({required this.accept, this.kind});
@@ -52,6 +52,13 @@ SessionHistoryDecision gateSessionHistoryResponse({
       return const SessionHistoryDecision(
         accept: true,
         kind: SessionHistoryKind.append,
+      );
+    case 'view':
+      // A transcript view page for the open session. Pages are exact for
+      // their range, so they never depend on request correlation.
+      return const SessionHistoryDecision(
+        accept: true,
+        kind: SessionHistoryKind.view,
       );
     case null:
       // Backward compatibility for servers that predate request correlation.

@@ -129,6 +129,9 @@ class ChatMessage {
   String? entryId;
   int? sessionSeq;
   int revision;
+  // A user row's history entry carries the local ChatMessage.id the prompt
+  // was sent with, so the pending bubble and its row can be matched.
+  String? clientMessageId;
 
   // Tool summary fields
   List<String>? precedingToolUseIds;

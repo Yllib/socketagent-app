@@ -814,3 +814,119 @@ List<ChatMessage> reconcileLiveTranscriptWithSnapshot(
   }
   return reconciled;
 }
+
+/// Applies one transcript view page (server repo: docs/sync-views.md).
+///
+/// The page is exact from [fromSeq] to its newest row: a visible row in that
+/// range that the page lacks was removed on the server. Rows before [fromSeq]
+/// belong to older pages the user loaded and stay. Visible messages newer than
+/// the page, or without a server position, are drafts (live stream cards,
+/// pending prompts, local cards) and keep their place until a row covers them.
+///
+/// A row that matches a visible message reuses the visible object when it is
+/// unchanged or still streaming, so widget state and stream maps survive.
+List<ChatMessage> reconcileViewTranscript(
+  List<ChatMessage> page,
+  List<ChatMessage> visible, {
+  required int fromSeq,
+}) {
+  final lastSeq = page
+      .map((message) => message.sessionSeq ?? 0)
+      .fold(fromSeq - 1, (left, right) => left > right ? left : right);
+  // One history entry can become several cards (a prompt and its notices),
+  // so an identity holds a list and a match also needs the same kind.
+  final byIdentity = <String, List<ChatMessage>>{};
+  for (final message in visible) {
+    if (transcriptMessageIdentity(message) case final String key) {
+      (byIdentity[key] ??= []).add(message);
+    }
+  }
+  final unpositioned = visible.where((m) => m.sessionSeq == null).toList();
+  // Visible message -> the message that now shows it.
+  final shownAs = Map<ChatMessage, ChatMessage>.identity();
+
+  final rows = <ChatMessage>[];
+  for (final row in page) {
+    final prior =
+        byIdentity[transcriptMessageIdentity(row) ?? '']
+            ?.where(
+              (m) =>
+                  !shownAs.containsKey(m) &&
+                  m.type == row.type &&
+                  m.sender == row.sender,
+            )
+            .firstOrNull ??
+        unpositioned
+            .where((m) => !shownAs.containsKey(m) && _isDraftOfRow(m, row))
+            .firstOrNull;
+    if (prior == null) {
+      rows.add(row);
+      continue;
+    }
+    final keepPrior =
+        prior.sessionSeq == null ||
+        prior.revision >= row.revision ||
+        _isExplicitlyActiveLiveMessage(prior);
+    if (keepPrior) {
+      _mergeSnapshotStateIntoLive(prior, row);
+      prior.entryId = row.entryId;
+      prior.sessionSeq = row.sessionSeq;
+      prior.clientMessageId ??= row.clientMessageId;
+    }
+    final shown = keepPrior ? prior : row;
+    shownAs[prior] = shown;
+    rows.add(shown);
+  }
+
+  final positioned = <ChatMessage>[
+    for (final message in visible)
+      if (message.sessionSeq != null &&
+          !shownAs.containsKey(message) &&
+          (message.sessionSeq! < fromSeq || message.sessionSeq! > lastSeq))
+        message,
+    ...rows,
+  ];
+  final ordered = orderByTranscriptPosition(positioned);
+  final kept = Set<ChatMessage>.identity()..addAll(ordered);
+
+  // Unpositioned drafts follow the visible message they followed before.
+  final draftsAfter = Map<ChatMessage?, List<ChatMessage>>.identity();
+  ChatMessage? anchor;
+  for (final message in visible) {
+    if (message.sessionSeq == null && !shownAs.containsKey(message)) {
+      (draftsAfter[anchor] ??= []).add(message);
+      continue;
+    }
+    final shown = shownAs[message] ?? message;
+    if (kept.contains(shown)) anchor = shown;
+  }
+  final result = <ChatMessage>[];
+  for (final message in ordered) {
+    result.add(message);
+    if (draftsAfter.remove(message) case final List<ChatMessage> drafts) {
+      result.addAll(drafts);
+    }
+  }
+  for (final drafts in draftsAfter.values) {
+    result.addAll(drafts);
+  }
+  return result;
+}
+
+/// Whether an unpositioned live or local message is the draft of [row].
+bool _isDraftOfRow(ChatMessage draft, ChatMessage row) {
+  if (row.clientMessageId != null && row.clientMessageId == draft.id) {
+    return true;
+  }
+  if (draft.type != row.type || draft.sender != row.sender) return false;
+  if (draft.type == MessageType.runBoundary) {
+    return draft.toolUseId != null && draft.toolUseId == row.toolUseId;
+  }
+  final interaction = interactionKey(draft);
+  if (interaction != null) return interaction == interactionKey(row);
+  if (draft.type == MessageType.toolCall) {
+    return draft.toolUseId != null && draft.toolUseId == row.toolUseId;
+  }
+  if (draft.sender == MessageSender.user) return false;
+  return _textStreamsMatch(draft, row);
+}
