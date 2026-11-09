@@ -4021,7 +4021,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           request.serverId !=
               (_activeSessionServerId ?? _connMgr.activeServerId) ||
           request.payload['sessionId'] != _activeSessionId ||
-          _messages.any((m) => m.id == request.id || m.uuid == request.id)) {
+          _messages.any(
+            (m) =>
+                m.id == request.id ||
+                m.uuid == request.id ||
+                m.clientMessageId == request.id,
+          )) {
         continue;
       }
       _messages.add(
@@ -14629,7 +14634,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     _messages = dedupeNativeLiveAssistantTwins(
       preservePositionedTranscriptMembership(
-        orderByTranscriptPosition(dedupeStableTranscriptMessages(_messages)),
+        orderByTranscriptPosition(
+          dedupeStableTranscriptMessages(adoptPromptRows(_messages)),
+        ),
         // A view page is exact for its range, so a row it lacks is gone.
         isRewind || isView ? const [] : liveBeforeSnapshot,
       ),
@@ -14723,6 +14730,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
+    // A stored prompt row proves the server has it, like user_message_uuid
+    // does, so a lost receipt cannot leave it queued for a resend.
+    for (final message in _messages) {
+      final id = message.clientMessageId;
+      if (id != null && _pendingPromptDispatches.containsKey(id)) {
+        _forgetOutgoing(id);
+        _markReceived(id);
+      }
+    }
     _restoreOutgoingBubbles();
     _ensurePendingHardStopCard(
       historySessionId,

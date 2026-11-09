@@ -930,3 +930,32 @@ bool _isDraftOfRow(ChatMessage draft, ChatMessage row) {
   if (draft.sender == MessageSender.user) return false;
   return _textStreamsMatch(draft, row);
 }
+
+/// Merges each stored prompt row into the local bubble it was sent from.
+///
+/// A user row carries the local message ID of its prompt as
+/// `clientMessageId`. When that bubble is still in the list, it takes the
+/// row's position and the row is dropped, so one prompt is never shown twice
+/// when its row arrives before (or without) the live acknowledgement.
+List<ChatMessage> adoptPromptRows(List<ChatMessage> messages) {
+  final byId = <String, ChatMessage>{
+    for (final message in messages)
+      if (message.sender == MessageSender.user) message.id: message,
+  };
+  final rows = Set<ChatMessage>.identity();
+  for (final row in messages) {
+    final local = byId.remove(row.clientMessageId ?? '');
+    if (local == null || identical(local, row)) continue;
+    local.entryId = row.entryId;
+    local.sessionSeq = row.sessionSeq;
+    if (row.revision > local.revision) local.revision = row.revision;
+    local.uuid ??= row.uuid;
+    local.clientMessageId = row.clientMessageId;
+    rows.add(row);
+  }
+  if (rows.isEmpty) return messages;
+  return [
+    for (final message in messages)
+      if (!rows.contains(message)) message,
+  ];
+}

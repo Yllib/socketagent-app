@@ -91,4 +91,33 @@ void main() {
       );
     }, onClientMessage: sent.add);
   });
+
+  test('a stored prompt row merges into its unacknowledged bubble', () async {
+    await withSession((provider, send) async {
+      await provider.sendPrompt('fix the clock-out');
+      final prompt = provider.messages.lastWhere(
+        (m) => m.sender == MessageSender.user,
+      );
+      // The receipt and user_message_uuid were lost in a reconnect; the row
+      // arrives through history with the prompt's message ID.
+      await send({
+        'type': 'session_history',
+        'historyKind': 'append',
+        'total': 1,
+        'offset': 0,
+        'messages': [
+          row('u', 1, 1, 'user', 'fix the clock-out', prompt.id)
+            ..['uuid'] = 'uuid-1',
+        ],
+      });
+      final users = provider.messages
+          .where((m) => m.sender == MessageSender.user)
+          .toList();
+      expect(users, hasLength(1));
+      expect(users.single, same(prompt));
+      expect(prompt.sessionSeq, 1);
+      expect(prompt.uuid, 'uuid-1');
+      expect(prompt.isPending, isFalse);
+    });
+  });
 }
