@@ -5773,7 +5773,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'view_error':
           if (serverId != null) {
             if (_viewSyncs[serverId] case final viewSync?) {
-              _connMgr.sendToServer(serverId, viewSync.resetMessage());
+              _connMgr.sendToServer(
+                serverId,
+                viewSync.resetMessage(
+                  'view_error ${msg['reason']} ${msg['message'] ?? msg['expected'] ?? ''}',
+                ),
+              );
             }
           }
           break;
@@ -14931,7 +14936,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         : ViewSync(const ['sessions', 'status'], transcripts: version >= 2);
     _viewSyncs[serverId] = sync;
     sync.watchTranscript(_transcriptViewSessionFor(serverId));
-    _connMgr.sendToServer(serverId, sync.resetMessage());
+    _connMgr.sendToServer(serverId, sync.resetMessage('capabilities'));
   }
 
   /// The session whose transcript [serverId]'s view should follow.
@@ -14959,7 +14964,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (sync == null) return;
     final changed = sync.apply(msg);
     if (changed == null) {
-      _connMgr.sendToServer(serverId, sync.resetMessage());
+      _connMgr.sendToServer(serverId, sync.resetMessage(sync.breakReason));
       return;
     }
     if (changed.values['sessions'] case final sessions?) {

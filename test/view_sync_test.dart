@@ -203,4 +203,13 @@ void main() {
     );
     expect(sync.apply(transition(1, const [], setVersion: 2)), isNotNull);
   });
+
+  test('a duplicate is ignored and a real gap says why', () {
+    final sync = ViewSync(const ['sessions']);
+    expect(sync.resetMessage('capabilities')['reason'], 'capabilities');
+    expect(sync.apply(transition(0, const [])), isNotNull);
+    expect(sync.apply(transition(0, const []))?.values, isEmpty);
+    expect(sync.apply(transition(3, const [])), isNull);
+    expect(sync.breakReason, 'gap: at 1, got 3-4 set 1 (reset 1)');
+  });
 }

@@ -37,15 +37,20 @@ class ViewSync {
   Map<String, dynamic> _transcriptMeta = const {};
   final Map<String, Map<String, dynamic>> _rows = {};
 
+  /// Why the last [apply] returned null, for the next reset's `reason`.
+  String? breakReason;
+
   /// Starts a fresh subscription set on a new socket, or after a broken chain.
-  /// The transcript resumes from the rows this client holds.
-  Map<String, dynamic> resetMessage() {
+  /// The transcript resumes from the rows this client holds. [reason] goes to
+  /// the server log, so reset storms can be traced to their trigger.
+  Map<String, dynamic> resetMessage([String? reason]) {
     _transition = 0;
     _resetVersion = ++_setVersion;
     return {
       'type': 'view_set',
       'version': _setVersion,
       'reset': true,
+      'reason': ?reason,
       'add': [
         for (var i = 0; i < views.length; i++)
           {'queryId': i + 1, 'view': views[i], 'knownHash': ?_hashes[views[i]]},
@@ -99,7 +104,16 @@ class ViewSync {
     final end = (message['end'] as num?)?.toInt();
     final setVersion = (message['setVersion'] as num?)?.toInt() ?? 0;
     if (setVersion < _resetVersion) return const ViewSyncResult({}, null);
-    if (start != _transition || end == null) return null;
+    // Already applied: a duplicate, not a gap.
+    if (start != null && end != null && end <= _transition) {
+      return const ViewSyncResult({}, null);
+    }
+    if (start != _transition || end == null) {
+      breakReason =
+          'gap: at $_transition, got $start-$end set $setVersion '
+          '(reset $_resetVersion)';
+      return null;
+    }
     _transition = end;
     final values = <String, Map<String, dynamic>>{};
     TranscriptPage? transcript;
@@ -108,7 +122,10 @@ class ViewSync {
     for (final update in updates.whereType<Map>()) {
       final queryId = (update['queryId'] as num?)?.toInt() ?? 0;
       if (queryId == _transcriptQueryId) {
-        if (!_applyTranscript(update)) return null;
+        if (!_applyTranscript(update)) {
+          breakReason = 'transcript hash not held';
+          return null;
+        }
         transcript = _transcriptPage();
         continue;
       }
@@ -130,6 +147,7 @@ class ViewSync {
         // The server confirmed a value this client does not hold. Forget the
         // hash so the reset asks for the full value.
         _hashes.remove(view);
+        breakReason = '$view hash not held';
         return null;
       }
     }
