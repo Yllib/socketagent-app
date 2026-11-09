@@ -71,6 +71,7 @@ import 'computer_links.dart';
 import 'device_auth.dart';
 import 'device_name.dart';
 import '../models/active_browser_session.dart';
+import 'view_sync.dart';
 import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
@@ -756,6 +757,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   DateTime? _processingSetAt; // when client optimistically set _isProcessing
   final Map<String, OutgoingRequest> _pendingPromptDispatches = {};
   final Map<String, int> _serverCommandReceiptVersions = {};
+  final Map<String, ViewSync> _viewSyncs = {};
 
   /// A problem with the outbox itself, such as a record that could not be
   /// written. Shown above the composer until the next one replaces it.
@@ -5465,6 +5467,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     const globalTypes = {
       'session_list',
       'status_sync',
+      'view_transition',
+      'view_error',
       'subscription_required',
       'directory_listing',
       'file_manager_list_result',
@@ -5762,6 +5766,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         case 'session_list':
           await _handleSessionList(msg, serverId);
           break;
+        case 'view_transition':
+          if (serverId != null) await _applyViewTransition(msg, serverId);
+          break;
+        case 'view_error':
+          if (serverId != null) {
+            if (_viewSyncs[serverId] case final viewSync?) {
+              _connMgr.sendToServer(serverId, viewSync.resetMessage());
+            }
+          }
+          break;
         case 'server_capabilities':
           {
             final raw = msg['backends'];
@@ -5769,6 +5783,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 ? raw.whereType<String>().toList()
                 : <String>['claude'];
             if (serverId != null) {
+              _subscribeToViews(serverId, msg['views']);
               _serverCommandReceiptVersions[serverId] =
                   (msg['commandReceiptVersion'] as num?)?.toInt() ?? 0;
               unawaited(_drainOutgoingQueue());
@@ -14877,6 +14892,45 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         // Image no longer available — leave toolImageData null, widget will show placeholder
         debugPrint('Failed to load image for $toolUseId: $e');
       }
+    }
+  }
+
+  /// Subscribes a freshly connected server's socket to its session list and
+  /// status views, when the server has them. Older servers keep sending the
+  /// session_list and status_sync broadcasts instead.
+  void _subscribeToViews(String serverId, Object? capability) {
+    final version = capability is Map
+        ? (capability['version'] as num?)?.toInt() ?? 0
+        : 0;
+    if (version < 1) {
+      _viewSyncs.remove(serverId);
+      return;
+    }
+    final sync = _viewSyncs.putIfAbsent(
+      serverId,
+      () => ViewSync(const ['sessions', 'status']),
+    );
+    _connMgr.sendToServer(serverId, sync.resetMessage());
+  }
+
+  /// Shows the values a view transition carries through the handlers the
+  /// old broadcasts use, so both routes produce the same state.
+  Future<void> _applyViewTransition(
+    Map<String, dynamic> msg,
+    String serverId,
+  ) async {
+    final sync = _viewSyncs[serverId];
+    if (sync == null) return;
+    final changed = sync.apply(msg);
+    if (changed == null) {
+      _connMgr.sendToServer(serverId, sync.resetMessage());
+      return;
+    }
+    if (changed['sessions'] case final sessions?) {
+      await _handleSessionList(sessions, serverId);
+    }
+    if (changed['status'] case final status?) {
+      await _handleServerMessage({...status, 'type': 'status_sync'}, serverId);
     }
   }
 
