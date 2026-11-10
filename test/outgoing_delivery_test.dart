@@ -105,6 +105,33 @@ void main() {
       expect(provider.activeDeliveryProblems.map((r) => r.id), [failed.id]);
     }, onClientMessage: received.add);
   });
+  test('a failure the session already explained adds no second card', () async {
+    await withSession((provider, send) async {
+      int errorCards() =>
+          provider.messages.where((m) => m.type == MessageType.error).length;
+      await provider.sendPrompt('offline');
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      await send({
+        'type': 'prompt_failed',
+        'messageId': provider.pendingOutgoing.single.id,
+        'sessionId': 'shared-session',
+        'message': 'workspace routing discovery failed',
+        'errorShown': true,
+      });
+      expect(errorCards(), 0);
+      expect(provider.isProcessing, isFalse);
+
+      await provider.sendPrompt('rejected');
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      await send({
+        'type': 'prompt_failed',
+        'messageId': provider.pendingOutgoing.last.id,
+        'sessionId': 'shared-session',
+        'message': 'Claude session aborted',
+      });
+      expect(errorCards(), 1);
+    });
+  });
   test(
     'native resume choice is queued with the exact originating session',
     () async {

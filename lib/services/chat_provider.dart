@@ -6784,7 +6784,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _isProcessing = false;
             _processingSetAt = null;
             _stopPromptRuntime();
-            _messages.add(ChatMessage.error(failureReason, trace: failure));
+            // The session already showed a card naming the cause.
+            if (msg['errorShown'] != true) {
+              _messages.add(ChatMessage.error(failureReason, trace: failure));
+            }
             notifyListeners();
           }
           break;
