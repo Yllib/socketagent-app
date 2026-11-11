@@ -1,3 +1,4 @@
+import '../models/context_meter.dart';
 import 'package:flutter/material.dart';
 import '../config/app_palette.dart';
 
@@ -216,6 +217,63 @@ class ContextUsageBar extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// The header's context meter: a track spanning the session's window,
+/// filled to the tokens in use, with a tick where compaction starts.
+class ContextMeterBar extends StatelessWidget {
+  const ContextMeterBar({
+    super.key,
+    required this.meter,
+    required this.color,
+    this.width = 76,
+  });
+
+  final ContextMeter meter;
+
+  /// The fill colour, which the caller also uses for the percentage.
+  final Color color;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final used = meter.windowTokens > 0
+        ? (meter.usedTokens / meter.windowTokens).clamp(0.0, 1.0)
+        : 0.0;
+    final mark = meter.compactMark;
+    return SizedBox(
+      width: width,
+      height: 12,
+      child: Stack(
+        alignment: Alignment.centerLeft,
+        children: [
+          Container(
+            height: 8,
+            decoration: BoxDecoration(
+              color: onSurface.withAlpha(45),
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          Container(
+            width: width * used,
+            height: 8,
+            decoration: BoxDecoration(
+              color: color,
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          if (mark != null)
+            Positioned(
+              left: (width * mark - 1).clamp(0.0, width - 2),
+              top: 0,
+              bottom: 0,
+              child: Container(width: 2, color: onSurface),
+            ),
+        ],
+      ),
     );
   }
 }

@@ -10,6 +10,7 @@ import '../widgets/outgoing_queue_notice.dart';
 import 'dart:io';
 import '../services/desktop_clipboard_attachments.dart';
 import '../models/chat_find.dart';
+import '../models/context_meter.dart';
 import '../models/message.dart' show ChatMessage, MessageType;
 import '../services/desktop_composer_keys.dart';
 import '../services/desktop_shortcuts.dart';
@@ -1360,98 +1361,115 @@ class _ChatScreenState extends State<_ChatScreen> {
                   : null,
               title: _withBackendWatermark(
                 provider.activeSessionBackend,
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
+                // Three lines on the left. Context usage and the connection
+                // dot sit beside them, centered on the bar's height.
+                Row(
                   children: [
-                    // Line 1: title, context usage, connection.
-                    Row(
-                      children: [
-                        Expanded(
-                          // The title opens the session details, as in
-                          // chat apps.
-                          child: GestureDetector(
-                            key: const ValueKey('session-header-title'),
-                            behavior: HitTestBehavior.opaque,
-                            onTap: hasSession
-                                ? () => unawaited(_showSessionDetails(provider))
-                                : null,
-                            child: Text(
-                              _sessionHeaderTitle(provider, isPlan: isPlan),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w600,
-                                color: sessionTheme?.textColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        if (provider.lastUsage != null)
-                          _buildUsageIndicator(provider.lastUsage!),
-                        _buildConnectionIndicator(provider.connectionStatus),
-                      ],
-                    ),
-                    // Line 2: computer (folder in its tooltip) and
-                    // permission mode.
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Tooltip(
-                            message: provider.activeSessionCwd ?? '',
-                            child: Text(
-                              _activeComputerName(provider),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: headerMuted,
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (hasSession) ...[
-                          Text(
-                            ' · ',
-                            style: TextStyle(fontSize: 11, color: headerMuted),
-                          ),
-                          GestureDetector(
-                            onTap: () => _showPermissionModePicker(provider),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  _permissionModeIcon(displayPermMode),
-                                  size: 11,
-                                  color: headerMuted,
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _permissionModeLabel(
-                                    displayPermMode,
-                                    backend: provider.activeSessionBackend,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          // Line 1: title.
+                          Row(
+                            children: [
+                              Expanded(
+                                // The title opens the session details, as in
+                                // chat apps.
+                                child: GestureDetector(
+                                  key: const ValueKey('session-header-title'),
+                                  behavior: HitTestBehavior.opaque,
+                                  onTap: hasSession
+                                      ? () => unawaited(
+                                          _showSessionDetails(provider),
+                                        )
+                                      : null,
+                                  child: Text(
+                                    _sessionHeaderTitle(
+                                      provider,
+                                      isPlan: isPlan,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w600,
+                                      color: sessionTheme?.textColor,
+                                    ),
                                   ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          // Line 2: computer (folder in its tooltip) and
+                          // permission mode.
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Tooltip(
+                                  message: provider.activeSessionCwd ?? '',
+                                  child: Text(
+                                    _activeComputerName(provider),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: headerMuted,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (hasSession) ...[
+                                Text(
+                                  ' · ',
                                   style: TextStyle(
                                     fontSize: 11,
                                     color: headerMuted,
                                   ),
                                 ),
-                                Icon(
-                                  Icons.arrow_drop_down,
-                                  size: 14,
-                                  color: headerMuted.withAlpha(128),
+                                GestureDetector(
+                                  onTap: () =>
+                                      _showPermissionModePicker(provider),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        _permissionModeIcon(displayPermMode),
+                                        size: 11,
+                                        color: headerMuted,
+                                      ),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        _permissionModeLabel(
+                                          displayPermMode,
+                                          backend:
+                                              provider.activeSessionBackend,
+                                        ),
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          color: headerMuted,
+                                        ),
+                                      ),
+                                      Icon(
+                                        Icons.arrow_drop_down,
+                                        size: 14,
+                                        color: headerMuted.withAlpha(128),
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ],
-                            ),
+                            ],
                           ),
+                          // Line 3: model, effort, raw, more. Plain text, no
+                          // chips.
+                          if (hasSession) _buildHeaderControls(provider),
                         ],
-                      ],
+                      ),
                     ),
-                    // Line 3: model, effort, raw, more. Plain text, no
-                    // chips.
-                    if (hasSession) _buildHeaderControls(provider),
+                    if (provider.lastUsage != null)
+                      _buildUsageIndicator(provider, provider.lastUsage!),
+                    _buildConnectionIndicator(provider.connectionStatus),
                   ],
                 ),
               ),
@@ -2643,54 +2661,95 @@ class _ChatScreenState extends State<_ChatScreen> {
     });
   }
 
-  Widget _buildUsageIndicator(Map<String, dynamic> usage) {
-    final inputTokens = (usage['inputTokens'] as num?)?.toInt() ?? 0;
-    final outputTokens = (usage['outputTokens'] as num?)?.toInt() ?? 0;
-    final cacheRead = (usage['cacheReadTokens'] as num?)?.toInt() ?? 0;
-    final cacheCreate = (usage['cacheCreateTokens'] as num?)?.toInt() ?? 0;
-    final contextWindow = (usage['contextWindow'] as num?)?.toInt() ?? 0;
-    // Total context = uncached input + cache read + cache create (what was sent to the API)
-    final totalContext = inputTokens + cacheRead + cacheCreate;
+  /// The meter the header and the context dialog share, so both measure the
+  /// same thing. Claude sessions measure toward auto-compaction.
+  ContextMeter? _contextMeter(
+    ChatProvider provider,
+    Map<String, dynamic> usage,
+  ) {
+    final claude = provider.activeSessionBackend != 'codex';
+    final reported = provider.contextUsage;
+    return ContextMeter.from(
+      usage: usage,
+      context: reported?['sessionId'] == provider.activeSessionId
+          ? reported
+          : null,
+      autoCompact: !claude || provider.claudeAutoCompactEnabled,
+      pendingWindow: claude ? provider.claudeAutoCompactWindowEffective : null,
+    );
+  }
 
-    // Context fill ratio
-    final fillRatio = contextWindow > 0 ? totalContext / contextWindow : 0.0;
-    final fillColor = fillRatio > 0.8
-        ? context.palette.shade(Colors.red, 300)
-        : fillRatio > 0.5
-        ? context.palette.shade(Colors.orange, 300)
-        : Theme.of(context).colorScheme.onSurface.withAlpha(178);
+  Color _contextMeterColor(ContextMeter meter) => meter.fill >= 0.9
+      ? context.palette.shade(Colors.red, 300)
+      : meter.fill >= 0.7
+      ? context.palette.shade(Colors.orange, 300)
+      : Theme.of(context).colorScheme.onSurface.withAlpha(215);
 
-    return GestureDetector(
-      onTap: () => _showContextDialog(usage),
-      child: Padding(
-        padding: const EdgeInsets.only(right: 8),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.token, size: 14, color: fillColor),
-            const SizedBox(width: 3),
-            Text(
-              formatCompactCount(totalContext),
-              style: TextStyle(fontSize: 11, color: fillColor),
-            ),
-            if (contextWindow > 0) ...[
-              Text(
-                ' / ${formatCompactCount(contextWindow)}',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: Theme.of(context).colorScheme.onSurface.withAlpha(102),
+  /// The header's context meter: how close the session is to compacting,
+  /// with the numbers under it. The whole block opens the context dialog.
+  Widget _buildUsageIndicator(
+    ChatProvider provider,
+    Map<String, dynamic> usage,
+  ) {
+    final meter = _contextMeter(provider, usage);
+    final onSurface = Theme.of(context).colorScheme.onSurface;
+    final muted = onSurface.withAlpha(150);
+    final color = meter == null ? muted : _contextMeterColor(meter);
+    final percent = meter == null ? null : (meter.fill * 100).round();
+    final detail = Platform.isWindows ? 'Click for details' : 'Tap for details';
+    return Tooltip(
+      message: meter == null
+          ? 'Context details'
+          : meter.compactAt != null
+          ? 'Context: $percent% of the way to compaction'
+          : 'Context: $percent% full',
+      child: InkWell(
+        key: const ValueKey('session-header-usage'),
+        onTap: () => _showContextDialog(usage),
+        borderRadius: BorderRadius.circular(6),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 48),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (meter != null)
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '$percent%',
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: color,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      ContextMeterBar(meter: meter, color: color),
+                    ],
+                  ),
+                const SizedBox(height: 3),
+                Text(
+                  meter == null
+                      ? detail
+                      : '${formatCompactCount(meter.usedTokens)} / '
+                            '${formatCompactCount(meter.limit)}',
+                  style: TextStyle(fontSize: 11, color: muted),
                 ),
-              ),
-            ],
-            if (outputTokens > 0) ...[
-              const SizedBox(width: 6),
-              Icon(Icons.arrow_upward, size: 10, color: context.palette.mauve),
-              Text(
-                formatCompactCount(outputTokens),
-                style: TextStyle(fontSize: 11, color: context.palette.mauve),
-              ),
-            ],
-          ],
+                if (meter != null)
+                  Text(
+                    detail,
+                    style: TextStyle(
+                      fontSize: 9.5,
+                      color: muted.withAlpha(110),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -2702,6 +2761,12 @@ class _ChatScreenState extends State<_ChatScreen> {
       text: provider.claudeAutoCompactWindowOverride?.toString() ?? '',
     );
     String? error;
+    // Claude starts compacting this many tokens before the window fills.
+    final reported = provider.contextUsage;
+    final reserve =
+        ((reported?['maxTokens'] as num?)?.toInt() ?? 0) -
+        ((reported?['autoCompactThreshold'] as num?)?.toInt() ?? 0);
+    final hasReserve = reported?['autoCompactThreshold'] != null && reserve > 0;
     final selected = await showDialog<int?>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -2712,11 +2777,15 @@ class _ChatScreenState extends State<_ChatScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                inherited
-                    ? provider.claudeAutoCompactWindowEffective == null
-                          ? 'Currently inheriting the Claude SDK/model default.'
-                          : 'Currently inheriting ${provider.claudeAutoCompactWindowEffective} tokens from the computer.'
-                    : 'This session currently overrides the computer default.',
+                [
+                  inherited
+                      ? provider.claudeAutoCompactWindowEffective == null
+                            ? "This session uses the model's default window."
+                            : "This session uses the computer's window, ${formatThousands(provider.claudeAutoCompactWindowEffective!)} tokens."
+                      : 'This session has its own window.',
+                  if (hasReserve)
+                    'Compaction starts ${formatCompactCount(reserve)} tokens before the window fills.',
+                ].join(' '),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -2867,6 +2936,13 @@ class _ChatScreenState extends State<_ChatScreen> {
     final isAutoCompact = ctx?['isAutoCompactEnabled'] == true;
 
     final theme = Theme.of(context);
+    final meter = _contextMeter(provider, usage);
+    // A session that compacts headlines the header meter's measure, how far
+    // along it is to compaction, so the two numbers agree.
+    final compactAt = meter?.compactAt;
+    final headlineRatio = compactAt != null && compactAt > 0
+        ? (usedTokens / compactAt).clamp(0.0, 1.0)
+        : usedRatio;
 
     showDialog(
       context: context,
@@ -2902,14 +2978,14 @@ class _ChatScreenState extends State<_ChatScreen> {
                 // Fill percentage headline
                 Text(
                   maxTokens > 0
-                      ? '${(usedRatio * 100).toStringAsFixed(0)}% used'
+                      ? '${(headlineRatio * 100).round()}% used'
                       : 'No context data',
                   style: TextStyle(
                     fontSize: 24,
                     fontWeight: FontWeight.w600,
-                    color: usedRatio > 0.8
+                    color: headlineRatio >= 0.9
                         ? context.palette.shade(Colors.red, 300)
-                        : usedRatio > 0.5
+                        : headlineRatio >= 0.7
                         ? context.palette.shade(Colors.orange, 300)
                         : theme.colorScheme.onSurface,
                   ),
@@ -2917,7 +2993,10 @@ class _ChatScreenState extends State<_ChatScreen> {
                 if (maxTokens > 0) ...[
                   const SizedBox(height: 4),
                   Text(
-                    '${formatCompactCount(usedTokens)} / ${formatCompactCount(maxTokens)} tokens',
+                    compactAt != null
+                        ? '${formatCompactCount(usedTokens)} / ${formatCompactCount(compactAt)} tokens. '
+                              'The window is ${formatCompactCount(meter!.windowTokens)}.'
+                        : '${formatCompactCount(usedTokens)} / ${formatCompactCount(maxTokens)} tokens',
                     style: TextStyle(
                       fontSize: 13,
                       color: theme.colorScheme.onSurface.withAlpha(178),
@@ -2933,18 +3012,34 @@ class _ChatScreenState extends State<_ChatScreen> {
                         ? autoCompactThreshold
                         : null,
                   ),
-                if (isAutoCompact &&
-                    autoCompactThreshold != null &&
-                    maxTokens > 0) ...[
-                  const SizedBox(height: 4),
-                  Text(
-                    'Tick marks auto-compact at ${(autoCompactThreshold / maxTokens * 100).toStringAsFixed(0)}%',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: theme.colorScheme.onSurface.withAlpha(128),
-                    ),
+                // Where this session compacts, measured the way the header
+                // meter measures it, and the control that moves it.
+                if (provider.activeSessionBackend != 'codex')
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          compactAt != null
+                              ? 'Compacts at ${formatCompactCount(compactAt)}, the tick on the bar.'
+                              : 'Auto-compact is off',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurface.withAlpha(178),
+                          ),
+                        ),
+                      ),
+                      TextButton(
+                        key: const ValueKey('context-change-limit'),
+                        onPressed: () {
+                          Navigator.pop(dlgCtx);
+                          unawaited(
+                            _showClaudeAutoCompactWindowDialog(provider),
+                          );
+                        },
+                        child: const Text('Change limit'),
+                      ),
+                    ],
                   ),
-                ],
                 const SizedBox(height: 14),
                 // Legend for the bar above, in the same order and colours.
                 // A category that has a breakdown opens to show it in place,
@@ -2968,7 +3063,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                 ..._contextReserveRows(
                   breakdown,
                   freeTokens,
-                  usedRatio,
+                  headlineRatio,
                   ctx,
                   theme,
                 ),
