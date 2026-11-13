@@ -283,12 +283,13 @@ class AccountVaultClient {
     return (reply?['version'] as num?)?.toInt() ?? 0;
   }
 
-  /// Deletes the account. A missing or already deleted account succeeds.
+  /// Deletes the account. The relay answers 204, also for an account that
+  /// is missing or already deleted. Anything else is a failure, a 404
+  /// included: the relay never sends one here, so it came from something
+  /// in front of it and says nothing about the account.
   Future<void> delete(AccountKeys keys) async {
     final response = await _send(keys, 'DELETE', _accountPath, null);
-    if (response.statusCode != 204 && response.statusCode != 404) {
-      throw _failure(response);
-    }
+    if (response.statusCode != 204) throw _failure(response);
   }
 
   /// Sets the account's PIN record and returns the relay's `setAt` for it,

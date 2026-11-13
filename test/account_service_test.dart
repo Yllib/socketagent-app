@@ -897,6 +897,29 @@ void main() {
       expect(cloud.liveAccounts, isEmpty);
       expect(cloud.driveFiles, isEmpty);
     });
+
+    test('a 404 is not a delete: Drive is kept and the device stays', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      final account = a.service.accountId!;
+      // Something in front of the relay answers for it. The relay never
+      // answers 404 to DELETE /api/account.
+      cloud.beforeRelay = (request) async => request.method == 'DELETE'
+          ? http.Response('404 page not found', 404)
+          : null;
+
+      await expectLater(
+        a.service.deleteAccount(),
+        throwsA(_stateError(startsWith('The account was not deleted: '))),
+      );
+
+      expect(a.service.accountId, account);
+      expect(cloud.keyFiles, hasLength(1));
+      expect(cloud.accounts[account]!.live, isTrue);
+      cloud.beforeRelay = null;
+      expect(await a.sync(), AccountSyncOutcome.synced);
+      expect(await b.sync(), AccountSyncOutcome.synced);
+    });
   });
 
   test('a pending change survives the stored record', () {
