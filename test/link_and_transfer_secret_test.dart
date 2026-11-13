@@ -13,7 +13,8 @@ import 'support/fake_v2_computer.dart';
 
 /// Link secrets and transfer secrets, wire spec 10.1 and 10.3, through the
 /// real provider and two computers on transport v2. Both computers get the
-/// same secret, or neither gets one.
+/// same secret, or neither gets one. Also where a link ticket request goes:
+/// only to the relay stored for the target, never to one a computer names.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late HttpServer relay;
@@ -135,6 +136,89 @@ void main() {
     expect(source.all('computer_link_set'), isEmpty);
   });
 
+  /// A relay no config here names. It keeps every request it gets.
+  Future<({String url, List<HttpRequest> requests})> otherRelay() async {
+    final other = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => other.close(force: true));
+    final requests = <HttpRequest>[];
+    other.listen((request) async {
+      requests.add(request);
+      await request.drain<void>();
+      request.response
+        ..write(jsonEncode({'ticket': 'other', 'expiresAt': 4102444800000}))
+        ..close();
+    });
+    return (url: 'ws://127.0.0.1:${other.port}', requests: requests);
+  }
+
+  test(
+    'a link room on a relay the target names gets no ticket request',
+    () async {
+      final source = await add('source', links: 2, transfer: 4);
+      final target = await add('target', links: 2, transfer: 4);
+      final other = await otherRelay();
+      target.relayUrl = other.url;
+
+      await expectLater(
+        provider.createComputerLink(
+          sourceId: 'source',
+          targetId: 'target',
+          access: access,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'target has no link room',
+          ),
+        ),
+      );
+
+      // No request, so no subscriber token either.
+      expect(other.requests, isEmpty);
+      expect(source.all('computer_link_set'), isEmpty);
+    },
+  );
+
+  test('a link room on the stored relay gets its ticket there', () async {
+    final source = await add('source', links: 2, transfer: 4);
+    final target = await add('target', links: 2, transfer: 4);
+    // The stored relay in another spelling, as a computer may name it.
+    target.relayUrl = 'ws://127.0.0.1:${relay.port}/';
+
+    await provider.createComputerLink(
+      sourceId: 'source',
+      targetId: 'target',
+      access: access,
+    );
+
+    final set = source.last('computer_link_set');
+    expect(set['ticket'], 'link-ticket');
+    expect(set['relayUrl'], 'ws://127.0.0.1:${relay.port}');
+  });
+
+  test('a stored link on a relay the source names is not renewed', () async {
+    final source = await add('source', links: 2, transfer: 4);
+    final target = await add('target', links: 2, transfer: 4);
+    final other = await otherRelay();
+    // No ticket yet, so the app would fetch one.
+    source.links = [
+      {
+        'name': 'target',
+        'targetPubkey': target.publicKey,
+        'relayUrl': other.url,
+        'linkRoom': 'link-room',
+      },
+    ];
+    provider.setSubscriptionActive(true);
+
+    await provider.loadComputerLinks('source');
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+
+    expect(other.requests, isEmpty);
+    expect(source.all('computer_link_set'), isEmpty);
+  });
+
   Future<void> transfer() => provider.transferSession(
     source: fakeSession('session', 'source'),
     destinationServerId: 'target',
@@ -194,6 +278,9 @@ class _Computer {
   /// What `computer_link_list` reports.
   List<Map<String, Object?>> links = const [];
 
+  /// The relay `link_room_info` names, when it names one.
+  String? relayUrl;
+
   String get publicKey => _key.publicKey;
   String get roomId => _key.roomId;
   String get pairingSecret => _key.pairingSecret;
@@ -241,6 +328,7 @@ class _Computer {
         'link_room_info' => {
           'type': 'link_room_info_result',
           'linkRoom': 'link-room',
+          'relayUrl': ?relayUrl,
         },
         'computer_link_set' => {'type': 'computer_link_result', 'ok': true},
         'computer_link_list' => {

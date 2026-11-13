@@ -8992,9 +8992,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         room['error'] as String? ?? '${target.name} has no link room',
       );
     }
-    final relayUrl = room['relayUrl'] as String? ?? target.relayUrl;
+    final relayUrl = _linkRelayUrl(target, room['relayUrl']);
     final linkRoom = room['linkRoom'] as String? ?? '';
-    if (linkRoom.isEmpty) {
+    if (relayUrl == null || linkRoom.isEmpty) {
       throw StateError('${target.name} has no link room');
     }
     final ticket = await _computerLinkTicket(relayUrl, linkRoom);
@@ -9061,11 +9061,46 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// The relay the app asks for a ticket to [target]'s link room, as a
+  /// `wss://` URL, or `ws://` for one on this machine. It is the one stored
+  /// in the target's config, or the app's default when that is empty or this
+  /// device has no config for the target. Null when [named], the relay a
+  /// computer reported for the link, is another one, or when the stored one
+  /// is neither TLS nor on this machine. The request carries the subscriber
+  /// token, and no computer may name where that goes (wire spec 14). The
+  /// source is told this relay too, since the ticket is good only there.
+  String? _linkRelayUrl(ServerConfig? target, Object? named) {
+    final stored = target?.relayUrl.trim() ?? '';
+    final trusted = _relayHttpUrlFromWs(
+      stored.isEmpty ? defaultRelayUrl : stored,
+    );
+    final relay = Uri.tryParse(trusted ?? '');
+    if (trusted == null || relay == null || relay.host.isEmpty) return null;
+    if (relay.scheme != 'https' &&
+        !(relay.scheme == 'http' && isLoopbackHost(relay.host))) {
+      return null;
+    }
+    if (named != null && named != '') {
+      if (named is! String) return null;
+      final other = Uri.tryParse(_relayHttpUrlFromWs(named) ?? '');
+      if (other == null ||
+          other.scheme != relay.scheme ||
+          other.host != relay.host ||
+          other.port != relay.port) {
+        return null;
+      }
+    }
+    return trusted.replaceFirst('http', 'ws');
+  }
+
+  /// Asks [relayUrl] for a ticket. Only ever called with [_linkRelayUrl]'s
+  /// answer, because the subscriber token goes in the request.
   Future<ComputerLinkTicket> _computerLinkTicket(
     String relayUrl,
     String linkRoom,
   ) async {
-    final httpUrl = _relayHttpUrlFromWs(relayUrl) ?? relayHttpUrl;
+    final httpUrl = _relayHttpUrlFromWs(relayUrl);
+    if (httpUrl == null) throw StateError('Invalid relay address');
     try {
       return await requestComputerLinkTicket(
         relayHttpUrl: httpUrl,
@@ -9199,12 +9234,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final now = DateTime.now();
       for (final link in links) {
         if (!link.needsTicketRefresh(now)) continue;
-        var relayUrl = link.relayUrl;
+        final target = _serverConfigs
+            .where((c) => c.serverPubkey == link.targetPubkey)
+            .firstOrNull;
+        // The relay the source or the target names. It is only compared
+        // with the one stored here, never asked for a ticket by itself.
+        Object? named = link.relayUrl;
         var linkRoom = link.linkRoom;
         if (linkRoom.isEmpty) {
-          final target = _serverConfigs
-              .where((c) => c.serverPubkey == link.targetPubkey)
-              .firstOrNull;
           if (target == null ||
               _connMgr.statusOf(target.id) != ConnectionStatus.connected) {
             continue;
@@ -9212,10 +9249,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final room = await _deviceRequest(target.id, {
             'type': 'link_room_info',
           }, 'link_room_info_result');
-          relayUrl = room['relayUrl'] as String? ?? target.relayUrl;
+          named = room['relayUrl'];
           linkRoom = room['linkRoom'] as String? ?? '';
           if (linkRoom.isEmpty) continue;
         }
+        final relayUrl = _linkRelayUrl(target, named);
+        if (relayUrl == null) continue;
         final ticket = await _computerLinkTicket(relayUrl, linkRoom);
         await _setComputerLink(
           sourceId,
