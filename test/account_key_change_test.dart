@@ -892,6 +892,37 @@ void main() {
       expect(cloud.liveAccounts, [c.service.accountId]);
     });
 
+    test('refuses that move too when its own change died before the commit '
+        'was sent', () async {
+      final cloud = FakeCloud();
+      final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
+      // Pixel starts to remove Tablet and dies as it makes the new account.
+      _dieOn(
+        cloud,
+        a,
+        (request) =>
+            request.method == 'PUT' &&
+            request.body.contains('"expectedVersion":0'),
+        afterLanding: false,
+      );
+      await expectLater(a.service.removeDevice(c.publicKey), throwsStateError);
+      expect(a.service.pending, isA<PendingKeyChange>());
+
+      // Tablet moves the account first.
+      await c.service.removeDevice(b.publicKey);
+
+      await a.restart();
+      await a.sync();
+      expect(a.service.hasAccount, isFalse);
+      expect(
+        a.service.notice,
+        startsWith('Tablet moved the account before it could be removed'),
+      );
+      expect(a.storage.record, isNull);
+      expect(a.removedKeys, [c.publicKey]);
+      expect(cloud.liveAccounts, [c.service.accountId]);
+    });
+
     test('is finished by the others when the device is lost after the '
         'commit', () async {
       final cloud = FakeCloud();

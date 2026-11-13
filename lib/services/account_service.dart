@@ -1222,7 +1222,7 @@ class AccountService extends ChangeNotifier {
       case KeyChangeStage.committed:
         return true;
       case KeyChangeStage.undoing:
-        await _undoKeyChange(client, pending);
+        await _undoUnlessMoved(client, keys, pending);
         return true;
       case KeyChangeStage.lost:
         if (await _deleteNewAccount(client, pending) &&
@@ -1243,7 +1243,7 @@ class AccountService extends ChangeNotifier {
     final commitVersion = pending.commitVersion;
     if (commitVersion == null) {
       // The commit was never sent.
-      await _undoKeyChange(client, pending);
+      await _undoUnlessMoved(client, keys, pending);
       return true;
     }
     for (var attempt = 0; attempt < 3; attempt++) {
@@ -1255,12 +1255,7 @@ class AccountService extends ChangeNotifier {
               await _takeNewKey(pending);
               return true;
             case false:
-              // Another change won. The sync follows it, and refuses it
-              // when a device this change was removing made it.
-              _notice = lostChangeWords;
-              _pending = pending.copyWith(stage: KeyChangeStage.lost);
-              await _persist();
-              await _deleteNewAccount(client, pending);
+              await _loseKeyChange(client, pending);
               return true;
             case null:
               // The move may be this change's own, and then the other
@@ -1297,6 +1292,35 @@ class AccountService extends ChangeNotifier {
     }
     _lastError = _uncheckedChangeWords;
     return false;
+  }
+
+  /// Another change won. The change is kept as lost until this device has
+  /// followed the move, because the sync refuses a move made by a device
+  /// this change was removing, and needs its list of them for that.
+  Future<void> _loseKeyChange(
+    AccountVaultClient client,
+    PendingKeyChange pending,
+  ) async {
+    _notice = lostChangeWords;
+    _pending = pending.copyWith(stage: KeyChangeStage.lost);
+    await _persist();
+    await _deleteNewAccount(client, pending);
+  }
+
+  /// Undoes a change whose commit was not sent or cannot land, after one
+  /// more look at the old account. A move found there is another device's,
+  /// so the change is lost, not dropped: clearing it first would let this
+  /// device follow a device it was removing.
+  Future<void> _undoUnlessMoved(
+    AccountVaultClient client,
+    AccountKeys keys,
+    PendingKeyChange pending,
+  ) async {
+    if (await client.get(keys) is VaultMoved) {
+      await _loseKeyChange(client, pending);
+    } else {
+      await _undoKeyChange(client, pending);
+    }
   }
 
   /// Whether the move in [reply] is the commit of [pending]. True when this
