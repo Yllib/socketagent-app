@@ -120,11 +120,13 @@ class DriveKeyStore {
   }
 
   /// The key file, or null when the folder has none. When several exist
-  /// (two first devices raced) the oldest wins and the rest are deleted.
+  /// (two first devices raced) the oldest wins and the rest are deleted. It
+  /// lists ten files, as the released app does, so it never deletes more
+  /// than that app would.
   Future<DriveKeyFile?> read() async {
     final client = _clientFactory();
     try {
-      final files = await _list(client);
+      final files = await _list(client, pageSize: 10);
       if (files.isEmpty) return null;
       final keep = files.first;
       for (final extra in files.skip(1)) {
@@ -240,15 +242,18 @@ class DriveKeyStore {
     if (rotated) 'rotatedBy': by,
   });
 
-  /// The files under the name, oldest first. Files with one creation time
-  /// are ordered by id, so every device agrees on the oldest.
-  Future<List<_ListedFile>> _list(http.Client client) async {
+  /// Up to [pageSize] files under the name, oldest first. Files with one
+  /// creation time are ordered by id, so every device agrees on the oldest.
+  Future<List<_ListedFile>> _list(
+    http.Client client, {
+    int pageSize = 100,
+  }) async {
     final query = Uri(
       queryParameters: {
         'spaces': 'appDataFolder',
         'q': "name = '$fileName'",
         'fields': 'files(id,createdTime,size)',
-        'pageSize': '100',
+        'pageSize': '$pageSize',
       },
     ).query;
     final response = await _send(client, 'GET', '/drive/v3/files?$query');
