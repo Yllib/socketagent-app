@@ -191,6 +191,20 @@ class WebSocketService {
   bool _carryOver = true;
   bool _upgradeAsked = false;
   String? _upgradeRequestId;
+  // The request a desktop app makes of the server on its own machine when
+  // it holds no secret and no token for it (wire spec 5.3). The owner turns
+  // it on for such a computer. The socket uses it only in direct mode, to a
+  // loopback address, on the control lane.
+  bool _localRequest = false;
+  // Whether this connection is that request. Fixed per connection. Such a
+  // channel is never an application channel: it sends `transport_ready` and
+  // reads the grant or the refusal.
+  bool _socketLocalRequest = false;
+  // A server from before transport v2 answers the request's upgrade with an
+  // HTTP error. The next dial then goes the old way, as the released app
+  // does, and the one after asks again.
+  bool _upgradeRefused = false;
+  bool _skipLocalRequest = false;
   // This socket's own retries wait for these moments. The first is about
   // the computer, the second about the relay. A dial the owner asks for,
   // such as the one after the user subscribes, goes out at once as before.
@@ -288,6 +302,10 @@ class WebSocketService {
       disconnect();
     }
   }
+
+  /// Lets this socket ask the server on its own machine for a pairing. Has
+  /// no effect while [setPairing] holds one, or off loopback.
+  void setLocalRequest(bool localRequest) => _localRequest = localRequest;
 
   /// Whether a retry is scheduled. False after an intentional [disconnect].
   bool get reconnecting => _reconnectTimer?.isActive ?? false;
@@ -418,14 +436,28 @@ class WebSocketService {
     }
     if (gen != _connectionGeneration) return;
     final pairing = _pairing;
-    _socketV2 = pairing != null;
+    final skipLocalRequest = _skipLocalRequest;
+    _skipLocalRequest = false;
+    _upgradeRefused = false;
+    _socketLocalRequest =
+        pairing == null &&
+        _localRequest &&
+        !skipLocalRequest &&
+        _mode == ConnectionMode.direct &&
+        _lane == TransportLane.control &&
+        isLoopbackHost(_host) &&
+        crypto != null &&
+        crypto.hasKeyPair &&
+        crypto.isReady &&
+        _v2Available();
+    _socketV2 = pairing != null || _socketLocalRequest;
     final blocked = _transportBlocked(pairing, crypto);
     if (blocked != null) {
       debugPrint('[Transport] Connection blocked: $blocked');
       _setStatus(ConnectionStatus.error);
       return;
     }
-    if (_socketV2) {
+    if (pairing != null) {
       // Saved before the first frame goes out, so this computer never gets
       // the old transport from this device again.
       try {
@@ -498,12 +530,24 @@ class WebSocketService {
       // onDone. The one difference is that this keeps the dart:io socket.
       _rawSocket = null;
       _channel = IOWebSocketChannel(
-        WebSocket.connect(uri.toString(), headers: headers).then((socket) {
-          socket.pingInterval = const Duration(seconds: 20);
-          if (gen == _connectionGeneration) _rawSocket = socket;
-          return socket;
-        }),
+        WebSocket.connect(uri.toString(), headers: headers).then(
+          (socket) {
+            socket.pingInterval = const Duration(seconds: 20);
+            if (gen == _connectionGeneration) _rawSocket = socket;
+            return socket;
+          },
+          onError: (Object error, StackTrace stack) {
+            // The server answered over HTTP and would not upgrade.
+            if (gen == _connectionGeneration && error is WebSocketException) {
+              _upgradeRefused = true;
+            }
+            Error.throwWithStackTrace(error, stack);
+          },
+        ),
       );
+
+      // A dial that fails is reported once, on the stream below.
+      _channel!.ready.ignore();
 
       _channelSubscription = _channel!.stream
           .asyncMap((data) => _onFrame(data, gen))
@@ -512,6 +556,12 @@ class WebSocketService {
             onError: (error) {
               if (gen != _connectionGeneration) return;
               _abandonHandshake();
+              if (_socketLocalRequest && _upgradeRefused) {
+                // This machine's server is from before transport v2.
+                _skipLocalRequest = true;
+                connect(force: true);
+                return;
+              }
               _setStatus(ConnectionStatus.error);
               _scheduleReconnect();
             },
@@ -626,20 +676,23 @@ class WebSocketService {
     final pairing = _pairing;
     final crypto = _cryptoService;
     final secret = decodeKey32(pairing?.secret);
-    if (pairing == null || crypto == null || secret == null) return;
+    if (crypto == null) return;
+    if (!_socketLocalRequest && (pairing == null || secret == null)) return;
     final TransportHandshake handshake;
     final String frame;
     try {
-      handshake = crypto.startHandshake(
-        path: _mode == ConnectionMode.relay ? 'relay' : 'direct',
-        lane: _lane.name,
-        roomId: pairing.roomId,
-        secret: secret,
-      );
+      handshake = pairing == null || secret == null
+          ? crypto.startLocalRequest()
+          : crypto.startHandshake(
+              path: _mode == ConnectionMode.relay ? 'relay' : 'direct',
+              lane: _lane.name,
+              roomId: pairing.roomId,
+              secret: secret,
+            );
       frame = handshake.hs1(
         deviceHandshakePayload(
           appVersion: _appVersion,
-          name: _deviceName,
+          name: _socketLocalRequest ? _nameWithAccount() : _deviceName,
           platform: _devicePlatform,
           capabilities: _clientCapabilities,
         ),
@@ -697,7 +750,9 @@ class WebSocketService {
     socket.sink.add(jsonEncode(channel.sealText(transportReadyMessage)));
     switch (result.answer.status) {
       case HandshakeStatus.open:
-        _onTransportOpen();
+        // A local request that is let in has the grant coming and nothing
+        // else. It never becomes a channel the app talks on.
+        if (!_socketLocalRequest) _onTransportOpen();
       case HandshakeStatus.pending:
         // The channel exists but carries nothing until a paired device
         // allows this one. Both sides show the same code.
@@ -913,6 +968,16 @@ class WebSocketService {
   /// transparently absorbs the wire-format handshake messages.
   void _routeDecryptedMessage(Map<String, dynamic> msg) {
     final t = msg['type'];
+    if (_socketLocalRequest) {
+      // Two things come back from a local request: the pairing, or word
+      // that nobody allowed it. The grant is read on this channel alone.
+      if (t == 'pairing_grant') {
+        _onPairingGrant(msg);
+      } else if (t == 'device_auth_result' && msg['ok'] != true) {
+        _onNotApproved('not approved');
+      }
+      return;
+    }
     if (_held) {
       // Only the verdict is read from a held channel.
       if (t == 'device_auth_result') {
@@ -1005,24 +1070,43 @@ class WebSocketService {
     }
   }
 
-  /// The three sealed messages that carry a pairing secret. They stop here
-  /// whatever happens, so no listener ever sees a secret. Each counts only
-  /// where the spec lets it: `pairing_update` on an open v2 control channel,
-  /// and `pairing_upgrade_result` as the answer this old-transport control
-  /// channel asked for. `pairing_grant` belongs to the Windows local
-  /// request, which this socket never makes.
+  /// The pairing a local request was after. The owner stores it and dials
+  /// again with an ordinary `direct` handshake. The computer closes this
+  /// socket once it has sent the grant, so nothing is left to do with it.
+  void _onPairingGrant(Map<String, dynamic> msg) {
+    final change = PairingChange.parse(msg, withRoute: true);
+    if (change == null) return;
+    _closeSocket();
+    _lastHandshakeAwaited = false;
+    _deviceAuth.reset();
+    _emitDeviceAuth();
+    _setStatus(ConnectionStatus.disconnected);
+    // Dials again by itself should the owner not get to it.
+    _scheduleReconnect();
+    if (!_pairingChangeController.isClosed) {
+      _pairingChangeController.add(change);
+    }
+  }
+
+  /// The three sealed messages that carry a pairing secret, on any channel
+  /// but a local request. They stop here whatever happens, so no listener
+  /// ever sees a secret. Each counts only where the spec lets it:
+  /// `pairing_update` on an open v2 control channel, and
+  /// `pairing_upgrade_result` as the answer this old-transport control
+  /// channel asked for. `pairing_grant` counts only on a local request,
+  /// which [_onPairingGrant] reads, so here it is dropped.
   void _onPairingMessage(Map<String, dynamic> msg) {
     if (_lane != TransportLane.control) return;
     final PairingChange? change;
     if (msg['type'] == 'pairing_update' && _socketV2) {
-      change = PairingChange.parse(msg, upgrade: false);
+      change = PairingChange.parse(msg, withRoute: false);
     } else if (msg['type'] == 'pairing_upgrade_result' &&
         !_socketV2 &&
         _upgradeRequestId != null &&
         msg['requestId'] == _upgradeRequestId &&
         _peerChannel?.sessionKeyed == true) {
       _upgradeRequestId = null;
-      change = PairingChange.parse(msg, upgrade: true);
+      change = PairingChange.parse(msg, withRoute: true);
     } else {
       change = null;
     }
@@ -1213,15 +1297,21 @@ class WebSocketService {
   void _sendTokenlessDirectAuth() {
     _deviceAuth.onKeyExchangeAck('pending');
     _emitDeviceAuth();
-    final account = Platform.environment['USERNAME']?.trim() ?? '';
     _sendOnCurrentLane({
       'type': 'direct_auth',
-      'name': account.isEmpty ? _deviceName : '$account on $_deviceName',
+      'name': _nameWithAccount(),
       'platform': _devicePlatform,
       'lane': _lane.name,
       ..._clientCapabilities,
       'sessionKeyVersion': sessionKeyVersion,
     });
+  }
+
+  /// This device's name with the Windows account in front, for a request
+  /// to the server on this machine.
+  String _nameWithAccount() {
+    final account = Platform.environment['USERNAME']?.trim() ?? '';
+    return account.isEmpty ? _deviceName : '$account on $_deviceName';
   }
 
   /// Send our public key to the server for NaCl key exchange
@@ -1339,7 +1429,7 @@ class WebSocketService {
   }
 
   bool _sendOnCurrentLane(Map<String, dynamic> message) {
-    if (_channel == null) return false;
+    if (_channel == null || _socketLocalRequest) return false;
     if (_socketV2 && _oldTransportOnly.contains(message['type'])) return false;
 
     try {

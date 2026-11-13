@@ -40,6 +40,63 @@ DEFAULT_CWD='C:\\Projects With Spaces'
     }
   });
 
+  group('the owner reads the pairing from the server\'s own files', () {
+    final secret = base64Encode(List<int>.generate(32, (i) => i + 1));
+    final older = base64Encode(List<int>.generate(32, (i) => i + 2));
+    final env = {'AUTH_TOKEN': 'token', 'PAIRING_TOKEN': 'room-id'};
+    final state = jsonEncode({
+      'version': 2,
+      'locked': false,
+      'relayKey': 'never read',
+      'secrets': [
+        {'id': 4, 'secret': secret},
+        {'id': 3, 'secret': older, 'retiredAt': '2026-11-01T00:00:00Z'},
+      ],
+    });
+
+    test('and is on transport v2 from the start', () {
+      final config = WindowsLocalServer.configuration(
+        env,
+        publicKey,
+        stateFile: '\uFEFF$state',
+      )!;
+      expect(config.isV2, isTrue);
+      expect(config.pairingSecret, secret);
+      expect(config.pairingToken, 'room-id');
+      expect(config.host, '127.0.0.1');
+      // Still this machine's own entry, with no relay.
+      expect(config.isLoopbackOnly, isTrue);
+      expect(config.token, 'token');
+    });
+
+    test('and keeps the token sign-in when a file is missing or bad', () {
+      for (final (environment, file) in [
+        (env, null),
+        (env, 'not json'),
+        (env, jsonEncode({'secrets': <Object>[]})),
+        (
+          env,
+          jsonEncode({
+            'secrets': [
+              {'secret': 'short'},
+            ],
+          }),
+        ),
+        ({'AUTH_TOKEN': 'token'}, state),
+      ]) {
+        final config = WindowsLocalServer.configuration(
+          environment,
+          publicKey,
+          stateFile: file,
+        )!;
+        expect(config.isV2, isFalse);
+        expect(config.pairingSecret, isEmpty);
+        expect(config.pairingToken, isEmpty);
+        expect(config.token, 'token');
+      }
+    });
+  });
+
   test('the machine marker gives a pinned, token-less local server', () {
     final config = WindowsLocalServer.machineConfiguration(
       '\uFEFF${jsonEncode({'directory': r'C:\Users\lanik\socketagent', 'port': 8085, 'task': 'SocketAgentService', 'publicKey': publicKey})}',
@@ -105,6 +162,36 @@ DEFAULT_CWD='C:\\Projects With Spaces'
 
     test('a new computer is added', () {
       expect(LocalServerPlan.of([], found).add, same(found));
+    });
+
+    test('the saved entry takes the pairing the files hold, once', () {
+      final secret = base64Encode(List<int>.generate(32, (i) => i + 1));
+      final paired = WindowsLocalServer.configuration(
+        {'AUTH_TOKEN': 'new', 'PAIRING_TOKEN': 'room-id'},
+        key,
+        stateFile: jsonEncode({
+          'secrets': [
+            {'secret': secret},
+          ],
+        }),
+      )!;
+      final plan = LocalServerPlan.of([local('mine', key)], paired);
+      final update = plan.update!;
+      expect(update.id, 'mine');
+      expect(update.isV2, isTrue);
+      expect(update.pairingSecret, secret);
+      expect(update.pairingToken, 'room-id');
+      expect(plan.add, isNull);
+      expect(plan.replace, isNull);
+      // Nothing to do once it is stored, or for a server with no state file.
+      expect(LocalServerPlan.of([update], paired).update, isNull);
+      expect(LocalServerPlan.of([local('mine', key)], found).update, isNull);
+      // The user's own entry for this computer takes it too.
+      final named = LocalServerPlan.of([relay, local('mine', key)], paired);
+      expect(named.update?.id, 'desk');
+      expect(named.update?.pairingSecret, secret);
+      expect(named.update?.useRelay, isTrue);
+      expect(named.remove, ['mine']);
     });
   });
 }

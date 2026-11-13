@@ -34,6 +34,9 @@ String newSharedSecret() {
   return base64Encode(List.generate(32, (_) => random.nextInt(256)));
 }
 
+/// The `path` of the request to the server on this machine.
+const String localRequestPath = 'local-request';
+
 /// The first record of every v2 channel.
 const String transportReadyMessage = '{"type":"transport_ready"}';
 
@@ -188,6 +191,29 @@ class TransportHandshake {
          ephemeralPrivateKey: ephemeralPrivateKey,
        );
 
+  /// The request a desktop app makes of the server on its own machine when
+  /// it has no pairing secret (wire spec 5.3). It proves this device's key
+  /// and nothing else: the pre-shared key is a public constant, the tag is
+  /// all zeros and the prologue has no room.
+  TransportHandshake.localRequest({
+    required Uint8List staticPrivateKey,
+    required Uint8List computerKey,
+    Uint8List? ephemeralPrivateKey,
+  }) : path = localRequestPath,
+       lane = 'control',
+       _tag = '00000000',
+       _noise = NoiseInitiator(
+         prologue: transportPrologue(
+           path: localRequestPath,
+           lane: 'control',
+           context: '',
+         ),
+         staticPrivateKey: staticPrivateKey,
+         remoteStaticPublicKey: computerKey,
+         psk: localRequestPsk(),
+         ephemeralPrivateKey: ephemeralPrivateKey,
+       );
+
   final String path;
   final String lane;
   final String _tag;
@@ -275,38 +301,55 @@ typedef TransportPairing = ({String roomId, String secret});
 typedef DeviceIdentity = ({String name, String platform, String appVersion});
 
 /// A pairing a computer handed this device in a sealed record on its own
-/// control channel: the answer to `pairing_upgrade` on the old transport, or
-/// a `pairing_update` on v2. Nothing else on the wire may change the stored
-/// secret or room ID (wire spec section 14).
+/// control channel: the answer to `pairing_upgrade` on the old transport, a
+/// `pairing_grant` on a local request, or a `pairing_update` on v2. Nothing
+/// else on the wire may change the stored secret or room ID (wire spec
+/// section 14).
 class PairingChange {
-  const PairingChange({required this.secret, required this.roomId, this.route});
+  const PairingChange({
+    required this.secret,
+    required this.roomId,
+    this.route,
+    this.local = false,
+  });
 
   /// Base64 of the pairing secret to prove from the next handshake on.
   final String secret;
   final String roomId;
 
-  /// The computer's LAN addresses and port. Set for a carry-over, which
-  /// moves the computer to v2. Null for a `pairing_update`.
+  /// The computer's LAN addresses and port. Set by the two messages that
+  /// move a computer to v2, the carry-over answer and the grant. Null for a
+  /// `pairing_update`.
   final ({List<String> hosts, int port})? route;
 
-  /// Reads `pairing_update`, or `pairing_upgrade_result` when [upgrade].
-  /// Null when a field breaks its rule or the upgrade was refused.
+  /// Whether this is a `pairing_grant`, from the server on this machine. Its
+  /// entry stays a local one and gets no relay address.
+  final bool local;
+
+  /// Reads `pairing_update`, or with [withRoute] one of the two messages
+  /// that also carry the computer's addresses: `pairing_upgrade_result` and
+  /// `pairing_grant`. Null when a field breaks its rule or the upgrade was
+  /// refused.
   static PairingChange? parse(
     Map<String, dynamic> message, {
-    required bool upgrade,
+    required bool withRoute,
   }) {
     final secret = message['secret'];
     final roomId = message['roomId'];
     if (secret is! String || decodeKey32(secret) == null) return null;
     if (roomId is! String || !isValidRoomId(roomId)) return null;
-    if (!upgrade) return PairingChange(secret: secret, roomId: roomId);
+    if (!withRoute) return PairingChange(secret: secret, roomId: roomId);
     final hosts = message['hosts'];
     final port = message['port'];
-    if (message['ok'] != true || hosts is! List) return null;
+    if (message['type'] == 'pairing_upgrade_result' && message['ok'] != true) {
+      return null;
+    }
+    if (hosts is! List) return null;
     if (port is! int || port < 1 || port > 65535) return null;
     return PairingChange(
       secret: secret,
       roomId: roomId,
+      local: message['type'] == 'pairing_grant',
       route: (
         hosts: hosts.whereType<String>().where((h) => h.isNotEmpty).toList(),
         port: port,

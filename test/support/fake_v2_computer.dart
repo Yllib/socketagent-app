@@ -39,17 +39,19 @@ class FakeV2Computer {
   int _sent = 0;
 
   /// The `hs2` text frame for an `hs1` text [frame]. Throws when message 1
-  /// does not verify, as a real computer would stay silent.
+  /// does not verify, as a real computer would stay silent. A local request
+  /// is read with its own constant key and no room.
   String answer(Object? frame, {String status = 'open', String? reason}) {
     final hs1 = jsonDecode(frame as String) as Map<String, dynamic>;
+    final local = hs1['path'] == localRequestPath;
     final responder = NoiseResponder(
       prologue: transportPrologue(
         path: hs1['path'] as String,
         lane: hs1['lane'] as String,
-        context: roomId,
+        context: local ? '' : roomId,
       ),
       staticPrivateKey: staticKey,
-      psk: pskForSecret(secret),
+      psk: local ? localRequestPsk() : pskForSecret(secret),
     );
     final read = responder.readMessage1(base64Decode(hs1['d'] as String));
     hello = hs1;

@@ -2,19 +2,29 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../models/server_config.dart';
+import 'transport_v2.dart';
 
 /// What discovery should do with the server found on this machine, given the
 /// saved computers. Entries pointing at this machine under an older key can
 /// never connect again, so they are replaced or removed instead of piling up
 /// next to the current one.
 class LocalServerPlan {
-  const LocalServerPlan({this.add, this.replace, this.remove = const []});
+  const LocalServerPlan({
+    this.add,
+    this.replace,
+    this.update,
+    this.remove = const [],
+  });
 
   /// A new entry, when nothing saved is this computer yet.
   final ServerConfig? add;
 
   /// A stale local entry brought up to date, keeping its ID and name.
   final ServerConfig? replace;
+
+  /// The saved entry for this computer, local or the user's own, with the
+  /// pairing the server's files now hold. The key is the one already saved.
+  final ServerConfig? update;
 
   /// IDs of local entries to drop: stale keys, or duplicates of a computer
   /// the user already saved another way.
@@ -35,25 +45,59 @@ class LocalServerPlan {
     ];
     // The user's own entry for this computer, such as one paired over the
     // relay and named by them. Auto routing reaches it locally anyway.
-    final named = saved.any(
-      (c) => c.serverPubkey == found.serverPubkey && !local.contains(c),
-    );
-    if (named) return LocalServerPlan(remove: [for (final c in local) c.id]);
+    final named = saved
+        .where(
+          (c) => c.serverPubkey == found.serverPubkey && !local.contains(c),
+        )
+        .firstOrNull;
+    if (named != null) {
+      return LocalServerPlan(
+        update: _pairingUpdate(named, found),
+        remove: [for (final c in local) c.id],
+      );
+    }
     if (current.isNotEmpty) {
-      return LocalServerPlan(remove: [for (final c in stale) c.id]);
+      return LocalServerPlan(
+        update: _pairingUpdate(current.first, found),
+        remove: [for (final c in stale) c.id],
+      );
     }
     if (stale.isNotEmpty) {
       return LocalServerPlan(
         // A reinstalled server is a new computer: its key file names it,
         // and whatever v2 pairing the old one had goes with the old key.
-        replace: stale.first
-            .withComputerKey(found.serverPubkey)
-            .copyWith(host: found.host, token: found.token),
+        replace: _withPairing(
+          stale.first
+              .withComputerKey(found.serverPubkey)
+              .copyWith(host: found.host, token: found.token),
+          found,
+        ),
         remove: [for (final c in stale.skip(1)) c.id],
       );
     }
     return LocalServerPlan(add: found);
   }
+
+  /// [entry] with the pairing in [found], when [found] read one from the
+  /// server's files and [entry] does not hold it yet. Otherwise null.
+  static ServerConfig? _pairingUpdate(ServerConfig entry, ServerConfig found) =>
+      found.isV2 &&
+          (!entry.isV2 ||
+              entry.pairingSecret != found.pairingSecret ||
+              entry.pairingToken != found.pairingToken)
+      ? _withPairing(entry, found)
+      : null;
+
+  /// [entry] with the pairing [found] read from the server's own files,
+  /// when it read one.
+  static ServerConfig _withPairing(ServerConfig entry, ServerConfig found) =>
+      found.isV2
+      ? entry.copyWith(
+          pairingToken: found.pairingToken,
+          pairingSecret: found.pairingSecret,
+          transport: 2,
+        )
+      : entry;
 }
 
 /// Reads only this computer's installations: the current Windows user's own,
@@ -127,10 +171,34 @@ class WindowsLocalServer {
     return result;
   }
 
+  /// The current pairing secret in the text of the server's `transport.json`
+  /// (wire spec 7.1), or null. The newest secret is first. Nothing else in
+  /// that file is the app's to read.
+  static String? pairingSecret(String stateFile) {
+    try {
+      final state = jsonDecode(stateFile.replaceFirst('\uFEFF', ''));
+      final secrets = state is Map ? state['secrets'] : null;
+      final current = secrets is List && secrets.isNotEmpty
+          ? secrets.first
+          : null;
+      final secret = current is Map ? current['secret'] : null;
+      return decodeKey32(secret) == null ? null : secret as String;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The owner's own install, from its `.env`, its key file and, when the
+  /// server has one, its state file. With [stateFile] the entry is on
+  /// transport v2 from the start: the room ID is the `.env`'s
+  /// `PAIRING_TOKEN` and the secret comes from the file (wire spec 5.3).
+  /// Without it, or when either value is unusable, the entry connects with
+  /// the token as before.
   static ServerConfig? configuration(
     Map<String, String> env,
-    String publicKey,
-  ) {
+    String publicKey, {
+    String? stateFile,
+  }) {
     final port = int.tryParse(env['PORT'] ?? '8085');
     final token = env['AUTH_TOKEN'] ?? '';
     if (port == null || port < 1 || port > 65535 || token.isEmpty) return null;
@@ -139,6 +207,9 @@ class WindowsLocalServer {
     } catch (_) {
       return null;
     }
+    final roomId = env['PAIRING_TOKEN'] ?? '';
+    final secret = stateFile == null ? null : pairingSecret(stateFile);
+    final paired = secret != null && isValidRoomId(roomId);
     return ServerConfig(
       id: 'windows_local_$port',
       name: 'This computer',
@@ -146,6 +217,9 @@ class WindowsLocalServer {
       port: port,
       token: token,
       serverPubkey: publicKey,
+      pairingToken: paired ? roomId : '',
+      pairingSecret: paired ? secret : '',
+      transport: paired ? 2 : null,
       defaultCwd: env['DEFAULT_CWD'] ?? '',
     );
   }
@@ -188,9 +262,11 @@ class WindowsLocalServer {
           final keys = File('$directory/relay-keys.json');
           if (!await keys.exists()) continue;
           final json = jsonDecode(await keys.readAsString()) as Map;
+          final state = File('$directory/transport.json');
           final config = configuration(
             env,
             json['publicKey']?.toString() ?? '',
+            stateFile: await state.exists() ? await state.readAsString() : null,
           );
           if (config != null &&
               !found.any(

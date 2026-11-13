@@ -305,6 +305,17 @@ class CryptoService {
     );
   }
 
+  /// Starts the request to the server on this machine, which has no secret
+  /// in it. See [TransportHandshake.localRequest].
+  TransportHandshake startLocalRequest() {
+    final computerKey = _serverPublicKey;
+    if (computerKey == null) throw StateError('No computer key set');
+    return TransportHandshake.localRequest(
+      staticPrivateKey: Uint8List.fromList(privateKey.asTypedList),
+      computerKey: computerKey,
+    );
+  }
+
   /// Holds the paired computer to session keys from now on.
   void markServerSessionKeyed() {
     final key = _serverKeyBase64;

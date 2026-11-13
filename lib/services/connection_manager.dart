@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../models/server_config.dart';
 import 'local_route.dart';
 import 'websocket_service.dart';
@@ -47,6 +48,17 @@ ConnectionMode connectionModeForServerId(
   return fallback;
 }
 
+/// Whether [config] is the server on this machine as an account that cannot
+/// read its files sees it: a loopback entry with the key from the machine
+/// marker and neither a token nor a pairing secret. Such an entry asks the
+/// server for its pairing (wire spec 5.3).
+bool asksLocalServerForPairing(ServerConfig config) =>
+    config.isLoopbackOnly &&
+    !config.useRelay &&
+    config.token.isEmpty &&
+    config.serverPubkey.isNotEmpty &&
+    !config.isV2;
+
 /// A pairing a computer handed over on its own control channel.
 class ServerPairingChange {
   final String serverId;
@@ -73,6 +85,12 @@ ConnectionMode chooseAutoRoute({
 /// Each server gets its own [WebSocketService] and (if relay) its own
 /// [CryptoService] with that server's public key.
 class ConnectionManager {
+  /// Whether a local entry may ask the server on this machine for its
+  /// pairing. Only the Windows desktop app finds such entries. Tests turn
+  /// this on to run that path elsewhere.
+  @visibleForTesting
+  bool localRequests = Platform.isWindows;
+
   final Map<String, WebSocketService> _connections = {};
   final Map<String, ServerConfig> _configs = {};
   final Map<String, CryptoService> _cryptoServices = {};
@@ -245,12 +263,13 @@ class ConnectionManager {
     // direct socket while relay configuration is incomplete.
     ws.setMode(selectedMode);
     // The desktop app's entry for the server on its own Windows machine
-    // keeps the old transport until it can read the pairing from the
-    // server's files, so it does not ask over the wire.
+    // never asks for a carry-over. The owner's account reads the pairing
+    // from the server's files, and any other account makes a local request.
     ws.setPairing(
       config.transportPairing,
       carryOver: !(Platform.isWindows && config.isLoopbackOnly),
     );
+    ws.setLocalRequest(localRequests && asksLocalServerForPairing(config));
 
     if (selectedMode == ConnectionMode.relay) {
       if (!config.isRelayPaired) {

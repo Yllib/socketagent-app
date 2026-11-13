@@ -2883,6 +2883,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           for (final id in plan.remove) {
             await removeServer(id);
           }
+          final update = plan.update;
+          // The server's own files are where this pairing comes from, so it
+          // is stored whether or not the server answers right now.
+          if (update != null) await updateServer(update);
           final replace = plan.replace;
           final add = plan.add;
           // A user who deleted this computer's entry doesn't get it back.
@@ -2890,8 +2894,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               replace ?? (add != null && !seen.contains(identity) ? add : null);
           if (next != null) {
             // Without a token the first connection waits for the owner to
-            // approve this device, so there is nothing to probe yet.
-            if (next.token.isNotEmpty) {
+            // approve this device, so there is nothing to probe yet. The
+            // same goes for an entry with a pairing secret, which a locked
+            // computer holds for approval too.
+            if (next.token.isNotEmpty && !next.isV2) {
               final probe = await const ServerConnectionProbe().verify(
                 next,
                 subscriberToken: '',
@@ -3382,10 +3388,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Stores a pairing its computer handed over in a sealed record on its
-  /// own control channel. The answer to a carry-over request moves the
-  /// computer to transport v2, for good, and reconnects that way. A new
-  /// secret on a v2 channel leaves the open channel alone and is proved by
-  /// the next handshake.
+  /// own control channel. The answer to a carry-over request, and the grant
+  /// to a request made of the server on this machine, move the computer to
+  /// transport v2, for good, and reconnect that way. A new secret on a v2
+  /// channel leaves the open channel alone and is proved by the next
+  /// handshake.
   Future<void> _applyPairingChange(
     String serverId,
     PairingChange change,
@@ -3400,7 +3407,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     var updated = existing.copyWith(
-      relayUrl: existing.relayUrl.isEmpty ? defaultRelayUrl : null,
+      relayUrl: existing.relayUrl.isEmpty && !change.local
+          ? defaultRelayUrl
+          : null,
       pairingToken: change.roomId,
       pairingSecret: change.secret,
       transport: 2,
