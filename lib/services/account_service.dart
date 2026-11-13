@@ -1519,15 +1519,22 @@ class AccountService extends ChangeNotifier {
             // Saved with the commit's version, just below.
             pending = pending.copyWith(newPinSetAt: setAt);
           }
-          wrapped = {
-            for (final device in changed.devices)
-              device.publicKey: sealHandoverBox(
+          wrapped = {};
+          for (final device in changed.devices) {
+            try {
+              wrapped[device.publicKey] = sealHandoverBox(
                 newKeys.masterKey,
                 fromAccount: keys.accountId,
                 sender: ownKey,
                 recipient: PublicKey(base64Decode(device.publicKey)),
-              ),
-          };
+              );
+            } catch (error) {
+              // An entry whose key is not a key gets no box and cannot
+              // follow. It does not stop the change for the others.
+              if (device.publicKey == devicePublicKey) rethrow;
+              debugPrint('[Account] No handover box: ${error.runtimeType}');
+            }
+          }
         } catch (error) {
           // Nothing links the new account to the old one yet.
           await _undoKeyChange(client, pending);

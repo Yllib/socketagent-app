@@ -473,6 +473,48 @@ void main() {
       expect(c.service.notice, AccountService.removedWords);
     });
 
+    test('a device entry whose key is not a key gets no box and does not '
+        'stop the change', () async {
+      final cloud = FakeCloud();
+      final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
+      final oldAccount = a.service.accountId!;
+      // A holder of the account key writes one more entry into the vault.
+      final keys = AccountKeys.fromMasterKey(
+        decodeRecoveryKey(a.service.recoveryKey!)!,
+      );
+      final notAKey = base64Encode(List.filled(32, 0));
+      final vault = a.service.vault!;
+      cloud.accounts[oldAccount]!
+        ..version += 1
+        ..ciphertext = keys.sealVault(
+          jsonEncode(
+            vault
+                .copyWith(
+                  devices: [
+                    ...vault.devices,
+                    VaultDevice(
+                      publicKey: notAKey,
+                      name: 'Phone',
+                      platform: 'android',
+                      addedAt: cloud.now,
+                    ),
+                  ],
+                )
+                .toJson(),
+          ),
+        );
+
+      await a.service.removeDevice(c.publicKey);
+
+      expect(a.service.accountId, isNot(oldAccount));
+      expect(cloud.accounts[oldAccount]!.wrapped.keys.toSet(), {
+        a.publicKey,
+        b.publicKey,
+      });
+      expect(await b.sync(), AccountSyncOutcome.synced);
+      expect(b.service.accountId, a.service.accountId);
+    });
+
     test('and set new PIN changes both in the same commit', () async {
       final cloud = FakeCloud();
       final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
