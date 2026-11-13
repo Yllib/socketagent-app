@@ -262,13 +262,13 @@ class _AccountScreenState extends State<AccountScreen> {
                   leading: Icon(Icons.error_outline, color: palette.danger),
                   title: Text(error),
                 ),
-              if (account.removedNotice case final notice?)
+              if (account.notice case final notice?)
                 ListTile(
                   leading: Icon(Icons.info_outline, color: palette.warning),
                   title: Text(notice),
                   trailing: IconButton(
                     icon: const Icon(Icons.close),
-                    onPressed: account.dismissRemovedNotice,
+                    onPressed: account.dismissNotice,
                   ),
                 ),
               if (!account.hasAccount)

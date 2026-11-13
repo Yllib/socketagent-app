@@ -20,6 +20,8 @@ class AccountVault {
     this.projectMembers = const [],
     this.removedProjectMembers = const [],
     this.preferences = const {},
+    this.pin,
+    this.resetId,
     this.unknownFields = const {},
   });
 
@@ -56,6 +58,15 @@ class AccountVault {
   final List<VaultTombstone> removedProjectMembers;
   final Map<String, Object?> preferences;
 
+  /// The account PIN's public values. An account is a PIN account when its
+  /// vault has this.
+  final VaultAccountPin? pin;
+
+  /// Set when a device wrote the vault again after the relay lost it. A
+  /// device takes a vault at a lower version than it remembers only when
+  /// this is an id it has not seen, which the relay cannot make.
+  final String? resetId;
+
   /// Top-level fields from a newer build, carried through unchanged.
   final Map<String, Object?> unknownFields;
 
@@ -75,6 +86,8 @@ class AccountVault {
     'projectMembers',
     'removedProjectMembers',
     'preferences',
+    'pin',
+    'reset',
   };
 
   Map<String, Object?> toJson() => {
@@ -96,6 +109,8 @@ class AccountVault {
       for (final t in removedProjectMembers) t.toJson(),
     ],
     'preferences': preferences,
+    if (pin case final pin?) 'pin': pin.toJson(),
+    if (resetId case final id?) 'reset': {'id': id},
   };
 
   /// Reads formats 1, 2 and 3. Throws [FormatException] for anything else.
@@ -116,6 +131,8 @@ class AccountVault {
         for (final item in value) ?parse(item),
     ];
     final preferences = raw['preferences'];
+    final reset = raw['reset'];
+    final resetId = reset is Map ? reset['id'] : null;
     return AccountVault(
       updatedAt: (raw['updatedAt'] as num?)?.toInt() ?? 0,
       updatedBy: raw['updatedBy'] as String? ?? '',
@@ -136,6 +153,8 @@ class AccountVault {
       preferences: preferences is Map
           ? Map<String, Object?>.from(preferences)
           : const {},
+      pin: VaultAccountPin.fromJson(raw['pin']),
+      resetId: resetId is String && resetId.isNotEmpty ? resetId : null,
       unknownFields: {
         for (final entry in raw.entries)
           if (entry.key is String && !_knownFields.contains(entry.key))
@@ -160,6 +179,8 @@ class AccountVault {
     List<VaultProjectMember>? projectMembers,
     List<VaultTombstone>? removedProjectMembers,
     Map<String, Object?>? preferences,
+    VaultAccountPin? pin,
+    String? resetId,
   }) => AccountVault(
     updatedAt: updatedAt ?? this.updatedAt,
     updatedBy: updatedBy ?? this.updatedBy,
@@ -175,6 +196,8 @@ class AccountVault {
     projectMembers: projectMembers ?? this.projectMembers,
     removedProjectMembers: removedProjectMembers ?? this.removedProjectMembers,
     preferences: preferences ?? this.preferences,
+    pin: pin ?? this.pin,
+    resetId: resetId ?? this.resetId,
     unknownFields: unknownFields,
   );
 
@@ -279,6 +302,64 @@ class VaultDevice {
       name: raw['name'] as String? ?? '',
       platform: raw['platform'] as String? ?? '',
       addedAt: (raw['addedAt'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// The account PIN as every signed-in device holds it. All of it is public:
+/// a device can seal the master key for whoever knows the PIN, and holds
+/// nothing a guess can be tested against.
+class VaultAccountPin {
+  const VaultAccountPin({
+    required this.id,
+    required this.salt,
+    required this.publicKey,
+    required this.setAt,
+    required this.setBy,
+  });
+
+  /// Names this PIN on the relay and in the Drive file. Base64 of 16 bytes.
+  final String id;
+
+  /// What the PIN is stretched with. Base64 of 16 bytes.
+  final String salt;
+
+  /// The X25519 key the Drive file's box is sealed to. Base64 of 32 bytes.
+  final String publicKey;
+
+  /// Unix ms.
+  final int setAt;
+
+  /// The public key of the device that says it set the PIN. Any member can
+  /// write this, so it only supplies a name to show.
+  final String setBy;
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'salt': salt,
+    'publicKey': publicKey,
+    'setAt': setAt,
+    'setBy': setBy,
+  };
+
+  /// Null when the vault has no PIN. Throws [FormatException] for a PIN
+  /// entry this build cannot read, so the vault is never written back
+  /// without it.
+  static VaultAccountPin? fromJson(Object? raw) {
+    if (raw == null) return null;
+    if (raw is! Map) throw const FormatException('Unsupported vault format');
+    final id = raw['id'];
+    final salt = raw['salt'];
+    final publicKey = raw['publicKey'];
+    if (id is! String || salt is! String || publicKey is! String) {
+      throw const FormatException('Unsupported vault format');
+    }
+    return VaultAccountPin(
+      id: id,
+      salt: salt,
+      publicKey: publicKey,
+      setAt: (raw['setAt'] as num?)?.toInt() ?? 0,
+      setBy: raw['setBy'] as String? ?? '',
     );
   }
 }
@@ -421,7 +502,12 @@ class VaultSubscription {
 /// Folds two vaults into one. Per key, the newer write wins; a tombstone at
 /// the same instant as a write wins; a write after a tombstone revives the
 /// item and drops the tombstone. Neither input is changed.
-AccountVault mergeVaults(AccountVault a, AccountVault b) {
+///
+/// The account PIN does not merge by time. [a] is this device's vault and
+/// [b] the relay's. [a]'s PIN wins when [relayPinId], the id the relay's
+/// PIN record reports, is its id. Otherwise [b]'s wins when it has one. The
+/// repair id is [b]'s when it has one.
+AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
   final computers = _mergeItems<VaultComputer>(
     a.computers,
     b.computers,
@@ -485,6 +571,8 @@ AccountVault mergeVaults(AccountVault a, AccountVault b) {
     preferences: newer.preferences.isEmpty
         ? (newer == a ? b : a).preferences
         : newer.preferences,
+    pin: a.pin != null && a.pin?.id == relayPinId ? a.pin : b.pin ?? a.pin,
+    resetId: b.resetId ?? a.resetId,
     unknownFields: {
       ...(newer == a ? b : a).unknownFields,
       ...newer.unknownFields,

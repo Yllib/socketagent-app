@@ -1,29 +1,8 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import 'account_key_file.dart';
-
-/// A version 1 key file: the account's master key in the clear, as the app
-/// kept it in the user's Google Drive app data folder before the account
-/// PIN. [DriveKeyStore.read], [DriveKeyStore.create] and
-/// [DriveKeyStore.replace] deal in these.
-class DriveKeyFile {
-  const DriveKeyFile({
-    required this.id,
-    required this.masterKey,
-    required this.createdTime,
-    this.rotatedBy,
-  });
-
-  final String id;
-  final Uint8List masterKey;
-
-  /// Drive's own creation time, which settles races between first devices.
-  final DateTime createdTime;
-  final String? rotatedBy;
-}
 
 /// Google refused the token. The user has to sign in again.
 class DriveAuthFailed implements Exception {
@@ -49,10 +28,9 @@ typedef _ListedFile = ({String id, DateTime createdTime, int? size});
 /// Reads and writes `socketagent-account-key.json` in `appDataFolder`
 /// through the Drive v3 REST API with a bearer token from [accessToken].
 ///
-/// [readAll], [write] and [keepOldest] are the account PIN's store. They
-/// treat the files as sealed text and never see a key. [read], [create],
-/// [replace] and [deleteAll] are the version 1 store, where the file is the
-/// key.
+/// The store treats the files as sealed text and never sees a key. A
+/// version 1 file, which holds a master key in the clear, is listed and
+/// deleted like any other and its key is never read.
 class DriveKeyStore {
   DriveKeyStore({
     required Future<String> Function() accessToken,
@@ -119,29 +97,6 @@ class DriveKeyStore {
     }
   }
 
-  /// The key file, or null when the folder has none. When several exist
-  /// (two first devices raced) the oldest wins and the rest are deleted. It
-  /// lists ten files, as the released app does, so it never deletes more
-  /// than that app would.
-  Future<DriveKeyFile?> read() async {
-    final client = _clientFactory();
-    try {
-      final files = await _list(client, pageSize: 10);
-      if (files.isEmpty) return null;
-      final keep = files.first;
-      for (final extra in files.skip(1)) {
-        try {
-          await _delete(client, extra.id);
-        } catch (error) {
-          debugPrint('[Drive] Extra key file kept: ${error.runtimeType}');
-        }
-      }
-      return await _download(client, keep);
-    } finally {
-      client.close();
-    }
-  }
-
   /// Deletes every key file in the app data folder.
   Future<void> deleteAll() async {
     final client = _clientFactory();
@@ -149,54 +104,6 @@ class DriveKeyStore {
       for (final file in await _list(client)) {
         await _delete(client, file.id);
       }
-    } finally {
-      client.close();
-    }
-  }
-
-  /// Writes a new key file, then returns whichever file won: ours, or an
-  /// older one another device wrote in the meantime.
-  Future<DriveKeyFile> create(Uint8List masterKey, {required String by}) async {
-    final client = _clientFactory();
-    try {
-      await _create(client, _content(masterKey, createdAt: _now, by: by));
-    } finally {
-      client.close();
-    }
-    final winner = await read();
-    if (winner == null) throw const DriveRequestFailed(0, 'file vanished');
-    return winner;
-  }
-
-  /// Replaces the key inside [fileId] after a device removal. The file's
-  /// creation time stays, so it keeps winning any race.
-  Future<DriveKeyFile> replace(
-    String fileId,
-    Uint8List masterKey, {
-    required String by,
-    required DateTime createdTime,
-  }) async {
-    final client = _clientFactory();
-    try {
-      final response = await _send(
-        client,
-        'PATCH',
-        '/upload/drive/v3/files/$fileId?uploadType=media',
-        headers: const {'Content-Type': 'application/json'},
-        body: _content(
-          masterKey,
-          createdAt: createdTime.toUtc().toIso8601String(),
-          by: by,
-          rotated: true,
-        ),
-      );
-      if (response.statusCode != 200) throw _failure(response);
-      return DriveKeyFile(
-        id: fileId,
-        masterKey: masterKey,
-        createdTime: createdTime,
-        rotatedBy: by,
-      );
     } finally {
       client.close();
     }
@@ -227,33 +134,15 @@ class DriveKeyStore {
     if (response.statusCode != 200) throw _failure(response);
   }
 
-  String get _now => DateTime.now().toUtc().toIso8601String();
-
-  String _content(
-    Uint8List masterKey, {
-    required String createdAt,
-    required String by,
-    bool rotated = false,
-  }) => jsonEncode({
-    'v': 1,
-    'masterKey': base64Encode(masterKey),
-    'createdAt': createdAt,
-    if (rotated) 'rotatedAt': _now,
-    if (rotated) 'rotatedBy': by,
-  });
-
-  /// Up to [pageSize] files under the name, oldest first. Files with one
-  /// creation time are ordered by id, so every device agrees on the oldest.
-  Future<List<_ListedFile>> _list(
-    http.Client client, {
-    int pageSize = 100,
-  }) async {
+  /// Up to 100 files under the name, oldest first. Files with one creation
+  /// time are ordered by id, so every device agrees on the oldest.
+  Future<List<_ListedFile>> _list(http.Client client) async {
     final query = Uri(
       queryParameters: {
         'spaces': 'appDataFolder',
         'q': "name = '$fileName'",
         'fields': 'files(id,createdTime,size)',
-        'pageSize': '$pageSize',
+        'pageSize': '100',
       },
     ).query;
     final response = await _send(client, 'GET', '/drive/v3/files?$query');
@@ -295,27 +184,6 @@ class DriveKeyStore {
     );
     if (response.statusCode != 200) throw _failure(response);
     return readKeyFile(response.bodyBytes);
-  }
-
-  Future<DriveKeyFile> _download(http.Client client, _ListedFile file) async {
-    final response = await _send(
-      client,
-      'GET',
-      '/drive/v3/files/${file.id}?alt=media',
-    );
-    if (response.statusCode != 200) throw _failure(response);
-    final body = jsonDecode(response.body);
-    final key = body is Map && body['v'] == 1 ? body['masterKey'] : null;
-    final bytes = key is String ? base64Decode(key) : null;
-    if (bytes == null || bytes.length != 32) {
-      throw const DriveRequestFailed(200, 'unreadable key file');
-    }
-    return DriveKeyFile(
-      id: file.id,
-      masterKey: Uint8List.fromList(bytes),
-      createdTime: file.createdTime,
-      rotatedBy: body is Map ? body['rotatedBy'] as String? : null,
-    );
   }
 
   Future<void> _delete(http.Client client, String id) async {

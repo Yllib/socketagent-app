@@ -8505,6 +8505,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     account.deviceName = _deviceName;
     account.devicePlatform = _devicePlatform;
     account.devicePublicKey = devicePublicKey;
+    account.deviceKey = () => _deviceCrypto.privateKey;
     account.addListener(notifyListeners);
     await account.load();
     if (account.hasAccount) unawaited(account.sync());
