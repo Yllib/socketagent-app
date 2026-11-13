@@ -4,9 +4,12 @@ import 'dart:io';
 import 'package:app/models/server_config.dart';
 import 'package:app/screens/connect_computer_screen.dart';
 import 'package:app/screens/pair_screen.dart';
+import 'package:app/screens/receive_credentials_screen.dart';
 import 'package:app/services/chat_provider.dart';
+import 'package:app/services/config_transfer.dart';
 import 'package:app/services/server_connection_probe.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -38,8 +41,30 @@ class _ProbeRecorder extends FakeComputersProvider {
   }
 }
 
-/// A pairing code that names a relay other than the app's own is used only
-/// after the user has seen that relay's host and agreed (wire spec 6).
+/// A provider that records which relays the receive screen imports with,
+/// instead of saving anything.
+class _ImportRecorder extends FakeComputersProvider {
+  _ImportRecorder() : super(configs: []);
+
+  final imports = <Set<String>>[];
+
+  // The handoff panel's address. Nothing is listening there.
+  @override
+  String get relayHttpUrl => 'http://127.0.0.1:9';
+
+  @override
+  Future<int> importTransferredConfigs(
+    ExportPayload payload, {
+    Set<String> confirmedRelays = const {},
+  }) async {
+    imports.add(confirmedRelays);
+    return 0;
+  }
+}
+
+/// A pairing code or an import that names a relay other than the app's own
+/// is used only after the user has seen that relay's host and agreed (wire
+/// spec 6).
 void main() {
   final key = base64Encode(List.filled(32, 1));
   final secret = base64Encode(List.filled(32, 2));
@@ -82,6 +107,143 @@ void main() {
     expect(asked(code()), isNull);
     expect(asked(code(defaultRelayUrl)), isNull);
     expect(asked(code('wss://relay.example.test')), 'relay.example.test');
+  });
+
+  test('an import is asked about only for a relay the computer is not on', () {
+    ServerConfig on(String relayUrl) => ServerConfig(
+      id: 'computer',
+      name: 'Computer',
+      host: '',
+      port: 8085,
+      token: '',
+      relayUrl: relayUrl,
+      pairingToken: 'room',
+      serverPubkey: key,
+    );
+    final other = on('wss://relay.example.test');
+
+    expect(relayToConfirm(on('')), isNull);
+    expect(relayToConfirm(on(defaultRelayUrl)), isNull);
+    expect(relayToConfirm(on(defaultRelayUrl), other), isNull);
+    expect(relayToConfirm(other), 'relay.example.test');
+    expect(relayToConfirm(other, on(defaultRelayUrl)), 'relay.example.test');
+    expect(relayToConfirm(other, on('')), 'relay.example.test');
+    expect(relayToConfirm(other, other), isNull);
+    expect(
+      relayToConfirm(on('wss://relay.example.test:8443'), other),
+      'relay.example.test:8443',
+    );
+  });
+
+  group('the receive screen', () {
+    late _ImportRecorder provider;
+
+    setUp(() {
+      mockProviderChannels();
+      provider = _ImportRecorder();
+    });
+    tearDown(unmockProviderChannels);
+
+    Map<String, Object?> computer(String name, [String? relay]) => {
+      'name': name,
+      'useRelay': true,
+      'pairingToken': 'room-$name',
+      'serverPubkey': key,
+      'relayUrl': ?relay,
+    };
+
+    /// Opens the receive screen and pastes a transfer of [computers], then
+    /// agrees to the import as a whole.
+    Future<void> receive(
+      WidgetTester tester,
+      List<Map<String, Object?>> computers,
+    ) async {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => call.method == 'Clipboard.getData'
+            ? {'text': ConfigTransfer.encode(computers)}
+            : null,
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Paste'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.tap(find.text('Import'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+    }
+
+    /// Answers the relay question, and lets the screen close after it.
+    Future<void> answer(WidgetTester tester, String button) async {
+      await tester.tap(find.text(button));
+      await tester.pump();
+      await tester.pump(const Duration(seconds: 1));
+    }
+
+    Future<void> pumpOpener(WidgetTester tester) => tester.pumpWidget(
+      ChangeNotifierProvider<ChatProvider>(
+        create: (_) => provider,
+        child: MaterialApp(
+          home: Builder(
+            builder: (context) => TextButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<int>(
+                  builder: (_) => const ReceiveCredentialsScreen(),
+                ),
+              ),
+              child: const Text('Open'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    testWidgets('asks once about a relay before anything is imported', (
+      tester,
+    ) async {
+      final file = [
+        computer('One', 'wss://relay.example.test'),
+        computer('Two', 'wss://relay.example.test'),
+        computer('Three'),
+      ];
+      await pumpOpener(tester);
+      await receive(tester, file);
+
+      expect(find.text('Use this relay?'), findsOneWidget);
+      expect(
+        find.text(
+          'This import connects through relay.example.test, not '
+          "SocketAgent's relay. Your relay access will be sent to it.",
+        ),
+        findsOneWidget,
+      );
+      expect(provider.imports, isEmpty);
+
+      // No: the import runs with that relay left out.
+      await answer(tester, 'Cancel');
+      expect(find.text('Use this relay?'), findsNothing);
+      expect(provider.imports, [<String>{}]);
+
+      // Yes: one answer covers both computers on it.
+      await receive(tester, file);
+      expect(provider.imports, hasLength(1));
+      await answer(tester, 'Continue');
+      expect(find.text('Use this relay?'), findsNothing);
+      expect(provider.imports.last, {'relay.example.test'});
+    });
+
+    testWidgets('does not ask about the app\'s own relay', (tester) async {
+      await pumpOpener(tester);
+      await receive(tester, [
+        computer('One'),
+        computer('Two', defaultRelayUrl),
+      ]);
+
+      expect(find.text('Use this relay?'), findsNothing);
+      expect(provider.imports, [<String>{}]);
+    });
   });
 
   group('the connect screen', () {

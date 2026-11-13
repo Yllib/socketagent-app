@@ -8,10 +8,12 @@ import 'package:provider/provider.dart';
 import '../services/chat_provider.dart';
 import '../services/config_transfer.dart';
 import '../widgets/phone_handoff_panel.dart';
+import 'pair_screen.dart' show confirmOtherRelay;
 
 /// Shows a one-time QR code for another device's Credential Manager to scan,
 /// or opens a file that device saved. Pops with the number of computers added
-/// or updated once the user confirms an import.
+/// or updated once the user confirms an import. A relay in it that is not
+/// the app's own gets a question of its own first.
 class ReceiveCredentialsScreen extends StatefulWidget {
   const ReceiveCredentialsScreen({super.key});
 
@@ -41,9 +43,24 @@ class _ReceiveCredentialsScreenState extends State<ReceiveCredentialsScreen> {
       builder: (_) => _ConfirmDialog(payload),
     );
     if (confirmed == true && mounted) {
-      final imported = await context
-          .read<ChatProvider>()
-          .importTransferredConfigs(payload);
+      final provider = context.read<ChatProvider>();
+      // One question for each relay that is not the app's own. Computers on
+      // a relay the user turns down are left out, and the rest are imported.
+      final confirmedRelays = <String>{};
+      for (final host in provider.importRelaysToConfirm(payload.servers)) {
+        if (!mounted) return;
+        if (await confirmOtherRelay(
+          context,
+          host: host,
+          source: 'This import',
+        )) {
+          confirmedRelays.add(host);
+        }
+      }
+      final imported = await provider.importTransferredConfigs(
+        payload,
+        confirmedRelays: confirmedRelays,
+      );
       if (mounted) Navigator.of(context).pop(imported);
       return;
     }

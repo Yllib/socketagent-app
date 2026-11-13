@@ -33,9 +33,9 @@ String storableRelayUrl(String value) {
 
 /// The host of [relayUrl] when that is not the app's own relay, or null
 /// when it is. A relay is sent this phone's relay access when a computer
-/// connects through it, so before a pairing code's relay is used the app
-/// shows this host and asks. The same host on another port is another
-/// relay, and is shown with its port.
+/// connects through it, so before the relay of a pairing code or an import
+/// is used the app shows this host and asks. The same host on another port
+/// is another relay, and is shown with its port.
 String? otherRelayHost(String relayUrl) {
   final relay = Uri.tryParse(storableRelayUrl(relayUrl));
   if (relay == null || relay.host.isEmpty) return null;
@@ -53,6 +53,13 @@ String? otherRelayHost(String relayUrl) {
   }
   return relay.hasPort ? '${relay.host}:${relay.port}' : relay.host;
 }
+
+/// The relay host to show the user before an import saves [next], or null
+/// when no question is needed: [next] is on the app's own relay or on none,
+/// or it replaces [previous], which is on that very relay already. See
+/// [otherRelayHost] for why the app asks.
+String? relayToConfirm(ServerConfig next, [ServerConfig? previous]) =>
+    previous?.relayUrl == next.relayUrl ? null : otherRelayHost(next.relayUrl);
 
 class ServerConfig {
   final String id;

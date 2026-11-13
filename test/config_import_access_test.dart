@@ -109,6 +109,10 @@ void main() {
     );
   }
 
+  /// The loopback relay stands in for the real one, so these imports run as
+  /// though the user had agreed to it.
+  Set<String> agreed() => {'127.0.0.1:${relay.port}'};
+
   ExportPayload transfer({String token = 'test-play-access'}) =>
       ConfigTransfer.decode(
         ConfigTransfer.encodeEncrypted(
@@ -123,7 +127,13 @@ void main() {
     'first imported connection already has the phone subscription',
     () async {
       await withProvider((provider) async {
-        expect(await provider.importTransferredConfigs(transfer()), 1);
+        expect(
+          await provider.importTransferredConfigs(
+            transfer(),
+            confirmedRelays: agreed(),
+          ),
+          1,
+        );
         await firstConnection.future.timeout(const Duration(seconds: 5));
         expect(connectionTokens, isNotEmpty);
         expect(connectionTokens, everyElement('test-play-access'));
@@ -142,11 +152,19 @@ void main() {
     'duplicate-only import restores access after an earlier relay rejection',
     () async {
       await withProvider((provider) async {
-        await provider.importServerConfigs([computer]);
+        await provider.importServerConfigs([
+          computer,
+        ], confirmedRelays: agreed());
         await firstConnection.future.timeout(const Duration(seconds: 5));
         await Future<void>.delayed(const Duration(milliseconds: 50));
         expect(provider.hasCachedRelayAccess, isFalse);
-        expect(await provider.importTransferredConfigs(transfer()), 0);
+        expect(
+          await provider.importTransferredConfigs(
+            transfer(),
+            confirmedRelays: agreed(),
+          ),
+          0,
+        );
         expect(provider.serverConfigs, hasLength(1));
         expect(provider.hasCachedRelayAccess, isTrue);
         expect(provider.subscriptionProvider, 'google_play');
@@ -160,20 +178,29 @@ void main() {
 
   test('a transfer with another key adds a computer of its own', () async {
     await withProvider((provider) async {
-      await provider.importServerConfigs([computer]);
+      await provider.importServerConfigs([computer], confirmedRelays: agreed());
       final other = {
         ...computer,
         'serverPubkey': base64Encode(
           PrivateKey.generate().publicKey.asTypedList,
         ),
       };
-      expect(await provider.importServerConfigs([other]), 1);
+      expect(
+        await provider.importServerConfigs([other], confirmedRelays: agreed()),
+        1,
+      );
       expect(provider.serverConfigs.map((c) => c.serverPubkey), [
         computer['serverPubkey'],
         other['serverPubkey'],
       ]);
       // Each file now finds its own entry.
-      expect(await provider.importServerConfigs([other, computer]), 0);
+      expect(
+        await provider.importServerConfigs([
+          other,
+          computer,
+        ], confirmedRelays: agreed()),
+        0,
+      );
       expect(provider.serverConfigs, hasLength(2));
     });
   });
@@ -187,7 +214,7 @@ void main() {
         'pairingSecret': secret,
         'transport': 2,
       };
-      await provider.importServerConfigs([paired]);
+      await provider.importServerConfigs([paired], confirmedRelays: agreed());
       void expectPaired() {
         final saved = provider.serverConfigs.first;
         expect(saved.serverPubkey, computer['serverPubkey']);
@@ -205,15 +232,15 @@ void main() {
           'token': 'a-token',
           'serverPubkey': computer['serverPubkey'],
         },
-      ]);
+      ], confirmedRelays: agreed());
       // The same with no key at all.
       await provider.importServerConfigs([
         {'name': computer['name'], 'host': '192.168.1.20'},
-      ]);
+      ], confirmedRelays: agreed());
       // An older export of the same computer: its room, and no secret.
       await provider.importServerConfigs([
         {...computer, 'relayUrl': ''},
-      ]);
+      ], confirmedRelays: agreed());
       expect(provider.serverConfigs, hasLength(1));
       expectPaired();
 
@@ -223,7 +250,7 @@ void main() {
       );
       await provider.importServerConfigs([
         {...computer, 'serverPubkey': otherKey},
-      ]);
+      ], confirmedRelays: agreed());
       expect(provider.serverConfigs, hasLength(2));
       expectPaired();
       expect(provider.serverConfigs.last.serverPubkey, otherKey);
@@ -241,16 +268,72 @@ void main() {
           'pairingSecret': '${'A' * 42}B=',
           'transport': 2,
         };
-        expect(await provider.importServerConfigs([broken]), 0);
+        expect(
+          await provider.importServerConfigs([
+            broken,
+          ], confirmedRelays: agreed()),
+          0,
+        );
         expect(provider.serverConfigs, isEmpty);
 
         // Nor does it reach a computer that is already saved.
         final secret = base64Encode(List.filled(32, 7));
         await provider.importServerConfigs([
           {...computer, 'pairingSecret': secret, 'transport': 2},
-        ]);
-        expect(await provider.importServerConfigs([broken]), 0);
+        ], confirmedRelays: agreed());
+        expect(
+          await provider.importServerConfigs([
+            broken,
+          ], confirmedRelays: agreed()),
+          0,
+        );
         expect(provider.serverConfigs.single.pairingSecret, secret);
+      });
+    },
+  );
+
+  test(
+    'an import puts no computer on another relay until the user agrees',
+    () async {
+      await withProvider((provider) async {
+        final direct = {'name': 'Direct only', 'host': '10.0.0.9'};
+        final file = [
+          computer,
+          {...computer, 'name': 'Second', 'pairingToken': 'second-pairing'},
+          {...computer, 'name': 'On the app relay', 'relayUrl': ''},
+          direct,
+        ];
+        // One question for the relay, however many computers are on it.
+        expect(provider.importRelaysToConfirm(file), agreed());
+
+        // No answer, or Cancel: the rest is imported and that relay hears
+        // nothing.
+        expect(await provider.importServerConfigs([computer, direct]), 1);
+        expect(provider.serverConfigs.single.name, 'Direct only');
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+        expect(connectionTokens, isEmpty);
+
+        expect(
+          await provider.importServerConfigs([
+            computer,
+            direct,
+          ], confirmedRelays: agreed()),
+          1,
+        );
+        expect(provider.serverConfigs.last.relayUrl, computer['relayUrl']);
+
+        // A computer saved on that relay stays on it with no question, and
+        // one moved to it from another relay is asked about.
+        final moved = {...computer, 'host': '10.0.0.5'};
+        expect(provider.importRelaysToConfirm([moved]), isEmpty);
+        expect(await provider.importServerConfigs([moved]), 1);
+        expect(provider.serverConfigs.last.host, '10.0.0.5');
+        final elsewhere = {...moved, 'relayUrl': 'wss://relay.example.test'};
+        expect(provider.importRelaysToConfirm([elsewhere]), {
+          'relay.example.test',
+        });
+        expect(await provider.importServerConfigs([elsewhere]), 0);
+        expect(provider.serverConfigs.last.relayUrl, computer['relayUrl']);
       });
     },
   );
@@ -261,7 +344,7 @@ void main() {
         {...computer, 'name': 'Fixed relay', 'autoRoute': false},
         {...computer, 'name': 'Auto by default'},
         {'name': 'Direct only', 'host': '10.0.0.9', 'token': 'secret'},
-      ]);
+      ], confirmedRelays: agreed());
       final byName = {
         for (final config in provider.serverConfigs) config.name: config,
       };
@@ -272,7 +355,7 @@ void main() {
       expect(
         await provider.importServerConfigs([
           {...computer, 'name': 'Fixed relay', 'autoRoute': true},
-        ]),
+        ], confirmedRelays: agreed()),
         1,
       );
       expect(
@@ -287,7 +370,13 @@ void main() {
   test('a computer-only export preserves existing relay access', () async {
     await withProvider((provider) async {
       await provider.saveSubscriberToken('test-play-access');
-      expect(await provider.importTransferredConfigs(transfer(token: '')), 1);
+      expect(
+        await provider.importTransferredConfigs(
+          transfer(token: ''),
+          confirmedRelays: agreed(),
+        ),
+        1,
+      );
       await firstConnection.future.timeout(const Duration(seconds: 5));
       expect(provider.subscriberToken, 'test-play-access');
       expect(provider.hasCachedRelayAccess, isTrue);
@@ -301,6 +390,7 @@ void main() {
       await withProvider((provider) async {
         await provider.importTransferredConfigs(
           transfer(token: 'expired-access'),
+          confirmedRelays: agreed(),
         );
         expect(provider.hasCachedRelayAccess, isFalse);
         expect(provider.subscriptionChecked, isTrue);

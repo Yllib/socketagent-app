@@ -134,13 +134,24 @@ Future<bool> confirmCodeRelay(
   PairingResult pairing,
 ) async {
   final host = otherRelayHost(pairing.relayUrl);
-  if (host == null) return true;
+  return host == null ||
+      await confirmOtherRelay(context, host: host, source: 'This code');
+}
+
+/// Shows [host], a relay that is not the app's own, and asks whether to use
+/// it. [source] starts the sentence with what named the relay: "This code"
+/// or "This import". True only when the user chooses Continue.
+Future<bool> confirmOtherRelay(
+  BuildContext context, {
+  required String host,
+  required String source,
+}) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
       title: const Text('Use this relay?'),
       content: Text(
-        "This code connects through $host, not SocketAgent's relay. "
+        "$source connects through $host, not SocketAgent's relay. "
         'Your relay access will be sent to it.',
       ),
       actions: [

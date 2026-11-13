@@ -3752,14 +3752,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Restore relay access before any imported computer opens a connection.
   /// The credential must also be restored when all computers are duplicates.
-  Future<int> importTransferredConfigs(ExportPayload payload) async {
+  /// [confirmedRelays] is as in [importServerConfigs].
+  Future<int> importTransferredConfigs(
+    ExportPayload payload, {
+    Set<String> confirmedRelays = const {},
+  }) async {
     if (payload.subscriberToken.isNotEmpty) {
       await saveSubscriberToken(
         payload.subscriberToken,
         payload.subscriberEmail,
       );
     }
-    final imported = await importServerConfigs(payload.servers);
+    final imported = await importServerConfigs(
+      payload.servers,
+      confirmedRelays: confirmedRelays,
+    );
     if (payload.subscriberToken.isNotEmpty) {
       await checkSubscriptionStatus();
     }
@@ -3771,80 +3778,115 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// token, takes the transferred credentials instead of being added twice.
   /// A saved computer's pinned key is never changed here: a file that
   /// carries another key for it describes another computer, which is added
-  /// as its own entry. Returns how many computers were added or changed.
-  Future<int> importServerConfigs(List<Map<String, dynamic>> configs) async {
+  /// as its own entry. An entry that would put a computer on a relay other
+  /// than the app's own is applied only when [confirmedRelays] holds that
+  /// relay's host as [importRelaysToConfirm] gave it. Otherwise it is left
+  /// out, and nothing of it is saved or sent. Returns how many computers
+  /// were added or changed.
+  Future<int> importServerConfigs(
+    List<Map<String, dynamic>> configs, {
+    Set<String> confirmedRelays = const {},
+  }) async {
     int imported = 0;
     for (final m in configs) {
-      final name = m['name'] as String? ?? 'Imported';
-      final host = m['host'] as String? ?? '';
-      final pairingToken = m['pairingToken'] as String? ?? '';
-      final port = m['port'] as int? ?? 8085;
-      final token = m['token'] as String? ?? '';
-      final useRelay = m['useRelay'] as bool? ?? false;
-      // Same default as ServerConfig.fromJson: relay computers auto route.
-      final autoRoute = m['autoRoute'] as bool? ?? useRelay;
-      final relayUrl = m['relayUrl'] as String? ?? '';
-      final serverPubkey = m['serverPubkey'] as String? ?? '';
-      final pairingSecret = m['pairingSecret'] as String? ?? '';
-      final transport = m['transport'] == 2 ? 2 : null;
-      // A secret that does not decode can prove nothing, and stored it
-      // would hold its computer on a pairing that never connects.
-      if (pairingSecret.isNotEmpty && decodeKey32(pairingSecret) == null) {
-        continue;
+      final change = _importChange(m);
+      if (change == null) continue;
+      final relay = relayToConfirm(change.next, change.existing);
+      if (relay != null && !confirmedRelays.contains(relay)) continue;
+      if (change.existing == null) {
+        await addServer(change.next);
+      } else {
+        await updateServer(change.next);
       }
+      imported++;
+    }
+    return imported;
+  }
 
-      final sameRoute = _serverConfigs.where(
-        (existing) =>
-            existing.name == name &&
-            ((host.isNotEmpty && existing.host == host) ||
-                (pairingToken.isNotEmpty &&
-                    existing.pairingToken == pairingToken)),
-      );
-      // The entry with this very key, else one where either side has no key
-      // yet. An entry pinned to another key is never the match.
-      final existing =
-          sameRoute
-              .where(
-                (existing) =>
-                    serverPubkey.isNotEmpty &&
-                    existing.serverPubkey == serverPubkey,
-              )
-              .firstOrNull ??
-          sameRoute
-              .where(
-                (existing) =>
-                    existing.serverPubkey.isEmpty || serverPubkey.isEmpty,
-              )
-              .firstOrNull;
-      if (existing != null) {
-        // A file that names no key leaves the saved one alone. A key is
-        // only ever set here on an entry that had none.
-        final key = serverPubkey.isEmpty ? existing.serverPubkey : serverPubkey;
-        final updated = existing
-            .withComputerKey(key)
-            .copyWith(
-              host: host,
-              port: port,
-              token: token,
-              useRelay: useRelay,
-              autoRoute: autoRoute,
-              relayUrl: relayUrl,
-              pairingToken: pairingToken,
-              pairingSecret: pairingSecret,
-              transport: transport,
+  /// The relays, other than the app's own, that importing [configs] would
+  /// put a computer on, each by the host to show the user and each once.
+  /// The user is asked about every one before the import runs.
+  Set<String> importRelaysToConfirm(List<Map<String, dynamic>> configs) => {
+    for (final m in configs)
+      if (_importChange(m) case final change?)
+        ?relayToConfirm(change.next, change.existing),
+  };
+
+  /// What importing [m] would save: the entry as it would be stored, and
+  /// the saved entry it replaces when there is one. Null when [m] is not
+  /// applied or changes nothing.
+  ({ServerConfig next, ServerConfig? existing})? _importChange(
+    Map<String, dynamic> m,
+  ) {
+    final name = m['name'] as String? ?? 'Imported';
+    final host = m['host'] as String? ?? '';
+    final pairingToken = m['pairingToken'] as String? ?? '';
+    final port = m['port'] as int? ?? 8085;
+    final token = m['token'] as String? ?? '';
+    final useRelay = m['useRelay'] as bool? ?? false;
+    // Same default as ServerConfig.fromJson: relay computers auto route.
+    final autoRoute = m['autoRoute'] as bool? ?? useRelay;
+    final relayUrl = m['relayUrl'] as String? ?? '';
+    final serverPubkey = m['serverPubkey'] as String? ?? '';
+    final pairingSecret = m['pairingSecret'] as String? ?? '';
+    final transport = m['transport'] == 2 ? 2 : null;
+    // A secret that does not decode can prove nothing, and stored it
+    // would hold its computer on a pairing that never connects.
+    if (pairingSecret.isNotEmpty && decodeKey32(pairingSecret) == null) {
+      return null;
+    }
+
+    final sameRoute = _serverConfigs.where(
+      (existing) =>
+          existing.name == name &&
+          ((host.isNotEmpty && existing.host == host) ||
+              (pairingToken.isNotEmpty &&
+                  existing.pairingToken == pairingToken)),
+    );
+    // The entry with this very key, else one where either side has no key
+    // yet. An entry pinned to another key is never the match.
+    final existing =
+        sameRoute
+            .where(
+              (existing) =>
+                  serverPubkey.isNotEmpty &&
+                  existing.serverPubkey == serverPubkey,
             )
-            .after(existing);
-        if (!_requiresServerReconnect(existing, updated) &&
-            existing.autoRoute == updated.autoRoute &&
-            existing.pairingSecret == updated.pairingSecret) {
-          continue;
-        }
-        await updateServer(updated);
-        imported++;
-        continue;
+            .firstOrNull ??
+        sameRoute
+            .where(
+              (existing) =>
+                  existing.serverPubkey.isEmpty || serverPubkey.isEmpty,
+            )
+            .firstOrNull;
+    if (existing != null) {
+      // A file that names no key leaves the saved one alone. A key is
+      // only ever set here on an entry that had none.
+      final key = serverPubkey.isEmpty ? existing.serverPubkey : serverPubkey;
+      final updated = existing
+          .withComputerKey(key)
+          .copyWith(
+            host: host,
+            port: port,
+            token: token,
+            useRelay: useRelay,
+            autoRoute: autoRoute,
+            relayUrl: relayUrl,
+            pairingToken: pairingToken,
+            pairingSecret: pairingSecret,
+            transport: transport,
+          )
+          .after(existing);
+      if (!_requiresServerReconnect(existing, updated) &&
+          existing.autoRoute == updated.autoRoute &&
+          existing.pairingSecret == updated.pairingSecret) {
+        return null;
       }
+      return (next: updated, existing: existing);
+    }
 
-      final config = ServerConfig(
+    return (
+      next: ServerConfig(
         id: ServerConfig.generateId(),
         name: name,
         host: host,
@@ -3860,11 +3902,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         transport: transport,
         defaultCwd: m['defaultCwd'] as String? ?? '',
         colorValue: m['colorValue'] as int?,
-      );
-      await addServer(config);
-      imported++;
-    }
-    return imported;
+      ),
+      existing: null,
+    );
   }
 
   /// Saves a scanned pairing code on a computer and reconnects via relay.
