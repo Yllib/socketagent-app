@@ -188,10 +188,12 @@ class WebSocketService {
   // LAN says nothing about the computer in the relay room.
   int _silentRelayHandshakes = 0;
   int _silentDirectHandshakes = 0;
-  // Whether the computer has answered on the current connection, and the
-  // address a direct one was opened to. See the getters.
+  // Whether the computer has answered on the current connection, the
+  // address a direct one was opened to, and whether its TCP connection
+  // opened. See the getters.
   bool _computerAnswered = false;
   String? _dialledHost;
+  bool _dialOpened = false;
   // A v2 channel the computer holds until a paired device answers. Only the
   // verdict is read from it.
   bool _held = false;
@@ -282,6 +284,12 @@ class WebSocketService {
   /// The LAN address this connection, or the last one, was opened to. Null
   /// on the relay and before the first dial.
   String? get dialledHost => _dialledHost;
+
+  /// Whether the TCP connection of this direct dial, or the last one,
+  /// opened: something at the address took the connection, whatever it did
+  /// next. False on the relay, and for a dial that was refused or reached
+  /// nothing.
+  bool get dialOpened => _dialOpened;
 
   /// Fires when the relay turns this phone away for lack of a subscription.
   /// A relay signal, so it stays off [messages], which carries only what the
@@ -467,6 +475,7 @@ class WebSocketService {
     final gen = ++_connectionGeneration;
     _computerAnswered = false;
     _dialledHost = null;
+    _dialOpened = false;
     unawaited(
       _connectAfterClosingPrevious(gen, previousSubscription, previousChannel),
     );
@@ -590,8 +599,14 @@ class WebSocketService {
       // frames work and pingInterval turns a silently broken socket into
       // onDone. The one difference is that this keeps the dart:io socket.
       _rawSocket = null;
+      // A direct dial notes when its TCP connection opens, for [dialOpened].
+      final dial = _mode == ConnectionMode.direct
+          ? _dialNotingOpen(uri, headers, () {
+              if (gen == _connectionGeneration) _dialOpened = true;
+            })
+          : WebSocket.connect(uri.toString(), headers: headers);
       _channel = IOWebSocketChannel(
-        WebSocket.connect(uri.toString(), headers: headers).then(
+        dial.then(
           (socket) {
             socket.pingInterval = const Duration(seconds: 20);
             if (gen == _connectionGeneration) _rawSocket = socket;
@@ -684,6 +699,39 @@ class WebSocketService {
       _setStatus(ConnectionStatus.error);
       _scheduleReconnect();
     }
+  }
+
+  /// Opens a WebSocket to [uri] and calls [opened] once its TCP connection
+  /// is up, whatever the other end does with it next. The default client
+  /// starts that connection inside this call, where the override sees it.
+  /// The override makes the connection outside its own zone, exactly as
+  /// the client would have.
+  static Future<WebSocket> _dialNotingOpen(
+    Uri uri,
+    Map<String, dynamic>? headers,
+    void Function() opened,
+  ) {
+    final outside = Zone.current;
+    return IOOverrides.runZoned(
+      () => WebSocket.connect(uri.toString(), headers: headers),
+      socketStartConnect: (host, port, {sourceAddress, sourcePort = 0}) async {
+        final task = await outside.run(
+          () => Socket.startConnect(
+            host,
+            port,
+            sourceAddress: sourceAddress,
+            sourcePort: sourcePort,
+          ),
+        );
+        return ConnectionTask.fromSocket(
+          task.socket.then((socket) {
+            opened();
+            return socket;
+          }),
+          task.cancel,
+        );
+      },
+    );
   }
 
   /// What this build can do, as `client_capabilities` announces it on the

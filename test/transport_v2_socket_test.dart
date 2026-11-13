@@ -430,6 +430,41 @@ void main() {
     expect(service.reconnecting, isTrue);
   });
 
+  test('a direct dial says whether anything took its connection', () async {
+    // Something that takes the TCP connection and never speaks.
+    final quiet = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final taken = <Socket>[];
+    quiet.listen(taken.add);
+    addTearDown(() {
+      for (final socket in taken) {
+        socket.destroy();
+      }
+    });
+    direct();
+    void dial() => service
+      ..configure(
+        host: '127.0.0.1',
+        port: quiet.port,
+        token: 'auth-token',
+        cryptoService: crypto,
+      )
+      ..connect(force: true);
+
+    dial();
+    await until(ConnectionStatus.error);
+    expect(taken, hasLength(1));
+    expect(service.dialledHost, '127.0.0.1');
+    expect(service.dialOpened, isTrue);
+    expect(service.computerAnswered, isFalse);
+
+    // The same port with nothing listening on it.
+    await quiet.close();
+    dial();
+    await until(ConnectionStatus.error);
+    expect(service.dialOpened, isFalse);
+    expect(service.computerAnswered, isFalse);
+  });
+
   group('pairing_update', () {
     Map<String, Object?> update() => {
       'type': 'pairing_update',

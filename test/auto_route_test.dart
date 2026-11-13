@@ -282,19 +282,23 @@ void main() {
       () async {
         // Something on the LAN that advertises the computer's ID, accepts
         // the socket and says nothing. And a relay that accepts the phone.
+        // Once it has a socket it turns every other connection away, so
+        // nothing but the dial itself shows it was there.
+        var turnsAway = false;
         final sockets = <WebSocket>[];
+        final onLan = <WebSocket>[];
+        final onRelay = <WebSocket>[];
         Future<HttpServer> quietServer(List<WebSocket> opened) async {
           final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
           server.listen((request) async {
             final socket = await WebSocketTransformer.upgrade(request);
             sockets.add(socket);
             opened.add(socket);
+            if (opened == onLan) turnsAway = true;
           });
           return server;
         }
 
-        final onLan = <WebSocket>[];
-        final onRelay = <WebSocket>[];
         final lan = await quietServer(onLan);
         final relay = await quietServer(onRelay);
         addTearDown(() async {
@@ -309,7 +313,10 @@ void main() {
           ..setSubscriberToken('subscriber')
           // The relay socket is left to wait in its room.
           ..relayPatience = const Duration(minutes: 1)
-          ..routeFinder = finderAdvertisingLoopback();
+          ..routeFinder = LocalRouteFinder(
+            discover: (_) => Stream.value('127.0.0.1'),
+            reachable: (host, _) async => host == '127.0.0.1' && !turnsAway,
+          );
         await manager.setServers([
           autoConfig(
             useRelay: false,
@@ -332,7 +339,9 @@ void main() {
         expect(saved.single.useRelay, isTrue);
         expect(saved.single.host, '192.168.1.20');
 
-        // A search on the same network leaves the address out.
+        // A search on the same network leaves the address out, though it
+        // takes connections again.
+        turnsAway = false;
         await manager.routeServer('computer', force: true);
         expect(ws.mode, ConnectionMode.relay);
 
@@ -343,6 +352,44 @@ void main() {
         expect(saved.every((config) => config.host == '192.168.1.20'), isTrue);
       },
     );
+
+    test('stops searching the LAN for a computer while three addresses are '
+        'silent', () async {
+      var searches = 0;
+      final tried = <String>[];
+      manager
+        ..setSubscriberToken('subscriber')
+        ..routeFinder = LocalRouteFinder(
+          discover: (_) {
+            searches++;
+            return const Stream.empty();
+          },
+          reachable: (host, _) async {
+            tried.add(host);
+            return false;
+          },
+        );
+      await manager.setServers([autoConfig()]);
+
+      manager
+        ..noteSilent('computer', '192.168.1.31')
+        ..noteSilent('computer', '192.168.1.32');
+      await manager.routeServer('computer', force: true);
+      expect(searches, 1);
+
+      // The stored address is still tried, and the relay is still there.
+      manager.noteSilent('computer', '192.168.1.33');
+      tried.clear();
+      await manager.routeServer('computer', force: true);
+      expect(searches, 1);
+      expect(tried, ['192.168.1.20']);
+      expect(manager.getConnection('computer')!.mode, ConnectionMode.relay);
+
+      // Another network starts it over.
+      manager.onNetworkChanged([ConnectivityResult.wifi]);
+      await manager.routeServer('computer', force: true);
+      expect(searches, 2);
+    });
 
     test('stores an address the search found once the computer answers '
         'there', () async {

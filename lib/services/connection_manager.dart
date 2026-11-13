@@ -121,12 +121,15 @@ class ConnectionManager {
   final Map<String, DateTime> _relayRefused = {};
   // Auto-routed computers waiting on the relay, with the next direct check.
   final Map<String, Timer> _relayWatch = {};
-  // LAN addresses that accepted a connection and then gave no answer as
-  // the computer, by computer, with when. Routing leaves each out for
+  // LAN addresses that took a connection and then gave no answer as the
+  // computer, by computer, with when. Routing leaves each out for
   // [_silentHostSkip] or until the network changes, so the next route gets
-  // its turn (wire spec 3.8).
+  // its turn (wire spec 3.8). While [_silentHostLimit] of them are left out
+  // for one computer, routing does not search the LAN for it either, so a
+  // LAN that keeps naming new addresses cannot keep it off the relay.
   final Map<String, Map<String, DateTime>> _silentHosts = {};
   static const _silentHostSkip = Duration(minutes: 5);
+  static const _silentHostLimit = 3;
   // The address a computer's direct socket is set to when it is not the
   // stored one: the search found it, and no handshake there has succeeded
   // yet. It is stored in the entry once one does.
@@ -466,11 +469,13 @@ class ConnectionManager {
       // On mobile data alone the LAN can't answer, so don't make the relay
       // wait on it. A VPN such as Tailscale can still reach the stored host.
       if (network != _NetworkKind.mobileOnly || !canRelay) {
+        final skip = _skippedHosts(config.id);
         directHost = await routeFinder.find(
           config,
-          searchLan: network == _NetworkKind.local,
+          searchLan:
+              network == _NetworkKind.local && skip.length < _silentHostLimit,
           timeout: const Duration(seconds: 2),
-          skip: _skippedHosts(config.id),
+          skip: skip,
         );
       }
     }
@@ -546,21 +551,27 @@ class ConnectionManager {
     onRouteChanged?.call(proven);
   }
 
-  /// [ws] dropped. When its last dial was to a LAN address that still
-  /// accepts a connection and the computer never answered there, that
-  /// address is left out and the route is picked again without it. An
-  /// address that accepts nothing is not marked: the computer may be
-  /// restarting, and is found there again as soon as it is back.
-  Future<void> _skipIfSilent(String serverId, WebSocketService ws) async {
+  /// [ws] dropped. When its last dial was to a LAN address that took the
+  /// connection and the computer never answered there, that address is left
+  /// out and the route is picked again without it. A dial that never opened
+  /// is not marked: the computer may be off or restarting, and is found
+  /// there again as soon as it is back. Returns whether it marked one.
+  bool _skipIfSilent(String serverId, WebSocketService ws) {
     final host = ws.dialledHost;
-    final config = _configs[serverId];
-    if (host == null || config == null || ws.computerAnswered) return;
-    if (!await routeFinder.reachable(host, config.port)) return;
-    if (_connections[serverId] != ws || _configs[serverId]?.autoRoute != true) {
-      return;
-    }
-    (_silentHosts[serverId] ??= {})[host] = DateTime.now();
-    // A search that began before the mark may still pick this address.
+    if (host == null || !ws.dialOpened || ws.computerAnswered) return false;
+    noteSilent(serverId, host);
+    return true;
+  }
+
+  /// Marks [host] as silent for [serverId]. Tests call it to stand in for a
+  /// dial that went unanswered.
+  @visibleForTesting
+  void noteSilent(String serverId, String host) =>
+      (_silentHosts[serverId] ??= {})[host] = DateTime.now();
+
+  /// Picks [serverId]'s route again after a search that may have begun
+  /// before an address was marked silent, and could still pick it.
+  Future<void> _routeWithoutSilent(String serverId) async {
     await _routing[serverId];
     await routeServer(serverId, force: true);
   }
@@ -733,8 +744,11 @@ class ConnectionManager {
               status == ConnectionStatus.disconnected) &&
           ws.reconnecting &&
           _configs[serverId]?.autoRoute == true) {
-        unawaited(routeServer(serverId));
-        unawaited(_skipIfSilent(serverId, ws));
+        unawaited(
+          _skipIfSilent(serverId, ws)
+              ? _routeWithoutSilent(serverId)
+              : routeServer(serverId),
+        );
       }
     });
   }
