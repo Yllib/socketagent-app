@@ -1,0 +1,2146 @@
+{
+  "about": "SocketAgent account PIN vectors. Every key, salt, nonce and PIN is made up for this file. See account_pin_vectors.md.",
+  "kdf": [
+    {
+      "pin": "502918",
+      "salt": "d1418b217d3fa163240b226e37af6ce3",
+      "stretched": "16cfcd5ccbded7db9942ec8c8c268abc1405e164cb02b57c4419c16b6a0875fb",
+      "authKey": "0b6c097c3f000a69db1f208d022052c7fb0d3bb8103dc56420784af8843bf637",
+      "wrapSeed": "9073c2f410c9bf92bdd74c94be26ce05dd478886be6a1e46274ae333c1c9bdfd"
+    },
+    {
+      "pin": "Kettle!42x",
+      "salt": "462a953bf5aa17699ccf9a33ccbc3db4",
+      "stretched": "25815adbba1905ae73b083f27caa6e406dc64545000d71b67d910e87b6d3e6a1",
+      "authKey": "9d06a2a29090610398134c01ce1d889e82fe6000a6c0008b14b32fb5f508d082",
+      "wrapSeed": "d6302ceacf049100b1a730aa54d36dad25c2ee2591ee1bd62f1d1dfc3533f47d"
+    },
+    {
+      "pin": "Seven-Grey-Owls/Watch_The~Harbour@Night+Count:9(Lamps)&3[Boats]!",
+      "salt": "fde8ee07c4ab045964a11be077a1f5dc",
+      "stretched": "254dcfd32744dabd45188e1a82f27ba0a49c687e2865282f0b88288dbb587d94",
+      "authKey": "82e6f7667971dba5315d26e8b0682a3c8398eb2a1b93a1c739c6659f9124a927",
+      "wrapSeed": "2ed3954f6be7e4a43efe2afd4d028039792509ce9e87ba59be20b5fc4c36635c"
+    }
+  ],
+  "pinKey": [
+    {
+      "wrapSeed": "9073c2f410c9bf92bdd74c94be26ce05dd478886be6a1e46274ae333c1c9bdfd",
+      "relayKey": "0bd7d3cad4b3a07465e5fc1d9b2dac6d3757214743d7e297dfc1255fbd696801",
+      "pinPrivate": "1d6d9b301c6d0efe68c7d801ccc735734d0a4b1e7f48c766799d44c54b5aa0de",
+      "pinPublic": "350abcb9692c673d192414c089901c2137ba005317b4d38f0a05314fa0ffe71d"
+    },
+    {
+      "wrapSeed": "d6302ceacf049100b1a730aa54d36dad25c2ee2591ee1bd62f1d1dfc3533f47d",
+      "relayKey": "eb83d55b45270ebc7b9e31d2c5dd245dca853607eaef4ef583105e1c5ec56da5",
+      "pinPrivate": "37e600622d88cd8b1c39aa3bd1999070b8e686cd2a27ffd4c412989a46853ef2",
+      "pinPublic": "457e16c77afa42497cccb3b315e5fd4d89baca83974cab394ce95e69bac3fb4a"
+    },
+    {
+      "wrapSeed": "2ed3954f6be7e4a43efe2afd4d028039792509ce9e87ba59be20b5fc4c36635c",
+      "relayKey": "f710d3dc49027c9de6618c3819ebb13ba9bbcfed14dd60dc52e7c2936f997ff9",
+      "pinPrivate": "df396f6f47442753832170fc166e2485ef8fb997a38a859affd8187b7f3f5cb9",
+      "pinPublic": "621f0f6d30d127b775bc8ca00e5c308a88db0264a9a97ae178a0f1bda022e73c"
+    }
+  ],
+  "box": {
+    "key": {
+      "masterKey": "5b9a59217d6ac5dddc18ce6ded66a4578c5a59327b5883aa7ab9d59d391447a6",
+      "account": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "senderPrivate": "a63455c19ca92e2a4926280a849cf82f99cda3a126673923a3cc3155c6dec0eb",
+      "recipientPrivate": "1d6d9b301c6d0efe68c7d801ccc735734d0a4b1e7f48c766799d44c54b5aa0de",
+      "recipientPublic": "350abcb9692c673d192414c089901c2137ba005317b4d38f0a05314fa0ffe71d",
+      "nonce": "ecf59001d6d7907fb08d83e7b1823c9e5359494503e84170",
+      "payload": "{\"t\":\"socketagent-pin-box-v1\",\"masterKey\":\"W5pZIX1qxd3cGM5t7WakV4xaWTJ7WIOqernVnTkUR6Y=\"}",
+      "box": "hOkxBeZJsZuBz+BLcodFtuwBGVtycyt83c3bm7r6JUDs9ZAB1teQf7CNg+exgjyeU1lJRQPoQXCHpG6dpSetwyII/yyEWB+kObhSeMtUGyGOQ+nyglZJKWrMJ5V94pQEdT7LpdDNezoIKxb9DWtLZIr5ZKfFESLXPf0JKuCwefcb7B0aYXaGI8GDjGXynrbXyqXUPVV8hAeo41Xg90U48d0="
+    },
+    "handover": {
+      "masterKey": "13fcc8234e7f1bc44b1ca8db562f5150e303674f7f3872cb776e63902f67c4c7",
+      "account": "RMR-LaJWRwcZdnzcX2k7_OeUgNlLOKsNGhVdQ1Pcot0",
+      "fromAccount": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "senderPrivate": "6b9aef8de7aca5225418559c931c512a2f03eb161fd0b43107f8d00875c0556a",
+      "senderPublic": "45xRQTzfeGE9jGSmb6EIwgQA3A4hU/CkFtfpIcyD6Rg=",
+      "recipientPrivate": "9dcba519bc8a6fb5bd6685880819f4c11f3695d13a0fd79e723b0520949398e7",
+      "recipientPublic": "0z/IH5pUsodKyxC37bPVCTmUCW2Wa5rj/+Ht6yjvND8=",
+      "nonce": "78c4a607f22238ce356edb162ef279ff0e93cb5d0961ee94",
+      "payload": "{\"t\":\"socketagent-handover-v1\",\"from\":\"am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0\",\"masterKey\":\"E/zII05/G8RLHKjbVi9RUOMDZ09/OHLLd25jkC9nxMc=\"}",
+      "box": "45xRQTzfeGE9jGSmb6EIwgQA3A4hU/CkFtfpIcyD6Rh4xKYH8iI4zjVu2xYu8nn/DpPLXQlh7pQ/b/OQcnBZNrh1JhyYtogH9cHfIQCAXnv9bZ/lN3BPj5TXDmuVVqLcev22ovcnSMnnzm3sJOm6n4/7EtMfgS9L0zBFR3+itEikVBaLia3Nvq/vRat2vv7dswcI/52vKI2rkpLSG+TJOtKnW7tyFillFEK1Ib44Rc+d2m85I48TlqHrx/rLqQxIeCzuDIBOZf/U/7dqVfxddvi3WcZxBcg="
+    }
+  },
+  "driveFile": {
+    "masterKey": "5b9a59217d6ac5dddc18ce6ded66a4578c5a59327b5883aa7ab9d59d391447a6",
+    "account": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+    "pinId": "yt+YUNmStQHxMCetkqlXog==",
+    "salt": "0UGLIX0/oWMkCyJuN69s4w==",
+    "box": "hOkxBeZJsZuBz+BLcodFtuwBGVtycyt83c3bm7r6JUDs9ZAB1teQf7CNg+exgjyeU1lJRQPoQXCHpG6dpSetwyII/yyEWB+kObhSeMtUGyGOQ+nyglZJKWrMJ5V94pQEdT7LpdDNezoIKxb9DWtLZIr5ZKfFESLXPf0JKuCwefcb7B0aYXaGI8GDjGXynrbXyqXUPVV8hAeo41Xg90U48d0=",
+    "body": "{\"account\":\"am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0\",\"pinId\":\"yt+YUNmStQHxMCetkqlXog==\",\"salt\":\"0UGLIX0/oWMkCyJuN69s4w==\",\"box\":\"hOkxBeZJsZuBz+BLcodFtuwBGVtycyt83c3bm7r6JUDs9ZAB1teQf7CNg+exgjyeU1lJRQPoQXCHpG6dpSetwyII/yyEWB+kObhSeMtUGyGOQ+nyglZJKWrMJ5V94pQEdT7LpdDNezoIKxb9DWtLZIr5ZKfFESLXPf0JKuCwefcb7B0aYXaGI8GDjGXynrbXyqXUPVV8hAeo41Xg90U48d0=\"}",
+    "sig": "zNeat2Eb6eUJMAcnwEz344amROfKf4N5J0H00OkbhVP9D5NDNZGfkZB32U32GGASIl9DnfyCeECmb0pIueSjAQ==",
+    "file": "{\"v\":2,\"body\":\"eyJhY2NvdW50IjoiYW05ZVZFY2V1X1hVMUtrTzhSNWZ2Tk9HME4wNTVzejhTSEYxV0cwOVlVMCIsInBpbklkIjoieXQrWVVObVN0UUh4TUNldGtxbFhvZz09Iiwic2FsdCI6IjBVR0xJWDAvb1dNa0N5SnVONjlzNHc9PSIsImJveCI6ImhPa3hCZVpKc1p1QnorQkxjb2RGdHV3QkdWdHljeXQ4M2MzYm03cjZKVURzOVpBQjF0ZVFmN0NOZytleGdqeWVVMWxKUlFQb1FYQ0hwRzZkcFNldHd5SUkveXlFV0Ira09iaFNlTXRVR3lHT1ErbnlnbFpKS1dyTUo1Vjk0cFFFZFQ3THBkRE5lem9JS3hiOURXdExaSXI1WktmRkVTTFhQZjBKS3VDd2VmY2I3QjBhWVhhR0k4R0RqR1h5bnJiWHlxWFVQVlY4aEFlbzQxWGc5MFU0OGQwPSJ9\",\"sig\":\"zNeat2Eb6eUJMAcnwEz344amROfKf4N5J0H00OkbhVP9D5NDNZGfkZB32U32GGASIl9DnfyCeECmb0pIueSjAQ==\"}"
+  },
+  "weak": [
+    {
+      "pin": "000000",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "aaaaaaaaaaaa",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "121212",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "1212121",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "123123",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "abcabcabcabc",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "123456",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "12345678",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "654321",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "abcdef",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "fedcba",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "112233",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "789456",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "159753",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "123321",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "147258",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "258369",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "369258",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "147852",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "753951",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "951753",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "123654",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "456123",
+      "problem": "tooEasy"
+    },
+    {
+      "pin": "502918",
+      "problem": null
+    },
+    {
+      "pin": "121213",
+      "problem": null
+    },
+    {
+      "pin": "123457",
+      "problem": null
+    },
+    {
+      "pin": "567890",
+      "problem": null
+    },
+    {
+      "pin": "12341234",
+      "problem": null
+    },
+    {
+      "pin": "19900101",
+      "problem": null
+    },
+    {
+      "pin": "abcdeg",
+      "problem": null
+    },
+    {
+      "pin": "Abcdef",
+      "problem": null
+    },
+    {
+      "pin": "Kettle!42x",
+      "problem": null
+    },
+    {
+      "pin": "12345",
+      "problem": "tooShort"
+    },
+    {
+      "pin": "",
+      "problem": "tooShort"
+    },
+    {
+      "pin": "Seven-Grey-Owls/Watch_The~Harbour@Night+Count:9(Lamps)&3[Boats]!x",
+      "problem": "tooLong"
+    },
+    {
+      "pin": "12 456",
+      "problem": "badCharacter"
+    },
+    {
+      "pin": "12345\t",
+      "problem": "badCharacter"
+    },
+    {
+      "pin": "١٢٣٤٥٦",
+      "problem": "badCharacter"
+    },
+    {
+      "pin": "pässword1",
+      "problem": "badCharacter"
+    },
+    {
+      "pin": "é",
+      "problem": "badCharacter"
+    }
+  ],
+  "refused": [
+    {
+      "name": "a signature made with another account key",
+      "kind": "file",
+      "reads": "invalid",
+      "file": "{\"v\":2,\"body\":\"eyJhY2NvdW50IjoiYW05ZVZFY2V1X1hVMUtrTzhSNWZ2Tk9HME4wNTVzejhTSEYxV0cwOVlVMCIsInBpbklkIjoieXQrWVVObVN0UUh4TUNldGtxbFhvZz09Iiwic2FsdCI6IjBVR0xJWDAvb1dNa0N5SnVONjlzNHc9PSIsImJveCI6ImhPa3hCZVpKc1p1QnorQkxjb2RGdHV3QkdWdHljeXQ4M2MzYm03cjZKVURzOVpBQjF0ZVFmN0NOZytleGdqeWVVMWxKUlFQb1FYQ0hwRzZkcFNldHd5SUkveXlFV0Ira09iaFNlTXRVR3lHT1ErbnlnbFpKS1dyTUo1Vjk0cFFFZFQ3THBkRE5lem9JS3hiOURXdExaSXI1WktmRkVTTFhQZjBKS3VDd2VmY2I3QjBhWVhhR0k4R0RqR1h5bnJiWHlxWFVQVlY4aEFlbzQxWGc5MFU0OGQwPSJ9\",\"sig\":\"PjljySII3dbvsQiMesNei5MWOkr/+BWNgoFIwoQR5v0mZluJ57d1FsRs9BZBIc7y1rQsihF56gJ/eoMdE8fvBA==\"}"
+    },
+    {
+      "name": "a body with a fifth field",
+      "kind": "file",
+      "reads": "invalid",
+      "file": "{\"v\":2,\"body\":\"eyJhY2NvdW50IjoiYW05ZVZFY2V1X1hVMUtrTzhSNWZ2Tk9HME4wNTVzejhTSEYxV0cwOVlVMCIsInBpbklkIjoieXQrWVVObVN0UUh4TUNldGtxbFhvZz09Iiwic2FsdCI6IjBVR0xJWDAvb1dNa0N5SnVONjlzNHc9PSIsImJveCI6ImhPa3hCZVpKc1p1QnorQkxjb2RGdHV3QkdWdHljeXQ4M2MzYm03cjZKVURzOVpBQjF0ZVFmN0NOZytleGdqeWVVMWxKUlFQb1FYQ0hwRzZkcFNldHd5SUkveXlFV0Ira09iaFNlTXRVR3lHT1ErbnlnbFpKS1dyTUo1Vjk0cFFFZFQ3THBkRE5lem9JS3hiOURXdExaSXI1WktmRkVTTFhQZjBKS3VDd2VmY2I3QjBhWVhhR0k4R0RqR1h5bnJiWHlxWFVQVlY4aEFlbzQxWGc5MFU0OGQwPSIsIm1hc3RlcktleSI6Ii9GVVpsYWhQeGhqaTI1bDZiRHZMcWdkbWJqaVV2OEMzaFYzWkh6TjNVTWc9In0=\",\"sig\":\"fJLekCTBG8eRzd0O6lAbV4ieQ6XvtK2ooL+Xe2kcSs53dF65oDVc0hZ33bh9Lmw7Dp7j6CbyliaIfa1QSAOSAw==\"}"
+    },
+    {
+      "name": "a version 1 file",
+      "kind": "file",
+      "reads": "plain",
+      "file": "{\"v\":1,\"masterKey\":\"/FUZlahPxhji25l6bDvLqgdmbjiUv8C3hV3ZHzN3UMg=\",\"createdAt\":\"2026-11-01T00:00:00.000Z\"}"
+    },
+    {
+      "name": "a good file with spaces after it, one byte over 64 KB",
+      "kind": "file",
+      "reads": "invalid",
+      "file": "{\"v\":2,\"body\":\"eyJhY2NvdW50IjoiYW05ZVZFY2V1X1hVMUtrTzhSNWZ2Tk9HME4wNTVzejhTSEYxV0cwOVlVMCIsInBpbklkIjoieXQrWVVObVN0UUh4TUNldGtxbFhvZz09Iiwic2FsdCI6IjBVR0xJWDAvb1dNa0N5SnVONjlzNHc9PSIsImJveCI6ImhPa3hCZVpKc1p1QnorQkxjb2RGdHV3QkdWdHljeXQ4M2MzYm03cjZKVURzOVpBQjF0ZVFmN0NOZytleGdqeWVVMWxKUlFQb1FYQ0hwRzZkcFNldHd5SUkveXlFV0Ira09iaFNlTXRVR3lHT1ErbnlnbFpKS1dyTUo1Vjk0cFFFZFQ3THBkRE5lem9JS3hiOURXdExaSXI1WktmRkVTTFhQZjBKS3VDd2VmY2I3QjBhWVhhR0k4R0RqR1h5bnJiWHlxWFVQVlY4aEFlbzQxWGc5MFU0OGQwPSJ9\",\"sig\":\"zNeat2Eb6eUJMAcnwEz344amROfKf4N5J0H00OkbhVP9D5NDNZGfkZB32U32GGASIl9DnfyCeECmb0pIueSjAQ==\"}",
+      "paddedToBytes": 65537
+    },
+    {
+      "name": "a key box whose master key is for another account",
+      "kind": "keyBox",
+      "pinPrivate": "1d6d9b301c6d0efe68c7d801ccc735734d0a4b1e7f48c766799d44c54b5aa0de",
+      "account": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "box": "QrBo7vleuauCia0aQVw3OH/a3M32fCZkdfURG3HKti0DvrgwExYvpKwwKSIcZ31z/vjZzbSVnBderWLnCTr+xK+W28UXmobvDKM8aAFHdBmZU2W5++1E6f6AKIe854PUxXDF0vUYj83auhy6E0DXt6Ww2taQAosKkxWCaqZGmpEAy65LkEgRfVRudWsJL7HPZrBrzKy3FRBA8+SgvU9B0Ao="
+    },
+    {
+      "name": "a key box whose payload says it is a handover",
+      "kind": "keyBox",
+      "pinPrivate": "1d6d9b301c6d0efe68c7d801ccc735734d0a4b1e7f48c766799d44c54b5aa0de",
+      "account": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "box": "JGO0TypDNVfyst1Dgu/Az53TmMViezjQRJwINAclhyteu5ZrKTxVkD4YbTG9/wG8MPGBNkadJMtY7zKYdEhu7Mxml6WQsTPOTZOQEHu6NjpucLKoW3FxTB3k9vU9XosmxlbSoMlW2QAsxiFUDsKHJpDBRizBicOOKW9bo+ht5WkaafJ0nXWK7CKvZ7P3DEaeGdQ1gPmLT/6SuXErrem8d85n"
+    },
+    {
+      "name": "a key box whose sender key is all zeros",
+      "kind": "keyBox",
+      "pinPrivate": "1d6d9b301c6d0efe68c7d801ccc735734d0a4b1e7f48c766799d44c54b5aa0de",
+      "account": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "box": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADEXnIAfyrCaDLDOmNqnAvNpoQzl+EDUigStHzTIB6/3bqpxj3HW4lU9flTo0dYqEFetdVM9aAJew=="
+    },
+    {
+      "name": "a key box whose sender key is a point of order 8",
+      "kind": "keyBox",
+      "pinPrivate": "1d6d9b301c6d0efe68c7d801ccc735734d0a4b1e7f48c766799d44c54b5aa0de",
+      "account": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "box": "4Ot6fDtBuK4WVuP68Z/EatoJjeucMrH9hmIFFl9JuABRVnNCv4YwvBGtYPqKY02R5wb8AQlRMM1Vg2kOTFgf9IyFVHBBo7ziXLk7jTkGzpN69/9amIPLBQ=="
+    },
+    {
+      "name": "a handover whose from is another account",
+      "kind": "handoverBox",
+      "recipientPrivate": "9dcba519bc8a6fb5bd6685880819f4c11f3695d13a0fd79e723b0520949398e7",
+      "fromAccount": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "box": "45xRQTzfeGE9jGSmb6EIwgQA3A4hU/CkFtfpIcyD6Rj74DspD9e1kHLk97L3QD3t0OiTofwYKVkHfsIBGt0jRdpe2LHj/Clv4nA9d+LpMl+4xpUuZ4qJ7scbFX8nph4mne1akfky12JnJ4mvNmFVEur7fwZHOtnpqyhxYywityeiI5kdqHTwgWfXQK3jrkX5BtQlmUnkVecLFzVNB6JxmgcRULklOjuHMD7v7WfHnA5GMsM+bv7Wb9uWhD5sUEPkBKp5twEgo9/WesDvd9H1yQ3gXMC3Guc="
+    },
+    {
+      "name": "a handover that leads back to the account it leaves",
+      "kind": "handoverBox",
+      "recipientPrivate": "9dcba519bc8a6fb5bd6685880819f4c11f3695d13a0fd79e723b0520949398e7",
+      "fromAccount": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "box": "45xRQTzfeGE9jGSmb6EIwgQA3A4hU/CkFtfpIcyD6RgBqXWOqjo02+yAZhNPIWlnSqydkZMGMWnKRpxwOrtoM6rT+6skicO+oea+bv0MxajZp+W2dRcaDVKZggotCyCks0RvRT5sN+5+wjB+VBQm4lTK76UHsV0Of+wICueIWvHZq5WIQhweSd0VUVpSlAHbDPT0Y9mUAKd5tmsVU47UUyA91afz0YZ2XAEOzfg//peER6oCTkDaSjXPZCVfpw3/eDt47Lw8xLg6db2KpQ6jwaq/IEGCvOg="
+    },
+    {
+      "name": "a key box where a handover belongs",
+      "kind": "handoverBox",
+      "recipientPrivate": "9dcba519bc8a6fb5bd6685880819f4c11f3695d13a0fd79e723b0520949398e7",
+      "fromAccount": "am9eVEceu_XU1KkO8R5fvNOG0N055sz8SHF1WG09YU0",
+      "box": "45xRQTzfeGE9jGSmb6EIwgQA3A4hU/CkFtfpIcyD6RjWVsGNLtUrU6/3+/LteyW6p8V7CTAlo+baRAO1uWzq3GwQAy3XqxGZsjE5bwEljJabZStD1L3ckorUo3kyIhMCwggJsFQcVqzIPkUe6EC1MBDOfAQX+Q6tZaGedzAxfDJTSICAnMWM0nei65tudbTZmhHVQrzyVwZ+n9WzN9NCe+U="
+    }
+  ],
+  "requests": {
+    "signed": [
+      {
+        "method": "PUT",
+        "path": "/api/account/pin",
+        "body": "{\"expectedId\":null,\"id\":\"XM0AYEERB5hKKBqTvsdbbQ==\",\"authKey\":\"12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=\",\"relayKey\":\"khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=\"}",
+        "message": "socketagent-account-v1\nPUT\n/api/account/pin\n1800000000000\nfba66a7aa559f3f10fb9f4c84397b1de665ed71b53c1aca0ee277772dce42e8d",
+        "headers": {
+          "X-SA-Account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "X-SA-Time": "1800000000000",
+          "X-SA-Signature": "gIsdmNbivXnaF+FVSdNYw/tb3vG3JV+vC0GoNgmRcYQJSPoZaoJCYvC1F+IaVx1+iipY1WPBF8agw03MaFW3Dw=="
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/account/pin/reset",
+        "body": "",
+        "message": "socketagent-account-v1\nPOST\n/api/account/pin/reset\n1800000000000\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "headers": {
+          "X-SA-Account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "X-SA-Time": "1800000000000",
+          "X-SA-Signature": "kc1VfxTXD5nnwcwSKyenT3yfr0SpVkNze40krePn+BnGH0CieEG/UDz2F1WwoYc/3aX/ENmKFMCBpvrU+548Aw=="
+        }
+      },
+      {
+        "method": "POST",
+        "path": "/api/account/pin/claim",
+        "body": "{\"from\":\"034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw\"}",
+        "message": "socketagent-account-v1\nPOST\n/api/account/pin/claim\n1800000000000\n6c1877226a9d7eff47859c14a45538a3d22245d5738380fb16db2825164139eb",
+        "headers": {
+          "X-SA-Account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "X-SA-Time": "1800000000000",
+          "X-SA-Signature": "9TYOzaWMhK0CN7I49q0UnjcZsJrEDC+wXtxSe3RYV+92sHZozFCwHHNitbAUar5F6H4YEgw2WlxFqSvWHc4BBg=="
+        }
+      }
+    ],
+    "unlock": {
+      "method": "POST",
+      "path": "/api/account/pin/unlock",
+      "body": "{\"account\":\"7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90\",\"id\":\"XM0AYEERB5hKKBqTvsdbbQ==\",\"authKey\":\"12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=\"}"
+    }
+  },
+  "counter": {
+    "accounts": [
+      {
+        "name": "first",
+        "masterKey": "81a5b15f21f52d2b221be91416dc77d50a1aa4f9731be5b0f9e173339638f786",
+        "signingSeed": "4b28f966e020fd0f06916d9cb0b3cc2b6696d37517c252b6cda2f17379fb5121",
+        "accountId": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90"
+      },
+      {
+        "name": "second",
+        "masterKey": "6f4c81ec6ca40f3053f5959fe1b354aa7e4d39597deb2a4accc5b45bc80de94b",
+        "signingSeed": "de6aa6a8c46ef2eaf7a3d1927cbe98a50032212036f1c40ec334875d6a5dea2f",
+        "accountId": "034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw"
+      },
+      {
+        "name": "third",
+        "masterKey": "f9241565d26c0aa46f5954204dbe2c53605c54d2a35d5097913bf1d9db7cddad",
+        "signingSeed": "017c7cd0abe835caf55adf64debc3f465c79060c46fb45bf48900dc066d66efd",
+        "accountId": "8nXzlmMkhZdlDZxEf5YArTAiLJd2zETSxptS91LRL_k"
+      },
+      {
+        "name": "deleted",
+        "masterKey": "8feb9f9c11ca9de24df24a9e04f0b15d5b461151a7d7bd0928047ad6027bf204",
+        "signingSeed": "ada5d1ea279cf5d805e1c81311cd3b59913ea4eaa827c21a267c065be1cfbe46",
+        "accountId": "woKeKrinhOC-1saaK8JFsNs__qLljAl-TvmoTdfYQTA"
+      },
+      {
+        "name": "missing",
+        "masterKey": "703b302f8f385285211942159907e1a34b788b253cbf25902cab57d72b308c58",
+        "signingSeed": "93c1028207f31437f62afb8348f9291151df88fa4be6293fb4c6d6945f92a225",
+        "accountId": "XFPZBAkN2ElVF_1CzWPRbgVS6ShXIVbOeRNYxQ0FfOI"
+      }
+    ],
+    "events": [
+      {
+        "at": 1800000000000,
+        "op": "create",
+        "account": "first",
+        "records": {}
+      },
+      {
+        "at": 1800000000000,
+        "op": "vault.get",
+        "account": "first",
+        "status": 200,
+        "reply": {
+          "pin": null
+        },
+        "records": {}
+      },
+      {
+        "at": 1800000000000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE="
+        },
+        "status": 404,
+        "reply": {
+          "error": "no_pin"
+        },
+        "records": {}
+      },
+      {
+        "at": 1800000000000,
+        "op": "pin.reset",
+        "account": "first",
+        "status": 404,
+        "reply": {
+          "error": "no_pin"
+        },
+        "records": {}
+      },
+      {
+        "at": 1800000000000,
+        "op": "pin.unlock",
+        "account": "missing",
+        "body": {
+          "account": "XFPZBAkN2ElVF_1CzWPRbgVS6ShXIVbOeRNYxQ0FfOI",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE="
+        },
+        "status": 404,
+        "reply": {
+          "error": "no_pin"
+        },
+        "records": {}
+      },
+      {
+        "at": 1800000000000,
+        "op": "pin.put",
+        "account": "missing",
+        "body": {
+          "expectedId": null,
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+          "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs="
+        },
+        "status": 404,
+        "reply": {
+          "error": "not_found"
+        },
+        "records": {}
+      },
+      {
+        "at": 1800000000000,
+        "op": "pin.put",
+        "account": "first",
+        "body": {
+          "expectedId": null,
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+          "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs="
+        },
+        "status": 200,
+        "reply": {
+          "id": "XM0AYEERB5hKKBqTvsdbbQ=="
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 0,
+            "lastWrongAt": 0,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000060000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 9,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 9,
+            "refillAt": 1800086460000,
+            "wrongTotal": 1,
+            "lastWrongAt": 1800000060000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000120000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 8,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 8,
+            "refillAt": 1800086460000,
+            "wrongTotal": 2,
+            "lastWrongAt": 1800000120000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000180000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 7,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 7,
+            "refillAt": 1800086460000,
+            "wrongTotal": 3,
+            "lastWrongAt": 1800000180000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000240000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 6,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 6,
+            "refillAt": 1800086460000,
+            "wrongTotal": 4,
+            "lastWrongAt": 1800000240000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000300000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 5,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 5,
+            "refillAt": 1800086460000,
+            "wrongTotal": 5,
+            "lastWrongAt": 1800000300000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000360000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 4,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 4,
+            "refillAt": 1800086460000,
+            "wrongTotal": 6,
+            "lastWrongAt": 1800000360000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000420000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 3,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 3,
+            "refillAt": 1800086460000,
+            "wrongTotal": 7,
+            "lastWrongAt": 1800000420000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000480000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 2,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 2,
+            "refillAt": 1800086460000,
+            "wrongTotal": 8,
+            "lastWrongAt": 1800000480000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000540000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 1,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 1,
+            "refillAt": 1800086460000,
+            "wrongTotal": 9,
+            "lastWrongAt": 1800000540000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000600000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 0,
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000660000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 429,
+        "reply": {
+          "error": "locked",
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000660000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE="
+        },
+        "status": 429,
+        "reply": {
+          "error": "locked",
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000660000,
+        "op": "vault.get",
+        "account": "first",
+        "status": 200,
+        "reply": {
+          "pin": {
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "triesLeft": 0,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastUnlockAt": 0
+          }
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000660000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE="
+        },
+        "status": 409,
+        "reply": {
+          "error": "changed"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000660000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbg=="
+        },
+        "status": 400,
+        "reply": {
+          "error": "invalid_body"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800000660000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdb",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE="
+        },
+        "status": 400,
+        "reply": {
+          "error": "invalid_body"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800086459999,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 429,
+        "reply": {
+          "error": "locked",
+          "retryAt": 1800086460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800086460000,
+        "op": "vault.get",
+        "account": "first",
+        "status": 200,
+        "reply": {
+          "pin": {
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "triesLeft": 1,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastUnlockAt": 0
+          }
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800086460000,
+            "wrongTotal": 10,
+            "lastWrongAt": 1800000600000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800086460000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 0,
+          "retryAt": 1800172860000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800172860000,
+            "wrongTotal": 11,
+            "lastWrongAt": 1800086460000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800259260000,
+        "op": "vault.get",
+        "account": "first",
+        "status": 200,
+        "reply": {
+          "pin": {
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "triesLeft": 2,
+            "wrongTotal": 11,
+            "lastWrongAt": 1800086460000,
+            "lastUnlockAt": 0
+          }
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 0,
+            "refillAt": 1800172860000,
+            "wrongTotal": 11,
+            "lastWrongAt": 1800086460000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800259260000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE="
+        },
+        "status": 200,
+        "reply": {
+          "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs="
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 11,
+            "lastWrongAt": 1800086460000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800262860000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 9,
+          "retryAt": 1800349260000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 9,
+            "refillAt": 1800349260000,
+            "wrongTotal": 12,
+            "lastWrongAt": 1800262860000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800266460000,
+        "op": "pin.reset",
+        "account": "first",
+        "status": 204,
+        "reply": null,
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 12,
+            "lastWrongAt": 1800262860000,
+            "lastResetAt": 1800266460000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800270060000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 9,
+          "retryAt": 1800356460000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 9,
+            "refillAt": 1800356460000,
+            "wrongTotal": 13,
+            "lastWrongAt": 1800270060000,
+            "lastResetAt": 1800266460000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800273660000,
+        "op": "pin.reset",
+        "account": "first",
+        "status": 429,
+        "reply": {
+          "error": "too_soon",
+          "retryAt": 1800352860000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 9,
+            "refillAt": 1800356460000,
+            "wrongTotal": 13,
+            "lastWrongAt": 1800270060000,
+            "lastResetAt": 1800266460000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800352860000,
+        "op": "pin.reset",
+        "account": "first",
+        "status": 204,
+        "reply": null,
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 13,
+            "lastWrongAt": 1800270060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800435660000,
+        "op": "pin.put",
+        "account": "first",
+        "body": {
+          "expectedId": null,
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+          "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI="
+        },
+        "status": 409,
+        "reply": {
+          "id": "XM0AYEERB5hKKBqTvsdbbQ=="
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+            "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE=",
+            "relayKey": "khiVgeEc9Hm4BYKdIntwV5gk3b0zam6BJ+qMYGZlyEs=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 13,
+            "lastWrongAt": 1800270060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800000000000
+          }
+        }
+      },
+      {
+        "at": 1800435660000,
+        "op": "pin.put",
+        "account": "first",
+        "body": {
+          "expectedId": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+          "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI="
+        },
+        "status": 200,
+        "reply": {
+          "id": "e/WHNaGBMyGL7eKg1cT/8w=="
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 13,
+            "lastWrongAt": 1800270060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800435720000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "XM0AYEERB5hKKBqTvsdbbQ==",
+          "authKey": "12cpm42i5vbSzy/5H7BUzAXGdfZBriFtS5vHcLoXbtE="
+        },
+        "status": 409,
+        "reply": {
+          "error": "changed"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 13,
+            "lastWrongAt": 1800270060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800435780000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 9,
+          "retryAt": 1800522180000
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439260000,
+        "op": "create",
+        "account": "second",
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439260000,
+        "op": "move",
+        "account": "first",
+        "to": "second",
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439260000,
+        "op": "pin.unlock",
+        "account": "first",
+        "body": {
+          "account": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg="
+        },
+        "status": 409,
+        "reply": {
+          "error": "changed"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439260000,
+        "op": "pin.unlock",
+        "account": "second",
+        "body": {
+          "account": "034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg="
+        },
+        "status": 404,
+        "reply": {
+          "error": "no_pin"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439260000,
+        "op": "pin.reset",
+        "account": "first",
+        "status": 410,
+        "reply": {
+          "error": "gone"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439260000,
+        "op": "pin.put",
+        "account": "first",
+        "body": {
+          "expectedId": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "id": "8+yrNDmzGCyOs6ic52kW9A==",
+          "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+          "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0="
+        },
+        "status": 410,
+        "reply": {
+          "error": "gone"
+        },
+        "records": {
+          "first": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439320000,
+        "op": "pin.claim",
+        "account": "second",
+        "body": {
+          "from": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90"
+        },
+        "status": 200,
+        "reply": {
+          "pin": true
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439380000,
+        "op": "pin.claim",
+        "account": "second",
+        "body": {
+          "from": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90"
+        },
+        "status": 200,
+        "reply": {
+          "pin": true
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439380000,
+        "op": "vault.get",
+        "account": "second",
+        "status": 200,
+        "reply": {
+          "pin": {
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "triesLeft": 9,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastUnlockAt": 1800259260000
+          }
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800522180000,
+            "wrongTotal": 14,
+            "lastWrongAt": 1800435780000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439440000,
+        "op": "pin.unlock",
+        "account": "second",
+        "body": {
+          "account": "034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 8,
+          "retryAt": 1800522180000
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 8,
+            "refillAt": 1800522180000,
+            "wrongTotal": 15,
+            "lastWrongAt": 1800439440000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800259260000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800439500000,
+        "op": "pin.unlock",
+        "account": "second",
+        "body": {
+          "account": "034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg="
+        },
+        "status": 200,
+        "reply": {
+          "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI="
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 15,
+            "lastWrongAt": 1800439440000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800522060000,
+        "op": "pin.unlock",
+        "account": "second",
+        "body": {
+          "account": "034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw",
+          "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 9,
+          "retryAt": 1800608460000
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800608460000,
+            "wrongTotal": 16,
+            "lastWrongAt": 1800522060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800525660000,
+        "op": "create",
+        "account": "third",
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800608460000,
+            "wrongTotal": 16,
+            "lastWrongAt": 1800522060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800435660000
+          }
+        }
+      },
+      {
+        "at": 1800525660000,
+        "op": "pin.put",
+        "account": "third",
+        "body": {
+          "expectedId": null,
+          "id": "8+yrNDmzGCyOs6ic52kW9A==",
+          "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+          "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0="
+        },
+        "status": 200,
+        "reply": {
+          "id": "8+yrNDmzGCyOs6ic52kW9A=="
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800608460000,
+            "wrongTotal": 16,
+            "lastWrongAt": 1800522060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800435660000
+          },
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 0,
+            "lastWrongAt": 0,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800525660000,
+        "op": "move",
+        "account": "second",
+        "to": "third",
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800608460000,
+            "wrongTotal": 16,
+            "lastWrongAt": 1800522060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800435660000
+          },
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 0,
+            "lastWrongAt": 0,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800525720000,
+        "op": "pin.unlock",
+        "account": "third",
+        "body": {
+          "account": "8nXzlmMkhZdlDZxEf5YArTAiLJd2zETSxptS91LRL_k",
+          "id": "8+yrNDmzGCyOs6ic52kW9A==",
+          "authKey": "lKLLw9DtIFd7ktPaCyDalh6oEbuPU37/tUXTNx25+mU="
+        },
+        "status": 403,
+        "reply": {
+          "error": "wrong_pin",
+          "triesLeft": 9,
+          "retryAt": 1800612120000
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800608460000,
+            "wrongTotal": 16,
+            "lastWrongAt": 1800522060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800435660000
+          },
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 9,
+            "refillAt": 1800612120000,
+            "wrongTotal": 1,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800525780000,
+        "op": "pin.claim",
+        "account": "third",
+        "body": {
+          "from": "7Ve9Yjw7UhnnQ42yAmHiXwLn2oQxG_9z0X6Gxn2Qs90"
+        },
+        "status": 409,
+        "reply": {
+          "error": "not_successor"
+        },
+        "records": {
+          "second": {
+            "v": 1,
+            "id": "e/WHNaGBMyGL7eKg1cT/8w==",
+            "authKey": "mj/7abKnAcDvrL/S/AROEp2vDFgfewQj4+2kK8Gv3Mg=",
+            "relayKey": "9aKazH1d+PDReumOUe/S7ufNCQzeprggxxpMwqywsXI=",
+            "tries": 9,
+            "refillAt": 1800608460000,
+            "wrongTotal": 16,
+            "lastWrongAt": 1800522060000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800435660000
+          },
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 9,
+            "refillAt": 1800612120000,
+            "wrongTotal": 1,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800525780000,
+        "op": "pin.claim",
+        "account": "third",
+        "body": {
+          "from": "034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw"
+        },
+        "status": 200,
+        "reply": {
+          "pin": true
+        },
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 9,
+            "refillAt": 1800612120000,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800525840000,
+        "op": "pin.claim",
+        "account": "third",
+        "body": {
+          "from": "034G6ZWgyRD_cBwK1p3wFZEGRULXcGQsorK9ucaTcjw"
+        },
+        "status": 200,
+        "reply": {
+          "pin": true
+        },
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 9,
+            "refillAt": 1800612120000,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800439500000,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800525900000,
+        "op": "pin.unlock",
+        "account": "third",
+        "body": {
+          "account": "8nXzlmMkhZdlDZxEf5YArTAiLJd2zETSxptS91LRL_k",
+          "id": "8+yrNDmzGCyOs6ic52kW9A==",
+          "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM="
+        },
+        "status": 200,
+        "reply": {
+          "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0="
+        },
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800525900000,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800529260000,
+        "op": "create",
+        "account": "deleted",
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800525900000,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800529260000,
+        "op": "pin.put",
+        "account": "deleted",
+        "body": {
+          "expectedId": null,
+          "id": "B9v0Tb2Fja5o6hCGBxfN6Q==",
+          "authKey": "N2Tvigk46DmWuhiYqBhr0YwsvXGNEmthkz3s2s5dh4I=",
+          "relayKey": "BGNNmQS4B+OYmuCnNUaY5AdMAoMgbBOKoT+ohvGO3t4="
+        },
+        "status": 200,
+        "reply": {
+          "id": "B9v0Tb2Fja5o6hCGBxfN6Q=="
+        },
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800525900000,
+            "setAt": 1800525660000
+          },
+          "deleted": {
+            "v": 1,
+            "id": "B9v0Tb2Fja5o6hCGBxfN6Q==",
+            "authKey": "N2Tvigk46DmWuhiYqBhr0YwsvXGNEmthkz3s2s5dh4I=",
+            "relayKey": "BGNNmQS4B+OYmuCnNUaY5AdMAoMgbBOKoT+ohvGO3t4=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 0,
+            "lastWrongAt": 0,
+            "lastResetAt": 0,
+            "lastUnlockAt": 0,
+            "setAt": 1800529260000
+          }
+        }
+      },
+      {
+        "at": 1800529320000,
+        "op": "delete",
+        "account": "deleted",
+        "status": 204,
+        "reply": null,
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800525900000,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800529380000,
+        "op": "pin.unlock",
+        "account": "deleted",
+        "body": {
+          "account": "woKeKrinhOC-1saaK8JFsNs__qLljAl-TvmoTdfYQTA",
+          "id": "B9v0Tb2Fja5o6hCGBxfN6Q==",
+          "authKey": "N2Tvigk46DmWuhiYqBhr0YwsvXGNEmthkz3s2s5dh4I="
+        },
+        "status": 409,
+        "reply": {
+          "error": "changed"
+        },
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800525900000,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800529380000,
+        "op": "pin.reset",
+        "account": "deleted",
+        "status": 410,
+        "reply": {
+          "error": "gone"
+        },
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800525900000,
+            "setAt": 1800525660000
+          }
+        }
+      },
+      {
+        "at": 1800529380000,
+        "op": "pin.put",
+        "account": "deleted",
+        "body": {
+          "expectedId": null,
+          "id": "B9v0Tb2Fja5o6hCGBxfN6Q==",
+          "authKey": "N2Tvigk46DmWuhiYqBhr0YwsvXGNEmthkz3s2s5dh4I=",
+          "relayKey": "BGNNmQS4B+OYmuCnNUaY5AdMAoMgbBOKoT+ohvGO3t4="
+        },
+        "status": 410,
+        "reply": {
+          "error": "gone"
+        },
+        "records": {
+          "third": {
+            "v": 1,
+            "id": "8+yrNDmzGCyOs6ic52kW9A==",
+            "authKey": "578ob3ysPJx2Zk1Rs+sR/SMqBQUo+BTQBcI2liDgbwM=",
+            "relayKey": "B89zSCU4sj0oAV/B3YwjA4g75SEdSGW7ch48Cg+Em/0=",
+            "tries": 10,
+            "refillAt": 0,
+            "wrongTotal": 17,
+            "lastWrongAt": 1800525720000,
+            "lastResetAt": 1800352860000,
+            "lastUnlockAt": 1800525900000,
+            "setAt": 1800525660000
+          }
+        }
+      }
+    ]
+  }
+}
