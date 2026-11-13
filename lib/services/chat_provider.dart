@@ -3357,6 +3357,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       pairingToken: pairingToken,
     );
     await _saveServerConfigs();
+    if (pairingChanged) _answerPairingReset(serverId);
     await _connMgr.setServers(_serverConfigs);
     if (pairingChanged) {
       _connMgr.getConnection(serverId)?.connect();
@@ -3406,6 +3407,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // ahead of what is stored.
     await _saveServerConfigs();
     final ws = _connMgr.getConnection(serverId);
+    if (reconnect && route == null) _answerPairingReset(serverId);
     if (reconnect) ws?.disconnect();
     await _connMgr.setServers(_serverConfigs);
     if (reconnect) ws?.connect();
@@ -8718,6 +8720,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         throw TimeoutException('The computer did not answer');
       },
     );
+  }
+
+  /// Answers a reset this app is waiting on for [serverId] with the new
+  /// pairing it has just stored, when the socket is about to close for it.
+  /// A computer hands the new pairing to its devices before it sends
+  /// `pairing_reset_result`, and the app leaves the old room on the first
+  /// of the two, so the result can come too late to be read. A reset left
+  /// waiting would time out and be sent again, which resets the computer a
+  /// second time. The result itself still answers when it gets here first.
+  void _answerPairingReset(String serverId) {
+    final waiting = _deviceRequestCompleters.remove(
+      '$serverId::pairing_reset_result',
+    );
+    for (final waiter in waiting ?? const <_DeviceRequestWaiter>[]) {
+      if (waiter.completer.isCompleted) continue;
+      waiter.completer.complete({'type': 'pairing_reset_result', 'ok': true});
+    }
   }
 
   /// Hands a result to the request that asked for it, matched by the

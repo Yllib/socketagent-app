@@ -9,17 +9,22 @@ import 'package:app/services/transport_v2.dart';
 /// reads `hs1` with the responder core, answers `hs2` with the status the
 /// test picks, and then seals and opens records under the two keys.
 class FakeV2Computer {
-  /// [staticKey] lets a test give this the same key as a fake old computer.
-  FakeV2Computer({this.roomId = 'test-room', Uint8List? staticKey})
-    : staticKey = staticKey ?? _crypto.randomPrivateKey();
+  /// [staticKey] lets a test give this the same key as a fake old computer,
+  /// and [secret] lets it play a computer whose pairing secret has changed.
+  FakeV2Computer({
+    this.roomId = 'test-room',
+    Uint8List? staticKey,
+    Uint8List? secret,
+  }) : staticKey = staticKey ?? _crypto.randomPrivateKey(),
+       secret =
+           secret ??
+           Uint8List.fromList(List.generate(32, (i) => (i * 7 + 3) % 256));
 
   static const _crypto = NoiseCrypto();
 
   final Uint8List staticKey;
   final String roomId;
-  final Uint8List secret = Uint8List.fromList(
-    List.generate(32, (i) => (i * 7 + 3) % 256),
-  );
+  final Uint8List secret;
 
   String get publicKey => base64Encode(_crypto.publicKey(staticKey));
   String get pairingSecret => base64Encode(secret);

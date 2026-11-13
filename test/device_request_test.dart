@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:app/models/server_config.dart';
 import 'package:app/services/chat_provider.dart';
@@ -26,18 +28,29 @@ void main() {
   late HttpServer server;
   late ChatProvider provider;
   late List<_Request> received;
+  late FakeV2Computer identity;
+
+  /// The computer's pairing secret now, which a reset replaces.
+  late Uint8List secret;
+
+  /// How many sockets the app has opened.
+  late int sockets;
 
   setUp(() async {
     mockProviderChannels();
     received = [];
-    final identity = FakeV2Computer(roomId: 'room');
+    sockets = 0;
+    identity = FakeV2Computer(roomId: 'room');
+    secret = identity.secret;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
       final socket = await WebSocketTransformer.upgrade(request);
+      sockets++;
       // Each socket is a lane with its own keys.
       final lane = FakeV2Computer(
         roomId: identity.roomId,
         staticKey: identity.staticKey,
+        secret: secret,
       );
       var open = false;
       socket.listen((frame) {
@@ -62,6 +75,18 @@ void main() {
 
     provider = ChatProvider();
     await provider.settingsReady;
+  });
+
+  tearDown(() async {
+    provider.dispose();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    await server.close(force: true);
+    unmockProviderChannels();
+  });
+
+  /// Adds the computer and waits for its direct connection. [relayUrl] is
+  /// the relay address stored for it, which this test never dials.
+  Future<void> connect({String? relayUrl}) async {
     final connected = provider.connMgr.statusStream.firstWhere(
       (update) => update.status == ConnectionStatus.connected,
     );
@@ -73,20 +98,14 @@ void main() {
         port: server.port,
         token: '',
         serverPubkey: identity.publicKey,
+        relayUrl: relayUrl ?? 'ws://127.0.0.1:${server.port}',
         pairingToken: identity.roomId,
         pairingSecret: identity.pairingSecret,
         transport: 2,
       ),
     );
     await connected.timeout(const Duration(seconds: 5));
-  });
-
-  tearDown(() async {
-    provider.dispose();
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    await server.close(force: true);
-    unmockProviderChannels();
-  });
+  }
 
   /// The next request of [type] the computer has not answered yet.
   Future<_Request> next(String type, {bool withId = true}) async {
@@ -106,6 +125,7 @@ void main() {
   }
 
   test('a lock is answered by its own list, not one on its way', () async {
+    await connect();
     // The list the app asks for on every connect, still unanswered.
     final onConnect = await next('device_list', withId: false);
     final locking = provider.lockDevices(id);
@@ -123,6 +143,7 @@ void main() {
   });
 
   test('a result with no ID does not answer a waiting removal', () async {
+    await connect();
     final removing = provider.removeRegisteredDevice(id, 'a-device');
     final remove = await next('device_remove');
 
@@ -149,7 +170,66 @@ void main() {
     await removing;
   });
 
+  /// The `pairing_update` a v2 computer sends its devices on a reset, with
+  /// a secret the fake computer holds from then on.
+  Map<String, Object?> newPairing() {
+    secret = Uint8List.fromList(List.filled(32, 9));
+    return {
+      'type': 'pairing_update',
+      'secret': base64Encode(secret),
+      'roomId': identity.roomId,
+    };
+  }
+
+  test('a reset on v2 is answered by its result on the same channel', () async {
+    await connect();
+    final resetting = provider.resetPairing(id);
+    final reset = await next('pairing_reset');
+    final opened = sockets;
+
+    // A v2 computer keeps its room. It hands over the new secret, then
+    // answers.
+    reset.reply(newPairing());
+    reset.reply({
+      'type': 'pairing_reset_result',
+      'requestId': reset.message['requestId'],
+      'ok': true,
+    });
+
+    await resetting.timeout(const Duration(seconds: 3));
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    expect(provider.serverConfigs.single.pairingSecret, base64Encode(secret));
+    expect(provider.connMgr.statusOf(id), ConnectionStatus.connected);
+    expect(sockets, opened);
+  });
+
+  test('a reset on v2 that reconnects is answered by the new secret', () async {
+    // An entry with no relay address gets the default one with its first
+    // new pairing, and reconnects for it before the result is read.
+    await connect(relayUrl: '');
+    final resetting = provider.resetPairing(id);
+    final reset = await next('pairing_reset');
+    final opened = sockets;
+    reset.reply(newPairing());
+
+    await resetting.timeout(const Duration(seconds: 3));
+    expect(provider.serverConfigs.single.pairingSecret, base64Encode(secret));
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+    while (sockets == opened ||
+        provider.connMgr.statusOf(id) != ConnectionStatus.connected) {
+      if (DateTime.now().isAfter(deadline)) fail('The app did not reconnect');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 300));
+    // One reset. A second would change the secret again.
+    expect(
+      received.where((request) => request.message['type'] == 'pairing_reset'),
+      isEmpty,
+    );
+  });
+
   test('the link list, which no computer tags, still answers', () async {
+    await connect();
     final loading = provider.loadComputerLinks(id);
     final list = await next('computer_link_list');
     list.reply({'type': 'computer_link_list_result', 'links': <Object>[]});

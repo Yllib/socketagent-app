@@ -7,7 +7,10 @@ import 'package:pinenacl/x25519.dart';
 /// every frame after that is sealed under it with a counted nonce. Enough
 /// for a test to stand in for a computer on a socket it owns.
 class FakeOldComputer {
-  final PrivateKey key = PrivateKey.generate();
+  /// [key] lets a test give each socket of one computer its own instance.
+  FakeOldComputer({PrivateKey? key}) : key = key ?? PrivateKey.generate();
+
+  final PrivateKey key;
   Box? _session;
   int _sent = 0;
 
