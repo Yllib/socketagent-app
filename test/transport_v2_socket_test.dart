@@ -406,6 +406,30 @@ void main() {
     expect(sentOldTransport(), isFalse);
   });
 
+  test('a silent direct handshake does not count against the relay', () async {
+    direct();
+    service.configureRelay(
+      relayUrl: 'ws://127.0.0.1:${server.port}',
+      pairingToken: computer.roomId,
+      cryptoService: crypto,
+      subscriberToken: 'subscriber',
+    );
+    service.connect();
+    await until(ConnectionStatus.error);
+    expect(joins, hasLength(1));
+
+    // The app moves to the relay. Its first silent handshake there is
+    // followed by the usual 3 s retry, and only the second slows it down.
+    relayInFront = true;
+    service
+      ..setMode(ConnectionMode.relay)
+      ..connect(force: true);
+    await Future<void>.delayed(const Duration(seconds: 8));
+
+    expect(joins, hasLength(3));
+    expect(service.reconnecting, isTrue);
+  });
+
   group('pairing_update', () {
     Map<String, Object?> update() => {
       'type': 'pairing_update',

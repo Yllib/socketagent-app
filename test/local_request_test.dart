@@ -226,10 +226,12 @@ void main() {
     /// app holding. Returns the path of each handshake.
     /// [recorded] is whether the server still has this key on its list and
     /// answers the request with the grant. Otherwise it holds the request
-    /// and nobody allows it.
+    /// and nobody allows it, or with [refused] turns it away at once, as it
+    /// does when it is holding all the requests it will.
     Future<List<String>> dialUnanswered({
       required bool request,
       bool recorded = true,
+      bool refused = false,
       int dials = 3,
     }) async {
       await local(request: request);
@@ -240,7 +242,15 @@ void main() {
         final path = (jsonDecode(frame as String) as Map)['path'] as String;
         paths.add(path);
         if (path != 'local-request') return;
-        if (recorded) {
+        if (refused) {
+          socket.add(
+            computer.answer(
+              frame,
+              status: 'refused',
+              reason: 'too_many_pending',
+            ),
+          );
+        } else if (recorded) {
           socket
             ..add(computer.answer(frame))
             ..add(computer.seal(grant()));
@@ -286,6 +296,24 @@ void main() {
         'direct',
         'direct',
         'direct',
+      ]);
+      expect(pairings, isEmpty);
+    });
+
+    test('asks again later when the server asked nobody', () async {
+      final paths = await dialUnanswered(
+        request: true,
+        refused: true,
+        dials: 6,
+      );
+
+      expect(paths, [
+        'direct',
+        'direct',
+        'local-request',
+        'direct',
+        'direct',
+        'local-request',
       ]);
       expect(pairings, isEmpty);
     });

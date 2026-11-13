@@ -183,8 +183,11 @@ class WebSocketService {
   // A socket runs one handshake. To run another the app dials again.
   bool _handshakeSent = false;
   Timer? _hs2Timer;
-  // Relay handshakes that got no `hs2`, since the last one that verified.
-  int _hs2Timeouts = 0;
+  // Handshakes in a row that got no `hs2`, since the last one that
+  // verified. The two routes are counted apart: a silent address on the
+  // LAN says nothing about the computer in the relay room.
+  int _silentRelayHandshakes = 0;
+  int _silentDirectHandshakes = 0;
   // A v2 channel the computer holds until a paired device answers. Only the
   // verdict is read from it.
   bool _held = false;
@@ -203,9 +206,10 @@ class WebSocketService {
   // the stored pairing, which is what `socketagent pair --reset` on the
   // computer leaves behind. The next dial asks again instead.
   bool _askLocalServerAgain = false;
-  // Set when that second request was not let straight in, so the server
-  // has this key on record no longer and a person has to allow it. An
-  // account the owner removed asks once per run, not once a minute.
+  // Set when that second request was held for approval, so the server has
+  // this key on record no longer and a person has to allow it. An account
+  // the owner removed asks once per run, not once a minute. A request the
+  // server refused outright showed nobody a prompt and does not set this.
   bool _askedAgainUnrecorded = false;
   // Whether this connection is that request. Fixed per connection. Such a
   // channel is never an application channel: it sends `transport_ready` and
@@ -317,7 +321,8 @@ class WebSocketService {
     _pairing = pairing;
     // What the computer refused was the old pairing.
     _retryNotBefore = null;
-    _hs2Timeouts = 0;
+    _silentRelayHandshakes = 0;
+    _silentDirectHandshakes = 0;
     _askLocalServerAgain = false;
     _askedAgainUnrecorded = false;
     if (_channel != null &&
@@ -764,15 +769,16 @@ class WebSocketService {
   /// may ask it for a pairing asks on the next dial.
   void _onHs2Timeout() {
     _handshake = null;
-    final silent = ++_hs2Timeouts >= 2;
     if (_mode == ConnectionMode.relay) {
-      if (silent) _retryNotBefore = DateTime.now().add(_refusedRetry);
-    } else if (silent &&
+      if (++_silentRelayHandshakes >= 2) {
+        _retryNotBefore = DateTime.now().add(_refusedRetry);
+      }
+    } else if (++_silentDirectHandshakes >= 2 &&
         _localRequest &&
         !_socketLocalRequest &&
         !_askedAgainUnrecorded) {
       _askLocalServerAgain = true;
-      _hs2Timeouts = 0;
+      _silentDirectHandshakes = 0;
     }
     _refuseConnection('no hs2 in time');
   }
@@ -791,7 +797,8 @@ class WebSocketService {
       _refuseConnection('hs2 refused: ${error.reason}');
       return;
     }
-    _hs2Timeouts = 0;
+    _silentRelayHandshakes = 0;
+    _silentDirectHandshakes = 0;
     final channel = PeerChannel.transport(
       sendKey: result.keys.sendKey,
       receiveKey: result.keys.receiveKey,
@@ -799,11 +806,6 @@ class WebSocketService {
     _peerChannel = channel;
     // The first record of every v2 channel, whatever the answer was.
     socket.sink.add(jsonEncode(channel.sealText(transportReadyMessage)));
-    if (_socketLocalRequest &&
-        _pairing != null &&
-        result.answer.status != HandshakeStatus.open) {
-      _askedAgainUnrecorded = true;
-    }
     switch (result.answer.status) {
       case HandshakeStatus.open:
         // A local request that is let in has the grant coming and nothing
@@ -811,7 +813,12 @@ class WebSocketService {
         if (!_socketLocalRequest) _onTransportOpen();
       case HandshakeStatus.pending:
         // The channel exists but carries nothing until a paired device
-        // allows this one. Both sides show the same code.
+        // allows this one. Both sides show the same code. A second local
+        // request that comes to this has now put its prompt before the
+        // paired devices, and is not made again this run.
+        if (_socketLocalRequest && _pairing != null) {
+          _askedAgainUnrecorded = true;
+        }
         _held = true;
         _lastHandshakeAwaited = true;
         _deviceAuth.held(approvalCode(result.keys.handshakeHash));
