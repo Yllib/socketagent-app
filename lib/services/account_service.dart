@@ -149,6 +149,8 @@ class AccountService extends ChangeNotifier {
       'Another device just set up this account. Sign in again.';
   static const pinNotChangedWords = 'The PIN was not changed.';
   static const _offlineWords = 'Could not reach the relay';
+  static const _uncheckedChangeWords =
+      'Could not check the account change. Trying again on the next sync.';
 
   /// The relay's limit on handover boxes in one frozen record.
   static const maxDevices = 64;
@@ -1115,14 +1117,7 @@ class AccountService extends ChangeNotifier {
       _notice = pinNotChangedWords;
       await _persist();
     }
-    AccountVault? frozen;
-    try {
-      frozen = AccountVault.fromJson(
-        jsonDecode(keys.openVault(reply.ciphertext)),
-      );
-    } catch (error) {
-      debugPrint('[Account] Frozen list unreadable: ${error.runtimeType}');
-    }
+    final frozen = _frozenList(keys, reply);
     final base = _vault ?? const AccountVault();
     final merged = frozen == null
         ? base
@@ -1189,6 +1184,19 @@ class AccountService extends ChangeNotifier {
     return null;
   }
 
+  /// The device list a moved account's frozen record holds, or null when it
+  /// does not open with [keys].
+  AccountVault? _frozenList(AccountKeys keys, VaultMoved reply) {
+    try {
+      return AccountVault.fromJson(
+        jsonDecode(keys.openVault(reply.ciphertext)),
+      );
+    } catch (error) {
+      debugPrint('[Account] Frozen list unreadable: ${error.runtimeType}');
+      return null;
+    }
+  }
+
   /// Adds [account] as the last account this device moved away from.
   void _left(String account) {
     _leftAccounts = [
@@ -1242,17 +1250,25 @@ class AccountService extends ChangeNotifier {
       final reply = await client.get(keys);
       switch (reply) {
         case final VaultMoved moved:
-          if (_commitLanded(moved, pending)) {
-            await _takeNewKey(pending);
-            return true;
+          switch (_commitLanded(keys, moved, pending)) {
+            case true:
+              await _takeNewKey(pending);
+              return true;
+            case false:
+              // Another change won. The sync follows it, and refuses it
+              // when a device this change was removing made it.
+              _notice = lostChangeWords;
+              _pending = pending.copyWith(stage: KeyChangeStage.lost);
+              await _persist();
+              await _deleteNewAccount(client, pending);
+              return true;
+            case null:
+              // The move may be this change's own, and then the other
+              // devices are in the new account. It is not deleted on a
+              // guess.
+              _lastError = _uncheckedChangeWords;
+              return false;
           }
-          // Another change won. The sync follows it, and refuses it when a
-          // device this change was removing made it.
-          _notice = lostChangeWords;
-          _pending = pending.copyWith(stage: KeyChangeStage.lost);
-          await _persist();
-          await _deleteNewAccount(client, pending);
-          return true;
         case VaultGone():
           // A deleted account takes no writes, so the commit never lands.
           await _undoKeyChange(client, pending);
@@ -1275,23 +1291,33 @@ class AccountService extends ChangeNotifier {
             // Something else wrote, or the commit landed. Read again.
           }
         case VaultLive() || VaultMissing():
-          _lastError =
-              'Could not check the account change. Trying again on the '
-              'next sync.';
+          _lastError = _uncheckedChangeWords;
           return false;
       }
     }
-    _lastError =
-        'Could not check the account change. Trying again on the next sync.';
+    _lastError = _uncheckedChangeWords;
     return false;
   }
 
-  /// Whether the frozen record holds this device's own handover box to the
-  /// key [pending] made.
-  bool _commitLanded(VaultMoved reply, PendingKeyChange pending) {
+  /// Whether the move in [reply] is the commit of [pending]. True when this
+  /// device's own handover box opens to the key the change made. False
+  /// only on proof that another change won: the box opens to another
+  /// account, or the frozen list revokes this device. Null when neither
+  /// can be shown, as with no device key, no box of its own, or a box that
+  /// does not open.
+  bool? _commitLanded(
+    AccountKeys keys,
+    VaultMoved reply,
+    PendingKeyChange pending,
+  ) {
+    if (devicePublicKey.isEmpty) return null;
     final box = reply.wrapped[devicePublicKey];
+    if (box == null) {
+      final frozen = _frozenList(keys, reply);
+      return frozen != null && frozen.isRevoked(devicePublicKey) ? false : null;
+    }
     final ownKey = _deviceKey();
-    if (box == null || ownKey == null) return false;
+    if (ownKey == null) return null;
     try {
       return openHandoverBox(
             box,
@@ -1300,7 +1326,7 @@ class AccountService extends ChangeNotifier {
           ).accountId ==
           pending.newKeys.accountId;
     } on FormatException {
-      return false;
+      return null;
     }
   }
 

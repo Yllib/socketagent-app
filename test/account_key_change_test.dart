@@ -996,6 +996,44 @@ void main() {
       }
     });
 
+    test('is kept, and the new account with it, while the device cannot '
+        'read its device key after the commit landed', () async {
+      final cloud = FakeCloud();
+      final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
+      final oldAccount = a.service.accountId!;
+      _dieOn(cloud, a, _isCommit, afterLanding: true);
+      await expectLater(a.service.removeDevice(c.publicKey), throwsStateError);
+      final newAccount = cloud.accounts[oldAccount]!.newAccountId!;
+      expect(await b.sync(), AccountSyncOutcome.synced);
+      expect(b.service.accountId, newAccount);
+
+      // The app starts and its device key does not load. It cannot open
+      // its own box, so it cannot tell whose move this is.
+      await a.restart();
+      a.service
+        ..devicePublicKey = ''
+        ..deviceKey = () => throw StateError('No key pair generated');
+      expect(await a.sync(), AccountSyncOutcome.offline);
+
+      expect(a.service.accountId, oldAccount);
+      expect(a.service.pending, isA<PendingKeyChange>());
+      expect(
+        a.service.lastError,
+        'Could not check the account change. Trying again on the next sync.',
+      );
+      expect(cloud.accounts[newAccount]!.live, isTrue);
+      expect(cloud.liveAccounts, [newAccount]);
+      expect(await b.sync(), AccountSyncOutcome.synced);
+      expect(b.service.accountId, newAccount);
+
+      // With the key back the change finishes.
+      await a.restart();
+      await _settle([a]);
+      expect(a.service.accountId, newAccount);
+      expect(a.service.pending, isNull);
+      expect(a.removedKeys, [c.publicKey]);
+    });
+
     test('carries on when the commit landed and its reply was lost', () async {
       final cloud = FakeCloud();
       final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
