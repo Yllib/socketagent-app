@@ -18,6 +18,41 @@ ServerConfig relayConfig({required String id, String name = 'Server'}) {
 }
 
 void main() {
+  test('a config holds a relay address with TLS, on this machine, or none', () {
+    ServerConfig withRelay(String relayUrl) =>
+        relayConfig(id: 'server-1').copyWith(relayUrl: relayUrl);
+
+    for (final allowed in [
+      'wss://relay.example.test',
+      'https://relay.example.test',
+      'ws://127.0.0.1:9000',
+      'ws://localhost:9000',
+      'ws://[::1]:9000',
+    ]) {
+      expect(withRelay(allowed).relayUrl, allowed);
+    }
+    for (final refused in [
+      'ws://relay.example.test',
+      'http://relay.example.test',
+      'ws://192.168.1.20:9000',
+      'ftp://relay.example.test',
+      'relay.example.test',
+      'not a url',
+    ]) {
+      expect(withRelay(refused).relayUrl, isEmpty, reason: refused);
+      expect(withRelay(refused).isRelayPaired, isFalse, reason: refused);
+    }
+    // The relay's first address is the default relay today.
+    expect(withRelay('ws://jarofdirt.info:9988').relayUrl, defaultRelayUrl);
+
+    // The same check from a stored or imported entry.
+    final stored = ServerConfig.fromJson({
+      ...relayConfig(id: 'server-1').toJson(),
+      'relayUrl': 'ws://relay.example.test',
+    });
+    expect(stored.relayUrl, isEmpty);
+  });
+
   test('expected-online preference survives serialization', () {
     final config = ServerConfig(
       id: 'server-1',

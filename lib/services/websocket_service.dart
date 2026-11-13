@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../models/file_download_frame.dart';
+import '../models/server_config.dart' show isLoopbackHost;
 import 'crypto_service.dart';
 import 'device_auth.dart';
 import 'socket_frame_decoder.dart';
@@ -35,11 +36,6 @@ bool shouldStartWebSocketConnection(
       (status != ConnectionStatus.connecting &&
           status != ConnectionStatus.connected);
 }
-
-/// Whether [host] names this machine, so nothing sent to it crosses a
-/// network.
-bool isLoopbackHost(String host) =>
-    const {'127.0.0.1', 'localhost', '::1'}.contains(host);
 
 bool relayTransportIsConfigured({
   required String relayUrl,

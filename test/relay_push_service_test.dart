@@ -6,6 +6,19 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('registers only at a relay with TLS or on this machine', () {
+    expect(RelayPushService.registrationUri('ws://relay.example'), isNull);
+    expect(RelayPushService.registrationUri('http://relay.example'), isNull);
+    expect(
+      RelayPushService.registrationUri('ws://127.0.0.1:9000').toString(),
+      'http://127.0.0.1:9000/api/push/register',
+    );
+    expect(
+      RelayPushService.registrationUri('wss://relay.example').toString(),
+      'https://relay.example/api/push/register',
+    );
+  });
+
   test('registers the FCM token with the credentialed relay', () async {
     late Map<String, dynamic> received;
     final client = MockClient((request) async {

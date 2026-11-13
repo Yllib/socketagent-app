@@ -1,7 +1,33 @@
 import 'dart:math';
 
-/// The relay every computer uses unless its pairing code names another.
+/// The relay every computer uses unless its pairing code names another. It
+/// is also the only relay the app's own account work goes to: subscription,
+/// billing, reports and the vault.
 const String defaultRelayUrl = 'wss://relay.jarofdirt.info';
+
+/// Whether [host] names this machine, so nothing sent to it crosses a
+/// network.
+bool isLoopbackHost(String host) =>
+    const {'127.0.0.1', 'localhost', '::1'}.contains(host);
+
+/// [value] as a relay address a config may hold: `wss://` or `https://`, or
+/// `ws://` or `http://` to this machine. The relay's first address becomes
+/// [defaultRelayUrl]. Anything else comes back empty, the same as no relay.
+/// Every [ServerConfig] is built through this, so an address from a pairing
+/// code, an import, the vault or a text field is checked once, where it is
+/// stored, and the subscriber token never follows one over plain HTTP.
+String storableRelayUrl(String value) {
+  final trimmed = value.trim();
+  if (trimmed == 'ws://jarofdirt.info:9988') return defaultRelayUrl;
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null || uri.host.isEmpty) return '';
+  final allowed = switch (uri.scheme) {
+    'wss' || 'https' => true,
+    'ws' || 'http' => isLoopbackHost(uri.host),
+    _ => false,
+  };
+  return allowed ? trimmed : '';
+}
 
 class ServerConfig {
   final String id;
@@ -50,7 +76,7 @@ class ServerConfig {
     this.autoRoute = false,
     this.expectedOnline = false,
     this.sortOrder = 0,
-    this.relayUrl = '',
+    String relayUrl = '',
     this.pairingToken = '',
     String serverPubkey = '',
     this.pairingSecret = '',
@@ -59,6 +85,7 @@ class ServerConfig {
     this.colorValue,
     this.systemPrompt = '',
   }) : serverPubkey = normalizeServerPubkey(serverPubkey),
+       relayUrl = storableRelayUrl(relayUrl),
        transport = transport == 2 ? 2 : null;
 
   /// Whether this computer is on transport v2 here, for good.

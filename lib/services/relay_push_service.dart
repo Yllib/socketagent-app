@@ -2,9 +2,14 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import '../models/server_config.dart';
+
 class RelayPushService {
+  /// Where a computer's relay registers a phone for pushes, or null when
+  /// [relayUrl] is not one a config may hold. The request carries the
+  /// subscriber token, so it never goes out over plain HTTP to a network.
   static Uri? registrationUri(String relayUrl) {
-    var value = relayUrl.trim();
+    var value = storableRelayUrl(relayUrl);
     if (value.isEmpty) return null;
     value = value
         .replaceFirst('wss://', 'https://')
