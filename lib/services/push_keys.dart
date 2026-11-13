@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
+import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_config.dart';
@@ -22,6 +22,10 @@ typedef PushKey = ({String tag, String key});
 /// secure storage is only ever opened from the main isolate.
 class PushKeys {
   static const _prefsKey = 'push_keys_v1';
+
+  /// The IDs of the saved computers still on the old transport, the only
+  /// ones whose pushes come plain.
+  static const _plainKey = 'push_plain_servers_v1';
 
   /// Whether this platform keeps push keys. Only Android receives pushes,
   /// so nowhere else are the keys written.
@@ -51,27 +55,45 @@ class PushKeys {
     return result;
   }
 
-  /// Brings the stored keys in line with [configs]. Called whenever the
-  /// computers are loaded or saved, which covers every way a pairing secret
-  /// arrives: a scanned code, a carry-over, `pairing_update` and the vault.
+  /// Brings the stored keys, and the list of computers whose pushes come
+  /// plain, in line with [configs]. Called whenever the computers are loaded
+  /// or saved, which covers every way a pairing secret arrives: a scanned
+  /// code, a carry-over, `pairing_update` and the vault.
   static Future<void> sync(Iterable<ServerConfig> configs) async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getString(_prefsKey);
     if (!kept) {
       if (stored != null) await prefs.remove(_prefsKey);
+      if (prefs.containsKey(_plainKey)) await prefs.remove(_plainKey);
       return;
     }
     final updated = _encode(next(_decode(stored), configs));
     if (updated != stored) await prefs.setString(_prefsKey, updated);
+    final plain = [
+      for (final config in configs)
+        if (!config.isV2) config.id,
+    ];
+    if (!listEquals(plain, prefs.getStringList(_plainKey))) {
+      await prefs.setStringList(_plainKey, plain);
+    }
   }
 
-  /// Whether this device holds push keys for the computer [serverId], which
-  /// means that computer's pushes come sealed and a plain one is not its own.
-  static Future<bool> holds(Object? serverId) async {
-    if (serverId is! String) return false;
+  /// Whether a plain push that names [serverId] is shown. Only a saved
+  /// computer still on the old transport sends one, and the relay puts this
+  /// device's own ID for that computer on it. So a plain push that names no
+  /// computer, one this device never saved, or one on transport v2 is not
+  /// shown, and none is once every saved computer is on v2.
+  ///
+  /// Until the app has been opened once after the update that added the
+  /// list, there is none to read. Then only a plain push under the name of
+  /// a computer this device holds push keys for is turned away.
+  static Future<bool> takesPlain(Object? serverId) async {
     final prefs = await SharedPreferences.getInstance();
+    // The background isolate keeps its own copy of the preferences.
     await prefs.reload();
-    return _decode(prefs.getString(_prefsKey))[serverId]?.isNotEmpty ?? false;
+    final plain = prefs.getStringList(_plainKey);
+    if (plain != null) return plain.contains(serverId);
+    return _decode(prefs.getString(_prefsKey))[serverId]?.isEmpty ?? true;
   }
 
   /// The plaintext map of a sealed push, with its `serverId` added, or null

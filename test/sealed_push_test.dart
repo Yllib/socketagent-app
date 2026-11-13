@@ -33,6 +33,15 @@ void main() {
     transport: 2,
   );
 
+  /// A saved computer still on the old transport, whose pushes come plain.
+  final oldComputer = ServerConfig(
+    id: 'old-computer',
+    name: 'Old computer',
+    host: '',
+    port: 8085,
+    token: '',
+  );
+
   /// One sealed entry, as the computer writes it for the secret of [seed].
   String entry(int seed, Map<String, Object?> push, {Uint8List? key}) {
     final sealed = NaclCipher.secret(
@@ -132,6 +141,54 @@ void main() {
     expect(prefs.getString('push_keys_v1'), isNull);
   });
 
+  group('a plain push', () {
+    const approval = <String, dynamic>{
+      'title': 'New device',
+      'body': 'Allow it',
+      'kind': 'device_pending',
+    };
+    Future<Map<String, dynamic>?> named(String? serverId) =>
+        PushNotificationService.openPushData({
+          ...approval,
+          'serverId': ?serverId,
+        });
+
+    test('is shown only for a saved computer on the old transport', () async {
+      await PushKeys.sync([computer(1), oldComputer]);
+
+      expect(await named('old-computer'), {
+        ...approval,
+        'serverId': 'old-computer',
+      });
+      expect(await named('computer'), isNull);
+      expect(await named('nobody'), isNull);
+      expect(await named(null), isNull);
+    });
+
+    test('is never shown once every saved computer is on v2', () async {
+      await PushKeys.sync([computer(1), oldComputer]);
+      await PushKeys.sync([computer(1), computer(2, id: 'old-computer')]);
+
+      expect(await named('old-computer'), isNull);
+      expect(await named('computer'), isNull);
+      expect(await named(null), isNull);
+    });
+
+    test('is read by the push keys alone until the app has run once', () async {
+      // An update the user has not opened yet: the keys an earlier build
+      // stored, and no list of computers.
+      await PushKeys.sync([computer(1)]);
+      final prefs = await SharedPreferences.getInstance();
+      final keys = prefs.getString('push_keys_v1');
+      if (keys == null) fail('the keys should be stored');
+      SharedPreferences.setMockInitialValues({'push_keys_v1': keys});
+
+      expect(await named('computer'), isNull);
+      expect(await named('old-computer'), isNotNull);
+      expect(await named(null), isNotNull);
+    });
+  });
+
   test(
     'the handler shows sealed and plain pushes and drops the rest',
     () async {
@@ -152,7 +209,7 @@ void main() {
         return true;
       });
       addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
-      await PushKeys.sync([computer(1)]);
+      await PushKeys.sync([computer(1), oldComputer]);
 
       Future<void> deliver(String id, Map<String, dynamic> data) =>
           PushNotificationService.handleRemoteMessage(
@@ -175,8 +232,11 @@ void main() {
       });
       expect(shown, hasLength(2));
 
-      // Nor is a plain push under the name of a computer that seals its own.
+      // Nor is a plain push under the name of a computer that seals its
+      // own, or of none this device has saved.
       await deliver('m4', {...finished, 'serverId': 'computer'});
+      await deliver('m6', {...finished, 'serverId': 'nobody'});
+      await deliver('m7', finished);
       await PushNotificationService.handleRemoteMessage(
         const RemoteMessage(
           messageId: 'm5',
