@@ -198,6 +198,11 @@ class AccountService extends ChangeNotifier {
   /// The [VaultAccountPin.mark] of the PIN this device last set, typed or
   /// showed the notice for.
   String? _knownPin;
+
+  /// The relay's `setAt` for that PIN's record, or null until the relay has
+  /// said. The same id with another `setAt` is a record someone wrote
+  /// again.
+  int? _knownPinSetAt;
   List<String> _leftAccounts = [];
 
   /// The accounts in [_leftAccounts] whose PIN record the relay was asked to
@@ -302,13 +307,24 @@ class AccountService extends ChangeNotifier {
     return (count: pin.wrongTotal - shown, lastWrongAt: pin.lastWrongAt);
   }
 
-  /// The vault names a PIN this device has not set, typed or been told of,
-  /// or null. A known id with another salt or public key is such a PIN.
-  /// [deviceName] is who the vault says set it, which any member can write.
+  /// The account has a PIN this device has not set, typed or been told of,
+  /// or null. That is a vault entry with an id it does not know, a known id
+  /// with another salt or public key, or a relay record written again
+  /// under the id it knows. [deviceName] is who the vault says set it,
+  /// which any member can write. It is null when the vault names no device
+  /// in the list, and for a record written again, which the vault does not
+  /// tell of.
   ({int setAt, String? deviceName})? get newPinNotice {
     final pin = _vault?.pin;
-    if (_keys == null || pin == null || pin.mark == _knownPin) return null;
-    return (setAt: pin.setAt, deviceName: deviceNameOf(pin.setBy));
+    if (_keys == null || pin == null) return null;
+    if (pin.mark != _knownPin) {
+      return (setAt: pin.setAt, deviceName: deviceNameOf(pin.setBy));
+    }
+    final known = _knownPinSetAt;
+    final relay = _relayPin;
+    final setAt = relay?.id == pin.id ? relay?.setAt : null;
+    if (known == null || setAt == null || setAt == known) return null;
+    return (setAt: setAt, deviceName: null);
   }
 
   /// Drive holds a valid key file for an account this device does not
@@ -335,6 +351,7 @@ class AccountService extends ChangeNotifier {
         _seenResets.addAll(_strings(record['seenResets']));
         _shownWrongTotal = (record['shownWrongTotal'] as num?)?.toInt();
         _knownPin = record['knownPin'] as String?;
+        _knownPinSetAt = (record['knownPinSetAt'] as num?)?.toInt();
         _leftAccounts = _strings(record['leftAccounts']);
         _claimedFrom.addAll(_strings(record['claimedFrom']));
         _pinAsked = record['pinAsked'] == true;
@@ -380,6 +397,7 @@ class AccountService extends ChangeNotifier {
         if (_seenResets.isNotEmpty) 'seenResets': _seenResets.toList(),
         'shownWrongTotal': ?_shownWrongTotal,
         'knownPin': ?_knownPin,
+        'knownPinSetAt': ?_knownPinSetAt,
         if (_leftAccounts.isNotEmpty) 'leftAccounts': _leftAccounts,
         if (_claimedFrom.isNotEmpty) 'claimedFrom': _claimedFrom.toList(),
         if (_pinAsked) 'pinAsked': true,
@@ -593,12 +611,13 @@ class AccountService extends ChangeNotifier {
         _pending = null;
         _synced = true;
         _knownPin = made.public.mark;
+        _knownPinSetAt = null;
         _shownWrongTotal = 0;
         _lastSyncedAt = _clock();
         await _persist();
         notifyListeners();
         try {
-          await _withRelay(
+          _knownPinSetAt = await _withRelay(
             (client) => client.putPin(
               keys,
               expectedId: null,
@@ -607,6 +626,7 @@ class AccountService extends ChangeNotifier {
               relayKey: made.relayKey,
             ),
           );
+          await _persist();
           await drive.write(_keyFile(keys, made.public));
         } catch (error) {
           // The next sync shows "PIN must be set again", or writes the
@@ -677,6 +697,8 @@ class AccountService extends ChangeNotifier {
           setAt: 0,
           setBy: '',
         ).mark;
+        // The first sync stores the relay's `setAt` for it.
+        _knownPinSetAt = null;
         _pinAsked = true;
         await _persist();
         notifyListeners();
@@ -901,6 +923,9 @@ class AccountService extends ChangeNotifier {
         // The PIN write landed. The vault and the Drive file follow.
         local = local.copyWith(pin: pending.pin);
         _knownPin = pending.pin.mark;
+        // Null after the app died before the answer came. The PIN step
+        // then stores what the relay says now.
+        _knownPinSetAt = pending.setAt;
       } else {
         _notice = pinNotChangedWords;
       }
@@ -1011,6 +1036,15 @@ class AccountService extends ChangeNotifier {
       return false;
     }
     _pinMustBeSet = false;
+    if (_knownPinSetAt == null && pin.mark == _knownPin) {
+      // This device knows the PIN and has no time for its record yet: it
+      // typed the PIN, restored with the recovery key, or the relay did
+      // not say before.
+      if (relayPin.setAt case final setAt?) {
+        _knownPinSetAt = setAt;
+        await _persist();
+      }
+    }
     final session = _session;
     if (session == null) return false;
     try {
@@ -1311,7 +1345,12 @@ class AccountService extends ChangeNotifier {
     _lastVersion = 0;
     _synced = true;
     _pinAsked = true;
-    if (pending.newPin case final pin?) _knownPin = pin.mark;
+    // With no new PIN the record moves over as it is, `setAt` included, so
+    // what this device knows of it still holds.
+    if (pending.newPin case final pin?) {
+      _knownPin = pin.mark;
+      _knownPinSetAt = pending.newPinSetAt;
+    }
     _pending = pending.copyWith(stage: KeyChangeStage.committed);
     await _persist();
     notifyListeners();
@@ -1405,7 +1444,7 @@ class AccountService extends ChangeNotifier {
             ciphertext: newKeys.sealVault(jsonEncode(changed.toJson())),
           );
           if (made != null && !pinSent) {
-            await client.putPin(
+            final setAt = await client.putPin(
               newKeys,
               expectedId: null,
               id: made.public.id,
@@ -1413,6 +1452,8 @@ class AccountService extends ChangeNotifier {
               relayKey: made.relayKey,
             );
             pinSent = true;
+            // Saved with the commit's version, just below.
+            pending = pending.copyWith(newPinSetAt: setAt);
           }
           wrapped = {
             for (final device in changed.devices)
@@ -1576,7 +1617,7 @@ class AccountService extends ChangeNotifier {
     _pending = PendingPin(made.public);
     await _persist();
     try {
-      await _withRelay(
+      final setAt = await _withRelay(
         (client) => client.putPin(
           keys,
           expectedId: _relayPin?.id,
@@ -1585,6 +1626,8 @@ class AccountService extends ChangeNotifier {
           relayKey: made.relayKey,
         ),
       );
+      _pending = PendingPin(made.public, setAt: setAt);
+      await _persist();
     } on PinConflict {
       _pending = null;
       await _persist();
@@ -1639,7 +1682,9 @@ class AccountService extends ChangeNotifier {
   Future<void> acknowledgeNewPin() async {
     final pin = _vault?.pin;
     if (_keys == null || pin == null) return;
+    final relay = _relayPin;
     _knownPin = pin.mark;
+    _knownPinSetAt = relay?.id == pin.id ? relay?.setAt : null;
     await _persist();
     notifyListeners();
   }
@@ -1927,6 +1972,7 @@ class AccountService extends ChangeNotifier {
     _seenResets.clear();
     _shownWrongTotal = null;
     _knownPin = null;
+    _knownPinSetAt = null;
     _leftAccounts = [];
     _claimedFrom.clear();
     _pinAsked = false;

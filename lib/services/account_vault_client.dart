@@ -15,10 +15,16 @@ class RelayPin {
     required this.wrongTotal,
     required this.lastWrongAt,
     required this.lastUnlockAt,
+    required this.setAt,
   });
 
   /// Names the PIN, as the vault and the Drive file do.
   final String id;
+
+  /// Unix ms on the relay's clock when this record's keys were written, or
+  /// null from a relay that does not say. A record whose id went away and
+  /// came back with other keys has a later one.
+  final int? setAt;
 
   /// Wrong tries a new device has left, counting the ones that came back.
   final int triesLeft;
@@ -43,9 +49,13 @@ class RelayPin {
       wrongTotal: number('wrongTotal'),
       lastWrongAt: number('lastWrongAt'),
       lastUnlockAt: number('lastUnlockAt'),
+      setAt: _setAt(raw['setAt']),
     );
   }
 }
+
+/// A relay's `setAt`, or null when it sent none. Zero is not a time.
+int? _setAt(Object? raw) => raw is num && raw > 0 ? raw.toInt() : null;
 
 /// The relay's answer to a read of an account's vault.
 sealed class VaultReply {
@@ -281,9 +291,11 @@ class AccountVaultClient {
     }
   }
 
-  /// Sets the account's PIN record. [expectedId] is the PIN the relay
-  /// holds now, or null for none. Throws [PinConflict] when it is not.
-  Future<void> putPin(
+  /// Sets the account's PIN record and returns the relay's `setAt` for it,
+  /// or null from a relay that does not say. [expectedId] is the PIN the
+  /// relay holds now, or null for none. Throws [PinConflict] when it is
+  /// not. [id] must be a new one.
+  Future<int?> putPin(
     AccountKeys keys, {
     required String? expectedId,
     required String id,
@@ -306,6 +318,7 @@ class AccountVaultClient {
       throw PinConflict(current is String ? current : null);
     }
     if (response.statusCode != 200) throw _failure(response);
+    return _setAt(_json(response)?['setAt']);
   }
 
   /// Gives a new device its ten tries back. The relay allows one reset in

@@ -792,7 +792,7 @@ Future<PinNoticeChoice?> showWrongTriesDialog(
       'password and set a new PIN.',
 );
 
-/// The vault names a PIN this device did not know. [deviceName] is what
+/// The account has a PIN this device did not know. [deviceName] is what
 /// the vault says set it, or null when it names no device in the list.
 Future<PinNoticeChoice?> showNewPinDialog(
   BuildContext context, {
@@ -802,9 +802,10 @@ Future<PinNoticeChoice?> showNewPinDialog(
   context,
   title: 'New account PIN',
   text:
-      'The account PIN changed on ${accountDate(setAt)}. The account says '
-      '${deviceName ?? 'a device that is not in the list'} did it. If that '
-      'was not you, remove any device you do not know and set a new PIN.',
+      'The account PIN changed on ${accountDate(setAt)}. '
+      '${deviceName == null ? 'The account does not say which device did it.' : 'The account says $deviceName did it.'} '
+      'If that was not you, remove any device you do not know and set a new '
+      'PIN.',
 );
 
 /// Shows the account's one-time prompt and its two notices over [child],

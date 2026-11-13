@@ -680,6 +680,30 @@ void main() {
       expect(b.service.newPinNotice, isNull);
     });
 
+    testWidgets('a PIN record written again under the same id says no '
+        'device', (tester) async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      cloud.now += 5000;
+      await rewritePinUnderItsId(cloud, a);
+      await _pump(tester, host: b.service);
+      await b.sync();
+      await tester.pumpAndSettle();
+
+      expect(find.text('New account PIN'), findsOneWidget);
+      expect(
+        find.text(
+          'The account PIN changed on ${accountDate(cloud.now)}. The account '
+          'does not say which device did it. If that was not you, remove any '
+          'device you do not know and set a new PIN.',
+        ),
+        findsOneWidget,
+      );
+      await tester.tap(find.text('It was me'));
+      await tester.pumpAndSettle();
+      expect(b.service.newPinNotice, isNull);
+    });
+
     testWidgets('It was me on a new PIN changes nothing', (tester) async {
       final cloud = FakeCloud();
       final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);

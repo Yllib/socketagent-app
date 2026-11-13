@@ -6,6 +6,7 @@ import 'package:app/services/account_crypto.dart';
 import 'package:app/services/account_key_file.dart';
 import 'package:app/services/account_pin.dart';
 import 'package:app/services/account_service.dart';
+import 'package:app/services/account_vault_client.dart';
 import 'package:app/services/google_auth.dart';
 import 'package:app/services/secure_storage_service.dart';
 import 'package:crypto/crypto.dart' as hashes;
@@ -18,8 +19,10 @@ import 'package:pinenacl/ed25519.dart';
 // tables say, a Google Drive app data folder, and devices that can die
 // after any request and start again from what they had saved.
 //
-// The relay here counts no requests, so its only rate limit is the one a
-// test switches on for new accounts. It has no size limits, no account cap,
+// The relay here counts no requests and knows no addresses, so its only
+// rate limit is the one a test switches on for new accounts. The real one
+// counts new accounts by the first 48 bits of an IPv6 address and the other
+// limits by 64. It has no size limits, no account cap,
 // no clock check, no 503 on an empty folder and no damaged files. A try is
 // not saved before the compare, since nothing here can crash in between.
 // Everything else follows `account-vault.ts`, `account-pin.ts` and the
@@ -114,6 +117,10 @@ class FakeCloud {
   /// `rate_limited`, as the relay does past 30 new accounts a day from one
   /// address.
   bool newAccountsLimited = false;
+
+  /// Off for a relay from before `setAt`, which names no time for a PIN
+  /// record on the vault read or in the answer to a PIN write.
+  bool sendsSetAt = true;
   int _nextFile = 1;
   int _nextCreated = 1760300000000;
 
@@ -286,6 +293,7 @@ class FakeCloud {
       'wrongTotal': pin.wrongTotal,
       'lastWrongAt': pin.lastWrongAt,
       'lastUnlockAt': pin.lastUnlockAt,
+      if (sendsSetAt) 'setAt': pin.setAt,
     };
   }
 
@@ -428,18 +436,23 @@ class FakeCloud {
     if (!record.live) return _json(410, {'error': 'gone'});
     final current = pins[account];
     if (current?.id != expectedId) return _json(409, {'id': current?.id});
+    // Always later than the record it replaces, so two writes that bring
+    // an old id back cannot bring its `setAt` back.
+    final setAt = current == null || now > current.setAt
+        ? now
+        : current.setAt + 1;
     pins[account] =
         RelayPinRecord(
             id: id as String,
             authKey: authKey as String,
             relayKey: relayKey as String,
-            setAt: now,
+            setAt: setAt,
           )
           ..wrongTotal = current?.wrongTotal ?? 0
           ..lastWrongAt = current?.lastWrongAt ?? 0
           ..lastResetAt = current?.lastResetAt ?? 0
           ..lastUnlockAt = current?.lastUnlockAt ?? 0;
-    return _json(200, {'id': id});
+    return _json(200, {'id': id, if (sendsSetAt) 'setAt': setAt});
   }
 
   http.Response _claim(
@@ -759,6 +772,38 @@ const otherPin = '917345';
 
 /// A PIN account with a device for each of [names] signed in and synced.
 /// The first made the account with [goodPin] and the rest joined with it.
+/// Writes the PIN record of [device]'s account away to another id and back
+/// to the id it had, with other keys, as a holder of the account key can.
+/// The vault is left as it is. Returns the `setAt` the relay gave the
+/// second write.
+Future<int?> rewritePinUnderItsId(FakeCloud cloud, Device device) async {
+  final keys = AccountKeys.fromMasterKey(
+    decodeRecoveryKey(device.service.recoveryKey!)!,
+  );
+  final id = cloud.pins[keys.accountId]!.id;
+  Uint8List filled(int length, int byte) =>
+      Uint8List.fromList(List.filled(length, byte));
+  final other = base64Encode(filled(16, 9));
+  final client = AccountVaultClient(
+    'https://relay.test',
+    client: cloud.clientFor(device),
+  );
+  await client.putPin(
+    keys,
+    expectedId: id,
+    id: other,
+    authKey: filled(32, 1),
+    relayKey: filled(32, 2),
+  );
+  return client.putPin(
+    keys,
+    expectedId: other,
+    id: id,
+    authKey: filled(32, 3),
+    relayKey: filled(32, 4),
+  );
+}
+
 Future<List<Device>> pinAccount(FakeCloud cloud, List<String> names) async {
   final devices = [for (final name in names) Device(name, cloud)];
   await devices.first.createAccount(goodPin);

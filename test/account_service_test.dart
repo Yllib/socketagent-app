@@ -912,6 +912,7 @@ void main() {
       fromAccount: 'old',
       removed: const ['gone'],
       newPin: pin,
+      newPinSetAt: 9,
       commitVersion: 7,
       stage: KeyChangeStage.lost,
     );
@@ -920,15 +921,18 @@ void main() {
             as PendingKeyChange;
     expect(read.toJson(), change.toJson());
     expect(read.newPin!.id, pin.id);
+    expect(read.newPinSetAt, 9);
     expect(read.withoutCommit().commitVersion, isNull);
+    expect(read.withoutCommit().newPinSetAt, 9);
     expect(
       PendingChange.fromJson(const PendingCreate().toJson()),
       isA<PendingCreate>(),
     );
-    expect(
-      (PendingChange.fromJson(PendingPin(pin).toJson()) as PendingPin).pin.salt,
-      pin.salt,
-    );
+    final pinChange =
+        PendingChange.fromJson(PendingPin(pin, setAt: 4).toJson())
+            as PendingPin;
+    expect(pinChange.pin.salt, pin.salt);
+    expect(pinChange.setAt, 4);
     expect(PendingChange.fromJson({'type': 'later'}), isNull);
   });
 }

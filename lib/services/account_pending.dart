@@ -20,7 +20,9 @@ sealed class PendingChange {
         return const PendingCreate();
       case 'pin':
         final pin = VaultAccountPin.fromJson(raw['pin']);
-        return pin == null ? null : PendingPin(pin);
+        return pin == null
+            ? null
+            : PendingPin(pin, setAt: (raw['setAt'] as num?)?.toInt());
       case 'key':
         final masterKey = raw['newMasterKey'];
         final from = raw['fromAccount'];
@@ -38,6 +40,7 @@ sealed class PendingChange {
                 if (key is String) key,
           ],
           newPin: VaultAccountPin.fromJson(raw['newPin']),
+          newPinSetAt: (raw['newPinSetAt'] as num?)?.toInt(),
           commitVersion: (raw['commitVersion'] as num?)?.toInt(),
           stage: stage,
         );
@@ -60,12 +63,20 @@ final class PendingCreate extends PendingChange {
 /// reports [pin]'s id, the PIN write landed and the vault and the Drive
 /// file follow. If it reports another id, the PIN was not changed.
 final class PendingPin extends PendingChange {
-  const PendingPin(this.pin);
+  const PendingPin(this.pin, {this.setAt});
 
   final VaultAccountPin pin;
 
+  /// The relay's `setAt` from its answer to the PIN write, or null while
+  /// no answer has arrived.
+  final int? setAt;
+
   @override
-  Map<String, Object?> toJson() => {'type': 'pin', 'pin': pin.toJson()};
+  Map<String, Object?> toJson() => {
+    'type': 'pin',
+    'pin': pin.toJson(),
+    'setAt': ?setAt,
+  };
 }
 
 /// How far a change of master key has got.
@@ -97,6 +108,7 @@ final class PendingKeyChange extends PendingChange {
     required this.fromAccount,
     required this.removed,
     required this.newPin,
+    this.newPinSetAt,
     this.commitVersion,
     this.stage = KeyChangeStage.started,
   });
@@ -114,6 +126,10 @@ final class PendingKeyChange extends PendingChange {
   /// the PIN the account has.
   final VaultAccountPin? newPin;
 
+  /// The relay's `setAt` for [newPin]'s record on the new account, from its
+  /// answer to the PIN write.
+  final int? newPinSetAt;
+
   /// The old account's version the commit named, saved before the commit is
   /// sent. Null means the commit was never sent.
   final int? commitVersion;
@@ -121,15 +137,19 @@ final class PendingKeyChange extends PendingChange {
 
   AccountKeys get newKeys => AccountKeys.fromMasterKey(newMasterKey);
 
-  PendingKeyChange copyWith({int? commitVersion, KeyChangeStage? stage}) =>
-      PendingKeyChange(
-        newMasterKey: newMasterKey,
-        fromAccount: fromAccount,
-        removed: removed,
-        newPin: newPin,
-        commitVersion: commitVersion ?? this.commitVersion,
-        stage: stage ?? this.stage,
-      );
+  PendingKeyChange copyWith({
+    int? newPinSetAt,
+    int? commitVersion,
+    KeyChangeStage? stage,
+  }) => PendingKeyChange(
+    newMasterKey: newMasterKey,
+    fromAccount: fromAccount,
+    removed: removed,
+    newPin: newPin,
+    newPinSetAt: newPinSetAt ?? this.newPinSetAt,
+    commitVersion: commitVersion ?? this.commitVersion,
+    stage: stage ?? this.stage,
+  );
 
   /// The same change with no commit sent, for after the relay refused one.
   PendingKeyChange withoutCommit() => PendingKeyChange(
@@ -137,6 +157,7 @@ final class PendingKeyChange extends PendingChange {
     fromAccount: fromAccount,
     removed: removed,
     newPin: newPin,
+    newPinSetAt: newPinSetAt,
   );
 
   @override
@@ -146,6 +167,7 @@ final class PendingKeyChange extends PendingChange {
     'fromAccount': fromAccount,
     'removed': removed,
     if (newPin case final pin?) 'newPin': pin.toJson(),
+    'newPinSetAt': ?newPinSetAt,
     'commitVersion': ?commitVersion,
     'stage': stage.name,
   };

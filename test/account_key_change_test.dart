@@ -83,6 +83,10 @@ void _expectDriveCurrent(FakeCloud cloud, Device device) {
   expect(cloud.pins[device.service.accountId]!.id, file.pinId);
 }
 
+/// The record [device] keeps on its disk.
+Map<String, dynamic> _stored(Device device) =>
+    jsonDecode(device.storage.record!) as Map<String, dynamic>;
+
 void main() {
   group('Set new PIN', () {
     test('changes the PIN and not the key, and the other devices are '
@@ -101,6 +105,7 @@ void main() {
       expect(a.service.vault!.pin!.setAt, cloud.now);
       expect(a.service.pinState, AccountPinState.set);
       expect(a.service.newPinNotice, isNull);
+      expect(_stored(a)['knownPinSetAt'], cloud.pins[account]!.setAt);
       _expectDriveCurrent(cloud, a);
 
       await b.sync();
@@ -177,6 +182,61 @@ void main() {
         expect(device.service.vault!.pin!.salt, forged.pin!.salt);
         await device.service.acknowledgeNewPin();
         expect(device.service.newPinNotice, isNull);
+      }
+    });
+
+    test('shows the notice when two PIN writes bring the id back with other '
+        'keys', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      final account = a.service.accountId!;
+      final pin = a.service.vault!.pin!;
+      final first = cloud.pins[account]!.setAt;
+      // The device that set the PIN took the time from the relay's answer.
+      expect(_stored(a)['knownPinSetAt'], first);
+      expect(_stored(b)['knownPinSetAt'], first);
+
+      final setAt = await rewritePinUnderItsId(cloud, a);
+      // The relay's clock did not move, and the time still did.
+      expect(setAt, first + 2);
+      expect(cloud.pins[account]!.id, pin.id);
+
+      for (final device in [a, b]) {
+        expect(await device.sync(), AccountSyncOutcome.synced);
+        expect(device.service.vault!.pin!.mark, pin.mark);
+        expect(device.service.pinState, AccountPinState.set);
+        expect(device.service.newPinNotice, (setAt: setAt, deviceName: null));
+        await device.restart();
+        await device.sync();
+        expect(device.service.newPinNotice, (setAt: setAt, deviceName: null));
+        await device.service.acknowledgeNewPin();
+        expect(device.service.newPinNotice, isNull);
+        await device.restart();
+        await device.sync();
+        expect(device.service.newPinNotice, isNull);
+      }
+    });
+
+    test('a relay that names no time for the PIN raises no notice, and the '
+        'devices take the time when it starts to', () async {
+      final cloud = FakeCloud()..sendsSetAt = false;
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      await a.service.setNewPin(otherPin);
+      expect(a.service.newPinNotice, isNull);
+      await b.sync();
+      expect(b.service.newPinNotice!.deviceName, 'Pixel');
+      await b.service.acknowledgeNewPin();
+      expect(_stored(a).containsKey('knownPinSetAt'), isFalse);
+      expect(_stored(b).containsKey('knownPinSetAt'), isFalse);
+
+      cloud.sendsSetAt = true;
+      for (final device in [a, b]) {
+        await device.sync();
+        expect(device.service.newPinNotice, isNull);
+        expect(
+          _stored(device)['knownPinSetAt'],
+          cloud.pins[a.service.accountId]!.setAt,
+        );
       }
     });
 
@@ -287,6 +347,7 @@ void main() {
       await _settle([a, b, c]);
       final oldAccount = a.service.accountId!;
       final pinId = a.service.vault!.pin!.id;
+      final pinSetAt = cloud.pins[oldAccount]!.setAt;
       // Two wrong tries stand on the PIN record before the change.
       final stranger = Device('Stranger', cloud);
       expect(await stranger.service.signInWithGoogle(), isA<JoinAccount>());
@@ -326,8 +387,10 @@ void main() {
       // The PIN record moved as it was.
       expect(cloud.pins.keys, [newAccount]);
       expect(cloud.pins[newAccount]!.id, pinId);
+      expect(cloud.pins[newAccount]!.setAt, pinSetAt);
       expect(cloud.pins[newAccount]!.wrongTotal, 2);
       expect(cloud.pins[newAccount]!.tries, 8);
+      expect(_stored(a)['knownPinSetAt'], pinSetAt);
       expect(a.service.vault!.pin!.id, pinId);
       expect(a.service.pinState, AccountPinState.set);
       expect(a.service.newPinNotice, isNull);
