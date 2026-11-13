@@ -158,21 +158,76 @@ void main() {
     },
   );
 
-  test('a transfer with new keys updates the saved computer', () async {
+  test('a transfer with another key adds a computer of its own', () async {
     await withProvider((provider) async {
       await provider.importServerConfigs([computer]);
-      final repaired = {
+      final other = {
         ...computer,
         'serverPubkey': base64Encode(
           PrivateKey.generate().publicKey.asTypedList,
         ),
       };
-      expect(await provider.importServerConfigs([repaired]), 1);
+      expect(await provider.importServerConfigs([other]), 1);
+      expect(provider.serverConfigs.map((c) => c.serverPubkey), [
+        computer['serverPubkey'],
+        other['serverPubkey'],
+      ]);
+      // Each file now finds its own entry.
+      expect(await provider.importServerConfigs([other, computer]), 0);
+      expect(provider.serverConfigs, hasLength(2));
+    });
+  });
+
+  test('a transfer leaves a v2 computer its key and its pairing', () async {
+    await withProvider((provider) async {
+      final secret = base64Encode(List.filled(32, 7));
+      final paired = {
+        ...computer,
+        'host': '192.168.1.20',
+        'pairingSecret': secret,
+        'transport': 2,
+      };
+      await provider.importServerConfigs([paired]);
+      void expectPaired() {
+        final saved = provider.serverConfigs.first;
+        expect(saved.serverPubkey, computer['serverPubkey']);
+        expect(saved.isV2, isTrue);
+        expect(saved.pairingSecret, secret);
+        expect(saved.pairingToken, 'test-pairing');
+        expect(saved.relayUrl, computer['relayUrl']);
+      }
+
+      // Another device's direct-only entry for it: no secret, room or relay.
+      await provider.importServerConfigs([
+        {
+          'name': computer['name'],
+          'host': '192.168.1.20',
+          'token': 'a-token',
+          'serverPubkey': computer['serverPubkey'],
+        },
+      ]);
+      // The same with no key at all.
+      await provider.importServerConfigs([
+        {'name': computer['name'], 'host': '192.168.1.20'},
+      ]);
+      // An older export of the same computer: its room, and no secret.
+      await provider.importServerConfigs([
+        {...computer, 'relayUrl': ''},
+      ]);
       expect(provider.serverConfigs, hasLength(1));
-      expect(
-        provider.serverConfigs.single.serverPubkey,
-        repaired['serverPubkey'],
+      expectPaired();
+
+      // A file with another key for it does not take the entry over.
+      final otherKey = base64Encode(
+        PrivateKey.generate().publicKey.asTypedList,
       );
+      await provider.importServerConfigs([
+        {...computer, 'serverPubkey': otherKey},
+      ]);
+      expect(provider.serverConfigs, hasLength(2));
+      expectPaired();
+      expect(provider.serverConfigs.last.serverPubkey, otherKey);
+      expect(provider.serverConfigs.last.isV2, isFalse);
     });
   });
 

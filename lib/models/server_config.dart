@@ -85,13 +85,19 @@ class ServerConfig {
   }
 
   /// This entry as the next state of [previous]. "This computer is v2" is
-  /// set once and nothing clears it, so an update for the same computer that
-  /// carries no pairing secret, or no transport, keeps the previous ones.
+  /// set once and nothing clears it. A v2 pairing is its secret and its room
+  /// ID together: an update for the same computer that brings both replaces
+  /// the pair, and one that brings neither, or only one, keeps the previous
+  /// pair. An update that names no relay keeps the one a v2 entry had. So no
+  /// edit, import or vault entry can leave a v2 computer without its pairing.
   ServerConfig after(ServerConfig previous) {
-    if (previous.serverPubkey != serverPubkey) return this;
+    if (previous.serverPubkey != serverPubkey || !previous.isV2) return this;
+    final bringsPairing = pairingSecret.isNotEmpty && pairingToken.isNotEmpty;
     return copyWith(
-      pairingSecret: pairingSecret.isEmpty ? previous.pairingSecret : null,
-      transport: previous.transport,
+      pairingSecret: bringsPairing ? null : previous.pairingSecret,
+      pairingToken: bringsPairing ? null : previous.pairingToken,
+      relayUrl: relayUrl.isEmpty ? previous.relayUrl : null,
+      transport: 2,
     );
   }
 

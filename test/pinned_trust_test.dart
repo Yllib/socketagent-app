@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:app/models/account_vault.dart';
 import 'package:app/models/server_config.dart';
 import 'package:app/services/chat_provider.dart';
 import 'package:app/services/transport_v2.dart';
@@ -10,6 +11,7 @@ import 'package:pinenacl/x25519.dart';
 
 import 'support/fake_computers.dart';
 import 'support/fake_old_computer.dart';
+import 'support/fake_v2_computer.dart';
 
 /// Wire spec section 14 at the provider, where stored trust is written. On
 /// the old transport a computer's own sealed capabilities may move its relay
@@ -20,18 +22,29 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   late HttpServer server;
   late FakeOldComputer computer;
+  late FakeV2Computer v2;
   late ChatProvider provider;
   late Map<String, Object?> capabilities;
 
   setUp(() async {
     mockProviderChannels();
     computer = FakeOldComputer();
+    v2 = FakeV2Computer(roomId: 'room');
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
+      final speaksV2 = request.uri.queryParameters['e2e'] == '2';
       final socket = await WebSocketTransformer.upgrade(request);
       var exchanged = false;
       socket.listen((frame) {
-        if (exchanged || FakeOldComputer.isSealed(frame)) return;
+        if (exchanged) return;
+        if (speaksV2) {
+          if (FakeV2Computer.isRecord(frame)) return;
+          exchanged = true;
+          socket.add(v2.answer(frame));
+          socket.add(v2.seal(capabilities));
+          return;
+        }
+        if (FakeOldComputer.isSealed(frame)) return;
         exchanged = true;
         socket.add(computer.answer(frame));
         socket.add(computer.seal(capabilities));
@@ -48,7 +61,8 @@ void main() {
     unmockProviderChannels();
   });
 
-  Future<ServerConfig> connect() async {
+  /// Connects to the computer, on the old transport or over [onV2].
+  Future<ServerConfig> connect({bool onV2 = false}) async {
     final connected = provider.connMgr.statusStream.firstWhere(
       (update) => update.status == ConnectionStatus.connected,
     );
@@ -58,8 +72,11 @@ void main() {
         name: 'Computer',
         host: '127.0.0.1',
         port: server.port,
-        token: 'token',
-        serverPubkey: computer.publicKey,
+        token: onV2 ? '' : 'token',
+        serverPubkey: onV2 ? v2.publicKey : computer.publicKey,
+        pairingToken: onV2 ? v2.roomId : '',
+        pairingSecret: onV2 ? v2.pairingSecret : '',
+        transport: onV2 ? 2 : null,
       ),
     );
     await connected.timeout(const Duration(seconds: 5));
@@ -104,26 +121,92 @@ void main() {
     expect(config.relayUrl, defaultRelayUrl);
   });
 
-  group('a pairing a channel handed over', () {
-    final otherKey = base64Encode(PrivateKey.generate().publicKey.asTypedList);
-    final secret = base64Encode(List.filled(32, 5));
-    final newSecret = base64Encode(List.filled(32, 6));
+  test('a v2 computer names neither its room nor a token', () async {
+    capabilities = {
+      'type': 'server_capabilities',
+      'relayPairing': {
+        'relayUrl': 'wss://relay.example',
+        'pairingToken': 'other-room',
+        'serverPubkey': v2.publicKey,
+      },
+      'directRoute': {
+        'hosts': ['127.0.0.1'],
+        'port': server.port,
+        'token': 'a-token',
+      },
+    };
+    final config = await connect(onV2: true);
 
-    /// A stored entry at a port nothing listens on. The guards read the
-    /// config, so no socket is needed.
-    Future<void> store({String? key, bool v2 = false}) => provider.addServer(
-      ServerConfig(
-        id: 'computer',
-        name: 'Computer',
-        host: '127.0.0.1',
-        port: 1,
-        token: v2 ? '' : 'token',
-        serverPubkey: key ?? '',
-        pairingToken: v2 ? 'room' : '',
-        pairingSecret: v2 ? secret : '',
-        transport: v2 ? 2 : null,
-      ),
+    expect(config.pairingToken, 'room');
+    expect(config.pairingSecret, v2.pairingSecret);
+    expect(config.relayUrl, isEmpty);
+    expect(config.token, isEmpty);
+    expect(config.serverPubkey, v2.publicKey);
+  });
+
+  final otherKey = base64Encode(PrivateKey.generate().publicKey.asTypedList);
+  final secret = base64Encode(List.filled(32, 5));
+
+  /// A stored entry at a port nothing listens on, for what reads only the
+  /// config.
+  Future<void> store({String? key, bool v2 = false}) => provider.addServer(
+    ServerConfig(
+      id: 'computer',
+      name: 'Computer',
+      host: '127.0.0.1',
+      port: 1,
+      token: v2 ? '' : 'token',
+      serverPubkey: key ?? '',
+      pairingToken: v2 ? 'room' : '',
+      pairingSecret: v2 ? secret : '',
+      transport: v2 ? 2 : null,
+    ),
+  );
+
+  test('a vault entry cannot blank a v2 pairing or change the key', () async {
+    await store(key: computer.publicKey, v2: true);
+    final shared = VaultComputer.sharedFields(provider.serverConfigs.single);
+    Future<ServerConfig> apply(Map<String, Object?> fields, int at) async {
+      await provider.account.applyMerged!(
+        AccountVault(
+          computers: [
+            VaultComputer(
+              key: computer.publicKey,
+              updatedAt: at,
+              fields: fields,
+            ),
+          ],
+        ),
+      );
+      return provider.serverConfigs.single;
+    }
+
+    // Another device's entry for this computer, direct only and still on
+    // the old transport.
+    final renamed = await apply(
+      {...shared, 'name': 'Renamed', 'pairingToken': '', 'relayUrl': ''}
+        ..remove('pairingSecret')
+        ..remove('transport'),
+      2,
     );
+    expect(renamed.name, 'Renamed');
+    expect(renamed.isV2, isTrue);
+    expect(renamed.pairingSecret, secret);
+    expect(renamed.pairingToken, 'room');
+
+    // An entry filed under this computer's key that carries another.
+    final same = await apply({
+      ...shared,
+      'name': 'Someone else',
+      'serverPubkey': otherKey,
+    }, 3);
+    expect(same.serverPubkey, computer.publicKey);
+    expect(same.name, 'Renamed');
+    expect(same.pairingSecret, secret);
+  });
+
+  group('a pairing a channel handed over', () {
+    final newSecret = base64Encode(List.filled(32, 6));
 
     /// A carry-over answer when [carryOver], else a `pairing_update`.
     Future<ServerConfig> hand(String key, {required bool carryOver}) async {

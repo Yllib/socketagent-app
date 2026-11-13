@@ -178,6 +178,29 @@ void main() {
     expect(merged.isV2, isTrue);
     expect(merged.pairingSecret, 'c2VjcmV0');
 
+    // The room ID and the relay stay with the secret. An entry that brings
+    // a secret and a room of its own replaces the pair.
+    final relayed = paired.copyWith(relayUrl: 'wss://relay.example');
+    final blanked = paired
+        .copyWith(pairingToken: '', pairingSecret: '', relayUrl: '')
+        .after(relayed);
+    expect(blanked.pairingToken, 'room');
+    expect(blanked.pairingSecret, 'c2VjcmV0');
+    expect(blanked.relayUrl, 'wss://relay.example');
+    final halfNew = paired.copyWith(pairingSecret: 'bmV3').after(relayed);
+    expect(halfNew.pairingSecret, 'bmV3');
+    expect(halfNew.pairingToken, 'room');
+    final secretOnly = paired
+        .copyWith(pairingToken: '', pairingSecret: 'bmV3')
+        .after(relayed);
+    expect(secretOnly.pairingSecret, 'c2VjcmV0');
+    expect(secretOnly.pairingToken, 'room');
+    final renewed = paired
+        .copyWith(pairingToken: 'new-room', pairingSecret: 'bmV3')
+        .after(relayed);
+    expect(renewed.pairingSecret, 'bmV3');
+    expect(renewed.pairingToken, 'new-room');
+
     // A different key is a different computer and starts without one.
     final other = paired.withComputerKey('other');
     expect(other.isV2, isFalse);

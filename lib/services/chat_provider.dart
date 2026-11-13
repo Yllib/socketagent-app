@@ -3789,7 +3789,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Import server configs from compact maps (from a transfer decode).
   /// A computer already in the list, matched by name plus host or pairing
   /// token, takes the transferred credentials instead of being added twice.
-  /// Returns how many computers were added or changed.
+  /// A saved computer's pinned key is never changed here: a file that
+  /// carries another key for it describes another computer, which is added
+  /// as its own entry. Returns how many computers were added or changed.
   Future<int> importServerConfigs(List<Map<String, dynamic>> configs) async {
     int imported = 0;
     for (final m in configs) {
@@ -3806,21 +3808,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final pairingSecret = m['pairingSecret'] as String? ?? '';
       final transport = m['transport'] == 2 ? 2 : null;
 
-      final existing = _serverConfigs
-          .where(
-            (existing) =>
-                existing.name == name &&
-                ((host.isNotEmpty && existing.host == host) ||
-                    (pairingToken.isNotEmpty &&
-                        existing.pairingToken == pairingToken)),
-          )
-          .firstOrNull;
+      final sameRoute = _serverConfigs.where(
+        (existing) =>
+            existing.name == name &&
+            ((host.isNotEmpty && existing.host == host) ||
+                (pairingToken.isNotEmpty &&
+                    existing.pairingToken == pairingToken)),
+      );
+      // The entry with this very key, else one where either side has no key
+      // yet. An entry pinned to another key is never the match.
+      final existing =
+          sameRoute
+              .where(
+                (existing) =>
+                    serverPubkey.isNotEmpty &&
+                    existing.serverPubkey == serverPubkey,
+              )
+              .firstOrNull ??
+          sameRoute
+              .where(
+                (existing) =>
+                    existing.serverPubkey.isEmpty || serverPubkey.isEmpty,
+              )
+              .firstOrNull;
       if (existing != null) {
-        // A transfer that names no key cannot take a v2 computer's key
-        // away, which would put it back on the old transport.
-        final key = existing.isV2 && serverPubkey.isEmpty
-            ? existing.serverPubkey
-            : serverPubkey;
+        // A file that names no key leaves the saved one alone. A key is
+        // only ever set here on an entry that had none.
+        final key = serverPubkey.isEmpty ? existing.serverPubkey : serverPubkey;
         final updated = existing
             .withComputerKey(key)
             .copyWith(
@@ -8511,6 +8525,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         // Another machine's loopback entry for this computer must not
         // replace the route this device actually uses.
         if (incoming.isLoopbackOnly && !existing.isLoopbackOnly) continue;
+        // The vault never changes a saved computer's pinned key. An entry
+        // filed under one key that carries another is not applied.
+        if (existing.serverPubkey.isNotEmpty &&
+            incoming.serverPubkey != existing.serverPubkey) {
+          continue;
+        }
         await updateServer(incoming);
       } catch (error) {
         debugPrint('[Account] Skipped a vault update: $error');
