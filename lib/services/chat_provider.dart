@@ -4613,11 +4613,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// The other relays this device's computers are stored on, as HTTPS base
   /// URLs, each with TLS or on this machine. A relay the user runs issues
-  /// its own subscriber tokens and access codes, which the built-in relay
-  /// does not know, so the subscription check and the access code fall back
-  /// to these, and only after the built-in relay itself has said no. Each
-  /// already gets the subscriber token whenever a socket joins one of its
-  /// rooms. Nothing else is ever sent to them.
+  /// its own tokens and access codes, so the subscription check and the
+  /// access code fall back to these, but only after the built-in relay has
+  /// answered no and never when it could not be reached. A token the
+  /// built-in relay has just called inactive is worth nothing to a hostile
+  /// relay. The one cost left is that a stored relay can answer "active" and
+  /// hide the paywall, which gives it nothing else.
   List<String> _storedRelayHttpUrls() => {
     for (final config in _serverConfigs)
       if (config.isRelayPaired) ?_relayHttpUrlFromWs(config.relayUrl),
@@ -4758,22 +4759,24 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// What the relay at [httpUrl] says about [token], or null when it did not
-  /// answer. The relay reads the token from the query string and from
-  /// nowhere else, so that is where it rides until the relay takes a header.
-  /// The log line names neither the URL nor the error text, which holds it.
+  /// answer. The built-in relay takes the token in an `Authorization`
+  /// header, so there it is in no URL. Another stored relay may be an older
+  /// build that reads only the query string, so it gets that form. The log
+  /// line names neither the URL nor the error text, which can hold it.
   Future<Map<String, dynamic>?> _subscriptionStatusAt(
     String httpUrl,
     String token,
   ) async {
+    final status = Uri.parse('$httpUrl/api/subscription-status');
     try {
-      final response = await http
-          .get(
-            Uri.parse(
-              '$httpUrl/api/subscription-status'
-              '?token=${Uri.encodeComponent(token)}',
-            ),
-          )
-          .timeout(const Duration(seconds: 10));
+      final response =
+          await (httpUrl == relayHttpUrl
+                  ? http.get(
+                      status,
+                      headers: {'Authorization': 'Bearer $token'},
+                    )
+                  : http.get(status.replace(queryParameters: {'token': token})))
+              .timeout(const Duration(seconds: 10));
       if (response.statusCode != 200) return null;
       return jsonDecode(response.body) as Map<String, dynamic>;
     } catch (error) {

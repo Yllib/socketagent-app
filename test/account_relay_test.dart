@@ -93,6 +93,20 @@ void main() {
     });
   });
 
+  test('the built-in relay gets the token in a header, not the URL', () async {
+    await withProvider((provider) async {
+      expect(await provider.checkSubscriptionStatus(), isTrue);
+
+      final request = requests.single;
+      expect(request.method, 'GET');
+      expect(
+        request.url.toString(),
+        'https://$builtIn/api/subscription-status',
+      );
+      expect(request.headers['Authorization'], 'Bearer subscriber-token');
+    });
+  });
+
   test('the subscription check asks another relay only after a no', () async {
     await withProvider((provider) async {
       // A token the user's own relay issued.
@@ -101,6 +115,10 @@ void main() {
       expect(await provider.checkSubscriptionStatus(), isTrue);
       expect(hosts(), [builtIn, own]);
       expect(provider.subscriptionProvider, 'owner');
+      // That relay may be an older build, so it gets the query form.
+      expect(requests.first.url.query, isEmpty);
+      expect(requests.last.url.queryParameters, {'token': 'subscriber-token'});
+      expect(requests.last.headers, isNot(contains('Authorization')));
 
       // Neither relay knows the token.
       requests.clear();

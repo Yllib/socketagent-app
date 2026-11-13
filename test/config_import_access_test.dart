@@ -94,7 +94,7 @@ void main() {
       () => MockClient((request) async {
         if (request.url.path == '/api/subscription-status') {
           final active =
-              request.url.queryParameters['token'] == 'test-play-access';
+              request.headers['Authorization'] == 'Bearer test-play-access';
           return http.Response(
             jsonEncode({
               'active': active,
