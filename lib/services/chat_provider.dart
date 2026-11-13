@@ -3398,9 +3398,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  Future<void> updateServer(ServerConfig config) async {
-    final idx = _serverConfigs.indexWhere((c) => c.id == config.id);
+  /// Saves [update] over the entry with its ID. The v2 pairing stays with
+  /// the computer it was made with: an update that keeps the public key
+  /// keeps the pairing, whoever built it, and one that changes the key
+  /// starts with what it carries.
+  Future<void> updateServer(ServerConfig update) async {
+    final idx = _serverConfigs.indexWhere((c) => c.id == update.id);
     final previous = idx >= 0 ? _serverConfigs[idx] : null;
+    final config = previous == null ? update : update.after(previous);
     final systemPromptEditable =
         _connMgr.statusOf(config.id) == ConnectionStatus.connected;
     if (idx >= 0) {
@@ -3435,7 +3440,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         previous.useRelay != next.useRelay ||
         previous.relayUrl != next.relayUrl ||
         previous.pairingToken != next.pairingToken ||
-        previous.serverPubkey != next.serverPubkey;
+        previous.serverPubkey != next.serverPubkey ||
+        // A new pairing secret alone does not reconnect: the open channel
+        // stays, and the next handshake proves the new one.
+        previous.transport != next.transport;
   }
 
   Future<void> removeServer(String serverId) async {
@@ -3720,6 +3728,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final autoRoute = m['autoRoute'] as bool? ?? useRelay;
       final relayUrl = m['relayUrl'] as String? ?? '';
       final serverPubkey = m['serverPubkey'] as String? ?? '';
+      final pairingSecret = m['pairingSecret'] as String? ?? '';
+      final transport = m['transport'] == 2 ? 2 : null;
 
       final existing = _serverConfigs
           .where(
@@ -3731,18 +3741,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           )
           .firstOrNull;
       if (existing != null) {
-        final updated = existing.copyWith(
-          host: host,
-          port: port,
-          token: token,
-          useRelay: useRelay,
-          autoRoute: autoRoute,
-          relayUrl: relayUrl,
-          pairingToken: pairingToken,
-          serverPubkey: serverPubkey,
-        );
+        // A transfer that names no key cannot take a v2 computer's key
+        // away, which would put it back on the old transport.
+        final key = existing.isV2 && serverPubkey.isEmpty
+            ? existing.serverPubkey
+            : serverPubkey;
+        final updated = existing
+            .withComputerKey(key)
+            .copyWith(
+              host: host,
+              port: port,
+              token: token,
+              useRelay: useRelay,
+              autoRoute: autoRoute,
+              relayUrl: relayUrl,
+              pairingToken: pairingToken,
+              pairingSecret: pairingSecret,
+              transport: transport,
+            )
+            .after(existing);
         if (!_requiresServerReconnect(existing, updated) &&
-            existing.autoRoute == updated.autoRoute) {
+            existing.autoRoute == updated.autoRoute &&
+            existing.pairingSecret == updated.pairingSecret) {
           continue;
         }
         await updateServer(updated);
@@ -3762,6 +3782,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         relayUrl: relayUrl,
         pairingToken: pairingToken,
         serverPubkey: serverPubkey,
+        pairingSecret: pairingSecret,
+        transport: transport,
         defaultCwd: m['defaultCwd'] as String? ?? '',
         colorValue: m['colorValue'] as int?,
       );
@@ -3771,21 +3793,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return imported;
   }
 
-  /// Update a server's relay pairing data and reconnect via relay.
+  /// Saves a scanned pairing code on a computer and reconnects via relay.
+  /// [pairingSecret] is set for an `SA3` code, which puts the computer on
+  /// transport v2. An old code for a computer already on v2 leaves it there.
   Future<void> pairServerRelay(
     String serverId, {
     required String relayUrl,
     required String pairingToken,
     required String serverPubkey,
+    String pairingSecret = '',
   }) async {
     final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (idx < 0) return;
-    _serverConfigs[idx] = _serverConfigs[idx].copyWith(
-      useRelay: true,
-      relayUrl: relayUrl,
-      pairingToken: pairingToken,
-      serverPubkey: serverPubkey,
-    );
+    _serverConfigs[idx] = _serverConfigs[idx]
+        .withComputerKey(serverPubkey)
+        .copyWith(
+          useRelay: true,
+          relayUrl: relayUrl,
+          pairingToken: pairingToken,
+          pairingSecret: pairingSecret.isEmpty ? null : pairingSecret,
+          transport: pairingSecret.isEmpty ? null : 2,
+        );
     await _saveServerConfigs();
     // Disconnect and reconnect with relay
     final ws = _connMgr.getConnection(serverId);
@@ -4461,12 +4489,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         (c) => c.useRelay,
         orElse: () => _serverConfigs.first,
       );
-      final updated = target.copyWith(
-        useRelay: switchToRelay,
-        relayUrl: relayUrl,
-        pairingToken: pairingToken,
-        serverPubkey: serverPubkey,
-      );
+      final updated = target
+          .withComputerKey(serverPubkey)
+          .copyWith(
+            useRelay: switchToRelay,
+            relayUrl: relayUrl,
+            pairingToken: pairingToken,
+          );
       final idx = _serverConfigs.indexWhere((c) => c.id == target.id);
       if (idx >= 0) _serverConfigs[idx] = updated;
       await _saveServerConfigs();

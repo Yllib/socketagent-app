@@ -61,6 +61,7 @@ Future<void> pairServerRelay(
     relayUrl: result.relayUrl,
     pairingToken: result.pairingToken,
     serverPubkey: result.serverPubkey,
+    pairingSecret: result.pairingSecret,
   );
   if (!context.mounted) return;
   ScaffoldMessenger.of(

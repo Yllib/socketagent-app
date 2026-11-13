@@ -3,26 +3,40 @@ import '../widgets/desktop_qr_import_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import '../models/server_config.dart';
 import '../services/crypto_service.dart';
+import '../services/transport_v2.dart';
 import '../config/app_palette.dart';
 
 /// A scanned pairing code. Every code pairs the relay; newer servers also
 /// include [local], the details for connecting directly on the same network.
 class PairingResult {
   final String relayUrl;
+
+  /// The computer's relay room ID.
   final String pairingToken;
   final String serverPubkey;
+
+  /// Base64 of the pairing secret from an `SA3` code. Empty for an old code,
+  /// which pairs on the old transport.
+  final String pairingSecret;
   final LocalPairing? local;
   PairingResult({
     required this.relayUrl,
     required this.pairingToken,
     required this.serverPubkey,
+    this.pairingSecret = '',
     this.local,
   });
+
+  /// Whether this came from an `SA3` code. Such a computer is on transport
+  /// v2 from its first connection and never on the old one.
+  bool get isV2 => pairingSecret.isNotEmpty;
 }
 
 /// How to reach the computer directly. [hosts] are its LAN addresses,
-/// likeliest first. The direct connection uses the same public key.
+/// likeliest first. The direct connection uses the same public key. [token]
+/// is empty for an `SA3` code, which carries no AUTH_TOKEN.
 class LocalPairing {
   final List<String> hosts;
   final int port;
@@ -30,28 +44,71 @@ class LocalPairing {
   LocalPairing({required this.hosts, required this.port, required this.token});
 }
 
-/// Reads `SA|<pairing token>|<public key>|<port>|<auth token>|<host>,<host>`
-/// and the older `SA|<pairing token>|<public key>`. SC is accepted for
-/// servers that kept the original SocketClaude marker. Throws a
-/// [FormatException] with a message for the user when the code is unusable.
+const _notACode = FormatException(
+  'That is not a SocketAgent pairing code. Show a new code on the computer and try again.',
+);
+const _incompleteCode = FormatException(
+  'That pairing code is incomplete. Show a new code on the computer and try again.',
+);
+
+/// Reads the three kinds of pairing code:
+///
+///     SA3|<room ID>|<public key>|<secret>|<port>|<host>,<host>[|<relay URL>]
+///     SA|<pairing token>|<public key>|<port>|<auth token>|<host>,<host>
+///     SA|<pairing token>|<public key>
+///
+/// SC is accepted for servers that kept the original SocketClaude marker.
+/// Throws a [FormatException] with a message for the user when the code is
+/// unusable.
 PairingResult parsePairingCode(String rawData) {
   final parts = rawData.trim().split('|');
+  if (parts[0] == 'SA3') return _parseV2Code(parts);
   if ((parts.length != 3 && parts.length != 6) ||
       (parts[0] != 'SA' && parts[0] != 'SC')) {
-    throw const FormatException(
-      'That is not a SocketAgent pairing code. Show a new code on the computer and try again.',
-    );
+    throw _notACode;
   }
-  if (parts[1].isEmpty || parts[2].isEmpty) {
-    throw const FormatException(
-      'That pairing code is incomplete. Show a new code on the computer and try again.',
-    );
-  }
+  if (parts[1].isEmpty || parts[2].isEmpty) throw _incompleteCode;
   return PairingResult(
     relayUrl: PairScreen.relayUrl,
     pairingToken: parts[1],
     serverPubkey: parts[2],
     local: parts.length == 6 ? _localPairing(parts) : null,
+  );
+}
+
+/// An `SA3` code, wire spec section 6. Every part has to follow its rule: a
+/// code that breaks one is refused whole, and never read as an old code.
+PairingResult _parseV2Code(List<String> parts) {
+  if (parts.length != 6 && parts.length != 7) throw _notACode;
+  final [_, roomId, computerKey, secret, portText, hostList, ...rest] = parts;
+  final port = RegExp(r'^[0-9]{1,5}$').hasMatch(portText)
+      ? int.parse(portText)
+      : 0;
+  final relay = rest.isEmpty ? null : Uri.tryParse(rest.single);
+  if (!isValidRoomId(roomId) ||
+      decodeKey32(computerKey) == null ||
+      decodeKey32(secret) == null ||
+      port < 1 ||
+      port > 65535 ||
+      (rest.isNotEmpty &&
+          (!rest.single.startsWith('wss://') ||
+              relay == null ||
+              relay.host.isEmpty))) {
+    throw _incompleteCode;
+  }
+  final hosts = hostList
+      .split(',')
+      .map((host) => host.trim())
+      .where((host) => host.isNotEmpty)
+      .toList();
+  return PairingResult(
+    relayUrl: rest.isEmpty ? PairScreen.relayUrl : rest.single,
+    pairingToken: roomId,
+    serverPubkey: computerKey,
+    pairingSecret: secret,
+    local: hosts.isEmpty
+        ? null
+        : LocalPairing(hosts: hosts, port: port, token: ''),
   );
 }
 
@@ -73,7 +130,7 @@ LocalPairing? _localPairing(List<String> parts) {
 /// Relay URL is hardcoded — all users connect through the same relay.
 /// Also supports manual paste for remote pairing.
 class PairScreen extends StatefulWidget {
-  static const String relayUrl = 'wss://relay.jarofdirt.info';
+  static const String relayUrl = defaultRelayUrl;
   final CryptoService cryptoService;
 
   const PairScreen({super.key, required this.cryptoService});

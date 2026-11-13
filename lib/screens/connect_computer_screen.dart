@@ -551,6 +551,8 @@ ServerConfig relayCandidate(PairingResult pairing, int sortOrder) {
     relayUrl: pairing.relayUrl,
     pairingToken: pairing.pairingToken,
     serverPubkey: pairing.serverPubkey,
+    pairingSecret: pairing.pairingSecret,
+    transport: pairing.isV2 ? 2 : null,
   );
 }
 

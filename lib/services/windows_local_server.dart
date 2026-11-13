@@ -44,11 +44,11 @@ class LocalServerPlan {
     }
     if (stale.isNotEmpty) {
       return LocalServerPlan(
-        replace: stale.first.copyWith(
-          host: found.host,
-          token: found.token,
-          serverPubkey: found.serverPubkey,
-        ),
+        // A reinstalled server is a new computer: its key file names it,
+        // and whatever v2 pairing the old one had goes with the old key.
+        replace: stale.first
+            .withComputerKey(found.serverPubkey)
+            .copyWith(host: found.host, token: found.token),
         remove: [for (final c in stale.skip(1)) c.id],
       );
     }

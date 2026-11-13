@@ -27,7 +27,12 @@ class AccountVault {
   /// vault and write nothing, so they can't drop fields they don't know.
   /// From 2 on, top-level fields this build doesn't know are kept and written
   /// back, so adding one doesn't need another bump.
-  static const version = 2;
+  ///
+  /// Raised to 3 with transport v2. A format 2 build rewrites a computer
+  /// from its own config whenever the two differ, which would strip
+  /// `pairingSecret` and `transport` each time it synced. At 3 those builds
+  /// stop syncing and ask for an update. Nothing else in the vault changed.
+  static const version = 3;
 
   /// Unix ms of the newest change folded in.
   final int updatedAt;
@@ -93,7 +98,7 @@ class AccountVault {
     'preferences': preferences,
   };
 
-  /// Reads format 1 or 2. Throws [FormatException] for anything else.
+  /// Reads formats 1, 2 and 3. Throws [FormatException] for anything else.
   static AccountVault fromJson(Object? raw) {
     if (raw is! Map) throw const FormatException('Unsupported vault format');
     final v = raw['v'];
@@ -103,7 +108,7 @@ class AccountVault {
         'syncing.',
       );
     }
-    if (v != 1 && v != version) {
+    if (v is! int || v < 1) {
       throw const FormatException('Unsupported vault format');
     }
     List<T> list<T>(Object? value, T? Function(Object?) parse) => [

@@ -21,8 +21,20 @@ class ServerConfig {
   final int sortOrder;
   // Per-server relay pairing data
   final String relayUrl;
+
+  /// The computer's relay room ID. The name is from the old transport, where
+  /// this value was also the pairing secret.
   final String pairingToken;
   final String serverPubkey;
+
+  /// Base64 of the computer's current pairing secret, or empty. Transport v2
+  /// proves it in every handshake and never sends it.
+  final String pairingSecret;
+
+  /// 2 once this computer is on transport v2 for this account, otherwise
+  /// null. Nothing sets it back: from then on the app never speaks the old
+  /// transport to this computer.
+  final int? transport;
   final String defaultCwd;
   final int? colorValue; // ARGB color value for badge
   final String
@@ -41,10 +53,42 @@ class ServerConfig {
     this.relayUrl = '',
     this.pairingToken = '',
     String serverPubkey = '',
+    this.pairingSecret = '',
+    int? transport,
     this.defaultCwd = '',
     this.colorValue,
     this.systemPrompt = '',
-  }) : serverPubkey = normalizeServerPubkey(serverPubkey);
+  }) : serverPubkey = normalizeServerPubkey(serverPubkey),
+       transport = transport == 2 ? 2 : null;
+
+  /// Whether this computer is on transport v2 here, for good.
+  bool get isV2 => transport == 2;
+
+  /// This entry with [key] as its computer. A different key is a different
+  /// computer, so the v2 pairing made with the old one does not carry over.
+  /// Only a pairing code, the account, an import or the user typing may
+  /// supply [key]. Nothing a computer or relay sends reaches this.
+  ServerConfig withComputerKey(String key) {
+    final normalized = normalizeServerPubkey(key);
+    if (normalized == serverPubkey) return this;
+    return ServerConfig.fromJson(
+      toJson()
+        ..['serverPubkey'] = normalized
+        ..remove('pairingSecret')
+        ..remove('transport'),
+    );
+  }
+
+  /// This entry as the next state of [previous]. "This computer is v2" is
+  /// set once and nothing clears it, so an update for the same computer that
+  /// carries no pairing secret, or no transport, keeps the previous ones.
+  ServerConfig after(ServerConfig previous) {
+    if (previous.serverPubkey != serverPubkey) return this;
+    return copyWith(
+      pairingSecret: pairingSecret.isEmpty ? previous.pairingSecret : null,
+      transport: previous.transport,
+    );
+  }
 
   bool get isRelayPaired =>
       relayUrl.isNotEmpty && pairingToken.isNotEmpty && serverPubkey.isNotEmpty;
@@ -87,11 +131,12 @@ class ServerConfig {
   static String normalizeServerPubkey(String value) {
     final trimmed = value.trim();
     final parts = trimmed.split('|');
-    if ((parts.length == 3 || parts.length == 6) &&
-        (parts[0] == 'SA' || parts[0] == 'SC')) {
-      return parts[2].trim();
-    }
-    return trimmed;
+    final oldCode =
+        (parts.length == 3 || parts.length == 6) &&
+        (parts[0] == 'SA' || parts[0] == 'SC');
+    final v2Code =
+        (parts.length == 6 || parts.length == 7) && parts[0] == 'SA3';
+    return oldCode || v2Code ? parts[2].trim() : trimmed;
   }
 
   factory ServerConfig.fromJson(Map<String, dynamic> json) {
@@ -110,6 +155,8 @@ class ServerConfig {
       relayUrl: json['relayUrl'] as String? ?? '',
       pairingToken: json['pairingToken'] as String? ?? '',
       serverPubkey: json['serverPubkey'] as String? ?? '',
+      pairingSecret: json['pairingSecret'] as String? ?? '',
+      transport: (json['transport'] as num?)?.toInt(),
       defaultCwd: json['defaultCwd'] as String? ?? '',
       colorValue: json['colorValue'] as int?,
       systemPrompt: json['systemPrompt'] as String? ?? '',
@@ -129,6 +176,10 @@ class ServerConfig {
     'relayUrl': relayUrl,
     'pairingToken': pairingToken,
     'serverPubkey': serverPubkey,
+    // Written only when set, so an entry from a device still on the old
+    // transport carries neither and cannot blank them when it merges.
+    if (pairingSecret.isNotEmpty) 'pairingSecret': pairingSecret,
+    if (isV2) 'transport': 2,
     'defaultCwd': defaultCwd,
     if (colorValue != null) 'colorValue': colorValue,
     if (systemPrompt.isNotEmpty) 'systemPrompt': systemPrompt,
@@ -147,6 +198,8 @@ class ServerConfig {
     String? relayUrl,
     String? pairingToken,
     String? serverPubkey,
+    String? pairingSecret,
+    int? transport,
     String? defaultCwd,
     int? colorValue,
     String? systemPrompt,
@@ -164,6 +217,8 @@ class ServerConfig {
       relayUrl: relayUrl ?? this.relayUrl,
       pairingToken: pairingToken ?? this.pairingToken,
       serverPubkey: serverPubkey ?? this.serverPubkey,
+      pairingSecret: pairingSecret ?? this.pairingSecret,
+      transport: transport ?? this.transport,
       defaultCwd: defaultCwd ?? this.defaultCwd,
       colorValue: colorValue ?? this.colorValue,
       systemPrompt: systemPrompt ?? this.systemPrompt,

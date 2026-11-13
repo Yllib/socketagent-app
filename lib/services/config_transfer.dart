@@ -42,6 +42,8 @@ class ConfigTransfer {
     'relayUrl': 'ru',
     'pairingToken': 'pt',
     'serverPubkey': 'sp',
+    'pairingSecret': 'ps',
+    'transport': 'tv',
     'defaultCwd': 'd',
     'colorValue': 'c',
   };
@@ -56,6 +58,8 @@ class ConfigTransfer {
     'ru': 'relayUrl',
     'pt': 'pairingToken',
     'sp': 'serverPubkey',
+    'ps': 'pairingSecret',
+    'tv': 'transport',
     'd': 'defaultCwd',
     'c': 'colorValue',
   };

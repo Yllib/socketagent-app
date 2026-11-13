@@ -260,17 +260,16 @@ String deviceHandshakePayload({
   'caps': capabilities,
 });
 
-/// A pairing secret as it is stored and sent: base64 of exactly 32 bytes.
-/// Null for anything else.
-Uint8List? decodePairingSecret(Object? value) {
-  if (value is! String || value.length != 44) return null;
-  try {
-    final bytes = base64Decode(value);
-    return bytes.length == 32 ? bytes : null;
-  } on FormatException {
-    return null;
-  }
+/// A 32-byte key or secret as it is stored and sent: 44 characters of
+/// standard base64 with padding. Null for anything else, the URL-safe
+/// alphabet included, because stored keys are compared as strings.
+Uint8List? decodeKey32(Object? value) {
+  if (value is! String || !_key32.hasMatch(value)) return null;
+  final bytes = base64Decode(value);
+  return bytes.length == 32 ? bytes : null;
 }
+
+final _key32 = RegExp(r'^[A-Za-z0-9+/]{43}=$');
 
 /// Whether [value] may be a room ID: 1 to 200 visible ASCII characters and
 /// no `|`.

@@ -112,12 +112,14 @@ void main() {
     expect(restored.toJson(), vault.toJson());
   });
 
-  test('reads format 1, writes 2 and refuses a newer one', () {
-    final old = AccountVault.fromJson({'v': 1, 'updatedAt': 3});
-    expect(old.updatedAt, 3);
-    expect(old.toJson()['v'], 2);
+  test('reads formats 1, 2 and 3, writes 3 and refuses a newer one', () {
+    for (final format in [1, 2, 3]) {
+      final vault = AccountVault.fromJson({'v': format, 'updatedAt': 3});
+      expect(vault.updatedAt, 3);
+      expect(vault.toJson()['v'], 3);
+    }
     expect(
-      () => AccountVault.fromJson({'v': 3}),
+      () => AccountVault.fromJson({'v': 4}),
       throwsA(
         isA<FormatException>().having(
           (e) => e.message,
@@ -127,6 +129,59 @@ void main() {
       ),
     );
     expect(() => AccountVault.fromJson({'v': 'x'}), throwsFormatException);
+    expect(() => AccountVault.fromJson({'v': 0}), throwsFormatException);
+  });
+
+  test('a v2 pairing rides in the vault and no entry clears it', () {
+    final paired = ServerConfig(
+      id: 'srv_1',
+      name: 'Desk',
+      host: '10.0.0.2',
+      port: 8085,
+      token: '',
+      pairingToken: 'room',
+      serverPubkey: 'pub',
+      pairingSecret: 'c2VjcmV0',
+      transport: 2,
+    );
+    final stored = AccountVault(
+      computers: [VaultComputer.fromConfig(paired, now: 1)],
+    );
+    final fields = AccountVault.fromJson(stored.toJson()).computers.single;
+    expect(fields.fields['pairingSecret'], 'c2VjcmV0');
+    expect(fields.fields['transport'], 2);
+    final restored = ServerConfig.fromJson({...fields.fields, 'id': 'srv_2'});
+    expect(restored.isV2, isTrue);
+    expect(restored.pairingSecret, 'c2VjcmV0');
+
+    // A device still on the old transport writes neither field.
+    final old = ServerConfig.fromJson(
+      paired.toJson()
+        ..remove('pairingSecret')
+        ..remove('transport'),
+    );
+    expect(old.isV2, isFalse);
+    expect(VaultComputer.sharedFields(old).keys, isNot(contains('transport')));
+    expect(
+      VaultComputer.sharedFields(old).keys,
+      isNot(contains('pairingSecret')),
+    );
+
+    // Its entry, or one that says the old transport outright, merges over
+    // the paired one without taking the pairing away.
+    final merged = ServerConfig.fromJson({
+      ...paired.toJson(),
+      ...VaultComputer.sharedFields(old),
+      'transport': 1,
+      'pairingSecret': '',
+    }).after(paired);
+    expect(merged.isV2, isTrue);
+    expect(merged.pairingSecret, 'c2VjcmV0');
+
+    // A different key is a different computer and starts without one.
+    final other = paired.withComputerKey('other');
+    expect(other.isV2, isFalse);
+    expect(other.pairingSecret, isEmpty);
   });
 
   test('fields from a newer build survive a round trip and a merge', () {
