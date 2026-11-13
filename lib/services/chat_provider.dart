@@ -3915,13 +3915,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _setupListeners() {
-    // The relay's own signal, kept apart from what computers send.
-    _relaySubscriptionRequiredSub = _connMgr.subscriptionRequired.listen((_) {
-      _subscriptionActive = false;
-      _subscriptionChecked = true;
-      _subscriptionCheckedAt = DateTime.now();
-      _subscriptionRequiredController.add(null);
-      notifyListeners();
+    // A socket was turned away for lack of a subscription. That signal is
+    // unsealed, and a room's computer can send one that looks the same, so
+    // on its own it only costs that connection. Whether the subscription
+    // has lapsed is asked of the relay over HTTPS, and the app's state and
+    // what the user sees follow that answer.
+    _relaySubscriptionRequiredSub = _connMgr.subscriptionRequired.listen((
+      _,
+    ) async {
+      if (await checkSubscriptionStatus()) return;
+      if (!_subscriptionRequiredController.isClosed) {
+        _subscriptionRequiredController.add(null);
+      }
     });
     _pairingChangeSub = _connMgr.pairingChanges.listen(
       (update) => unawaited(applyPairingChange(update.serverId, update.change)),
@@ -4596,31 +4601,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _connMgr.connectAll();
   }
 
-  /// The relay's HTTPS base URL, preferring the active computer's relay.
-  String get relayHttpUrl => _relayHttpUrlCandidates().first;
+  /// The HTTPS base URL of the app's built-in relay. The app's own account
+  /// work goes here: subscription, billing, reports, the vault and
+  /// credential handoffs. No computer, pairing code, import or vault entry
+  /// can name another relay for it (wire spec 14).
+  String get relayHttpUrl => _relayHttpUrlFromWs(defaultRelayUrl)!;
 
-  List<String> _relayHttpUrlCandidates() {
-    final candidates = <String>[
-      if (_connMgr.activeConfig?.relayUrl.isNotEmpty == true)
-        _connMgr.activeConfig!.relayUrl,
-      ..._serverConfigs
-          .where((config) => config.relayUrl.isNotEmpty)
-          .map((config) => config.relayUrl),
-      if (_cachedPrefs?.getString('relay_url')?.isNotEmpty == true)
-        _cachedPrefs!.getString('relay_url')!,
-      'wss://relay.jarofdirt.info',
-    ];
+  /// [relayHttpUrl] as the list the account requests below walk. One entry,
+  /// always the built-in relay.
+  List<String> _accountRelayHttpUrls() => [relayHttpUrl];
 
-    final urls = <String>[];
-    final seen = <String>{};
-    for (final candidate in candidates) {
-      final normalized = _relayHttpUrlFromWs(candidate);
-      if (normalized != null && seen.add(normalized)) {
-        urls.add(normalized);
-      }
-    }
-    return urls;
-  }
+  /// The other relays this device's computers are stored on, as HTTPS base
+  /// URLs, each with TLS or on this machine. A relay the user runs issues
+  /// its own subscriber tokens and access codes, which the built-in relay
+  /// does not know, so the subscription check and the access code fall back
+  /// to these, and only after the built-in relay itself has said no. Each
+  /// already gets the subscriber token whenever a socket joins one of its
+  /// rooms. Nothing else is ever sent to them.
+  List<String> _storedRelayHttpUrls() => {
+    for (final config in _serverConfigs)
+      if (config.isRelayPaired) ?_relayHttpUrlFromWs(config.relayUrl),
+  }.where((url) => url != relayHttpUrl).toList();
 
   Future<String?> reportAiResponse(
     ChatMessage message,
@@ -4632,7 +4633,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
     final packageInfo = await PackageInfo.fromPlatform();
     return _aiResponseReports.submit(
-      relayHttpUrls: _relayHttpUrlCandidates(),
+      relayHttpUrls: _accountRelayHttpUrls(),
       category: category,
       content: message.textContent,
       subscriberToken: _subscriberToken,
@@ -4696,7 +4697,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final serverVersion =
         _serverRuntimeInfo[error.serverId]?['version']?.toString() ?? '';
     final failure = await _errorReports.submit(
-      relayHttpUrls: _relayHttpUrlCandidates(),
+      relayHttpUrls: _accountRelayHttpUrls(),
       error: error,
       subscriberToken: _subscriberToken,
       appVersion: '${packageInfo.version}+${packageInfo.buildNumber}',
@@ -4756,6 +4757,31 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// What the relay at [httpUrl] says about [token], or null when it did not
+  /// answer. The relay reads the token from the query string and from
+  /// nowhere else, so that is where it rides until the relay takes a header.
+  /// The log line names neither the URL nor the error text, which holds it.
+  Future<Map<String, dynamic>?> _subscriptionStatusAt(
+    String httpUrl,
+    String token,
+  ) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+              '$httpUrl/api/subscription-status'
+              '?token=${Uri.encodeComponent(token)}',
+            ),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return null;
+      return jsonDecode(response.body) as Map<String, dynamic>;
+    } catch (error) {
+      debugPrint('[Subscription] Status check failed: ${error.runtimeType}');
+      return null;
+    }
+  }
+
   Future<bool> _checkSubscriptionStatus() async {
     final token = _subscriberToken;
     if (token.isEmpty) {
@@ -4766,42 +4792,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return false;
     }
 
-    final prefs = await SharedPreferences.getInstance();
-    _cachedPrefs = prefs;
-    final httpUrls = _relayHttpUrlCandidates();
-    if (httpUrls.isEmpty) {
-      _subscriptionChecked = true;
-      _subscriptionCheckedAt = DateTime.now();
-      notifyListeners();
-      return false;
-    }
-
-    Map<String, dynamic>? statusData;
-    Map<String, dynamic>? inactiveStatusData;
-    for (final httpUrl in httpUrls) {
-      try {
-        final uri = Uri.parse(
-          '$httpUrl/api/subscription-status?token=${Uri.encodeComponent(token)}',
-        );
-        final response = await http
-            .get(uri)
-            .timeout(const Duration(seconds: 10));
+    // The built-in relay answers first. Another relay is asked only when
+    // the built-in one has answered that this token is not active with it.
+    var statusData = await _subscriptionStatusAt(relayHttpUrl, token);
+    if (_subscriberToken != token) return _subscriptionActive;
+    if (statusData != null && statusData['active'] != true) {
+      for (final httpUrl in _storedRelayHttpUrls()) {
+        final data = await _subscriptionStatusAt(httpUrl, token);
         if (_subscriberToken != token) return _subscriptionActive;
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body) as Map<String, dynamic>;
-          if (data['active'] == true) {
-            statusData = data;
-            break;
-          }
-          inactiveStatusData ??= data;
+        if (data?['active'] == true) {
+          statusData = data;
+          break;
         }
-      } catch (e) {
-        debugPrint('[Subscription] Status check failed for $httpUrl: $e');
       }
     }
 
-    if (_subscriberToken != token) return _subscriptionActive;
-    statusData ??= inactiveStatusData;
     if (statusData != null) {
       _subscriptionActive = statusData['active'] == true;
       _subscriptionProvider = statusData['provider'] as String? ?? '';
@@ -4828,7 +4833,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         _cancelAtPeriodEnd = false;
       }
     } else {
-      // Keep the saved credential usable while every configured relay is
+      // Keep the saved credential usable while the built-in relay is
       // unavailable. A later refresh will replace this cached state.
       _subscriptionActive = true;
       if (_subscriptionStatus.isEmpty) _subscriptionStatus = 'unknown';
@@ -4845,7 +4850,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (normalizedEmail.isEmpty) return {'error': 'Enter your email address.'};
 
     Object? lastError;
-    for (final httpUrl in _relayHttpUrlCandidates()) {
+    for (final httpUrl in _accountRelayHttpUrls()) {
       try {
         final response = await http
             .post(
@@ -4872,7 +4877,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (sessionId.trim().isEmpty) return 'Checkout session is missing.';
 
     Object? lastError;
-    for (final httpUrl in _relayHttpUrlCandidates()) {
+    for (final httpUrl in _accountRelayHttpUrls()) {
       try {
         final response = await http
             .post(
@@ -4910,7 +4915,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<String?> getDirectBillingPortalUrl() async {
     if (_subscriberToken.isEmpty) return null;
 
-    for (final httpUrl in _relayHttpUrlCandidates()) {
+    for (final httpUrl in _accountRelayHttpUrls()) {
       try {
         final response = await http
             .post(
@@ -4939,15 +4944,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (purchaseToken.trim().isEmpty || productId.trim().isEmpty) {
       return 'Google Play did not return a valid purchase.';
     }
-    final prefs = await SharedPreferences.getInstance();
-    _cachedPrefs = prefs;
-    final httpUrls = _relayHttpUrlCandidates();
-    if (httpUrls.isEmpty) {
-      return 'The relay URL is not configured.';
-    }
-
     Object? lastError;
-    for (final httpUrl in httpUrls) {
+    for (final httpUrl in _accountRelayHttpUrls()) {
       try {
         final uri = Uri.parse('$httpUrl/api/google-play/verify');
         final response = await http
@@ -4989,14 +4987,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Exchange an owner or comp access code for a signed relay access token.
+  /// The built-in relay is asked first. A relay the user runs has a code of
+  /// its own, so the other stored relays are asked too, but only once the
+  /// built-in relay has answered that the code is not one of its own. A code
+  /// the built-in relay could not be reached to judge goes nowhere else.
   Future<String?> requestAccessCode(String code) async {
     if (code.trim().isEmpty) return 'Enter your access code.';
-    final prefs = await SharedPreferences.getInstance();
-    _cachedPrefs = prefs;
-    final httpUrls = _relayHttpUrlCandidates();
-    if (httpUrls.isEmpty) return 'The relay URL is not configured.';
-
-    for (final httpUrl in httpUrls) {
+    for (final httpUrl in [relayHttpUrl, ..._storedRelayHttpUrls()]) {
+      final int status;
       try {
         final response = await http
             .post(
@@ -5005,7 +5003,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               body: jsonEncode({'code': code.trim()}),
             )
             .timeout(const Duration(seconds: 15));
-        if (response.statusCode == 200) {
+        status = response.statusCode;
+        if (status == 200) {
           final data = jsonDecode(response.body) as Map<String, dynamic>;
           final relayToken = data['token'] as String?;
           if (relayToken == null || relayToken.isEmpty) {
@@ -5016,23 +5015,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           notifyListeners();
           return null;
         }
-        if (response.statusCode == 403) return 'That access code is not valid.';
       } catch (e) {
-        debugPrint('[Subscription] Access code failed: $e');
+        debugPrint('[Subscription] Access code failed: ${e.runtimeType}');
+        return 'Could not reach the relay.';
       }
+      if (status != 403) return 'Could not reach the relay.';
     }
-    return 'Could not reach the relay.';
+    return 'That access code is not valid.';
   }
 
   /// Exchange a Play Console review code for temporary relay access.
   Future<String?> requestPlayReviewAccess(String reviewCode) async {
     if (reviewCode.trim().isEmpty) return 'Enter the review code.';
-    final prefs = await SharedPreferences.getInstance();
-    _cachedPrefs = prefs;
-    final httpUrls = _relayHttpUrlCandidates();
-    if (httpUrls.isEmpty) return 'The relay URL is not configured.';
-
-    for (final httpUrl in httpUrls) {
+    for (final httpUrl in _accountRelayHttpUrls()) {
       try {
         final response = await http
             .post(
