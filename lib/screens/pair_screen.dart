@@ -125,12 +125,50 @@ LocalPairing? _localPairing(List<String> parts) {
   return LocalPairing(hosts: hosts, port: port, token: parts[4]);
 }
 
-/// QR scanner screen for pairing with a relay server.
-/// Scans a QR code containing {token, pubkey} and stores the pairing data.
-/// Relay URL is hardcoded — all users connect through the same relay.
-/// Also supports manual paste for remote pairing.
+/// Asks before a pairing code's own relay is used. True at once for a code
+/// on the app's relay, which is every old code and every `SA3` code with no
+/// relay part. For any other relay the user is shown its host and has to
+/// choose Continue. Until then nothing is sent to that relay.
+Future<bool> confirmCodeRelay(
+  BuildContext context,
+  PairingResult pairing,
+) async {
+  final host = otherRelayHost(pairing.relayUrl);
+  if (host == null) return true;
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Use this relay?'),
+      content: Text(
+        "This code connects through $host, not SocketAgent's relay. "
+        'Your relay access will be sent to it.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context, true),
+          child: const Text('Continue'),
+        ),
+      ],
+    ),
+  );
+  return confirmed == true;
+}
+
+/// The scanner for a computer's pairing code, with a field to paste one
+/// instead. It hands back the code it read, and only after
+/// [confirmCodeRelay]: a code whose relay the user turns down is handed to
+/// nobody, and the screen closes with nothing.
 class PairScreen extends StatefulWidget {
   static const String relayUrl = defaultRelayUrl;
+
+  /// Whether this is the desktop app, which has no camera to scan with and
+  /// opens on the paste field. Tests turn it on to reach that field.
+  @visibleForTesting
+  static bool desktop = Platform.isWindows;
   final CryptoService cryptoService;
 
   const PairScreen({super.key, required this.cryptoService});
@@ -144,11 +182,11 @@ class _PairScreenState extends State<PairScreen> {
   final TextEditingController _pasteController = TextEditingController();
   bool _processing = false;
   String? _error;
-  bool _showManualInput = Platform.isWindows;
+  bool _showManualInput = PairScreen.desktop;
 
   @override
   void dispose() {
-    if (!Platform.isWindows) _controller.dispose();
+    if (!PairScreen.desktop) _controller.dispose();
     _pasteController.dispose();
     super.dispose();
   }
@@ -163,6 +201,12 @@ class _PairScreenState extends State<PairScreen> {
 
     try {
       final pairing = parsePairingCode(rawData);
+      // Asked before anything is done with the code. A scanner left open
+      // would read the same code again, so a no closes the screen.
+      if (!await confirmCodeRelay(context, pairing)) {
+        if (mounted) Navigator.of(context).pop();
+        return;
+      }
       await widget.cryptoService.ensureKeyPair();
       widget.cryptoService.setServerPublicKey(pairing.serverPubkey);
       if (mounted) Navigator.of(context).pop(pairing);
@@ -200,7 +244,7 @@ class _PairScreenState extends State<PairScreen> {
           _showManualInput ? 'Paste Pairing Data' : 'Scan Pairing QR',
         ),
         actions: [
-          if (!Platform.isWindows)
+          if (!PairScreen.desktop)
             IconButton(
               icon: Icon(_showManualInput ? Icons.qr_code_scanner : Icons.edit),
               tooltip: _showManualInput ? 'Scan QR' : 'Paste manually',
@@ -231,7 +275,7 @@ class _PairScreenState extends State<PairScreen> {
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                     ),
-                    if (Platform.isWindows) ...[
+                    if (PairScreen.desktop) ...[
                       const SizedBox(height: 12),
                       DesktopQrImportButton(onDecoded: _processPairingData),
                     ],

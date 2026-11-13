@@ -30,6 +30,29 @@ String storableRelayUrl(String value) {
   return allowed ? trimmed : '';
 }
 
+/// The host of [relayUrl] when that is not the app's own relay, or null
+/// when it is. A relay is sent this phone's relay access when a computer
+/// connects through it, so before a pairing code's relay is used the app
+/// shows this host and asks. The same host on another port is another
+/// relay, and is shown with its port.
+String? otherRelayHost(String relayUrl) {
+  final relay = Uri.tryParse(storableRelayUrl(relayUrl));
+  if (relay == null || relay.host.isEmpty) return null;
+  // `Uri` knows no default port for `ws` and `wss`.
+  int port(Uri uri) => uri.hasPort
+      ? uri.port
+      : const {'wss', 'https'}.contains(uri.scheme)
+      ? 443
+      : 80;
+  final own = Uri.parse(defaultRelayUrl);
+  if (relay.scheme == own.scheme &&
+      relay.host == own.host &&
+      port(relay) == port(own)) {
+    return null;
+  }
+  return relay.hasPort ? '${relay.host}:${relay.port}' : relay.host;
+}
+
 class ServerConfig {
   final String id;
   final String name;
