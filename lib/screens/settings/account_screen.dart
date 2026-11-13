@@ -447,7 +447,7 @@ String accountPinSummary(AccountService account) {
   ].join(' ');
 }
 
-/// Shows the recovery key with screenshots blocked.
+/// Shows the recovery key, with a button that copies it.
 class RecoveryKeyScreen extends StatefulWidget {
   const RecoveryKeyScreen({super.key, required this.recoveryKey});
 

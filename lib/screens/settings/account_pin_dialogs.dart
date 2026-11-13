@@ -338,7 +338,9 @@ class _AccountPinDialogState extends State<AccountPinDialog> {
               'No tries left. Try again ${accountWhen(retryAt)}. If that '
               'was not you, open SocketAgent on a signed-in device.';
         case JoinChanged():
-          message = 'The account just changed. Try again in a minute.';
+          message =
+              'The account just changed. Open SocketAgent on a signed-in '
+              'device, or use Forgot PIN.';
         case JoinNoPin():
           message =
               'The PIN has to be set again. Open SocketAgent on a signed-in '

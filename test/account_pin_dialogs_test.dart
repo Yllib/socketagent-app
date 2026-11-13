@@ -336,7 +336,8 @@ void main() {
         ),
         (
           const JoinChanged(),
-          'The account just changed. Try again in a minute.',
+          'The account just changed. Open SocketAgent on a signed-in '
+              'device, or use Forgot PIN.',
         ),
         (
           const JoinNoPin(),
