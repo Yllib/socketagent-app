@@ -137,9 +137,9 @@ void main() {
     expect(carried.serverPubkey, old.publicKey);
     // The relay address is never the wire's to give.
     expect(carried.relayUrl, defaultRelayUrl);
-    // The token is left as it was and v2 capabilities cannot replace it,
-    // or the room.
-    expect(carried.token, 'auth-token');
+    // The token goes with the old transport: v2 never sends it, and v2
+    // capabilities cannot give the entry another, or another room.
+    expect(carried.token, isEmpty);
     expect(v2.hello, containsPair('path', 'direct'));
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getStringList('transport_v2_servers'), [old.publicKey]);

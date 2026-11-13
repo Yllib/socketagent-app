@@ -35,6 +35,13 @@ class ServerConfig {
   final String name;
   final String host;
   final int port;
+
+  /// The computer's AUTH_TOKEN, for the old transport. It belongs to the
+  /// key it was stored with, and a computer on transport v2 is never sent
+  /// it, so a v2 entry holds none whatever an import, the vault or a text
+  /// field supplies. The one entry that keeps it on v2 is the one for the
+  /// server on this machine, which nothing else can reach: there it marks
+  /// the entry the app built from that server's own files.
   final String token;
 
   /// The route in use. With [autoRoute] the app updates it as the phone moves
@@ -77,7 +84,7 @@ class ServerConfig {
     required this.name,
     required this.host,
     required this.port,
-    required this.token,
+    required String token,
     this.useRelay = false,
     this.autoRoute = false,
     this.expectedOnline = false,
@@ -91,7 +98,17 @@ class ServerConfig {
     this.defaultCwd = '',
     this.colorValue,
     this.systemPrompt = '',
-  }) : serverPubkey = normalizeServerPubkey(serverPubkey),
+  }) : token =
+           transport == 2 &&
+               !_loopbackOnly(
+                 host: host,
+                 relayUrl: storableRelayUrl(relayUrl),
+                 pairingToken: pairingToken,
+                 serverPubkey: normalizeServerPubkey(serverPubkey),
+               )
+           ? ''
+           : token,
+       serverPubkey = normalizeServerPubkey(serverPubkey),
        relayUrl = storableRelayUrl(relayUrl),
        // An address decides this by itself. No address leaves it as it was.
        relayRefused = relayUrl.trim().isEmpty
@@ -108,7 +125,9 @@ class ServerConfig {
       isV2 ? (roomId: pairingToken, secret: pairingSecret) : null;
 
   /// This entry with [key] as its computer. A different key is a different
-  /// computer, so the v2 pairing made with the old one does not carry over.
+  /// computer, so neither the v2 pairing made with the old one nor the
+  /// token stored for it carries over. A caller that has the new computer's
+  /// token sets it afterwards.
   /// Only a pairing code, the account, an import or the user typing may
   /// supply [key]. Nothing a computer or relay sends reaches this.
   ServerConfig withComputerKey(String key) {
@@ -117,6 +136,7 @@ class ServerConfig {
     return ServerConfig.fromJson(
       toJson()
         ..['serverPubkey'] = normalized
+        ..['token'] = ''
         ..remove('pairingSecret')
         ..remove('transport'),
     );
@@ -153,8 +173,22 @@ class ServerConfig {
 
   /// Reachable only from the machine the server runs on. Discovery adds these
   /// on Windows; another device can't use 127.0.0.1 to reach this computer.
-  bool get isLoopbackOnly =>
-      !isRelayPaired && (host == '127.0.0.1' || host == 'localhost');
+  bool get isLoopbackOnly => _loopbackOnly(
+    host: host,
+    relayUrl: relayUrl,
+    pairingToken: pairingToken,
+    serverPubkey: serverPubkey,
+  );
+
+  /// [isLoopbackOnly] from the stored values, for the constructor.
+  static bool _loopbackOnly({
+    required String host,
+    required String relayUrl,
+    required String pairingToken,
+    required String serverPubkey,
+  }) =>
+      (host == '127.0.0.1' || host == 'localhost') &&
+      (relayUrl.isEmpty || pairingToken.isEmpty || serverPubkey.isEmpty);
 
   /// Stable identity for the physical SocketAgent server represented by this
   /// config. Older app versions could migrate/pair the same server more than

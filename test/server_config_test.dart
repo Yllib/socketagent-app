@@ -59,6 +59,52 @@ void main() {
     expect(old.relayUrl, defaultRelayUrl);
   });
 
+  test('the token stays with its key and leaves a v2 entry', () {
+    final saved = ServerConfig(
+      id: 'server-1',
+      name: 'Server',
+      host: '192.168.1.20',
+      port: 8085,
+      token: 'auth-token',
+      serverPubkey: 'server-key',
+    );
+    // The old transport keeps it, under the key it was stored with.
+    expect(saved.token, 'auth-token');
+    expect(saved.withComputerKey('server-key').token, 'auth-token');
+
+    final rekeyed = saved.withComputerKey('other-key');
+    expect(rekeyed.serverPubkey, 'other-key');
+    expect(rekeyed.token, isEmpty);
+    expect(rekeyed.host, '192.168.1.20');
+
+    // However an entry comes to be on v2, it holds no token, and no copy,
+    // stored entry or import gives it one.
+    final v2 = saved.copyWith(pairingSecret: 'c2VjcmV0', transport: 2);
+    expect(v2.token, isEmpty);
+    expect(v2.copyWith(token: 'another-token').token, isEmpty);
+    expect(
+      ServerConfig.fromJson({...v2.toJson(), 'token': 'another-token'}).token,
+      isEmpty,
+    );
+
+    // The entry for the server on this machine, which Windows discovery
+    // builds from that server's own files, is told apart by its token.
+    final local = saved.copyWith(
+      host: '127.0.0.1',
+      pairingSecret: 'c2VjcmV0',
+      transport: 2,
+    );
+    expect(local.isLoopbackOnly, isTrue);
+    expect(local.token, 'auth-token');
+    // Paired with a relay, another device can reach it and it is as any
+    // other v2 entry.
+    final relayed = local.copyWith(
+      relayUrl: 'wss://relay.example.test',
+      pairingToken: 'room',
+    );
+    expect(relayed.token, isEmpty);
+  });
+
   test('a refused relay address is remembered until another is given', () {
     final refused = relayConfig(
       id: 'server-1',
