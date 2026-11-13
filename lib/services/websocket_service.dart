@@ -433,7 +433,7 @@ class WebSocketService {
     try {
       decoded = await decodeSocketFrame(
         data,
-        cipher: channel?.cipher,
+        cipher: channel?.receiveCipher,
         encryptedBinary: true,
       );
     } catch (error) {

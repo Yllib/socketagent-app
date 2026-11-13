@@ -3,7 +3,8 @@ import 'package:pinenacl/x25519.dart';
 import 'package:sodium/sodium.dart' show SecureKey, Sodium, SodiumInit;
 
 /// Seals and opens the NaCl box messages exchanged with one server, using the
-/// box's precomputed key. Runs on native libsodium, which opened a 512 KB
+/// box's precomputed key, or a raw secretbox key from a transport v2
+/// handshake. Runs on native libsodium, which opened a 512 KB
 /// chunk in 1.2 ms against pinenacl's 25 ms on an x64 desktop, and falls back
 /// to pinenacl where libsodium cannot load. Both produce the same bytes:
 /// XSalsa20-Poly1305 with the 16-byte tag ahead of the ciphertext, as
@@ -12,8 +13,11 @@ class NaclCipher {
   NaclCipher(this.box, {bool native = true})
     : _native = native ? _nativeKey(box) : null;
 
+  /// A cipher for a raw 32-byte secretbox [key].
+  NaclCipher.secret(Uint8List key) : this(SecretBox(key));
+
   /// The pinenacl box, used directly by the fallback.
-  final Box box;
+  final BoxBase box;
   final (Sodium, SecureKey)? _native;
 
   /// Whether libsodium does the work. A pure Dart cipher is slow enough that
@@ -31,10 +35,10 @@ class NaclCipher {
     }
   }();
 
-  static (Sodium, SecureKey)? _nativeKey(Box box) {
+  static (Sodium, SecureKey)? _nativeKey(BoxBase box) {
     final sodium = _sodium;
     if (sodium == null) return null;
-    return (sodium, sodium.secureCopy(box.sharedKey.asTypedList));
+    return (sodium, sodium.secureCopy(box.key.asTypedList));
   }
 
   /// Opens [cipherText] sealed with [nonce]. Throws when it fails to verify.

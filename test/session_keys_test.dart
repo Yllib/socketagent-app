@@ -49,7 +49,7 @@ void main() {
   Future<String> receive(PeerChannel channel, Object frame) async {
     final decoded = await decodeSocketFrame(
       frame,
-      cipher: channel.cipher,
+      cipher: channel.receiveCipher,
       encryptedBinary: true,
     );
     channel.accept(decoded!.nonce);

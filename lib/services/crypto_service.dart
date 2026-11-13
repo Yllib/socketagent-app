@@ -29,24 +29,64 @@ class SessionKeyRequired implements Exception {
       'SessionKeyRequired: the computer used session keys before';
 }
 
-/// Seals and opens one connection's frames. A session channel numbers its
-/// nonces and refuses a frame whose number is not above the last one it
-/// accepted. A legacy channel is the static box, with no replay check.
-class PeerChannel {
-  PeerChannel.legacy(this.cipher) : sessionKeyed = false;
-  PeerChannel._session(this.cipher) : sessionKeyed = true;
+/// How a [PeerChannel] is keyed.
+enum ChannelKind {
+  /// The static box of the two long-lived keys. Random nonces, no replay
+  /// check. Only a computer that predates session keys uses it.
+  staticBox,
 
-  final NaclCipher cipher;
-  final bool sessionKeyed;
+  /// The old transport's per-connection key, one for both directions.
+  session,
+
+  /// Transport v2: the two keys of a Noise handshake, one per direction.
+  transport,
+}
+
+/// Seals and opens one connection's frames. A session or transport channel
+/// numbers its nonces, one counter per direction shared by text and binary
+/// frames, and refuses a frame whose number is not above the last one it
+/// accepted. A static-box channel has no replay check. This device is always
+/// the initiator, so it seals with direction byte 1 and accepts only 2.
+class PeerChannel {
+  PeerChannel.legacy(NaclCipher cipher)
+    : sendCipher = cipher,
+      receiveCipher = cipher,
+      kind = ChannelKind.staticBox;
+  PeerChannel._session(NaclCipher cipher)
+    : sendCipher = cipher,
+      receiveCipher = cipher,
+      kind = ChannelKind.session;
+
+  /// A transport v2 channel from the raw keys a handshake ended with. The
+  /// first frame sealed here must be `transport_ready`.
+  PeerChannel.transport({
+    required Uint8List sendKey,
+    required Uint8List receiveKey,
+  }) : sendCipher = NaclCipher.secret(sendKey),
+       receiveCipher = NaclCipher.secret(receiveKey),
+       kind = ChannelKind.transport;
+
+  /// Seals what this device sends.
+  final NaclCipher sendCipher;
+
+  /// Opens what the computer sends. The same cipher as [sendCipher] except
+  /// on a transport channel.
+  final NaclCipher receiveCipher;
+  final ChannelKind kind;
   int _sent = 0;
   int _received = 0;
 
+  /// Whether the old transport's session keys protect this channel.
+  bool get sessionKeyed => kind == ChannelKind.session;
+
+  bool get _counted => kind != ChannelKind.staticBox;
+
   ({Uint8List nonce, Uint8List cipherText}) _seal(Uint8List message) {
-    if (!sessionKeyed) return cipher.seal(message);
+    if (!_counted) return sendCipher.seal(message);
     final nonce = Uint8List(_nonceLength);
     nonce[0] = _fromInitiator;
     _writeCounter(nonce, ++_sent);
-    return cipher.seal(message, nonce: nonce);
+    return sendCipher.seal(message, nonce: nonce);
   }
 
   /// A `{n, c}` envelope for a text frame.
@@ -66,10 +106,11 @@ class PeerChannel {
       ..setAll(sealed.nonce.length, sealed.cipherText);
   }
 
-  /// Checks the nonce of a frame that already opened under [cipher], which
-  /// authenticates it. Throws for a replayed, reordered or reflected frame.
+  /// Checks the nonce of a frame that already opened under [receiveCipher],
+  /// which authenticates it. Throws for a replayed, reordered or reflected
+  /// frame. On a transport channel the caller then closes the channel.
   void accept(Uint8List? nonce) {
-    if (!sessionKeyed) return;
+    if (!_counted) return;
     if (nonce == null || nonce.length != _nonceLength) {
       throw StateError('Session frame without a nonce');
     }
@@ -83,9 +124,12 @@ class PeerChannel {
     _received = counter;
   }
 
-  /// Frees a session key. The legacy cipher belongs to [CryptoService].
+  /// Frees the keys this channel owns. The static box belongs to
+  /// [CryptoService].
   void dispose() {
-    if (sessionKeyed) cipher.dispose();
+    if (!_counted) return;
+    sendCipher.dispose();
+    if (!identical(sendCipher, receiveCipher)) receiveCipher.dispose();
   }
 }
 
