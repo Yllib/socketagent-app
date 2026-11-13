@@ -203,6 +203,14 @@ class WebSocketService {
   // channel is never an application channel: it sends `transport_ready` and
   // reads the grant or the refusal.
   bool _socketLocalRequest = false;
+  // Whether the device name carries the Windows account, see
+  // [setAccountInName].
+  bool _accountInName = false;
+
+  /// The signed-in Windows account. Tests replace it.
+  @visibleForTesting
+  String Function() windowsAccount = () =>
+      Platform.environment['USERNAME']?.trim() ?? '';
   // A server from before transport v2 answers the request's upgrade with an
   // HTTP error. The next dial then goes the old way, as the released app
   // does, and the one after asks again.
@@ -313,6 +321,15 @@ class WebSocketService {
   /// Lets this socket ask the server on its own machine for a pairing. Has
   /// no effect while [setPairing] holds one, or off loopback.
   void setLocalRequest(bool localRequest) => _localRequest = localRequest;
+
+  /// Puts the Windows account in front of the device name this socket
+  /// sends, as "kayla on DESKTOP". The owner turns it on for the server on
+  /// the app's own machine when another account runs that server, so the
+  /// computer's device list tells the accounts on one PC apart.
+  void setAccountInName(bool accountInName) {
+    _accountInName = accountInName;
+    _bulkLane?.setAccountInName(accountInName);
+  }
 
   /// Whether a retry is scheduled. False after an intentional [disconnect].
   bool get reconnecting => _reconnectTimer?.isActive ?? false;
@@ -699,7 +716,9 @@ class WebSocketService {
       frame = handshake.hs1(
         deviceHandshakePayload(
           appVersion: _appVersion,
-          name: _socketLocalRequest ? _nameWithAccount() : _deviceName,
+          name: _socketLocalRequest || _accountInName
+              ? _nameWithAccount()
+              : _deviceName,
           platform: _devicePlatform,
           capabilities: _clientCapabilities,
         ),
@@ -1330,10 +1349,10 @@ class WebSocketService {
     });
   }
 
-  /// This device's name with the Windows account in front, for a request
-  /// to the server on this machine.
+  /// This device's name with the Windows account in front, for the server
+  /// on this machine when another account runs it.
   String _nameWithAccount() {
-    final account = Platform.environment['USERNAME']?.trim() ?? '';
+    final account = windowsAccount();
     return account.isEmpty ? _deviceName : '$account on $_deviceName';
   }
 

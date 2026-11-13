@@ -50,14 +50,17 @@ ConnectionMode connectionModeForServerId(
 
 /// Whether [config] is the server on this machine as an account that cannot
 /// read its files sees it: a loopback entry with the key from the machine
-/// marker and neither a token nor a pairing secret. Such an entry asks the
-/// server for its pairing (wire spec 5.3).
-bool asksLocalServerForPairing(ServerConfig config) =>
+/// marker and no token. It stays one after the server hands it a pairing.
+bool isOtherAccountsLocalServer(ServerConfig config) =>
     config.isLoopbackOnly &&
     !config.useRelay &&
     config.token.isEmpty &&
-    config.serverPubkey.isNotEmpty &&
-    !config.isV2;
+    config.serverPubkey.isNotEmpty;
+
+/// Whether [config] is such an entry with no pairing secret yet. It asks the
+/// server for its pairing (wire spec 5.3).
+bool asksLocalServerForPairing(ServerConfig config) =>
+    isOtherAccountsLocalServer(config) && !config.isV2;
 
 /// A pairing a computer handed over on its own control channel.
 class ServerPairingChange {
@@ -270,6 +273,8 @@ class ConnectionManager {
       carryOver: !(Platform.isWindows && config.isLoopbackOnly),
     );
     ws.setLocalRequest(localRequests && asksLocalServerForPairing(config));
+    // The name it asked under is the name it keeps on that server's list.
+    ws.setAccountInName(localRequests && isOtherAccountsLocalServer(config));
 
     if (selectedMode == ConnectionMode.relay) {
       if (!config.isRelayPaired) {

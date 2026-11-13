@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:app/models/server_config.dart';
 import 'package:app/services/chat_provider.dart';
+import 'package:app/services/connection_manager.dart';
 import 'package:app/services/crypto_service.dart';
 import 'package:app/services/transport_v2.dart';
 import 'package:app/services/websocket_service.dart';
@@ -203,6 +204,23 @@ void main() {
       expect(pairings, isEmpty);
     });
 
+    test('keeps the account in its name once it holds the pairing', () async {
+      await local(request: false);
+      service
+        ..windowsAccount = (() => 'kayla')
+        ..setPairing(computer.pairing)
+        ..setAccountInName(true);
+      onFrame = (socket, frame) {
+        if (FakeV2Computer.isRecord(frame)) return;
+        socket.add(computer.answer(frame));
+      };
+      service.connect();
+      await settle();
+
+      expect(computer.hello, containsPair('path', 'direct'));
+      expect(computer.device['name'], 'kayla on Desktop');
+    });
+
     test('a grant on an ordinary v2 channel is dropped', () async {
       await local(request: false);
       service.setPairing(computer.pairing);
@@ -315,6 +333,9 @@ void main() {
       expect(stored.relayUrl, isEmpty);
       expect(stored.host, '127.0.0.1');
       expect(stored.isLoopbackOnly, isTrue);
+      // So it goes on naming the account it asked under.
+      expect(isOtherAccountsLocalServer(stored), isTrue);
+      expect(asksLocalServerForPairing(stored), isFalse);
     },
   );
 }
