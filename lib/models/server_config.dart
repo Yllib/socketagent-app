@@ -10,10 +10,11 @@ const String defaultRelayUrl = 'wss://relay.jarofdirt.info';
 bool isLoopbackHost(String host) =>
     const {'127.0.0.1', 'localhost', '::1'}.contains(host);
 
-/// [value] as a relay address a config may hold: `wss://` or `https://`, or
-/// `ws://` or `http://` to this machine. The relay's first address becomes
-/// [defaultRelayUrl]. Anything else comes back empty, and the config keeps
-/// that it was refused in [ServerConfig.relayRefused].
+/// [value] as a relay address a config may hold: `wss://`, or `ws://` to
+/// this machine, which is what the socket will dial (wire spec 14). The
+/// relay's first address becomes [defaultRelayUrl]. Anything else comes
+/// back empty, and the config keeps that it was refused in
+/// [ServerConfig.relayRefused].
 /// Every [ServerConfig] is built through this, so an address from a pairing
 /// code, an import, the vault or a text field is checked once, where it is
 /// stored, and the subscriber token never follows one over plain HTTP.
@@ -23,8 +24,8 @@ String storableRelayUrl(String value) {
   final uri = Uri.tryParse(trimmed);
   if (uri == null || uri.host.isEmpty) return '';
   final allowed = switch (uri.scheme) {
-    'wss' || 'https' => true,
-    'ws' || 'http' => isLoopbackHost(uri.host),
+    'wss' => true,
+    'ws' => isLoopbackHost(uri.host),
     _ => false,
   };
   return allowed ? trimmed : '';
@@ -41,7 +42,7 @@ String? otherRelayHost(String relayUrl) {
   // `Uri` knows no default port for `ws` and `wss`.
   int port(Uri uri) => uri.hasPort
       ? uri.port
-      : const {'wss', 'https'}.contains(uri.scheme)
+      : uri.scheme == 'wss'
       ? 443
       : 80;
   final own = Uri.parse(defaultRelayUrl);

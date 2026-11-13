@@ -18,13 +18,12 @@ ServerConfig relayConfig({required String id, String name = 'Server'}) {
 }
 
 void main() {
-  test('a config holds a relay address with TLS, on this machine, or none', () {
+  test('a config holds a wss relay address, one on this machine, or none', () {
     ServerConfig withRelay(String relayUrl) =>
         relayConfig(id: 'server-1').copyWith(relayUrl: relayUrl);
 
     for (final allowed in [
       'wss://relay.example.test',
-      'https://relay.example.test',
       'ws://127.0.0.1:9000',
       'ws://localhost:9000',
       'ws://[::1]:9000',
@@ -33,7 +32,10 @@ void main() {
     }
     for (final refused in [
       'ws://relay.example.test',
+      // Not an address a socket dials, with TLS or without.
+      'https://relay.example.test',
       'http://relay.example.test',
+      'http://127.0.0.1:9000',
       'ws://192.168.1.20:9000',
       'ftp://relay.example.test',
       'relay.example.test',
