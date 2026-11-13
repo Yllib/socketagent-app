@@ -8722,8 +8722,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
-  /// Hands a result to the request that asked for it: by `requestId` when
-  /// the computer echoes one, otherwise to the oldest request of that type.
+  /// Hands a result to the request that asked for it, matched by the
+  /// `requestId` every computer echoes. A result with no ID answers a
+  /// request the app sent without one, such as the device list on each
+  /// connect, so it completes nothing: taken as the answer to a waiting
+  /// lock or removal it would report the state from before that request.
+  /// The one exception is the link list, which no computer tags. It goes to
+  /// the oldest request, and any list that arrives after the request was
+  /// sent is as new as what the app already knows.
   void _completeDeviceRequest(
     String? serverId,
     String resultType,
@@ -8732,11 +8738,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final waiting = _deviceRequestCompleters['$serverId::$resultType'];
     if (waiting == null || waiting.isEmpty) return;
     final requestId = msg['requestId'];
-    final index = requestId is String
+    final index = requestId is String && requestId.isNotEmpty
         ? waiting.indexWhere((w) => w.requestId == requestId)
+        : resultType == 'computer_link_list_result'
+        ? 0
         : -1;
-    if (index < 0 && requestId is String && requestId.isNotEmpty) return;
-    final waiter = waiting.removeAt(index < 0 ? 0 : index);
+    if (index < 0) return;
+    final waiter = waiting.removeAt(index);
     if (!waiter.completer.isCompleted) waiter.completer.complete(msg);
   }
 
