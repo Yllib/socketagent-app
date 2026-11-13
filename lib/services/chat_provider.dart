@@ -313,21 +313,6 @@ String? _normalizeBackendAuthCodeCandidate(
   return null;
 }
 
-bool _isLocalRelayUrl(String value) {
-  final uri = Uri.tryParse(value.trim());
-  if (uri == null) return false;
-  final host = uri.host.toLowerCase();
-  return host == 'localhost' || host == '127.0.0.1' || host == '::1';
-}
-
-String _normalizeRelayUrl(String value) {
-  final trimmed = value.trim();
-  if (trimmed == 'ws://jarofdirt.info:9988' || _isLocalRelayUrl(trimmed)) {
-    return 'wss://relay.jarofdirt.info';
-  }
-  return trimmed;
-}
-
 class BackendInstallState {
   BackendInstallState({
     required this.backend,
@@ -2717,28 +2702,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       } catch (_) {
         _serverConfigs = [];
       }
-      // Migrate relay URLs that cannot work from the phone.
-      bool relayMigrated = false;
-      _serverConfigs = _serverConfigs.map((c) {
-        final normalizedRelayUrl = _normalizeRelayUrl(c.relayUrl);
-        if (normalizedRelayUrl != c.relayUrl) {
-          relayMigrated = true;
-          return c.copyWith(relayUrl: normalizedRelayUrl);
-        }
-        return c;
-      }).toList();
+      // A stored relay address is used as it was stored. [ServerConfig]
+      // has already moved the relay's first address to the default relay
+      // and no other address is ever swapped for another host.
       final dedupedConfigs = dedupeServerConfigs(_serverConfigs);
       final duplicateConfigsRemoved =
           dedupedConfigs.length != _serverConfigs.length;
       _serverConfigs = dedupedConfigs;
-      if (relayMigrated || duplicateConfigsRemoved) {
+      if (duplicateConfigsRemoved) {
         await _saveServerConfigs();
       }
     }
     // Migrate old single-server config if no multi-server configs exist
     if (_serverConfigs.isEmpty && _serverHost.isNotEmpty) {
       // Migrate global relay pairing data into the server config
-      final relayUrl = _normalizeRelayUrl(prefs.getString('relay_url') ?? '');
+      final relayUrl = prefs.getString('relay_url') ?? '';
       final pairingToken = prefs.getString('pairing_token') ?? '';
       final serverPubkey = prefs.getString('server_pubkey') ?? '';
       final useRelay = prefs.getBool('use_relay') ?? false;

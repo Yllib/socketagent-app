@@ -51,6 +51,12 @@ void main() {
       'relayUrl': 'ws://relay.example.test',
     });
     expect(stored.relayUrl, isEmpty);
+    // A computer saved by an old release still loads on the default relay.
+    final old = ServerConfig.fromJson({
+      ...relayConfig(id: 'server-1').toJson(),
+      'relayUrl': 'ws://jarofdirt.info:9988',
+    });
+    expect(old.relayUrl, defaultRelayUrl);
   });
 
   test('expected-online preference survives serialization', () {
