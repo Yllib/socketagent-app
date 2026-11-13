@@ -188,6 +188,10 @@ class WebSocketService {
   // LAN says nothing about the computer in the relay room.
   int _silentRelayHandshakes = 0;
   int _silentDirectHandshakes = 0;
+  // Whether the computer has answered on the current connection, and the
+  // address a direct one was opened to. See the getters.
+  bool _computerAnswered = false;
+  String? _dialledHost;
   // A v2 channel the computer holds until a paired device answers. Only the
   // verdict is read from it.
   bool _held = false;
@@ -267,6 +271,17 @@ class WebSocketService {
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
   ConnectionStatus get status => _status;
   ConnectionMode get mode => _mode;
+
+  /// Whether the computer has answered on this connection, or on the last
+  /// one once the socket has closed: with an `hs2` that verified, or on the
+  /// old transport with a key exchange answer the app accepted. False for a
+  /// dial that reached nothing, and for one that reached something which
+  /// never showed it was the computer.
+  bool get computerAnswered => _computerAnswered;
+
+  /// The LAN address this connection, or the last one, was opened to. Null
+  /// on the relay and before the first dial.
+  String? get dialledHost => _dialledHost;
 
   /// Fires when the relay turns this phone away for lack of a subscription.
   /// A relay signal, so it stays off [messages], which carries only what the
@@ -450,6 +465,8 @@ class WebSocketService {
     _channel = null;
     // Increment generation so any lingering async callbacks from old connections are ignored
     final gen = ++_connectionGeneration;
+    _computerAnswered = false;
+    _dialledHost = null;
     unawaited(
       _connectAfterClosingPrevious(gen, previousSubscription, previousChannel),
     );
@@ -514,6 +531,7 @@ class WebSocketService {
     try {
       final Uri uri;
       Map<String, dynamic>? headers;
+      _dialledHost = _mode == ConnectionMode.direct ? _host : null;
       if (_mode == ConnectionMode.relay) {
         // A new-style join, for v2 and the old transport alike: the room and
         // the subscriber token ride in headers, never in the URL.
@@ -799,6 +817,7 @@ class WebSocketService {
     }
     _silentRelayHandshakes = 0;
     _silentDirectHandshakes = 0;
+    _computerAnswered = true;
     final channel = PeerChannel.transport(
       sendKey: result.keys.sendKey,
       receiveKey: result.keys.receiveKey,
@@ -1255,6 +1274,7 @@ class WebSocketService {
         return false;
       }
       _peerChannel = PeerChannel.legacy(crypto.cipherForLegacyChannel);
+      _computerAnswered = true;
       return true;
     }
     try {
@@ -1272,6 +1292,7 @@ class WebSocketService {
       // answer to the old channel's request means nothing on this one.
       _upgradeAsked = false;
       _upgradeRequestId = null;
+      _computerAnswered = true;
       return true;
     } catch (error) {
       _refuseConnection('key exchange refused: $error');

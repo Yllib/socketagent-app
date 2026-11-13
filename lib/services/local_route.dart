@@ -21,6 +21,9 @@ String localRouteId(String serverPubkey) => sha256
 /// Finds a LAN address where [ServerConfig] answers: the stored host, plus
 /// whatever the server is advertising over mDNS when [searchLan] is set.
 /// Returns the first address that accepts a TCP connection, or null.
+/// Addresses in `skip` are not tried. An mDNS advert is not proof of who
+/// sent it, and neither is an open port, so the caller leaves out the ones
+/// where a handshake just went unanswered.
 ///
 /// The defaults touch the network; tests pass their own [discover] and
 /// [reachable].
@@ -37,6 +40,7 @@ class LocalRouteFinder {
     ServerConfig config, {
     required bool searchLan,
     Duration timeout = const Duration(seconds: 3),
+    Set<String> skip = const {},
   }) async {
     final found = Completer<String?>();
     final tried = <String>{};
@@ -51,7 +55,12 @@ class LocalRouteFinder {
     }
 
     void tryHost(String host) {
-      if (found.isCompleted || host.isEmpty || !tried.add(host)) return;
+      if (found.isCompleted ||
+          host.isEmpty ||
+          skip.contains(host) ||
+          !tried.add(host)) {
+        return;
+      }
       pending++;
       unawaited(
         reachable(host, config.port).then((ok) {

@@ -10,6 +10,9 @@ import 'package:bonsoir/bonsoir.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import 'support/fake_v2_computer.dart';
 
 final serverKey = base64Encode(List.filled(32, 7));
 
@@ -85,6 +88,26 @@ void main() {
       await firstReachable(['10.77.18.130'], 8085, reachable: reachable),
       isNull,
     );
+  });
+
+  test('the finder leaves out the addresses it is told to skip', () async {
+    final tried = <String>[];
+    final finder = LocalRouteFinder(
+      discover: (_) => Stream.fromIterable(['192.168.1.40', '192.168.1.50']),
+      reachable: (host, _) async {
+        tried.add(host);
+        return true;
+      },
+    );
+    expect(
+      await finder.find(
+        autoConfig(),
+        searchLan: true,
+        skip: {'192.168.1.20', '192.168.1.40'},
+      ),
+      '192.168.1.50',
+    );
+    expect(tried, ['192.168.1.50']);
   });
 
   test('the finder gives up when nothing answers', () async {
@@ -246,6 +269,125 @@ void main() {
         expect(saved.last.useRelay, isFalse);
       },
     );
+
+    /// A finder for a phone whose stored address is gone and whose LAN
+    /// advertises this machine as the computer.
+    LocalRouteFinder finderAdvertisingLoopback() => LocalRouteFinder(
+      discover: (_) => Stream.value('127.0.0.1'),
+      reachable: (host, _) async => host == '127.0.0.1',
+    );
+
+    test(
+      'skips a LAN address that accepts the socket and never answers',
+      () async {
+        // Something on the LAN that advertises the computer's ID, accepts
+        // the socket and says nothing. And a relay that accepts the phone.
+        final sockets = <WebSocket>[];
+        Future<HttpServer> quietServer(List<WebSocket> opened) async {
+          final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+          server.listen((request) async {
+            final socket = await WebSocketTransformer.upgrade(request);
+            sockets.add(socket);
+            opened.add(socket);
+          });
+          return server;
+        }
+
+        final onLan = <WebSocket>[];
+        final onRelay = <WebSocket>[];
+        final lan = await quietServer(onLan);
+        final relay = await quietServer(onRelay);
+        addTearDown(() async {
+          for (final socket in sockets) {
+            await socket.close();
+          }
+          await lan.close(force: true);
+          await relay.close(force: true);
+        });
+
+        manager
+          ..setSubscriberToken('subscriber')
+          // The relay socket is left to wait in its room.
+          ..relayPatience = const Duration(minutes: 1)
+          ..routeFinder = finderAdvertisingLoopback();
+        await manager.setServers([
+          autoConfig(
+            useRelay: false,
+          ).copyWith(port: lan.port, relayUrl: 'ws://127.0.0.1:${relay.port}'),
+        ]);
+        await manager.routeServer('computer', force: true);
+        final ws = manager.getConnection('computer')!;
+        manager.connectServer('computer');
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        // The advertised address gets its try, and is not stored for it.
+        expect(onLan, hasLength(1));
+        expect(onRelay, isEmpty);
+        expect(saved, isEmpty);
+
+        // The key exchange gets no answer in its 5 s, and the relay is next.
+        await Future<void>.delayed(const Duration(seconds: 6));
+        expect(ws.mode, ConnectionMode.relay);
+        expect(onRelay, hasLength(1));
+        expect(onLan, hasLength(1));
+        expect(saved.single.useRelay, isTrue);
+        expect(saved.single.host, '192.168.1.20');
+
+        // A search on the same network leaves the address out.
+        await manager.routeServer('computer', force: true);
+        expect(ws.mode, ConnectionMode.relay);
+
+        // On another network the address gets its turn again.
+        manager.onNetworkChanged([ConnectivityResult.wifi]);
+        await manager.routeServer('computer', force: true);
+        expect(ws.mode, ConnectionMode.direct);
+        expect(saved.every((config) => config.host == '192.168.1.20'), isTrue);
+      },
+    );
+
+    test('stores an address the search found once the computer answers '
+        'there', () async {
+      SharedPreferences.setMockInitialValues({});
+      final computer = FakeV2Computer(roomId: 'room');
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      server.listen((request) async {
+        final socket = await WebSocketTransformer.upgrade(request);
+        socket.listen((frame) {
+          if (FakeV2Computer.isRecord(frame)) return;
+          socket.add(computer.answer(frame));
+        });
+      });
+      addTearDown(() => server.close(force: true));
+
+      manager.routeFinder = finderAdvertisingLoopback();
+      await manager.setServers([
+        ServerConfig(
+          id: 'computer',
+          name: 'Computer',
+          host: '192.168.1.20',
+          port: server.port,
+          token: '',
+          autoRoute: true,
+          pairingToken: computer.roomId,
+          pairingSecret: computer.pairingSecret,
+          transport: 2,
+          serverPubkey: computer.publicKey,
+        ),
+      ]);
+      await manager.routeServer('computer', force: true);
+      // Found, and not yet proven.
+      expect(saved, isEmpty);
+
+      final connected = manager.statusStream.firstWhere(
+        (update) => update.status == ConnectionStatus.connected,
+      );
+      manager.connectServer('computer');
+      await connected.timeout(const Duration(seconds: 5));
+      await Future<void>.delayed(Duration.zero);
+
+      expect(saved.single.host, '127.0.0.1');
+      expect(saved.single.useRelay, isFalse);
+      expect(manager.configs.single.host, '127.0.0.1');
+    });
 
     test('leaves fixed-route computers alone', () async {
       manager

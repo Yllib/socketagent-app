@@ -121,6 +121,16 @@ class ConnectionManager {
   final Map<String, DateTime> _relayRefused = {};
   // Auto-routed computers waiting on the relay, with the next direct check.
   final Map<String, Timer> _relayWatch = {};
+  // LAN addresses that accepted a connection and then gave no answer as
+  // the computer, by computer, with when. Routing leaves each out for
+  // [_silentHostSkip] or until the network changes, so the next route gets
+  // its turn (wire spec 3.8).
+  final Map<String, Map<String, DateTime>> _silentHosts = {};
+  static const _silentHostSkip = Duration(minutes: 5);
+  // The address a computer's direct socket is set to when it is not the
+  // stored one: the search found it, and no handshake there has succeeded
+  // yet. It is stored in the entry once one does.
+  final Map<String, String> _unprovenHost = {};
 
   /// How long a relay socket may wait for its computer before the phone
   /// checks direct again. Doubles on each check that finds nothing, up to a
@@ -230,6 +240,15 @@ class ConnectionManager {
 
     // Add or update servers
     for (final config in serverConfigs) {
+      final previous = _configs[config.id];
+      if (previous != null &&
+          (previous.host != config.host ||
+              previous.port != config.port ||
+              previous.serverPubkey != config.serverPubkey)) {
+        // What was learned about the old address says nothing of this one.
+        _unprovenHost.remove(config.id);
+        _silentHosts.remove(config.id);
+      }
       _configs[config.id] = config;
 
       if (!_connections.containsKey(config.id)) {
@@ -306,7 +325,7 @@ class ConnectionManager {
         crypto.setServerPublicKey(config.serverPubkey);
       }
       ws.configure(
-        host: config.host,
+        host: _unprovenHost[config.id] ?? config.host,
         port: config.port,
         token: config.token,
         cryptoService: crypto,
@@ -355,6 +374,8 @@ class ConnectionManager {
     // The platform reports one change as a short burst of events. A socket
     // opened after the first of them is on the new network already; replacing
     // it again would resume the session twice.
+    // On another network the same addresses are other machines.
+    _silentHosts.clear();
     final now = DateTime.now();
     final burstStart = _networkChangedAt;
     if (burstStart == null ||
@@ -410,7 +431,9 @@ class ConnectionManager {
   /// socket if the route or LAN address changed. A live socket reconnects on
   /// the new route; an idle one stays idle. Runs at most once every 30
   /// seconds unless [force] is set, so a computer that is off doesn't keep
-  /// the phone searching.
+  /// the phone searching. A change of route is saved at once. An address
+  /// the search found is saved by [_keepProvenHost], once the computer has
+  /// answered there.
   Future<void> routeServer(String serverId, {bool force = false}) {
     final running = _routing[serverId];
     if (running != null) return running;
@@ -447,6 +470,7 @@ class ConnectionManager {
           config,
           searchLan: network == _NetworkKind.local,
           timeout: const Duration(seconds: 2),
+          skip: _skippedHosts(config.id),
         );
       }
     }
@@ -465,13 +489,24 @@ class ConnectionManager {
           )
         : connectionModeForServerConfig(config);
     final stale = staleSince != null && !ws.connectedAfter(staleSince);
-    final next = latest.copyWith(
-      useRelay: mode == ConnectionMode.relay,
-      host: directHost ?? latest.host,
-    );
+    final next = latest.copyWith(useRelay: mode == ConnectionMode.relay);
+    // The address for a direct socket: the one the search found, else the
+    // unproven one already in use unless it has gone silent, else the
+    // stored one, which is all there is to retry.
+    final unproven = _unprovenHost[config.id];
+    final dialled = unproven ?? latest.host;
+    final host =
+        directHost ??
+        (unproven != null && !_skippedHosts(config.id).contains(unproven)
+            ? unproven
+            : latest.host);
     final moved =
-        next.useRelay != latest.useRelay ||
-        (!next.useRelay && next.host != latest.host);
+        next.useRelay != latest.useRelay || (!next.useRelay && host != dialled);
+    if (next.useRelay || host == latest.host) {
+      _unprovenHost.remove(config.id);
+    } else {
+      _unprovenHost[config.id] = host;
+    }
     final live = ws.status != ConnectionStatus.disconnected || ws.reconnecting;
     if (!moved) {
       if (stale && live) ws.connect(force: true);
@@ -480,7 +515,54 @@ class ConnectionManager {
     _configs[config.id] = next;
     await _configureTransport(next);
     if (live) ws.connect(force: true);
-    onRouteChanged?.call(next);
+    if (next.useRelay != latest.useRelay) onRouteChanged?.call(next);
+  }
+
+  /// The addresses routing leaves out for [serverId] just now.
+  Set<String> _skippedHosts(String serverId) {
+    final silent = _silentHosts[serverId];
+    if (silent == null) return const {};
+    final now = DateTime.now();
+    silent.removeWhere((_, at) => now.difference(at) >= _silentHostSkip);
+    return silent.keys.toSet();
+  }
+
+  /// [ws] connected. When that was a direct socket to an address the search
+  /// found, the computer has now answered there with its key, and the
+  /// address is stored in the entry.
+  void _keepProvenHost(String serverId, WebSocketService ws) {
+    final host = _unprovenHost[serverId];
+    final config = _configs[serverId];
+    if (host == null ||
+        config == null ||
+        ws.status != ConnectionStatus.connected ||
+        ws.dialledHost != host ||
+        !ws.computerAnswered) {
+      return;
+    }
+    _unprovenHost.remove(serverId);
+    final proven = config.copyWith(host: host);
+    _configs[serverId] = proven;
+    onRouteChanged?.call(proven);
+  }
+
+  /// [ws] dropped. When its last dial was to a LAN address that still
+  /// accepts a connection and the computer never answered there, that
+  /// address is left out and the route is picked again without it. An
+  /// address that accepts nothing is not marked: the computer may be
+  /// restarting, and is found there again as soon as it is back.
+  Future<void> _skipIfSilent(String serverId, WebSocketService ws) async {
+    final host = ws.dialledHost;
+    final config = _configs[serverId];
+    if (host == null || config == null || ws.computerAnswered) return;
+    if (!await routeFinder.reachable(host, config.port)) return;
+    if (_connections[serverId] != ws || _configs[serverId]?.autoRoute != true) {
+      return;
+    }
+    (_silentHosts[serverId] ??= {})[host] = DateTime.now();
+    // A search that began before the mark may still pick this address.
+    await _routing[serverId];
+    await routeServer(serverId, force: true);
   }
 
   // An encrypted direct socket signs in with the token or, once the
@@ -637,6 +719,7 @@ class ConnectionManager {
       _statusController.add(ServerStatusUpdate(serverId, status));
       if (status == ConnectionStatus.connected) {
         _relayWatch.remove(serverId)?.cancel();
+        _keepProvenHost(serverId, ws);
       } else if (status == ConnectionStatus.connecting &&
           ws.mode == ConnectionMode.relay &&
           _configs[serverId]?.autoRoute == true &&
@@ -651,6 +734,7 @@ class ConnectionManager {
           ws.reconnecting &&
           _configs[serverId]?.autoRoute == true) {
         unawaited(routeServer(serverId));
+        unawaited(_skipIfSilent(serverId, ws));
       }
     });
   }
@@ -695,6 +779,8 @@ class ConnectionManager {
     _lastRouted.remove(id);
     _relayRefused.remove(id);
     _deviceKeyDirect.remove(id);
+    _silentHosts.remove(id);
+    _unprovenHost.remove(id);
   }
 
   /// [serverId] sent a LAN route without the token, so its direct socket
