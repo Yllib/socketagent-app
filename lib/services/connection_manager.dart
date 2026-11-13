@@ -71,6 +71,7 @@ class ConnectionManager {
   final Map<String, StreamSubscription> _messageSubs = {};
   final Map<String, StreamSubscription> _statusSubs = {};
   final Map<String, StreamSubscription> _deviceAuthSubs = {};
+  final Map<String, StreamSubscription> _subscriptionRequiredSubs = {};
   // Computers that sent a LAN route without the token: they approved this
   // device's key, so a direct socket can sign in with it.
   final Set<String> _deviceKeyDirect = {};
@@ -114,6 +115,13 @@ class ConnectionManager {
   final _statusController = StreamController<ServerStatusUpdate>.broadcast();
   final _deviceAuthController =
       StreamController<ServerDeviceAuthUpdate>.broadcast();
+  final _subscriptionRequiredController = StreamController<String>.broadcast();
+
+  /// The ID of each computer whose relay turned this phone away for lack of
+  /// a subscription. The relay says so, not the computer, so this never
+  /// travels on [messages].
+  Stream<String> get subscriptionRequired =>
+      _subscriptionRequiredController.stream;
 
   /// Merged message stream from all connected servers.
   Stream<ServerMessage> get messages => _messageController.stream;
@@ -543,8 +551,11 @@ class ConnectionManager {
 
   void _subscribeToServer(String serverId, WebSocketService ws) {
     _messageSubs[serverId] = ws.messages.listen((data) {
-      if (data['type'] == 'subscription_required' &&
-          _configs[serverId]?.autoRoute == true) {
+      _messageController.add(ServerMessage(serverId, data));
+    });
+
+    _subscriptionRequiredSubs[serverId] = ws.subscriptionRequired.listen((_) {
+      if (_configs[serverId]?.autoRoute == true) {
         // The relay turned us away. The LAN may still work without it.
         _relayRefused.add(serverId);
         // Retrying the relay would only be refused again.
@@ -554,7 +565,7 @@ class ConnectionManager {
           }),
         );
       }
-      _messageController.add(ServerMessage(serverId, data));
+      _subscriptionRequiredController.add(serverId);
     });
 
     _deviceAuthSubs[serverId] = ws.deviceAuthStream.listen((state) {
@@ -612,6 +623,8 @@ class ConnectionManager {
     _statusSubs.remove(id);
     _deviceAuthSubs[id]?.cancel();
     _deviceAuthSubs.remove(id);
+    _subscriptionRequiredSubs[id]?.cancel();
+    _subscriptionRequiredSubs.remove(id);
     _connections[id]?.dispose();
     _connections.remove(id);
     _configs.remove(id);
@@ -646,6 +659,9 @@ class ConnectionManager {
     for (final sub in _deviceAuthSubs.values) {
       sub.cancel();
     }
+    for (final sub in _subscriptionRequiredSubs.values) {
+      sub.cancel();
+    }
     for (final ws in _connections.values) {
       ws.dispose();
     }
@@ -655,9 +671,11 @@ class ConnectionManager {
     _messageSubs.clear();
     _statusSubs.clear();
     _deviceAuthSubs.clear();
+    _subscriptionRequiredSubs.clear();
     _messageController.close();
     _statusController.close();
     _deviceAuthController.close();
+    _subscriptionRequiredController.close();
   }
 }
 

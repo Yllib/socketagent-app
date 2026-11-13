@@ -95,6 +95,7 @@ class WebSocketService {
       0; // prevents stale callbacks from affecting state
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
+  final _subscriptionRequiredController = StreamController<void>.broadcast();
   ConnectionStatus _status = ConnectionStatus.disconnected;
   String _host = '192.168.1.100';
   int _port = 8085;
@@ -117,6 +118,11 @@ class WebSocketService {
   SessionOffer? _sessionOffer;
   PeerChannel? _peerChannel;
   bool _requireTrustedDirectKey = true;
+  // Whether this socket has a pinned computer key: every relay socket, and a
+  // direct one opened with `e2e`. Fixed per connection. On a keyed socket a
+  // frame is a sealed message or a transport signal, and nothing else gets
+  // past [_onFrame].
+  bool _socketKeyed = false;
 
   // Device registry handshake (relay only). The computer may hold the peer
   // after key exchange until this device proves it knows AUTH_TOKEN or
@@ -146,6 +152,12 @@ class WebSocketService {
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
   ConnectionStatus get status => _status;
   ConnectionMode get mode => _mode;
+
+  /// Fires when the relay turns this phone away for lack of a subscription.
+  /// A relay signal, so it stays off [messages], which carries only what the
+  /// computer sealed.
+  Stream<void> get subscriptionRequired =>
+      _subscriptionRequiredController.stream;
 
   /// Where the device registry handshake stands on this lane.
   Stream<DeviceAuthState> get deviceAuthStream => _deviceAuthController.stream;
@@ -298,6 +310,7 @@ class WebSocketService {
           '$_relayUrl?token=${Uri.encodeComponent(_pairingToken)}&role=phone&subscriber_token=${Uri.encodeComponent(_subscriberToken)}',
         );
         _encryptionReady = false;
+        _socketKeyed = true;
         // DO NOT log the full URI - it contains pairing and subscriber tokens
       } else {
         final encryptedDirect =
@@ -319,6 +332,7 @@ class WebSocketService {
           },
         );
         _encryptionReady = false;
+        _socketKeyed = encryptedDirect;
       }
 
       // Use the IOWebSocketChannel.connect factory so it builds the underlying
@@ -337,43 +351,7 @@ class WebSocketService {
       );
 
       _channelSubscription = _channel!.stream
-          .asyncMap((data) async {
-            if (gen != _connectionGeneration) return;
-            // A direct socket without a token stays connecting until the
-            // server approves its device key.
-            if (_status != ConnectionStatus.connected &&
-                _mode == ConnectionMode.direct &&
-                _token.isNotEmpty) {
-              _setStatus(ConnectionStatus.connected);
-            }
-            try {
-              final crypto = _cryptoService;
-              final channel = _peerChannel;
-              final decoded = await (crypto == null
-                  ? decodeSocketFrame(
-                      data,
-                      encryptedBinary: _mode == ConnectionMode.relay,
-                    )
-                  : crypto.decodeFrame(
-                      data,
-                      relay: _mode == ConnectionMode.relay,
-                      channel: channel,
-                    ));
-              // Reconnects can finish while a large frame is being decoded.
-              if (gen != _connectionGeneration || decoded == null) return;
-              if (decoded.encrypted) {
-                if (channel == null) return;
-                channel.accept(decoded.nonce);
-                _routeDecryptedMessage(decoded.message);
-              } else {
-                _handleIncoming(decoded.message);
-              }
-            } catch (error) {
-              debugPrint(
-                '[WebSocket] Incoming frame rejected: ${error.runtimeType}',
-              );
-            }
-          })
+          .asyncMap((data) => _onFrame(data, gen))
           .listen(
             (_) {},
             onError: (error) {
@@ -442,13 +420,87 @@ class WebSocketService {
     }
   }
 
-  /// Handle incoming messages — relay control, encrypted, or plain
-  void _handleIncoming(Map<String, dynamic> raw) {
+  /// Sorts one incoming frame. On a keyed socket it is either a sealed
+  /// message, which goes to [_routeDecryptedMessage], or a transport signal,
+  /// which goes to [_handleSignal]. Anything else is dropped on the relay.
+  /// On a direct socket it is dropped until the key exchange is done and
+  /// closes the socket after. Frames must be awaited in order.
+  Future<void> _onFrame(Object? data, int gen) async {
+    if (gen != _connectionGeneration) return;
+    if (!_socketKeyed) return _onUnkeyedFrame(data, gen);
+    final channel = _peerChannel;
+    final DecodedSocketFrame? decoded;
+    try {
+      decoded = await decodeSocketFrame(
+        data,
+        cipher: channel?.cipher,
+        encryptedBinary: true,
+      );
+    } catch (error) {
+      if (gen == _connectionGeneration) {
+        _rejectFrame('frame did not open (${error.runtimeType})');
+      }
+      return;
+    }
+    // Reconnects can finish while a large frame is being decoded.
+    if (gen != _connectionGeneration || decoded == null) return;
+    if (!decoded.encrypted) {
+      _handleSignal(decoded.message);
+      return;
+    }
+    if (channel == null) return;
+    try {
+      channel.accept(decoded.nonce);
+    } catch (error) {
+      _rejectFrame('$error');
+      return;
+    }
+    _routeDecryptedMessage(decoded.message);
+  }
+
+  /// A frame on a keyed socket that is neither a sealed message nor a
+  /// transport signal. The relay forwards whatever a room member sends, so
+  /// there it is only dropped. On a direct socket with its key exchange done
+  /// nothing honest sends one, and the socket closes.
+  void _rejectFrame(String reason) {
+    if (_mode == ConnectionMode.direct && _peerChannel != null) {
+      _refuseConnection('unsealed or unreadable frame: $reason');
+      return;
+    }
+    debugPrint('[WebSocket] Incoming frame dropped: $reason');
+  }
+
+  /// The plaintext token socket, which has no pinned key and so nothing to
+  /// seal with. The app opens one only when told the key is not required.
+  Future<void> _onUnkeyedFrame(Object? data, int gen) async {
+    if (_status != ConnectionStatus.connected && _token.isNotEmpty) {
+      _setStatus(ConnectionStatus.connected);
+    }
+    try {
+      final decoded = await decodeSocketFrame(data);
+      if (gen != _connectionGeneration || decoded == null) return;
+      final raw = decoded.message;
+      // Peek at server_capabilities for the binary-envelope flag, then
+      // forward the message so listeners can read fields like `backends`.
+      if (raw['type'] == 'server_capabilities') _applyServerCapabilities(raw);
+      _messageController.add(raw);
+    } catch (error) {
+      debugPrint('[WebSocket] Incoming frame rejected: ${error.runtimeType}');
+    }
+  }
+
+  /// An unsealed frame on a keyed socket. Only the relay's own signals and
+  /// the key exchange answer mean anything, and all they can change is this
+  /// connection's state. None of them reaches [messages].
+  void _handleSignal(Map<String, dynamic> raw) {
+    final type = raw['type'];
     if (_mode == ConnectionMode.relay) {
       // Subscription gate
-      if (raw['type'] == 'subscription_required') {
+      if (type == 'subscription_required') {
         debugPrint('[Relay] Subscription required');
-        _messageController.add(raw);
+        if (!_subscriptionRequiredController.isClosed) {
+          _subscriptionRequiredController.add(null);
+        }
         // Don't reconnect — user needs to subscribe first
         _reconnectTimer?.cancel();
         _channelSubscription?.cancel();
@@ -460,48 +512,33 @@ class WebSocketService {
         _setStatus(ConnectionStatus.disconnected);
         return;
       }
-
-      // Relay control messages
-      if (raw['type'] == 'peer_connected') {
+      if (type == 'peer_connected') {
         debugPrint('[Relay] Peer connected — sending key exchange');
         _sendKeyExchange();
         return;
       }
-      if (raw['type'] == 'peer_disconnected') {
+      if (type == 'peer_disconnected') {
         debugPrint('[Relay] Peer disconnected');
         _encryptionReady = false;
         _setStatus(ConnectionStatus.error);
         _scheduleReconnect();
         return;
       }
-
-      // Plaintext messages in relay mode (only during key exchange)
-      if (raw['type'] == 'key_exchange_ack') {
+      if (type == 'key_exchange_ack') {
         if (_completeKeyExchange(raw)) _onKeyExchangeAck(raw);
         return;
       }
-
-      // Unknown relay message — ignore
+      // Anything else unsealed in the room is dropped.
       return;
     }
 
-    // Direct mode with a server public key uses the same NaCl envelope as relay.
-    if (_mode == ConnectionMode.direct &&
-        _cryptoService != null &&
-        _cryptoService!.isReady) {
-      if (raw['type'] == 'key_exchange_ack') {
-        if (_completeKeyExchange(raw)) _onEncryptionEstablished();
-        return;
-      }
+    // Direct. The one unsealed frame a computer sends is its answer to this
+    // socket's key exchange.
+    if (type == 'key_exchange_ack' && _peerChannel == null) {
+      if (_completeKeyExchange(raw)) _onEncryptionEstablished();
+      return;
     }
-
-    // Direct legacy mode — pass through. We also peek at server_capabilities to
-    // capture the binary-envelope flag (purely internal), then forward the
-    // message so listeners can read fields like `backends`.
-    if (raw['type'] == 'server_capabilities') {
-      _applyServerCapabilities(raw);
-    }
-    _messageController.add(raw);
+    _rejectFrame('unsealed $type');
   }
 
   /// Common post-decrypt routing: surfaces the message to listeners and
@@ -1118,6 +1155,7 @@ class WebSocketService {
     _bulkLane = null;
     _messageController.close();
     _statusController.close();
+    _subscriptionRequiredController.close();
     _deviceAuthController.close();
   }
 }

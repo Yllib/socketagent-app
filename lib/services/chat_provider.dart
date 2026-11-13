@@ -1042,6 +1042,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final Map<String, int> _pushRegistrationRetryAttempts = {};
   StreamSubscription? _messageSub;
   StreamSubscription? _statusSub;
+  StreamSubscription<String>? _relaySubscriptionRequiredSub;
   StreamSubscription? _speechResultSub;
   StreamSubscription? _speechStatusSub;
   Timer? _foregroundResumeTimer;
@@ -3285,6 +3286,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         .toList();
     final before = _serverConfigs.where((c) => c.id == serverId).firstOrNull;
     if (before == null || !before.autoRoute || addresses.isEmpty) return;
+    // A socket with no pinned key delivered this unsealed.
+    if (before.serverPubkey.isEmpty) return;
     // A direct socket is already on a working address; keep it. Otherwise
     // store one that answers from here: the server can't tell its LAN from
     // a VPN adapter, so its first address may be the wrong one. Away from
@@ -3316,74 +3319,47 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Takes a new relay room from a computer's sealed capabilities, which is
+  /// how a computer on the old transport tells its devices that Reset
+  /// pairing code moved it, and how a computer found on this machine gets a
+  /// room at all. Nothing else is taken from the wire here. The pinned
+  /// public key never changes: it comes from a pairing code, the account or
+  /// an import. The relay address is the one already stored, or the app's
+  /// own. A socket with no pinned key seals nothing, so it teaches nothing.
   Future<void> _captureRelayPairingFromCapabilities(
     String serverId,
     Map<String, dynamic> msg,
   ) async {
     final relay = msg['relayPairing'];
-    final directE2e = msg['directE2e'];
-    final rawRelayUrl = relay is Map ? relay['relayUrl'] as String? ?? '' : '';
-    final relayUrl = _normalizeRelayUrl(rawRelayUrl);
-    final pairingToken = relay is Map
-        ? relay['pairingToken'] as String? ?? ''
-        : '';
-    final relayServerPubkey = relay is Map
-        ? relay['serverPubkey'] as String? ?? ''
-        : '';
-    final directServerPubkey = directE2e is Map
-        ? directE2e['serverPubkey'] as String? ?? ''
-        : '';
+    if (relay is! Map) return;
     final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (idx < 0) return;
     final existing = _serverConfigs[idx];
-    if (!existing.useRelay &&
-        existing.serverPubkey.isEmpty &&
-        directServerPubkey.isNotEmpty) {
-      debugPrint(
-        '[Direct E2E] Ignoring server public key learned over untrusted direct socket',
-      );
+    if (existing.serverPubkey.isEmpty) return;
+    final claimedKey = relay['serverPubkey'];
+    if (claimedKey is String &&
+        claimedKey.isNotEmpty &&
+        claimedKey != existing.serverPubkey) {
+      debugPrint('[Relay] Ignoring a relay pairing for another computer key');
       return;
     }
-    final serverPubkey = relayServerPubkey.isNotEmpty
-        ? relayServerPubkey
-        : directServerPubkey;
-    if (serverPubkey.isEmpty) {
+    final pairingToken = relay['pairingToken'];
+    if (pairingToken is! String ||
+        pairingToken.isEmpty ||
+        pairingToken == existing.pairingToken) {
       return;
     }
-    final effectiveRelayUrl = relayUrl.isEmpty
-        ? existing.relayUrl
-        : _isLocalRelayUrl(rawRelayUrl) &&
-              existing.relayUrl.isNotEmpty &&
-              !_isLocalRelayUrl(existing.relayUrl)
-        ? existing.relayUrl
-        : relayUrl;
-    final effectivePairingToken = pairingToken.isEmpty
-        ? existing.pairingToken
-        : pairingToken;
-    if (existing.relayUrl == effectiveRelayUrl &&
-        existing.pairingToken == effectivePairingToken &&
-        existing.serverPubkey == serverPubkey) {
-      return;
-    }
-    final shouldReconnectForDirectE2e =
-        !existing.useRelay && existing.serverPubkey != serverPubkey;
-    // A new pairing code moves the computer to another relay room. The relay
-    // socket closes when its config changes, so open it again in the new one.
-    final pairingChanged =
-        existing.pairingToken.isNotEmpty &&
-        existing.pairingToken != effectivePairingToken;
+    // The relay socket closes when its room changes, so open it again in
+    // the new one.
+    final pairingChanged = existing.pairingToken.isNotEmpty;
 
     _serverConfigs[idx] = existing.copyWith(
-      relayUrl: effectiveRelayUrl,
-      pairingToken: effectivePairingToken,
-      serverPubkey: serverPubkey,
+      relayUrl: existing.relayUrl.isEmpty ? defaultRelayUrl : null,
+      pairingToken: pairingToken,
     );
     await _saveServerConfigs();
-    if (shouldReconnectForDirectE2e) {
-      _connMgr.getConnection(serverId)?.disconnect();
-    }
     await _connMgr.setServers(_serverConfigs);
-    if (shouldReconnectForDirectE2e || pairingChanged) {
+    if (pairingChanged) {
       _connMgr.getConnection(serverId)?.connect();
     }
     await _registerPushNotifications();
@@ -3826,6 +3802,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _setupListeners() {
+    // The relay's own signal, kept apart from what computers send.
+    _relaySubscriptionRequiredSub = _connMgr.subscriptionRequired.listen((_) {
+      _subscriptionActive = false;
+      _subscriptionChecked = true;
+      _subscriptionCheckedAt = DateTime.now();
+      _subscriptionRequiredController.add(null);
+      notifyListeners();
+    });
     _statusSub = _connMgr.statusStream.listen((update) {
       _sessionListConnectionRevisions[update.serverId] =
           (_sessionListConnectionRevisions[update.serverId] ?? 0) + 1;
@@ -5476,7 +5460,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'status_sync',
       'view_transition',
       'view_error',
-      'subscription_required',
       'directory_listing',
       'file_manager_list_result',
       'file_manager_stat_result',
@@ -7676,13 +7659,6 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             }
           }
           break;
-        case 'subscription_required':
-          _subscriptionActive = false;
-          _subscriptionChecked = true;
-          _subscriptionCheckedAt = DateTime.now();
-          _subscriptionRequiredController.add(null);
-          notifyListeners();
-          break;
       }
     } catch (error, stackTrace) {
       final activeServer = serverId ?? _connMgr.activeServerId;
@@ -8556,6 +8532,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (token is! String || token.isEmpty) return;
     final index = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (index < 0 || _serverConfigs[index].token == token) return;
+    // A socket with no pinned key delivered this unsealed.
+    if (_serverConfigs[index].serverPubkey.isEmpty) return;
     _serverConfigs[index] = _serverConfigs[index].copyWith(token: token);
     await _saveServerConfigs();
     await _connMgr.setServers(_serverConfigs);
@@ -21173,6 +21151,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _htmlPlanListTimeout?.cancel();
     _messageSub?.cancel();
     _statusSub?.cancel();
+    _relaySubscriptionRequiredSub?.cancel();
     _speechResultSub?.cancel();
     _speechStatusSub?.cancel();
     for (final state in _uploadStates.values) {

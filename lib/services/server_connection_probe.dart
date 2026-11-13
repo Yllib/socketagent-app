@@ -99,15 +99,6 @@ class ServerConnectionProbe {
         complete(ServerProbeResult.success(Map<String, dynamic>.from(message)));
         return;
       }
-      if (type == 'subscription_required') {
-        complete(
-          const ServerProbeResult.failure(
-            ServerProbeFailureKind.subscriptionRequired,
-            'Relay sign-in is required before this computer can connect.',
-          ),
-        );
-        return;
-      }
       if (type == 'error') {
         final raw = message['message']?.toString() ?? 'Connection rejected';
         final unauthorized =
@@ -124,6 +115,15 @@ class ServerConnectionProbe {
           ),
         );
       }
+    });
+
+    final subscriptionSub = socket.subscriptionRequired.listen((_) {
+      complete(
+        const ServerProbeResult.failure(
+          ServerProbeFailureKind.subscriptionRequired,
+          'Relay sign-in is required before this computer can connect.',
+        ),
+      );
     });
 
     statusSub = socket.statusStream.listen((status) {
@@ -180,6 +180,7 @@ class ServerConnectionProbe {
     } finally {
       terminalStatusTimer?.cancel();
       await messageSub.cancel();
+      await subscriptionSub.cancel();
       await statusSub.cancel();
       socket.dispose();
     }

@@ -4,7 +4,6 @@ import 'package:pinenacl/x25519.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'nacl_cipher.dart';
 import 'secure_storage_service.dart';
-import 'socket_frame_decoder.dart';
 
 /// Session keys, version 1, as in server/src/relay-crypto.ts. The static box
 /// encrypts every frame two keys ever exchange, so a frame recorded off the
@@ -186,18 +185,6 @@ class CryptoService {
 
   /// Whether encryption is ready (we have both our keys and the server's)
   bool get isReady => _cipher != null;
-
-  /// Opens [frame] with [channel], the connection's cipher. Without one no
-  /// sealed frame opens, so nothing sealed before the key exchange counts.
-  Future<DecodedSocketFrame?> decodeFrame(
-    Object? frame, {
-    required bool relay,
-    required PeerChannel? channel,
-  }) => decodeSocketFrame(
-    frame,
-    cipher: channel?.cipher,
-    encryptedBinary: relay || isReady,
-  );
 
   /// Starts one connection's key exchange with the paired computer.
   SessionOffer startSession() {

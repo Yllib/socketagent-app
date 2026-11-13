@@ -1,5 +1,8 @@
 import 'dart:math';
 
+/// The relay every computer uses unless its pairing code names another.
+const String defaultRelayUrl = 'wss://relay.jarofdirt.info';
+
 class ServerConfig {
   final String id;
   final String name;
