@@ -24,6 +24,7 @@ import 'services/session_deep_link.dart';
 import 'models/device_approval_notification.dart';
 import 'models/notification_navigation.dart';
 import 'screens/main_shell_screen.dart';
+import 'screens/settings/account_pin_dialogs.dart';
 import 'screens/tasks/tasks_screen.dart';
 import 'screens/home_screen.dart';
 
@@ -599,13 +600,16 @@ class _AppLauncherState extends State<AppLauncher>
       children: [
         // Main app content (renders behind splash)
         if (_checked)
-          MainShellScreen(
-            key: _mainShellKey,
-            initialIndex:
-                _mainShellDestination ==
-                    NotificationParentDestination.scheduledTasks
-                ? MainShellScreenState.scheduledTasksIndex
-                : MainShellScreenState.sessionsIndex,
+          AccountPromptHost(
+            account: context.read<ChatProvider>().account,
+            child: MainShellScreen(
+              key: _mainShellKey,
+              initialIndex:
+                  _mainShellDestination ==
+                      NotificationParentDestination.scheduledTasks
+                  ? MainShellScreenState.scheduledTasksIndex
+                  : MainShellScreenState.sessionsIndex,
+            ),
           ),
 
         // Splash overlay — fades out once ready

@@ -11,15 +11,8 @@ import '../../services/account_service.dart';
 import '../../services/chat_provider.dart';
 import '../../services/device_unlock.dart';
 import '../../services/google_auth.dart';
+import 'account_pin_dialogs.dart';
 import 'settings_v2_screen.dart';
-
-/// The message shown for a failed account action.
-String accountErrorText(Object error) => switch (error) {
-  StateError(:final message) => message,
-  FormatException(:final message) => message,
-  GoogleAuthNotConfigured() => error.toString(),
-  _ => 'Something went wrong: $error',
-};
 
 /// Asks for a recovery key and opens the account with it. Throws a
 /// [StateError] when the key is not accepted.
@@ -53,8 +46,9 @@ Future<void> runAccountAction(
 }
 
 /// The account: an encrypted vault of computers and settings shared between
-/// this user's devices. Every device joins by signing in with Google, which
-/// holds the key in the app's hidden Drive folder. The relay only ever
+/// this user's devices. A new device joins by signing in with Google and
+/// typing the account PIN: the app's hidden Drive folder holds the key
+/// sealed to the PIN, and the relay checks the PIN. The relay only ever
 /// stores ciphertext.
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -92,7 +86,13 @@ class _AccountScreenState extends State<AccountScreen> {
   }
 
   Future<void> _signIn(AccountService account) =>
-      _run(account.signInWithGoogle);
+      _run(() => signInToAccount(context, account));
+
+  Future<void> _setFirstPin(AccountService account) =>
+      _run(() => setFirstAccountPin(context, account));
+
+  Future<void> _setNewPin(AccountService account) =>
+      _run(() => setNewAccountPin(context, account));
 
   Future<void> _restore(AccountService account) =>
       _run(() => restoreAccountWithRecoveryKey(context, account));
@@ -139,49 +139,7 @@ class _AccountScreenState extends State<AccountScreen> {
   });
 
   Future<void> _removeDevice(AccountService account, VaultDevice device) =>
-      _run(() async {
-        final choice = await showDialog<_DeviceRemoval>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Text('Remove ${device.name}?'),
-            content: Text(
-              'Forget is for a device whose app is gone, such as after a '
-              'reinstall. It drops ${device.name} from the account and your '
-              'computers.\n\n'
-              'Remove is for a lost device or one someone else has. It also '
-              'gives the account a new key and gives every computer a new '
-              'pairing token. If ${device.name} is still signed in to your '
-              'Google account it can read the new account key, so also '
-              'remove it from your Google account (Google Account, Security, '
-              'Your devices).',
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(ctx).pop(_DeviceRemoval.forget),
-                child: const Text('Forget'),
-              ),
-              FilledButton(
-                onPressed: account.signedInWithGoogle
-                    ? () => Navigator.of(ctx).pop(_DeviceRemoval.remove)
-                    : null,
-                child: const Text('Remove'),
-              ),
-            ],
-          ),
-        );
-        switch (choice) {
-          case _DeviceRemoval.forget:
-            await account.forgetDevice(device.publicKey);
-          case _DeviceRemoval.remove:
-            await account.removeDevice(device.publicKey);
-          case null:
-            return;
-        }
-      });
+      _run(() => removeAccountDevice(context, account, device));
 
   Future<void> _signOut(AccountService account) => _run(() async {
     final confirmed = await showDialog<bool>(
@@ -351,6 +309,7 @@ class _AccountScreenState extends State<AccountScreen> {
                   'account ${account.accountId!.substring(0, 8)}',
         ),
       ),
+      ..._pinRows(account),
       const SettingsGroupLabel('Devices'),
       for (final device in account.devices)
         ListTile(
@@ -368,7 +327,7 @@ class _AccountScreenState extends State<AccountScreen> {
                 : device.name,
           ),
           subtitle: Text(
-            '${device.platform} · added ${_date(device.addedAt)} · '
+            '${device.platform} · added ${accountDate(device.addedAt)} · '
             'code ${formatFingerprintCode(deviceFingerprintCode(device.publicKey))}',
           ),
           trailing: device.publicKey == provider.devicePublicKey
@@ -411,11 +370,75 @@ class _AccountScreenState extends State<AccountScreen> {
     return '${diff.inDays} d ago';
   }
 
-  static String _date(int unixMs) {
-    if (unixMs <= 0) return 'unknown';
-    final at = DateTime.fromMillisecondsSinceEpoch(unixMs).toLocal();
-    return '${at.year}-${at.month.toString().padLeft(2, '0')}-${at.day.toString().padLeft(2, '0')}';
+  /// Where the account's PIN stands, and the Drive notice.
+  List<Widget> _pinRows(AccountService account) {
+    final palette = context.palette;
+    final warning = Icon(Icons.info_outline, color: palette.warning);
+    return [
+      switch (account.pinState) {
+        AccountPinState.none => ListTile(
+          leading: warning,
+          title: const Text('No account PIN'),
+          subtitle: const Text('New devices cannot join until you set one'),
+          enabled: !_busy,
+          onTap: () => _setFirstPin(account),
+        ),
+        AccountPinState.mustSetAgain => ListTile(
+          leading: warning,
+          title: const Text('PIN must be set again'),
+          subtitle: const Text('New devices cannot join until then'),
+          enabled: !_busy,
+          onTap: () => _setNewPin(account),
+        ),
+        AccountPinState.set => ListTile(
+          leading: const Icon(Icons.pin_outlined),
+          title: const Text('Account PIN'),
+          subtitle: Text(accountPinSummary(account)),
+          enabled: !_busy,
+          onTap: () => _setNewPin(account),
+        ),
+      },
+      if (account.driveHoldsUnknownKey)
+        ListTile(
+          leading: warning,
+          title: const Text(
+            'Google Drive holds a key this device does not know',
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'New devices would join another account. Someone may have '
+                'changed your Google Drive data.',
+              ),
+              TextButton(
+                onPressed: _busy ? null : () => _run(account.putDriveFileBack),
+                child: const Text('Put this one back'),
+              ),
+            ],
+          ),
+        ),
+    ];
   }
+}
+
+/// When and where the PIN was set, and how new devices have used it. The
+/// use and the wrong tries come from the relay, so they wait for a sync.
+String accountPinSummary(AccountService account) {
+  final pin = account.vault?.pin;
+  if (pin == null) return '';
+  final device = account.deviceNameOf(pin.setBy);
+  final relay = account.relayPin;
+  final wrong = relay?.wrongTotal ?? 0;
+  return [
+    'Set ${accountDate(pin.setAt)}${device == null ? '' : ' on $device'}.',
+    if (relay != null) ...[
+      relay.lastUnlockAt == 0
+          ? 'Not used yet.'
+          : 'Last used ${accountDate(relay.lastUnlockAt)}.',
+      wrong == 1 ? '1 wrong try.' : '$wrong wrong tries.',
+    ],
+  ].join(' ');
 }
 
 /// Shows the recovery key with screenshots blocked.
@@ -437,8 +460,8 @@ class _RecoveryKeyScreenState extends State<RecoveryKeyScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           const Text(
-            'This opens the account on any device without Google. Keep it '
-            'somewhere safe and never type it into a chat.',
+            'This opens the account on any device without Google or the '
+            'PIN. Keep it somewhere safe and never type it into a chat.',
           ),
           const SizedBox(height: 12),
           SelectableText(
@@ -515,5 +538,3 @@ class _RecoveryKeyDialogState extends State<_RecoveryKeyDialog> {
     );
   }
 }
-
-enum _DeviceRemoval { forget, remove }

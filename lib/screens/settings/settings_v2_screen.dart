@@ -23,6 +23,7 @@ import '../paywall_screen.dart';
 import 'mcp_servers_screen.dart';
 import 'skills_screen.dart';
 import 'voice_speech_screen.dart';
+import 'account_pin_dialogs.dart';
 import 'account_screen.dart';
 import '../../config/app_palette.dart';
 import '../../widgets/light_backdrop.dart';
@@ -653,7 +654,10 @@ class _AccountTile extends StatelessWidget {
           ],
         ),
         onTap: canSignIn
-            ? () => runAccountAction(context, account.signInWithGoogle)
+            ? () => runAccountAction(
+                context,
+                () => signInToAccount(context, account),
+              )
             : null,
       );
     }

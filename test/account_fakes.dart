@@ -20,9 +20,10 @@ import 'package:pinenacl/ed25519.dart';
 //
 // The relay here counts no requests, so its only rate limit is the one a
 // test switches on for new accounts. It has no size limits, no account cap,
-// no clock check and no 503 on an empty folder. Everything else follows
-// `account-vault.ts`, `account-pin.ts` and the account routes in `api.ts`
-// of the relay.
+// no clock check, no 503 on an empty folder and no damaged files. A try is
+// not saved before the compare, since nothing here can crash in between.
+// Everything else follows `account-vault.ts`, `account-pin.ts` and the
+// account routes in `api.ts` of the relay at `3179619`.
 
 /// Stands in for Argon2id, which takes 64 MiB and a native library.
 Future<Uint8List> fakeStretch(String pin, Uint8List salt) async =>
@@ -165,6 +166,8 @@ class FakeCloud {
   static http.Response _json(int status, Map<String, Object?> body) =>
       http.Response(jsonEncode(body), status);
 
+  // The checks here use expectSync, since a widget test's pump may be
+  // running when a request arrives.
   http.Response _drive(http.Request request) {
     driveLog.add('${request.method} ${request.url.path}');
     if (!validTokens.contains(
@@ -177,7 +180,7 @@ class FakeCloud {
     }
     final path = request.url.path;
     if (request.method == 'GET' && path == '/drive/v3/files') {
-      expect(request.url.queryParameters['spaces'], 'appDataFolder');
+      expectSync(request.url.queryParameters['spaces'], 'appDataFolder');
       return _json(200, {
         'files': [
           for (final entry in driveFiles.entries)
@@ -190,7 +193,7 @@ class FakeCloud {
       });
     }
     if (request.method == 'POST' && path == '/upload/drive/v3/files') {
-      expect(request.body, contains('"parents":["appDataFolder"]'));
+      expectSync(request.body, contains('"parents":["appDataFolder"]'));
       final id = plantDriveFile(
         request.body.split('\r\n\r\n')[2].split('\r\n').first,
       );
@@ -202,7 +205,7 @@ class FakeCloud {
       return http.Response('{"error":{"message":"File not found"}}', 404);
     }
     if (request.method == 'GET') {
-      expect(request.url.queryParameters['alt'], 'media');
+      expectSync(request.url.queryParameters['alt'], 'media');
       return http.Response(existing.body, 200);
     }
     if (request.method == 'DELETE') {
@@ -373,6 +376,8 @@ class FakeCloud {
           return _json(400, {'error': 'invalid_body'});
         }
       }
+      // A first write cannot freeze the account it makes.
+      if (expected == 0) return _json(400, {'error': 'invalid_body'});
       newAccountId = to as String;
       wrapped = {
         for (final entry in boxes.entries)
@@ -385,10 +390,9 @@ class FakeCloud {
       return _json(409, {'version': version, 'rotated': true});
     }
     if (expected != version) return _json(409, {'version': version});
-    if (record == null) {
-      // A first write cannot freeze the account it makes.
-      if (newAccountId != null) return _json(400, {'error': 'invalid_body'});
-      if (newAccountsLimited) return _json(429, {'error': 'rate_limited'});
+    // Counted last, so only a write that would make an account is refused.
+    if (record == null && newAccountsLimited) {
+      return _json(429, {'error': 'rate_limited'});
     }
     accounts[account] =
         RelayAccount(
@@ -415,15 +419,15 @@ class FakeCloud {
         (expectedId != null && !_base64Of(expectedId, 16)) ||
         !_base64Of(id, 16) ||
         !_base64Of(authKey, 32) ||
-        !_base64Of(relayKey, 32)) {
+        !_base64Of(relayKey, 32) ||
+        // A new PIN needs a new id, so every device sees that it changed.
+        id == expectedId) {
       return _json(400, {'error': 'invalid_body'});
     }
     if (record == null) return _json(404, {'error': 'not_found'});
     if (!record.live) return _json(410, {'error': 'gone'});
     final current = pins[account];
     if (current?.id != expectedId) return _json(409, {'id': current?.id});
-    // A new PIN needs a new id, so every device sees that it changed.
-    if (current?.id == id) return _json(409, {'id': current?.id});
     pins[account] =
         RelayPinRecord(
             id: id as String,
