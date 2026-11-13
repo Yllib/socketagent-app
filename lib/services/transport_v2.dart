@@ -373,11 +373,17 @@ class PairingChange {
 
 /// A 32-byte key or secret as it is stored and sent: 44 characters of
 /// standard base64 with padding. Null for anything else, the URL-safe
-/// alphabet included, because stored keys are compared as strings.
+/// alphabet included, because stored keys are compared as strings. Never
+/// throws: the pattern lets through a last character with stray bits, which
+/// the decoder refuses, and that is null too.
 Uint8List? decodeKey32(Object? value) {
   if (value is! String || !_key32.hasMatch(value)) return null;
-  final bytes = base64Decode(value);
-  return bytes.length == 32 ? bytes : null;
+  try {
+    final bytes = base64Decode(value);
+    return bytes.length == 32 ? bytes : null;
+  } on FormatException {
+    return null;
+  }
 }
 
 final _key32 = RegExp(r'^[A-Za-z0-9+/]{43}=$');

@@ -228,6 +228,41 @@ void main() {
     expect(same.pairingSecret, secret);
   });
 
+  test(
+    'a vault entry whose pairing secret does not decode is not applied',
+    () async {
+      // 44 characters that pass for a key until they are decoded.
+      final broken = '${'A' * 42}B=';
+      await store(key: computer.publicKey, v2: true);
+      final shared = VaultComputer.sharedFields(provider.serverConfigs.single);
+      await provider.account.applyMerged!(
+        AccountVault(
+          computers: [
+            VaultComputer(
+              key: computer.publicKey,
+              updatedAt: 2,
+              fields: {...shared, 'name': 'Renamed', 'pairingSecret': broken},
+            ),
+            VaultComputer(
+              key: otherKey,
+              updatedAt: 2,
+              fields: {
+                ...shared,
+                'host': '192.168.1.30',
+                'serverPubkey': otherKey,
+                'pairingSecret': broken,
+              },
+            ),
+          ],
+        ),
+      );
+
+      final saved = provider.serverConfigs.single;
+      expect(saved.name, 'Computer');
+      expect(saved.pairingSecret, secret);
+    },
+  );
+
   group('a pairing a channel handed over', () {
     final newSecret = base64Encode(List.filled(32, 6));
 

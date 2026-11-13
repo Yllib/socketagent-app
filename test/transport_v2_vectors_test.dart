@@ -197,6 +197,16 @@ void main() {
     );
   });
 
+  test('a key that does not decode to 32 bytes is null, never a throw', () {
+    expect(decodeKey32(base64Encode(List.filled(32, 9))), isNotNull);
+    // 43 characters and one pad decode only when the last character's low
+    // two bits are zero. 'B' sets one of them, and the decoder refuses it.
+    expect(decodeKey32('${'A' * 42}B='), isNull);
+    expect(decodeKey32(base64Encode(List.filled(31, 9))), isNull);
+    expect(decodeKey32(base64Url.encode(List.filled(32, 0xff))), isNull);
+    expect(decodeKey32(null), isNull);
+  });
+
   test('rebuilds the shared fixture byte for byte', () {
     final given = File(_fixture).readAsStringSync();
     final cases = (jsonDecode(given) as Map<String, dynamic>)['cases'] as List;

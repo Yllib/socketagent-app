@@ -231,6 +231,30 @@ void main() {
     });
   });
 
+  test(
+    'a transfer whose pairing secret does not decode is not applied',
+    () async {
+      await withProvider((provider) async {
+        // 44 characters that pass for a key until they are decoded.
+        final broken = {
+          ...computer,
+          'pairingSecret': '${'A' * 42}B=',
+          'transport': 2,
+        };
+        expect(await provider.importServerConfigs([broken]), 0);
+        expect(provider.serverConfigs, isEmpty);
+
+        // Nor does it reach a computer that is already saved.
+        final secret = base64Encode(List.filled(32, 7));
+        await provider.importServerConfigs([
+          {...computer, 'pairingSecret': secret, 'transport': 2},
+        ]);
+        expect(await provider.importServerConfigs([broken]), 0);
+        expect(provider.serverConfigs.single.pairingSecret, secret);
+      });
+    },
+  );
+
   test('imported computers keep auto routing', () async {
     await withProvider((provider) async {
       await provider.importServerConfigs([

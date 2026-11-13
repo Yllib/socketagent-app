@@ -3787,6 +3787,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final serverPubkey = m['serverPubkey'] as String? ?? '';
       final pairingSecret = m['pairingSecret'] as String? ?? '';
       final transport = m['transport'] == 2 ? 2 : null;
+      // A secret that does not decode can prove nothing, and stored it
+      // would hold its computer on a pairing that never connects.
+      if (pairingSecret.isNotEmpty && decodeKey32(pairingSecret) == null) {
+        continue;
+      }
 
       final sameRoute = _serverConfigs.where(
         (existing) =>
@@ -8464,6 +8469,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _applyAccountVault(AccountVault merged) async {
     final byKey = {for (final c in _serverConfigs) VaultComputer.keyFor(c): c};
     for (final computer in merged.computers) {
+      // An entry whose pairing secret does not decode is not applied.
+      final secret = computer.fields['pairingSecret'];
+      if (secret != null && secret != '' && decodeKey32(secret) == null) {
+        continue;
+      }
       final existing = byKey[computer.key];
       if (existing == null) {
         final json = {
