@@ -384,13 +384,22 @@ class _ComputerEditScreenState extends State<ComputerEditScreen> {
     if (direct && serverPubkey.isEmpty) return null;
     final port = int.tryParse(_port.text.trim()) ?? 8085;
     final token = _token.text.trim();
+    // A saved token belongs to the key it was stored for. Under another key
+    // the entry keeps only a token typed in this edit.
+    final rekeyed =
+        existing != null &&
+        existing.serverPubkey.isNotEmpty &&
+        serverPubkey.isNotEmpty &&
+        ServerConfig.normalizeServerPubkey(serverPubkey) !=
+            existing.serverPubkey;
+    final savedToken = rekeyed ? '' : existing?.token;
 
     return ServerConfig(
       id: existing?.id ?? ServerConfig.generateId(),
       name: name.isEmpty ? host : name,
       host: direct ? host : existing?.host ?? host,
       port: direct ? port : existing?.port ?? port,
-      token: direct ? token : existing?.token ?? token,
+      token: direct && token != existing?.token ? token : savedToken ?? token,
       // Auto starts from the route in use; the connection manager re-picks it.
       useRelay: switch (_route) {
         _Route.relay => true,
