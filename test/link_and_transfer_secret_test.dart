@@ -7,6 +7,8 @@ import 'package:app/services/chat_provider.dart';
 import 'package:app/services/transport_v2.dart';
 import 'package:app/services/websocket_service.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'support/fake_computers.dart';
 import 'support/fake_v2_computer.dart';
@@ -62,6 +64,7 @@ void main() {
     String id, {
     required int links,
     required int transfer,
+    String? relayUrl,
   }) async {
     final computer = await _Computer.start(links: links, transfer: transfer);
     computers.add(computer);
@@ -73,7 +76,7 @@ void main() {
         port: computer.server.port,
         token: '',
         serverPubkey: computer.publicKey,
-        relayUrl: 'ws://127.0.0.1:${relay.port}',
+        relayUrl: relayUrl ?? 'ws://127.0.0.1:${relay.port}',
         pairingToken: computer.roomId,
         pairingSecret: computer.pairingSecret,
         transport: 2,
@@ -179,6 +182,45 @@ void main() {
       expect(source.all('computer_link_set'), isEmpty);
     },
   );
+
+  test('a target whose relay address was refused gets no ticket request', () {
+    // Every request the app makes here is caught, since the wrong answer
+    // would be a request to the default relay.
+    final asked = <Uri>[];
+    return http.runWithClient(
+      () async {
+        final source = await add('source', links: 2, transfer: 4);
+        await add(
+          'target',
+          links: 2,
+          transfer: 4,
+          relayUrl: 'ws://192.168.1.20:9000',
+        );
+
+        await expectLater(
+          provider.createComputerLink(
+            sourceId: 'source',
+            targetId: 'target',
+            access: access,
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'target has no link room',
+            ),
+          ),
+        );
+
+        expect(asked, isEmpty);
+        expect(source.all('computer_link_set'), isEmpty);
+      },
+      () => MockClient((request) async {
+        asked.add(request.url);
+        return http.Response('', 500);
+      }),
+    );
+  });
 
   test('a link room on the stored relay gets its ticket there', () async {
     final source = await add('source', links: 2, transfer: 4);

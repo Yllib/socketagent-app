@@ -12,7 +12,8 @@ bool isLoopbackHost(String host) =>
 
 /// [value] as a relay address a config may hold: `wss://` or `https://`, or
 /// `ws://` or `http://` to this machine. The relay's first address becomes
-/// [defaultRelayUrl]. Anything else comes back empty, the same as no relay.
+/// [defaultRelayUrl]. Anything else comes back empty, and the config keeps
+/// that it was refused in [ServerConfig.relayRefused].
 /// Every [ServerConfig] is built through this, so an address from a pairing
 /// code, an import, the vault or a text field is checked once, where it is
 /// stored, and the subscriber token never follows one over plain HTTP.
@@ -48,6 +49,11 @@ class ServerConfig {
   // Per-server relay pairing data
   final String relayUrl;
 
+  /// Whether the last relay address given for this computer was one
+  /// [storableRelayUrl] refuses. Such an entry has no relay until the user
+  /// gives it another address. It is never moved to the default relay.
+  final bool relayRefused;
+
   /// The computer's relay room ID. The name is from the old transport, where
   /// this value was also the pairing secret.
   final String pairingToken;
@@ -77,6 +83,7 @@ class ServerConfig {
     this.expectedOnline = false,
     this.sortOrder = 0,
     String relayUrl = '',
+    bool relayRefused = false,
     this.pairingToken = '',
     String serverPubkey = '',
     this.pairingSecret = '',
@@ -86,6 +93,10 @@ class ServerConfig {
     this.systemPrompt = '',
   }) : serverPubkey = normalizeServerPubkey(serverPubkey),
        relayUrl = storableRelayUrl(relayUrl),
+       // An address decides this by itself. No address leaves it as it was.
+       relayRefused = relayUrl.trim().isEmpty
+           ? relayRefused
+           : storableRelayUrl(relayUrl).isEmpty,
        transport = transport == 2 ? 2 : null;
 
   /// Whether this computer is on transport v2 here, for good.
@@ -127,6 +138,15 @@ class ServerConfig {
       transport: 2,
     );
   }
+
+  /// The relay this computer is on once it has a room: the stored one, or
+  /// the default when none was ever given. Null when the address given was
+  /// refused, so a room ID the computer sends later puts it on no relay.
+  String? get relayOrDefault => relayUrl.isNotEmpty
+      ? relayUrl
+      : relayRefused
+      ? null
+      : defaultRelayUrl;
 
   bool get isRelayPaired =>
       relayUrl.isNotEmpty && pairingToken.isNotEmpty && serverPubkey.isNotEmpty;
@@ -191,6 +211,7 @@ class ServerConfig {
       expectedOnline: json['expectedOnline'] as bool? ?? false,
       sortOrder: json['sortOrder'] as int? ?? 0,
       relayUrl: json['relayUrl'] as String? ?? '',
+      relayRefused: json['relayRefused'] == true,
       pairingToken: json['pairingToken'] as String? ?? '',
       serverPubkey: json['serverPubkey'] as String? ?? '',
       pairingSecret: json['pairingSecret'] as String? ?? '',
@@ -212,6 +233,7 @@ class ServerConfig {
     'expectedOnline': expectedOnline,
     'sortOrder': sortOrder,
     'relayUrl': relayUrl,
+    if (relayRefused) 'relayRefused': true,
     'pairingToken': pairingToken,
     'serverPubkey': serverPubkey,
     // Written only when set, so an entry from a device still on the old
@@ -253,6 +275,7 @@ class ServerConfig {
       expectedOnline: expectedOnline ?? this.expectedOnline,
       sortOrder: sortOrder ?? this.sortOrder,
       relayUrl: relayUrl ?? this.relayUrl,
+      relayRefused: relayRefused,
       pairingToken: pairingToken ?? this.pairingToken,
       serverPubkey: serverPubkey ?? this.serverPubkey,
       pairingSecret: pairingSecret ?? this.pairingSecret,

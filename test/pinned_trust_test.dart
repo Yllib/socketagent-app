@@ -62,7 +62,10 @@ void main() {
   });
 
   /// Connects to the computer, on the old transport or over [onV2].
-  Future<ServerConfig> connect({bool onV2 = false}) async {
+  Future<ServerConfig> connect({
+    bool onV2 = false,
+    String relayUrl = '',
+  }) async {
     final connected = provider.connMgr.statusStream.firstWhere(
       (update) => update.status == ConnectionStatus.connected,
     );
@@ -74,6 +77,7 @@ void main() {
         port: server.port,
         token: onV2 ? '' : 'token',
         serverPubkey: onV2 ? v2.publicKey : computer.publicKey,
+        relayUrl: relayUrl,
         pairingToken: onV2 ? v2.roomId : '',
         pairingSecret: onV2 ? v2.pairingSecret : '',
         transport: onV2 ? 2 : null,
@@ -121,6 +125,23 @@ void main() {
     expect(config.relayUrl, defaultRelayUrl);
   });
 
+  test('a room gives no relay to an entry whose address was refused', () async {
+    capabilities = {
+      'type': 'server_capabilities',
+      'relayPairing': {
+        'relayUrl': 'wss://relay.example',
+        'pairingToken': 'room',
+        'serverPubkey': computer.publicKey,
+      },
+    };
+    // A relay address the app does not hold: no TLS, and not this machine.
+    final config = await connect(relayUrl: 'ws://192.168.1.20:9000');
+
+    expect(config.pairingToken, 'room');
+    expect(config.relayUrl, isEmpty);
+    expect(config.isRelayPaired, isFalse);
+  });
+
   test('a v2 computer names neither its room nor a token', () async {
     capabilities = {
       'type': 'server_capabilities',
@@ -149,19 +170,21 @@ void main() {
 
   /// A stored entry at a port nothing listens on, for what reads only the
   /// config.
-  Future<void> store({String? key, bool v2 = false}) => provider.addServer(
-    ServerConfig(
-      id: 'computer',
-      name: 'Computer',
-      host: '127.0.0.1',
-      port: 1,
-      token: v2 ? '' : 'token',
-      serverPubkey: key ?? '',
-      pairingToken: v2 ? 'room' : '',
-      pairingSecret: v2 ? secret : '',
-      transport: v2 ? 2 : null,
-    ),
-  );
+  Future<void> store({String? key, bool v2 = false, String relayUrl = ''}) =>
+      provider.addServer(
+        ServerConfig(
+          id: 'computer',
+          name: 'Computer',
+          host: '127.0.0.1',
+          port: 1,
+          token: v2 ? '' : 'token',
+          serverPubkey: key ?? '',
+          relayUrl: relayUrl,
+          pairingToken: v2 ? 'room' : '',
+          pairingSecret: v2 ? secret : '',
+          transport: v2 ? 2 : null,
+        ),
+      );
 
   test('a vault entry cannot blank a v2 pairing or change the key', () async {
     await store(key: computer.publicKey, v2: true);
@@ -256,6 +279,17 @@ void main() {
       expect(updated.pairingSecret, newSecret);
       expect(updated.pairingToken, 'new-room');
       expect(updated.serverPubkey, computer.publicKey);
+    });
+
+    test('gives no relay to an entry whose address was refused', () async {
+      await store(
+        key: computer.publicKey,
+        v2: true,
+        relayUrl: 'ws://192.168.1.20:9000',
+      );
+      final updated = await hand(computer.publicKey, carryOver: false);
+      expect(updated.pairingToken, 'new-room');
+      expect(updated.relayUrl, isEmpty);
     });
 
     test('an entry with no key takes nothing', () async {

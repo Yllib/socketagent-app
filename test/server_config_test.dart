@@ -59,6 +59,32 @@ void main() {
     expect(old.relayUrl, defaultRelayUrl);
   });
 
+  test('a refused relay address is remembered until another is given', () {
+    final refused = relayConfig(
+      id: 'server-1',
+    ).copyWith(relayUrl: 'ws://192.168.1.20:9000');
+    expect(refused.relayUrl, isEmpty);
+    expect(refused.relayRefused, isTrue);
+    // No relay at all, not the default one.
+    expect(refused.relayOrDefault, isNull);
+
+    // A save, a copy and an update that names no relay all keep it.
+    expect(ServerConfig.fromJson(refused.toJson()).relayRefused, isTrue);
+    expect(refused.copyWith(name: 'Renamed').relayRefused, isTrue);
+    expect(refused.copyWith(relayUrl: '').relayRefused, isTrue);
+
+    final given = refused.copyWith(relayUrl: 'wss://relay.example.test');
+    expect(given.relayRefused, isFalse);
+    expect(given.relayOrDefault, 'wss://relay.example.test');
+
+    // An entry that never had an address takes the default relay.
+    final none = ServerConfig.fromJson(
+      refused.toJson()..remove('relayRefused'),
+    );
+    expect(none.relayRefused, isFalse);
+    expect(none.relayOrDefault, defaultRelayUrl);
+  });
+
   test('expected-online preference survives serialization', () {
     final config = ServerConfig(
       id: 'server-1',

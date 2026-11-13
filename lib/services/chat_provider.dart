@@ -3353,7 +3353,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final pairingChanged = existing.pairingToken.isNotEmpty;
 
     _serverConfigs[idx] = existing.copyWith(
-      relayUrl: existing.relayUrl.isEmpty ? defaultRelayUrl : null,
+      relayUrl: existing.relayOrDefault,
       pairingToken: pairingToken,
     );
     await _saveServerConfigs();
@@ -3387,9 +3387,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // for one already on v2.
     if ((route == null) != existing.isV2) return;
     var updated = existing.copyWith(
-      relayUrl: existing.relayUrl.isEmpty && !change.local
-          ? defaultRelayUrl
-          : null,
+      relayUrl: change.local ? null : existing.relayOrDefault,
       pairingToken: change.roomId,
       pairingSecret: change.secret,
       transport: 2,
@@ -9070,14 +9068,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// `wss://` URL, or `ws://` for one on this machine. It is the one stored
   /// in the target's config, or the app's default when that is empty or this
   /// device has no config for the target. Null when [named], the relay a
-  /// computer reported for the link, is another one, or when the stored one
-  /// is neither TLS nor on this machine. The request carries the subscriber
+  /// computer reported for the link, is another one, or when the address
+  /// stored for the target was refused. The request carries the subscriber
   /// token, and no computer may name where that goes (wire spec 14). The
   /// source is told this relay too, since the ticket is good only there.
   String? _linkRelayUrl(ServerConfig? target, Object? named) {
-    final stored = target?.relayUrl.trim() ?? '';
     final trusted = _relayHttpUrlFromWs(
-      stored.isEmpty ? defaultRelayUrl : stored,
+      target == null ? defaultRelayUrl : target.relayOrDefault ?? '',
     );
     final relay = Uri.tryParse(trusted ?? '');
     if (trusted == null || relay == null || relay.host.isEmpty) return null;

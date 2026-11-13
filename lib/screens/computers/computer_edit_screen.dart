@@ -399,6 +399,7 @@ class _ComputerEditScreenState extends State<ComputerEditScreen> {
       expectedOnline: _expectedOnline,
       sortOrder: existing?.sortOrder ?? provider.serverConfigs.length,
       relayUrl: existing?.relayUrl ?? '',
+      relayRefused: existing?.relayRefused ?? false,
       pairingToken: existing?.pairingToken ?? '',
       serverPubkey: serverPubkey.isNotEmpty
           ? serverPubkey
