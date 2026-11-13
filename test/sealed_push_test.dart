@@ -50,7 +50,12 @@ void main() {
 
   const finished = {'title': 'Done', 'body': 'Tests pass', 'kind': 'alert'};
 
-  setUp(() => SharedPreferences.setMockInitialValues({}));
+  setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    // Keys are kept only on Android, the one platform with pushes.
+    PushKeys.kept = true;
+  });
+  tearDown(() => PushKeys.kept = Platform.isAndroid);
 
   test('a sealed push opens under the current and the previous key', () async {
     await PushKeys.sync([computer(1)]);
@@ -117,6 +122,16 @@ void main() {
     expect(await PushKeys.open(push(entry(1, finished))), isNull);
   });
 
+  test('a platform with no pushes keeps no keys', () async {
+    await PushKeys.sync([computer(1)]);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getString('push_keys_v1'), isNotNull);
+
+    PushKeys.kept = false;
+    await PushKeys.sync([computer(1)]);
+    expect(prefs.getString('push_keys_v1'), isNull);
+  });
+
   test(
     'the handler shows sealed and plain pushes and drops the rest',
     () async {
@@ -158,6 +173,18 @@ void main() {
         'title': 'Outside the seal',
         'body': 'Not from the computer',
       });
+      expect(shown, hasLength(2));
+
+      // Nor is a plain push under the name of a computer that seals its own.
+      await deliver('m4', {...finished, 'serverId': 'computer'});
+      await PushNotificationService.handleRemoteMessage(
+        const RemoteMessage(
+          messageId: 'm5',
+          notification: RemoteNotification(title: 'Plain', body: 'Text'),
+          data: {'serverId': 'computer'},
+        ),
+        foreground: false,
+      );
       expect(shown, hasLength(2));
     },
   );

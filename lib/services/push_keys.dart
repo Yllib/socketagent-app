@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/server_config.dart';
@@ -20,6 +22,11 @@ typedef PushKey = ({String tag, String key});
 /// secure storage is only ever opened from the main isolate.
 class PushKeys {
   static const _prefsKey = 'push_keys_v1';
+
+  /// Whether this platform keeps push keys. Only Android receives pushes,
+  /// so nowhere else are the keys written.
+  @visibleForTesting
+  static bool kept = Platform.isAndroid;
 
   /// The stored keys after [configs] are saved, given the [held] ones. A
   /// computer whose secret changed keeps the key it had as the previous one.
@@ -50,8 +57,21 @@ class PushKeys {
   static Future<void> sync(Iterable<ServerConfig> configs) async {
     final prefs = await SharedPreferences.getInstance();
     final stored = prefs.getString(_prefsKey);
+    if (!kept) {
+      if (stored != null) await prefs.remove(_prefsKey);
+      return;
+    }
     final updated = _encode(next(_decode(stored), configs));
     if (updated != stored) await prefs.setString(_prefsKey, updated);
+  }
+
+  /// Whether this device holds push keys for the computer [serverId], which
+  /// means that computer's pushes come sealed and a plain one is not its own.
+  static Future<bool> holds(Object? serverId) async {
+    if (serverId is! String) return false;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    return _decode(prefs.getString(_prefsKey))[serverId]?.isNotEmpty ?? false;
   }
 
   /// The plaintext map of a sealed push, with its `serverId` added, or null

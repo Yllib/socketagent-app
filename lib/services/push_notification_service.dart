@@ -137,7 +137,8 @@ class PushNotificationService {
   }) async {
     final sealed = isSealedPush(message.data);
     final data = await openPushData(message.data);
-    // A sealed push that no held key opens is dropped.
+    // Dropped: a sealed push that no held key opens, or a plain push under
+    // the name of a computer whose pushes come sealed.
     if (data == null) return;
     // Only what was inside the seal counts for a sealed push.
     final rawTitle = sealed
@@ -241,12 +242,17 @@ class PushNotificationService {
   static bool isSealedPush(Map<String, dynamic> data) => data['v'] == '2';
 
   /// The map the rest of the push code reads: [data] itself for a plain
-  /// push, what the seal held for a sealed one, or null when a sealed push
-  /// does not open. A push only ever reads the stored keys.
+  /// push, what the seal held for a sealed one, or null when the push is to
+  /// be dropped. That is a sealed push that does not open, and a plain push
+  /// for a computer this device holds push keys for, since such a computer
+  /// only ever sends sealed ones. A push only ever reads the stored keys.
   @visibleForTesting
   static Future<Map<String, dynamic>?> openPushData(
     Map<String, dynamic> data,
-  ) async => isSealedPush(data) ? PushKeys.open(data) : data;
+  ) async {
+    if (isSealedPush(data)) return PushKeys.open(data);
+    return await PushKeys.holds(data['serverId']) ? null : data;
+  }
 
   static String? payloadForData(Map<String, dynamic> data) {
     final sessionId = data['sessionId'] as String?;
