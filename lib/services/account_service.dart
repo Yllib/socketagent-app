@@ -1007,24 +1007,30 @@ class AccountService extends ChangeNotifier {
     // One claim for each account this device left, whatever the relay says
     // of this account's own PIN record: the old record's wrong tries are
     // added to it, and the old keys are deleted.
-    var asked = false;
+    var answered = false;
     for (final left in _leftAccounts) {
       if (_claimedFrom.contains(left)) continue;
-      asked = true;
       try {
         await client.claimPin(keys, from: left);
       } on VaultRequestFailed catch (error) {
-        // `not_found` is this account lost by the relay, which the next
-        // read repairs, and a limit passes. Both are asked again on a later
-        // sync. Any other refusal stands: the other account did not move
-        // here, or this one has moved on. None of them starts a repair.
+        // Three refusals stand: the other account did not move here
+        // (409), this one has moved on (410), or the relay cannot read the
+        // request (400). Anything else passes, as a lost account the next
+        // read repairs, a limit or a clock that is off, and is asked again
+        // on a later sync. None of them starts a repair.
         debugPrint('[Account] PIN record not carried over: $error');
-        if (error.statusCode == 404 || error.rateLimited) continue;
+        if (!const {400, 409, 410}.contains(error.statusCode)) continue;
+      } on Exception catch (error) {
+        // No answer, or the relay is down. The rest of the step still
+        // runs, and the claim is asked again on a later sync.
+        debugPrint('[Account] Claim not answered: ${error.runtimeType}');
+        continue;
       }
+      answered = true;
       _claimedFrom.add(left);
       await _persist();
     }
-    if (asked) {
+    if (answered) {
       final again = await client.get(keys);
       if (again is! VaultLive) return true;
       relayPin = again.pin;

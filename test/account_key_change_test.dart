@@ -983,12 +983,18 @@ void main() {
       expect(cloud.relayLog.where((line) => line.contains('claim')), isEmpty);
     });
 
-    test('a claim the relay cannot place starts no repair', () async {
+    test('a claim the relay cannot place starts no repair, and only a '
+        'refusal that stands is not asked again', () async {
+      // Status 0 is no answer at all.
       for (final (status, error, askedAgain) in [
         (404, 'not_found', true),
         (429, 'rate_limited', true),
+        (401, 'stale_time', true),
+        (500, 'storage_error', true),
+        (0, 'no answer', true),
         (410, 'gone', false),
         (409, 'not_successor', false),
+        (400, 'invalid_body', false),
       ]) {
         final cloud = FakeCloud();
         final [a, b, c] = await pinAccount(cloud, [
@@ -1001,14 +1007,16 @@ void main() {
           a.service.removeDevice(c.publicKey),
           throwsStateError,
         );
-        cloud.beforeRelay = (request) async =>
-            request.url.path == '/api/account/pin/claim'
-            ? http.Response('{"error":"$error"}', status)
-            : null;
+        cloud.beforeRelay = (request) async {
+          if (request.url.path != '/api/account/pin/claim') return null;
+          if (status == 0) throw http.ClientException('No answer');
+          return http.Response('{"error":"$error"}', status);
+        };
 
         expect(await b.sync(), AccountSyncOutcome.synced, reason: error);
         final newAccount = b.service.accountId!;
         expect(b.service.vault!.resetId, isNull, reason: error);
+        // The rest of the PIN step ran, whatever the claim met.
         expect(b.service.pinState, AccountPinState.mustSetAgain, reason: error);
         expect(cloud.accounts[newAccount]!.live, isTrue, reason: error);
 
