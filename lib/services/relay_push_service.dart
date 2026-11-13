@@ -20,12 +20,16 @@ class RelayPushService {
     );
   }
 
+  /// Registers this phone for pushes from one computer. [sealed] says the
+  /// app holds that computer's pairing secret, so the relay sends its pushes
+  /// sealed and never as plain text.
   static Future<bool> register({
     required String relayUrl,
     required String pairingToken,
     required String subscriberToken,
     required String fcmToken,
     required String serverId,
+    bool sealed = false,
     http.Client? client,
   }) async {
     final uri = registrationUri(relayUrl);
@@ -49,6 +53,7 @@ class RelayPushService {
               'fcmToken': fcmToken,
               'platform': 'android',
               'serverId': serverId,
+              if (sealed) 'v': 2,
             }),
           )
           .timeout(const Duration(seconds: 10));

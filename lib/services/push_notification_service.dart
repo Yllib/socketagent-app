@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_approval_notification.dart';
 import '../models/session_notification_policy.dart';
 import 'notification_service.dart';
+import 'push_keys.dart';
 
 @pragma('vm:entry-point')
 Future<void> socketAgentFirebaseBackgroundHandler(RemoteMessage message) async {
@@ -134,11 +135,19 @@ class PushNotificationService {
     RemoteMessage message, {
     required bool foreground,
   }) async {
-    final data = message.data;
-    final rawTitle = message.notification?.title ?? data['title'];
-    final rawBody = message.notification?.body ?? data['body'];
+    final sealed = isSealedPush(message.data);
+    final data = await openPushData(message.data);
+    // A sealed push that no held key opens is dropped.
+    if (data == null) return;
+    // Only what was inside the seal counts for a sealed push.
+    final rawTitle = sealed
+        ? data['title']
+        : message.notification?.title ?? data['title'];
+    final rawBody = sealed
+        ? data['body']
+        : message.notification?.body ?? data['body'];
     if (rawTitle is! String || rawTitle.trim().isEmpty) return;
-    if (!await _claimRemoteEvent(message)) return;
+    if (!await _claimRemoteEvent(data, message.messageId)) return;
 
     final title = rawTitle.trim();
     final body = rawBody is String ? rawBody : '';
@@ -226,6 +235,18 @@ class PushNotificationService {
       payload: payload,
     );
   }
+
+  /// Whether [data] is a sealed push (wire spec 11.3) and not the plain map
+  /// a computer on the old transport still sends.
+  static bool isSealedPush(Map<String, dynamic> data) => data['v'] == '2';
+
+  /// The map the rest of the push code reads: [data] itself for a plain
+  /// push, what the seal held for a sealed one, or null when a sealed push
+  /// does not open. A push only ever reads the stored keys.
+  @visibleForTesting
+  static Future<Map<String, dynamic>?> openPushData(
+    Map<String, dynamic> data,
+  ) async => isSealedPush(data) ? PushKeys.open(data) : data;
 
   static String? payloadForData(Map<String, dynamic> data) {
     final sessionId = data['sessionId'] as String?;
@@ -397,13 +418,14 @@ class PushNotificationService {
         .contains(serverId);
   }
 
-  static Future<bool> _claimRemoteEvent(RemoteMessage message) async {
-    final dataEventId = message.data['eventId'] as String?;
-    final eventId = dataEventId?.isNotEmpty == true
-        ? dataEventId!
-        : message.messageId;
+  static Future<bool> _claimRemoteEvent(
+    Map<String, dynamic> data,
+    String? messageId,
+  ) async {
+    final dataEventId = data['eventId'] as String?;
+    final eventId = dataEventId?.isNotEmpty == true ? dataEventId! : messageId;
     if (eventId == null || eventId.isEmpty) return true;
-    final serverId = message.data['serverId'] as String? ?? '';
+    final serverId = data['serverId'] as String? ?? '';
     final key = '$serverId\u0001$eventId';
     if (!_claimedEventKeysInProcess.add(key)) return false;
     _claimedEventKeyOrder.add(key);
@@ -411,7 +433,7 @@ class PushNotificationService {
       _claimedEventKeysInProcess.remove(_claimedEventKeyOrder.removeAt(0));
     }
     final prefs = await SharedPreferences.getInstance();
-    final isCompletion = message.data['kind'] == 'session_finished';
+    final isCompletion = data['kind'] == 'session_finished';
     final prefKey = isCompletion
         ? 'processed_fcm_completion_event_ids_v1'
         : 'processed_fcm_event_ids_v1';

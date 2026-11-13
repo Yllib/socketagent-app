@@ -28,6 +28,28 @@ void main() {
     expect(received['subscriberToken'], 'subscriber-token');
     expect(received['fcmToken'], 'fcm-token');
     expect(received['serverId'], 'server-1');
+    // A computer on the old transport registers as it always has.
+    expect(received, isNot(contains('v')));
+  });
+
+  test('asks for sealed pushes when it holds the pairing secret', () async {
+    late Map<String, dynamic> received;
+    final client = MockClient((request) async {
+      received = jsonDecode(request.body) as Map<String, dynamic>;
+      return http.Response(jsonEncode({'ok': true}), 200);
+    });
+
+    await RelayPushService.register(
+      relayUrl: 'wss://relay.example',
+      pairingToken: 'room',
+      subscriberToken: 'subscriber-token',
+      fcmToken: 'fcm-token',
+      serverId: 'server-1',
+      sealed: true,
+      client: client,
+    );
+
+    expect(received['v'], 2);
   });
 
   test('requires all credentials before claiming registration', () async {

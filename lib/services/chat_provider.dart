@@ -90,6 +90,7 @@ import 'kokoro_device_engine.dart';
 import 'kokoro_model_manager.dart';
 import 'elevenlabs_tts_engine.dart';
 import 'notification_service.dart';
+import 'push_keys.dart';
 import 'push_notification_service.dart';
 import 'firebase_project_configuration_service.dart';
 import 'relay_push_service.dart';
@@ -2756,6 +2757,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _saveServerConfigs();
     }
 
+    await PushKeys.sync(_serverConfigs);
     _loadServerBuildCache(prefs);
     _loadScheduledTaskCache(prefs);
     _pushRegisteredServers
@@ -2971,6 +2973,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> _saveServerConfigs() async {
     final json = jsonEncode(_serverConfigs.map((c) => c.toJson()).toList());
     await _secureStorage.setServerConfigs(json);
+    // Every pairing secret arrives through a save, so the keys that open
+    // sealed pushes are never behind the secrets.
+    await PushKeys.sync(_serverConfigs);
   }
 
   Future<void> _savePushRegisteredServers() async {
@@ -3090,6 +3095,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           subscriberToken: _subscriberToken,
           fcmToken: token,
           serverId: serverId,
+          sealed: config.transportPairing != null,
         );
         if (!relayRegistered) {
           debugPrint('[Push] Relay FCM registration failed for $serverId');
@@ -3123,6 +3129,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             subscriberToken: _subscriberToken,
             fcmToken: token,
             serverId: config.id,
+            sealed: config.transportPairing != null,
           );
           if (!relayRegistered) {
             debugPrint('[Push] Relay FCM registration failed for ${config.id}');
