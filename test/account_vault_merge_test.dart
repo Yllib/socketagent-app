@@ -52,16 +52,19 @@ void main() {
     expect(merged.removedComputers, isEmpty);
   });
 
-  test('devices and revocations merge the same way', () {
+  test('a revoked device stays revoked, whatever time its entry '
+      'carries', () {
     final a = AccountVault(
       devices: [device('p', 1), device('q', 1)],
       revokedDevices: const [VaultTombstone(key: 'q', at: 2)],
     );
-    final b = AccountVault(devices: [device('r', 3)]);
-    final merged = mergeVaults(a, b);
-    expect(merged.devices.map((d) => d.publicKey).toSet(), {'p', 'r'});
-    expect(merged.isRevoked('q'), isTrue);
-    expect(merged.isRevoked('p'), isFalse);
+    // The other side holds a later entry for the revoked key.
+    final b = AccountVault(devices: [device('q', 9), device('r', 3)]);
+    for (final merged in [mergeVaults(a, b), mergeVaults(b, a)]) {
+      expect(merged.devices.map((d) => d.publicKey).toSet(), {'p', 'r'});
+      expect(merged.isRevoked('q'), isTrue);
+      expect(merged.isRevoked('p'), isFalse);
+    }
   });
 
   test('subscription and vault stamp follow the newer side', () {

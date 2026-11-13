@@ -507,6 +507,9 @@ class VaultSubscription {
 /// the same instant as a write wins; a write after a tombstone revives the
 /// item and drops the tombstone. Neither input is changed.
 ///
+/// Devices are the exception: a revocation wins over any entry for the same
+/// device key, whatever the times say.
+///
 /// The account PIN does not merge by time. [a] is this device's vault and
 /// [b] the relay's. The PIN whose id is [relayPinId], the id the relay's
 /// PIN record reports, wins, and [b]'s when both carry it. Otherwise [b]'s
@@ -527,6 +530,9 @@ AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
     b.revokedDevices,
     key: (d) => d.publicKey,
     at: (d) => d.addedAt,
+    // Any holder of the account key can write any `addedAt`, so no time
+    // brings a revoked device back. It joins again with a new device key.
+    tombstoneWins: true,
   );
   final pins = _mergeItems<VaultPin>(
     a.pinnedSessions,
@@ -601,6 +607,7 @@ VaultAccountPin? _mergePin(
   List<VaultTombstone> stonesB, {
   required String Function(T) key,
   required int Function(T) at,
+  bool tombstoneWins = false,
 }) {
   final items = <String, T>{};
   for (final item in [...itemsA, ...itemsB]) {
@@ -615,7 +622,7 @@ VaultAccountPin? _mergePin(
   for (final stone in stones.values.toList()) {
     final item = items[stone.key];
     if (item == null) continue;
-    if (at(item) > stone.at) {
+    if (!tombstoneWins && at(item) > stone.at) {
       stones.remove(stone.key);
     } else {
       items.remove(stone.key);

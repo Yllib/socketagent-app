@@ -430,6 +430,46 @@ void main() {
       expect(f.service.hasAccount, isFalse);
     });
 
+    test('a removed device stays removed when its entry carries a time '
+        'ahead of the remover\'s clock', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      // Tablet joins while its clock runs a day ahead. A device stamps its
+      // own entry with its own clock.
+      const day = 24 * 60 * 60 * 1000;
+      final c = Device('Tablet', cloud);
+      cloud.now += day;
+      expect(await c.join(goodPin), isA<Joined>());
+      cloud.now -= day;
+      await _settle([a, b]);
+      final oldAccount = a.service.accountId;
+      a.joined.clear();
+      b.joined.clear();
+      cloud.now += 60 * 1000;
+
+      await a.service.removeDevice(c.publicKey);
+
+      final newAccount = a.service.accountId;
+      expect(newAccount, isNot(oldAccount));
+      expect(a.removedKeys, [c.publicKey]);
+      await _settle([a, b]);
+      for (final device in [a, b]) {
+        expect(device.service.accountId, newAccount);
+        expect(device.service.vault!.isRevoked(c.publicKey), isTrue);
+        expect(
+          device.service.devices.map((entry) => entry.publicKey),
+          isNot(contains(c.publicKey)),
+        );
+        // A device named as joined is approved on every connected computer.
+        expect(device.joined, isEmpty);
+      }
+
+      // The removed device reads that it was removed and gets no new key.
+      await c.sync();
+      expect(c.service.hasAccount, isFalse);
+      expect(c.service.notice, AccountService.removedWords);
+    });
+
     test('and set new PIN changes both in the same commit', () async {
       final cloud = FakeCloud();
       final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
