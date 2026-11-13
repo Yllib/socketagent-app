@@ -152,6 +152,34 @@ void main() {
     expect(closed.isCompleted, isFalse);
   });
 
+  test('a config save does not let the relay strip session keys', () async {
+    onKeyExchange = (socket, frame) => socket.add(computer.answer(frame));
+    service
+      ..configureRelay(
+        relayUrl: 'ws://127.0.0.1:${server.port}',
+        pairingToken: 'room',
+        cryptoService: crypto,
+      )
+      ..setMode(ConnectionMode.relay)
+      ..connect();
+    final socket = await accepted.future;
+    socket.add(jsonEncode({'type': 'peer_connected'}));
+    await settle();
+    expect(service.status, ConnectionStatus.connected);
+
+    // What every save of the computers does to a live socket's key.
+    crypto.setServerPublicKey(computer.publicKey);
+    // The relay starts a new key exchange and answers it itself, with no
+    // session key, to put the socket on the static box.
+    socket
+      ..add(jsonEncode({'type': 'peer_connected'}))
+      ..add(jsonEncode({'type': 'key_exchange_ack', 'device': 'approved'}));
+    await settle();
+
+    expect(closed.isCompleted, isTrue);
+    expect(service.status, isNot(ConnectionStatus.connected));
+  });
+
   test(
     'the relay\'s subscription signal stays off the message stream',
     () async {

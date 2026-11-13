@@ -1,6 +1,20 @@
 import 'package:flutter/foundation.dart';
+import 'package:pinenacl/tweetnacl.dart';
 import 'package:pinenacl/x25519.dart';
 import 'package:sodium/sodium.dart' show SecureKey, Sodium, SodiumInit;
+
+/// The NaCl box between [mine] and [theirs]. Throws when their key makes the
+/// raw X25519 result all zeros, as a zero or low-order key does. Such a key
+/// gives every holder the same shared key, and pinenacl's Box does not check
+/// for it. Every box the app builds from a key it was given comes from here.
+Box checkedBox(PrivateKey mine, PublicKey theirs) {
+  final shared = Uint8List(32);
+  TweetNaCl.crypto_scalarmult(shared, mine.asTypedList, theirs.asTypedList);
+  if (shared.every((byte) => byte == 0)) {
+    throw ArgumentError('Invalid public key');
+  }
+  return Box(myPrivateKey: mine, theirPublicKey: theirs);
+}
 
 /// Seals and opens the NaCl box messages exchanged with one server, using the
 /// box's precomputed key, or a raw secretbox key from a transport v2

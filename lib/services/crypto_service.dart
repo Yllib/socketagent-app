@@ -205,7 +205,7 @@ class SessionOffer {
       throw const FormatException('Session answer is not for this offer');
     }
     return PeerChannel._session(
-      NaclCipher(Box(myPrivateKey: _ephemeral, theirPublicKey: PublicKey(key))),
+      NaclCipher(checkedBox(_ephemeral, PublicKey(key))),
     );
   }
 }
@@ -375,24 +375,36 @@ class CryptoService {
     if (!loaded) await generateKeyPair();
   }
 
-  /// Set the server's public key (from QR code) and initialize the Box
+  /// Sets the paired computer's public key and builds the static box. The
+  /// owner calls this with the stored key every time the configs are saved,
+  /// so the same key again changes nothing: what this device remembers about
+  /// the key, and the box a live socket is using, stay as they are.
   void setServerPublicKey(String base64Key) {
-    _serverPublicKey = Uint8List.fromList(base64Decode(base64Key));
-    _serverRequiresSession = false;
-    _serverIsV2 = false;
+    final key = Uint8List.fromList(base64Decode(base64Key));
+    final previous = _serverPublicKey;
+    final same = previous != null && _bytesEqual(previous, key);
+    if (same && _cipher != null) return;
+    _serverPublicKey = key;
+    if (!same) {
+      _serverRequiresSession = false;
+      _serverIsV2 = false;
+    }
     _initBox();
   }
 
-  /// Initialize the NaCl Box for encrypt/decrypt
+  /// Builds the static box. A zero or low-order computer key gets none, so
+  /// [isReady] stays false and no socket to that computer is dialled.
   void _initBox() {
     if (_secretKey == null || _serverPublicKey == null) return;
     _cipher?.dispose();
-    _cipher = NaclCipher(
-      Box(
-        myPrivateKey: _secretKey!,
-        theirPublicKey: PublicKey(_serverPublicKey!),
-      ),
-    );
+    _cipher = null;
+    try {
+      _cipher = NaclCipher(
+        checkedBox(_secretKey!, PublicKey(_serverPublicKey!)),
+      );
+    } on ArgumentError {
+      // Left without a box.
+    }
   }
 
   /// The static box, for a computer that predates session keys.

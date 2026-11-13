@@ -1191,10 +1191,20 @@ class WebSocketService {
       return true;
     }
     try {
-      final channel = offer.accept(ack, required: crypto.serverRequiresSession);
+      // A channel that has session keys is never replaced by the static box,
+      // whatever the stored pin says.
+      final channel = offer.accept(
+        ack,
+        required:
+            crypto.serverRequiresSession || _peerChannel?.sessionKeyed == true,
+      );
       if (channel.sessionKeyed) crypto.markServerSessionKeyed();
       _peerChannel?.dispose();
       _peerChannel = channel;
+      // A carry-over request belongs to the channel it was sent on. An
+      // answer to the old channel's request means nothing on this one.
+      _upgradeAsked = false;
+      _upgradeRequestId = null;
       return true;
     } catch (error) {
       _refuseConnection('key exchange refused: $error');

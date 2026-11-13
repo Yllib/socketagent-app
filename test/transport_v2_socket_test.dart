@@ -558,6 +558,52 @@ void main() {
       expect(delivered.map((m) => m['type']), ['server_capabilities']);
     });
 
+    test('takes no answer to a request made on a replaced channel', () async {
+      old = FakeOldComputer();
+      crypto.setServerPublicKey(old.publicKey);
+      relayInFront = true;
+      service = WebSocketService(manageBulkLane: false)
+        ..configureRelay(
+          relayUrl: 'ws://127.0.0.1:${server.port}',
+          pairingToken: 'room',
+          cryptoService: crypto,
+        )
+        ..setMode(ConnectionMode.relay);
+      listen();
+      var exchanges = 0;
+      Object? asked;
+      onFrame = (socket, frame) {
+        if (FakeOldComputer.isSealed(frame)) {
+          final message = old.open(frame);
+          if (message['type'] != 'pairing_upgrade') return;
+          asked = message['requestId'];
+          // The computer joins the room again before it answers, so the
+          // socket runs a second key exchange.
+          socket.add(jsonEncode({'type': 'peer_connected'}));
+          return;
+        }
+        exchanges++;
+        socket.add(old.answer(frame));
+        socket.add(
+          old.seal(
+            exchanges == 1
+                ? {
+                    'type': 'server_capabilities',
+                    'transport': {'version': 2},
+                  }
+                : {...granted, 'requestId': asked},
+          ),
+        );
+      };
+      service.connect();
+      await until(ConnectionStatus.connected);
+      await settle();
+
+      expect(exchanges, 2);
+      expect(asked, isNotNull);
+      expect(pairings, isEmpty);
+    });
+
     test('takes nothing from a refusal', () async {
       oldTransport(
         capabilities: {

@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:app/services/crypto_service.dart';
 import 'package:app/services/nacl_cipher.dart';
 import 'package:app/services/socket_frame_decoder.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pinenacl/x25519.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // Made by server/src/relay-crypto.ts: acceptKeyExchange answered an offer
 // built from these phone keys, then its channel sealed two frames.
@@ -94,6 +96,66 @@ void main() {
       );
     },
   );
+
+  test('a session key whose shared result is zero is refused', () {
+    // The computer's own proof over a zero key, which is low order.
+    final zero = Uint8List(32);
+    final ephemeral = PrivateKey(base64Decode(_ephemeralSecret));
+    final sealed = Box(myPrivateKey: server, theirPublicKey: phone.publicKey)
+        .encrypt(
+          Uint8List.fromList([
+            ...utf8.encode('socketagent session answer v1'),
+            ...zero,
+            ...ephemeral.publicKey.asTypedList,
+          ]),
+        );
+    final ack = {
+      'type': 'key_exchange_ack',
+      'session': {
+        'v': 1,
+        'key': base64Encode(zero),
+        'proof': base64Encode([
+          ...sealed.nonce.asTypedList,
+          ...sealed.cipherText.asTypedList,
+        ]),
+      },
+    };
+    expect(() => offer().accept(ack, required: false), throwsArgumentError);
+  });
+
+  group('the computer key a config save sets again', () {
+    final serverKey = base64Encode(server.publicKey.asTypedList);
+    late CryptoService crypto;
+
+    setUp(() async {
+      SharedPreferences.setMockInitialValues({
+        'session_keyed_servers': [serverKey],
+        'transport_v2_servers': [serverKey],
+      });
+      FlutterSecureStorage.setMockInitialValues({});
+      crypto = CryptoService();
+      await crypto.ensureKeyPair();
+      crypto.setServerPublicKey(serverKey);
+      await crypto.loadServerPins();
+    });
+
+    test('keeps what this device remembers about it', () {
+      crypto.setServerPublicKey(serverKey);
+      expect(crypto.serverRequiresSession, isTrue);
+      expect(crypto.serverIsV2, isTrue);
+
+      // Another computer's key starts with nothing remembered.
+      crypto.setServerPublicKey(phoneKey);
+      expect(crypto.serverRequiresSession, isFalse);
+      expect(crypto.serverIsV2, isFalse);
+    });
+
+    test('gets no static box when it is zero', () {
+      expect(crypto.isReady, isTrue);
+      crypto.setServerPublicKey(base64Encode(Uint8List(32)));
+      expect(crypto.isReady, isFalse);
+    });
+  });
 
   test('the offer proves its key under the static box', () {
     final message = offer().message();
