@@ -130,24 +130,97 @@ class WindowsLocalServer {
     }
   }
 
-  /// The marker counts only when SYSTEM or administrators own it. Setup makes
-  /// its folder writable by them alone, but any user can create a folder in
-  /// ProgramData before setup runs.
+  /// The text of the machine marker, or null when there is none to believe.
+  /// Any account can create a folder in ProgramData before setup runs, so
+  /// the marker counts only when [trustsMachineMarker] says setup made the
+  /// folder what it is. With that true no ordinary account can swap the
+  /// file between the check and the read.
   static Future<String?> _trustedMachineMarker() async {
     final data = Platform.environment['ProgramData'];
     if (data == null) return null;
-    final marker = File('$data\\SocketAgent\\machine-server.json');
+    final folder = '$data\\SocketAgent';
+    final marker = File('$folder\\machine-server.json');
     if (!await marker.exists()) return null;
-    final owner = await Process.run('powershell.exe', [
+    final facts = await Process.run('powershell.exe', [
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      "(Get-Acl -LiteralPath '${marker.path}').GetOwner([Security.Principal.SecurityIdentifier]).Value",
+      machineMarkerFactsScript(folder, marker.path),
     ]);
-    final sid = owner.stdout.toString().trim();
-    if (sid != 'S-1-5-18' && sid != 'S-1-5-32-544') return null;
+    if (!trustsMachineMarker(facts.stdout.toString())) return null;
     return marker.readAsString();
   }
+
+  /// The PowerShell that prints what [trustsMachineMarker] reads: the owner
+  /// of [folder], the owner of [file], each access rule on the folder, and
+  /// `end` once all of it was read. Any error stops it before `end`.
+  static String machineMarkerFactsScript(String folder, String file) {
+    String quoted(String path) => "'${path.replaceAll("'", "''")}'";
+    return [
+      r"$ErrorActionPreference = 'Stop'",
+      r'$sid = [Security.Principal.SecurityIdentifier]',
+      '\$folder = Get-Acl -LiteralPath ${quoted(folder)}',
+      r"'folder ' + $folder.GetOwner($sid).Value",
+      "'file ' + (Get-Acl -LiteralPath ${quoted(file)}).GetOwner(\$sid).Value",
+      r'foreach ($rule in $folder.GetAccessRules($true, $true, $sid)) '
+          r"{ 'rule {0} {1} {2}' -f $rule.AccessControlType, "
+          r'[int]$rule.FileSystemRights, $rule.IdentityReference.Value }',
+      "'end'",
+    ].join('; ');
+  }
+
+  /// Whether the machine marker is one setup's folder holds, from the
+  /// [facts] the script above printed. Setup gives the folder to the
+  /// administrators, with full control for them and SYSTEM and read access
+  /// for Users, so this asks that SYSTEM or the administrators own the
+  /// folder and the file, and that no rule lets any other account do more
+  /// in the folder than read it. A folder an ordinary account made, or may
+  /// write to, fails. So does output that is cut short or not understood.
+  static bool trustsMachineMarker(String facts) {
+    const administrators = {'S-1-5-18', 'S-1-5-32-544'};
+    // ReadAndExecute with Synchronize, the rights setup grants Users.
+    const readOnly = 0x1200A9;
+    String? folderOwner;
+    String? fileOwner;
+    var complete = false;
+    for (final line in const LineSplitter().convert(facts)) {
+      switch (line.trim().split(' ')) {
+        case ['']:
+          break;
+        case ['folder', final sid]:
+          folderOwner = sid;
+        case ['file', final sid]:
+          fileOwner = sid;
+        case ['rule', 'Deny', _, _]:
+          break;
+        case ['rule', 'Allow', final rights, final sid]:
+          if (administrators.contains(sid)) break;
+          final mask = int.tryParse(rights);
+          if (mask == null || (mask & 0xFFFFFFFF & ~readOnly) != 0) {
+            return false;
+          }
+        case ['end']:
+          complete = true;
+        default:
+          return false;
+      }
+    }
+    return complete &&
+        administrators.contains(folderOwner) &&
+        administrators.contains(fileOwner);
+  }
+
+  /// The servers discovery reports: the owner's [own] installs, and the
+  /// [machine] server from the marker unless one of them is on its port.
+  /// The owner's own files say which server that port is, with its key and
+  /// its token, and a marker does not overrule them.
+  static List<ServerConfig> found(
+    List<ServerConfig> own,
+    ServerConfig? machine,
+  ) => [
+    ...own,
+    if (machine != null && !own.any((c) => c.port == machine.port)) machine,
+  ];
 
   static Map<String, String> parseEnvironment(String text) {
     final result = <String, String>{};
@@ -281,16 +354,10 @@ class WindowsLocalServer {
     }
     try {
       final text = await _trustedMachineMarker();
-      final machine = text == null ? null : machineConfiguration(text);
-      // The owner's own install is the same server, reached with its token.
-      if (machine != null &&
-          !found.any(
-            (c) =>
-                c.port == machine.port &&
-                c.serverPubkey == machine.serverPubkey,
-          )) {
-        found.add(machine);
-      }
+      return WindowsLocalServer.found(
+        found,
+        text == null ? null : machineConfiguration(text),
+      );
     } catch (_) {}
     return found;
   }

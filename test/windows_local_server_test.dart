@@ -115,6 +115,107 @@ DEFAULT_CWD='C:\\Projects With Spaces'
     expect(WindowsLocalServer.machineConfiguration('nope'), isNull);
   });
 
+  group('the machine marker is believed', () {
+    // What the facts script prints for the folder a full install sets up:
+    // the administrators own it, they and SYSTEM have full control, and
+    // Users may read.
+    const fullInstall = [
+      'folder S-1-5-32-544',
+      'file S-1-5-32-544',
+      'rule Allow 2032127 S-1-5-18',
+      'rule Allow 2032127 S-1-5-32-544',
+      'rule Allow 1179817 S-1-5-32-545',
+      'end',
+    ];
+    bool trusts(List<String> lines) =>
+        WindowsLocalServer.trustsMachineMarker(lines.join('\r\n'));
+    List<String> replacing(String line, String by) => [
+      for (final l in fullInstall) l == line ? by : l,
+    ];
+
+    test('in the folder a full install sets up', () {
+      expect(trusts(fullInstall), isTrue);
+      // The server runs as SYSTEM or as an administrator.
+      expect(trusts(replacing('file S-1-5-32-544', 'file S-1-5-18')), isTrue);
+      // A rule that denies takes nothing away from this.
+      expect(
+        trusts([...fullInstall]..insert(2, 'rule Deny 278 S-1-1-0')),
+        isTrue,
+      );
+    });
+
+    test('only when setup owns the folder and the file', () {
+      const user = 'S-1-5-21-1-2-3-1001';
+      expect(trusts(replacing('folder S-1-5-32-544', 'folder $user')), isFalse);
+      expect(trusts(replacing('file S-1-5-32-544', 'file $user')), isFalse);
+      expect(trusts(fullInstall.sublist(1)), isFalse);
+    });
+
+    test('only when no other account may write to the folder', () {
+      // Users with Modify, as on a folder an ordinary account made.
+      expect(
+        trusts(
+          replacing(
+            'rule Allow 1179817 S-1-5-32-545',
+            'rule Allow 1245631 S-1-5-32-545',
+          ),
+        ),
+        isFalse,
+      );
+      // One account allowed to add files, and generic rights nobody reads.
+      expect(
+        trusts([...fullInstall]..insert(2, 'rule Allow 2 S-1-5-21-1-2-3-1001')),
+        isFalse,
+      );
+      expect(
+        trusts([...fullInstall]..insert(2, 'rule Allow -1610612736 S-1-5-11')),
+        isFalse,
+      );
+    });
+
+    test('only when all of it was read', () {
+      expect(trusts(fullInstall.sublist(0, fullInstall.length - 1)), isFalse);
+      expect(
+        trusts([...fullInstall]..insert(2, 'rule Allow S-1-5-18')),
+        isFalse,
+      );
+      expect(trusts(['Get-Acl : Access is denied', ...fullInstall]), isFalse);
+      expect(trusts(const []), isFalse);
+    });
+
+    test('by a script that quotes the paths it is given', () {
+      final script = WindowsLocalServer.machineMarkerFactsScript(
+        r"C:\ProgramData\It's",
+        r"C:\ProgramData\It's\machine-server.json",
+      );
+      expect(script, contains(r"-LiteralPath 'C:\ProgramData\It''s'; "));
+      expect(script, isNot(contains('"')));
+      expect(script, endsWith("; 'end'"));
+    });
+  });
+
+  test('a marker for a port the owner files name is left out', () {
+    final ownKey = base64Encode(List.filled(32, 1));
+    final markerKey = base64Encode(List.filled(32, 2));
+    final own = WindowsLocalServer.configuration({
+      'PORT': '8085',
+      'AUTH_TOKEN': 'made-up-owner-token',
+    }, ownKey)!;
+    ServerConfig marker(int port, String key) =>
+        WindowsLocalServer.machineConfiguration(
+          jsonEncode({'port': port, 'publicKey': key}),
+        )!;
+
+    // Another key on the owner's port never reaches the saved entry.
+    expect(WindowsLocalServer.found([own], marker(8085, markerKey)), [own]);
+    expect(WindowsLocalServer.found([own], marker(8085, ownKey)), [own]);
+    // The machine server of another account, on a port of its own.
+    final other = marker(8090, markerKey);
+    expect(WindowsLocalServer.found([own], other), [own, other]);
+    expect(WindowsLocalServer.found(const [], other), [other]);
+    expect(WindowsLocalServer.found([own], null), [own]);
+  });
+
   group('LocalServerPlan', () {
     final key = base64Encode(List<int>.generate(32, (i) => i));
     final oldKey = base64Encode(List<int>.generate(32, (i) => 255 - i));
