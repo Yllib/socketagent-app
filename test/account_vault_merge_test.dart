@@ -201,6 +201,17 @@ void main() {
     expect(renewed.pairingSecret, 'bmV3');
     expect(renewed.pairingToken, 'new-room');
 
+    // A relay named with no pairing does not move a v2 entry off its own.
+    // It is taken with a whole pairing, or by an entry that has none.
+    const otherRelay = 'wss://other.example';
+    final relayOnly = paired.copyWith(pairingSecret: '', relayUrl: otherRelay);
+    expect(relayOnly.after(relayed).relayUrl, 'wss://relay.example');
+    expect(relayOnly.after(paired).relayUrl, otherRelay);
+    expect(
+      renewed.copyWith(relayUrl: otherRelay).after(relayed).relayUrl,
+      otherRelay,
+    );
+
     // A different key is a different computer and starts without one.
     final other = paired.withComputerKey('other');
     expect(other.isV2, isFalse);

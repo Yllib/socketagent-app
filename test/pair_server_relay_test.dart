@@ -109,4 +109,35 @@ void main() {
     expect(openedBySecond.where((m) => m['type'] == 'device_auth'), isNotEmpty);
     expect(jsonEncode(openedBySecond), isNot(contains(firstToken)));
   });
+
+  test('an old code for the same key leaves a v2 entry where it is', () async {
+    await provider.addServer(
+      ServerConfig(
+        id: 'computer',
+        name: 'Computer',
+        host: '',
+        port: server.port,
+        token: '',
+        useRelay: true,
+        relayUrl: 'ws://127.0.0.1:${server.port}',
+        pairingToken: 'first-room',
+        pairingSecret: 'c2VjcmV0',
+        transport: 2,
+        serverPubkey: first.publicKey,
+      ),
+    );
+
+    await provider.pairServerRelay(
+      'computer',
+      relayUrl: 'wss://relay.example.test',
+      pairingToken: 'second-room',
+      serverPubkey: first.publicKey,
+    );
+
+    final saved = provider.serverConfigs.single;
+    expect(saved.isV2, isTrue);
+    expect(saved.pairingToken, 'first-room');
+    expect(saved.pairingSecret, 'c2VjcmV0');
+    expect(saved.relayUrl, 'ws://127.0.0.1:${server.port}');
+  });
 }

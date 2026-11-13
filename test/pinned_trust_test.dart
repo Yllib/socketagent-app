@@ -228,6 +228,61 @@ void main() {
     expect(same.pairingSecret, secret);
   });
 
+  test('a vault entry changes the room and secret together or not', () async {
+    await store(
+      key: computer.publicKey,
+      v2: true,
+      relayUrl: 'wss://relay.example',
+    );
+    final shared = VaultComputer.sharedFields(provider.serverConfigs.single);
+    Future<ServerConfig> apply(Map<String, Object?> fields, int at) async {
+      await provider.account.applyMerged!(
+        AccountVault(
+          computers: [
+            VaultComputer(
+              key: computer.publicKey,
+              updatedAt: at,
+              fields: fields,
+            ),
+          ],
+        ),
+      );
+      return provider.serverConfigs.single;
+    }
+
+    // A room and a relay with no secret are not a pairing. The entry stays
+    // in its room, on its relay.
+    final half = await apply(
+      {
+          ...shared,
+          'name': 'Renamed',
+          'pairingToken': 'other-room',
+          'relayUrl': 'wss://other.example',
+        }
+        ..remove('pairingSecret')
+        ..remove('transport'),
+      2,
+    );
+    expect(half.name, 'Renamed');
+    expect(half.pairingToken, 'room');
+    expect(half.pairingSecret, secret);
+    expect(half.relayUrl, 'wss://relay.example');
+
+    // A whole pairing replaces all three, and brings no token.
+    final newSecret = base64Encode(List.filled(32, 6));
+    final whole = await apply({
+      ...shared,
+      'token': 'a-token',
+      'pairingToken': 'other-room',
+      'pairingSecret': newSecret,
+      'relayUrl': 'wss://other.example',
+    }, 3);
+    expect(whole.pairingToken, 'other-room');
+    expect(whole.pairingSecret, newSecret);
+    expect(whole.relayUrl, 'wss://other.example');
+    expect(whole.token, isEmpty);
+  });
+
   test(
     'a vault entry whose pairing secret does not decode is not applied',
     () async {

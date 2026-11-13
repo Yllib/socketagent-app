@@ -3869,7 +3869,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// Saves a scanned pairing code on a computer and reconnects via relay.
   /// [pairingSecret] is set for an `SA3` code, which puts the computer on
-  /// transport v2. An old code for a computer already on v2 leaves it there.
+  /// transport v2. A code for another key makes the entry that computer,
+  /// with none of the token or pairing stored for the old one. An old code
+  /// for a computer already on v2 leaves it there, in its room and on its
+  /// relay: such a code brings no pairing, so [ServerConfig.after] keeps
+  /// the one the entry has.
   Future<void> pairServerRelay(
     String serverId, {
     required String relayUrl,
@@ -3879,15 +3883,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (idx < 0) return;
-    _serverConfigs[idx] = _serverConfigs[idx]
+    final existing = _serverConfigs[idx];
+    _serverConfigs[idx] = existing
         .withComputerKey(serverPubkey)
         .copyWith(
           useRelay: true,
           relayUrl: relayUrl,
           pairingToken: pairingToken,
-          pairingSecret: pairingSecret.isEmpty ? null : pairingSecret,
+          pairingSecret: pairingSecret,
           transport: pairingSecret.isEmpty ? null : 2,
-        );
+        )
+        .after(existing);
     await _saveServerConfigs();
     // Disconnect and reconnect with relay
     final ws = _connMgr.getConnection(serverId);
@@ -8503,8 +8509,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         continue;
       }
       try {
+        // The pairing is read from the vault entry alone. Laid over the
+        // saved secret, an entry that names a room and no secret would
+        // pass for a whole pairing. Without one, `updateServer` keeps the
+        // pairing a v2 computer has.
         final incoming = ServerConfig.fromJson({
-          ...existing.toJson(),
+          ...existing.toJson()
+            ..remove('pairingSecret')
+            ..remove('transport'),
           ...computer.fields,
           'id': existing.id,
           'useRelay': existing.useRelay,
