@@ -353,6 +353,119 @@ void main() {
       },
     );
 
+    /// A relay that takes the phone and says nothing, and a loopback port
+    /// with nothing on it, where every dial is refused.
+    Future<({HttpServer relay, List<WebSocket> onRelay, int closedPort})>
+    relayAndClosedPort() async {
+      final onRelay = <WebSocket>[];
+      final relay = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      relay.listen((request) async {
+        onRelay.add(await WebSocketTransformer.upgrade(request));
+      });
+      addTearDown(() async {
+        for (final socket in onRelay) {
+          await socket.close();
+        }
+        await relay.close(force: true);
+      });
+      final unused = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      final closedPort = unused.port;
+      await unused.close();
+      return (relay: relay, onRelay: onRelay, closedPort: closedPort);
+    }
+
+    test('skips a LAN address that takes the search and refuses the dial, '
+        'after two dials', () async {
+      final net = await relayAndClosedPort();
+      manager
+        ..setSubscriberToken('subscriber')
+        ..relayPatience = const Duration(minutes: 1)
+        // The address answers every check the search makes.
+        ..routeFinder = finderAdvertisingLoopback();
+      await manager.setServers([
+        autoConfig(useRelay: false).copyWith(
+          port: net.closedPort,
+          relayUrl: 'ws://127.0.0.1:${net.relay.port}',
+        ),
+      ]);
+      await manager.routeServer('computer', force: true);
+      final ws = manager.getConnection('computer')!;
+      manager.connectServer('computer');
+
+      // One refused dial is not enough: the search picks the address again.
+      await Future<void>.delayed(const Duration(seconds: 1));
+      expect(ws.mode, ConnectionMode.direct);
+      expect(net.onRelay, isEmpty);
+
+      // The dial 3 s later is refused too, and the relay is next.
+      await Future<void>.delayed(const Duration(seconds: 4));
+      expect(ws.dialOpened, isFalse);
+      expect(ws.mode, ConnectionMode.relay);
+      expect(net.onRelay, hasLength(1));
+      expect(saved.single.useRelay, isTrue);
+      expect(saved.single.host, '192.168.1.20');
+
+      // A search on the same network leaves the address out.
+      await manager.routeServer('computer', force: true);
+      expect(ws.mode, ConnectionMode.relay);
+    });
+
+    test(
+      'a computer that is off goes to the relay and is not marked',
+      () async {
+        final net = await relayAndClosedPort();
+        // The computer takes the first search's connection and is then off.
+        var up = true;
+        manager
+          ..setSubscriberToken('subscriber')
+          ..relayPatience = const Duration(minutes: 1)
+          ..routeFinder = LocalRouteFinder(
+            discover: (_) => const Stream.empty(),
+            reachable: (host, _) async => up && host == '127.0.0.1',
+          );
+        await manager.setServers([
+          autoConfig(useRelay: false, host: '127.0.0.1').copyWith(
+            port: net.closedPort,
+            relayUrl: 'ws://127.0.0.1:${net.relay.port}',
+          ),
+        ]);
+        await manager.routeServer('computer', force: true);
+        final ws = manager.getConnection('computer')!;
+        up = false;
+        manager.connectServer('computer');
+
+        // One refused dial, then a search that finds nothing.
+        await Future<void>.delayed(const Duration(seconds: 1));
+        expect(ws.mode, ConnectionMode.relay);
+        expect(net.onRelay, hasLength(1));
+
+        // Back on, it is found at its address at once.
+        up = true;
+        await manager.routeServer('computer', force: true);
+        expect(ws.mode, ConnectionMode.direct);
+      },
+    );
+
+    test('keeps searching the LAN past three silent addresses when there is '
+        'no relay', () async {
+      var searches = 0;
+      manager.routeFinder = LocalRouteFinder(
+        discover: (_) {
+          searches++;
+          return const Stream.empty();
+        },
+        reachable: (_, _) async => false,
+      );
+      await manager.setServers([autoConfig()]);
+      manager
+        ..noteSilent('computer', '192.168.1.31')
+        ..noteSilent('computer', '192.168.1.32')
+        ..noteSilent('computer', '192.168.1.33');
+      await manager.routeServer('computer', force: true);
+      expect(searches, 1);
+      expect(manager.getConnection('computer')!.mode, ConnectionMode.direct);
+    });
+
     test('stops searching the LAN for a computer while three addresses are '
         'silent', () async {
       var searches = 0;

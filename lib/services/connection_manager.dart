@@ -121,15 +121,22 @@ class ConnectionManager {
   final Map<String, DateTime> _relayRefused = {};
   // Auto-routed computers waiting on the relay, with the next direct check.
   final Map<String, Timer> _relayWatch = {};
-  // LAN addresses that took a connection and then gave no answer as the
-  // computer, by computer, with when. Routing leaves each out for
-  // [_silentHostSkip] or until the network changes, so the next route gets
-  // its turn (wire spec 3.8). While [_silentHostLimit] of them are left out
-  // for one computer, routing does not search the LAN for it either, so a
-  // LAN that keeps naming new addresses cannot keep it off the relay.
+  // LAN addresses where a dial went unanswered by the computer, by
+  // computer, with when: see [_markIfSilent] for which dials count. Routing
+  // leaves each out for [_silentHostSkip] or until the network changes, so
+  // the next route gets its turn (wire spec 3.8). While [_silentHostLimit]
+  // of them are left out for a computer the relay can reach, routing does
+  // not search the LAN for it either, so a LAN that keeps naming new
+  // addresses cannot keep it off the relay.
   final Map<String, Map<String, DateTime>> _silentHosts = {};
   static const _silentHostSkip = Duration(minutes: 5);
   static const _silentHostLimit = 3;
+  // Direct dials in a row, by computer, that ended with no answer from the
+  // computer. Zero again once it answers on either route.
+  final Map<String, int> _unansweredDials = {};
+  // Computers whose current dial has already reported that it dropped. One
+  // dial can report an error and then a close.
+  final Set<String> _dropped = {};
   // The address a computer's direct socket is set to when it is not the
   // stored one: the search found it, and no handshake there has succeeded
   // yet. It is stored in the entry once one does.
@@ -251,6 +258,7 @@ class ConnectionManager {
         // What was learned about the old address says nothing of this one.
         _unprovenHost.remove(config.id);
         _silentHosts.remove(config.id);
+        _unansweredDials.remove(config.id);
       }
       _configs[config.id] = config;
 
@@ -379,6 +387,7 @@ class ConnectionManager {
     // it again would resume the session twice.
     // On another network the same addresses are other machines.
     _silentHosts.clear();
+    _unansweredDials.clear();
     final now = DateTime.now();
     final burstStart = _networkChangedAt;
     if (burstStart == null ||
@@ -470,10 +479,14 @@ class ConnectionManager {
       // wait on it. A VPN such as Tailscale can still reach the stored host.
       if (network != _NetworkKind.mobileOnly || !canRelay) {
         final skip = _skippedHosts(config.id);
+        // Without the relay the search is the only way to a computer whose
+        // address changed, so the limit does not apply.
+        final searchLan =
+            network == _NetworkKind.local &&
+            (!canRelay || skip.length < _silentHostLimit);
         directHost = await routeFinder.find(
           config,
-          searchLan:
-              network == _NetworkKind.local && skip.length < _silentHostLimit,
+          searchLan: searchLan,
           timeout: const Duration(seconds: 2),
           skip: skip,
         );
@@ -551,15 +564,35 @@ class ConnectionManager {
     onRouteChanged?.call(proven);
   }
 
-  /// [ws] dropped. When its last dial was to a LAN address that took the
-  /// connection and the computer never answered there, that address is left
-  /// out and the route is picked again without it. A dial that never opened
-  /// is not marked: the computer may be off or restarting, and is found
-  /// there again as soon as it is back. Returns whether it marked one.
-  bool _skipIfSilent(String serverId, WebSocketService ws) {
+  /// [ws] dropped on a dial not counted yet. Marks the LAN address it
+  /// dialled as silent in two cases, and returns whether the route has to
+  /// be picked again at once.
+  ///
+  /// The dial's TCP connection opened and the computer never answered
+  /// there. That address is marked at once.
+  ///
+  /// Or the dial ended any other way without an answer, and the relay can
+  /// reach this computer. The route search picks an address on a connection
+  /// of its own, so an address can take that one and refuse every dial.
+  /// After the first such dial the route is picked again, and a computer
+  /// that is off or restarting goes to the relay there, since the search
+  /// does not pick an address that takes no connection. When the search
+  /// picks a LAN address all the same and that dial goes unanswered too,
+  /// the address is marked, and so is each one after it until the computer
+  /// answers. Without the relay nothing is marked this way: the address is
+  /// all there is to retry.
+  bool _markIfSilent(String serverId, WebSocketService ws) {
     final host = ws.dialledHost;
-    if (host == null || !ws.dialOpened || ws.computerAnswered) return false;
-    noteSilent(serverId, host);
+    final config = _configs[serverId];
+    if (host == null || config == null) return false;
+    if (ws.computerAnswered) {
+      _unansweredDials.remove(serverId);
+      return false;
+    }
+    final unanswered = (_unansweredDials[serverId] ?? 0) + 1;
+    _unansweredDials[serverId] = unanswered;
+    if (!ws.dialOpened && !_canRelay(config)) return false;
+    if (ws.dialOpened || unanswered >= 2) noteSilent(serverId, host);
     return true;
   }
 
@@ -570,7 +603,7 @@ class ConnectionManager {
       (_silentHosts[serverId] ??= {})[host] = DateTime.now();
 
   /// Picks [serverId]'s route again after a search that may have begun
-  /// before an address was marked silent, and could still pick it.
+  /// before a dial went unanswered, and could still pick its address.
   Future<void> _routeWithoutSilent(String serverId) async {
     await _routing[serverId];
     await routeServer(serverId, force: true);
@@ -730,6 +763,7 @@ class ConnectionManager {
       _statusController.add(ServerStatusUpdate(serverId, status));
       if (status == ConnectionStatus.connected) {
         _relayWatch.remove(serverId)?.cancel();
+        _unansweredDials.remove(serverId);
         _keepProvenHost(serverId, ws);
       } else if (status == ConnectionStatus.connecting &&
           ws.mode == ConnectionMode.relay &&
@@ -740,12 +774,15 @@ class ConnectionManager {
       // A dropped connection may mean the phone left or joined the
       // computer's network. Only when the socket plans to retry: an
       // intentional disconnect must stay disconnected.
-      if ((status == ConnectionStatus.error ||
-              status == ConnectionStatus.disconnected) &&
-          ws.reconnecting &&
-          _configs[serverId]?.autoRoute == true) {
+      final dropped =
+          status == ConnectionStatus.error ||
+          status == ConnectionStatus.disconnected;
+      if (!dropped) _dropped.remove(serverId);
+      if (dropped && ws.reconnecting && _configs[serverId]?.autoRoute == true) {
+        // One dial is counted once, though it may report twice.
+        final firstReport = _dropped.add(serverId);
         unawaited(
-          _skipIfSilent(serverId, ws)
+          firstReport && _markIfSilent(serverId, ws)
               ? _routeWithoutSilent(serverId)
               : routeServer(serverId),
         );
@@ -794,6 +831,8 @@ class ConnectionManager {
     _relayRefused.remove(id);
     _deviceKeyDirect.remove(id);
     _silentHosts.remove(id);
+    _unansweredDials.remove(id);
+    _dropped.remove(id);
     _unprovenHost.remove(id);
   }
 
