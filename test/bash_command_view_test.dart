@@ -102,4 +102,35 @@ void main() {
     expect(find.text('rg (ripgrep)'), findsOneWidget);
     expect(find.textContaining('Recursively searches files'), findsOneWidget);
   });
+
+  testWidgets('a card shows its whole summary once expanded', (tester) async {
+    tester.view.physicalSize = const Size(360, 700);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final message = ChatMessage.toolCall(
+      tool: 'Bash',
+      input: {
+        'command': 'mkdir -p audit',
+        'description':
+            'Create the audit report folder and gather pointers for the '
+            'briefs each agent reads before it starts',
+      },
+      toolUseId: 'bash-summary',
+    )..toolOutput = 'done';
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(body: ToolOutputBlock(message: message)),
+      ),
+    );
+
+    final summary = find.byKey(const ValueKey('tool-card-summary'));
+    expect(tester.widget<Text>(summary).maxLines, 1);
+    final oneLine = tester.getSize(summary).height;
+
+    await tester.tap(summary);
+    await tester.pump();
+    expect(tester.widget<Text>(summary).maxLines, isNull);
+    expect(tester.getSize(summary).height, greaterThan(oneLine * 2));
+  });
 }

@@ -402,6 +402,11 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
+                // An expanded card shows its whole summary, so the icons
+                // stay on the first line while the text wraps below it.
+                crossAxisAlignment: showBody
+                    ? CrossAxisAlignment.start
+                    : CrossAxisAlignment.center,
                 children: [
                   Icon(_toolIcon(rawToolName), size: 16, color: accentColor),
                   const SizedBox(width: 8),
@@ -436,14 +441,18 @@ class _ToolOutputBlockState extends State<ToolOutputBlock> {
                   ],
                   const SizedBox(width: 8),
                   Expanded(
-                    child: Text(
-                      _isBash ? _bashSummary : _toolDescription,
-                      style: GoogleFonts.jetBrainsMono(
-                        fontSize: 11,
-                        color: context.palette.textSecondary,
+                    child: Padding(
+                      padding: EdgeInsets.only(top: showBody ? 1 : 0),
+                      child: Text(
+                        _isBash ? _bashSummary : _toolDescription,
+                        key: const ValueKey('tool-card-summary'),
+                        style: GoogleFonts.jetBrainsMono(
+                          fontSize: 11,
+                          color: context.palette.textSecondary,
+                        ),
+                        maxLines: showBody ? null : 1,
+                        overflow: showBody ? null : TextOverflow.ellipsis,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   // TaskOutput status badge
