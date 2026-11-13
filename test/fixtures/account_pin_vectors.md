@@ -5,7 +5,7 @@ stretch, the key pair, the two boxes, the Drive file, the PIN rule, the
 requests and the relay's count. The relay keeps a copy, byte for byte, and
 both suites pin its SHA-256.
 
-    9e64cf93c522b6540af413b285244ab37c81c94bd6b35b219c2625f7a9bd8e81
+    965c4b2f65e894a0ee705c300f28ed1fd87bc6364f242e4c86761336c8e3736f
 
 Every key, salt, nonce and id is the SHA-256 of a label starting
 `account-pin-vectors/`, cut to length. The PINs are made up. None is a real
@@ -96,8 +96,8 @@ Raw bytes are hex. A value that travels as base64 is given as it travels.
   | `create` | Setup. `account` gets a live vault. |
   | `move` | Setup. `account` is frozen with a rotation record naming `to`. |
   | `delete` | `DELETE /api/account` |
-  | `vault.get` | `GET /api/account/vault`. `reply` gives only `pin`. |
-  | `pin.put` | `PUT /api/account/pin` with `body` |
+  | `vault.get` | `GET /api/account/vault`. `reply` gives only `pin`, with the record's `setAt` in it. |
+  | `pin.put` | `PUT /api/account/pin` with `body`. A `200` carries the new record's `setAt`. |
   | `pin.reset` | `POST /api/account/pin/reset` |
   | `pin.claim` | `POST /api/account/pin/claim` with `body`, signed by `account` |
   | `pin.unlock` | `POST /api/account/pin/unlock` with `body`. `account` names the account the body carries. |

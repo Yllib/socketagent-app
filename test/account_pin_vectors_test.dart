@@ -24,7 +24,7 @@ import 'package:pinenacl/x25519.dart';
 
 const _fixture = 'test/fixtures/account_pin_vectors.json';
 const _fixtureSha256 =
-    '9e64cf93c522b6540af413b285244ab37c81c94bd6b35b219c2625f7a9bd8e81';
+    '965c4b2f65e894a0ee705c300f28ed1fd87bc6364f242e4c86761336c8e3736f';
 const _write = bool.fromEnvironment('WRITE_PIN_VECTORS');
 
 const _day = 24 * 60 * 60 * 1000;
@@ -178,6 +178,7 @@ class _RelayModel {
               ? null
               : {
                   'id': view['id'],
+                  'setAt': view['setAt'],
                   'triesLeft': view['tries'],
                   'wrongTotal': view['wrongTotal'],
                   'lastWrongAt': view['lastWrongAt'],
@@ -210,6 +211,10 @@ class _RelayModel {
       if (!live.contains(account)) return (404, {'error': 'not_found'});
       final old = records[account];
       if (old?['id'] != expectedId) return (409, {'id': old?['id']});
+      // Later than the record it replaces, by 1 ms when the clock has not
+      // passed it.
+      final before = old?['setAt'] as int?;
+      final setAt = before == null || at > before ? at : before + 1;
       records[account] = {
         'v': 1,
         'id': id,
@@ -221,9 +226,9 @@ class _RelayModel {
         'lastWrongAt': old?['lastWrongAt'] ?? 0,
         'lastResetAt': old?['lastResetAt'] ?? 0,
         'lastUnlockAt': old?['lastUnlockAt'] ?? 0,
-        'setAt': at,
+        'setAt': setAt,
       };
-      return (200, {'id': id});
+      return (200, {'id': id, 'setAt': setAt});
     }
 
     _event(at, 'pin.put', account, body: body, answer: answer());
