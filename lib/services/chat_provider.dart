@@ -20099,13 +20099,15 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     await prefs.setString('kokoro_voice', voice.id);
   }
 
-  /// Direct connection details for file downloads.
+  /// Where a file may be fetched over plain HTTP, with the computer's token
+  /// in the URL. Only ever this machine, whichever entry the download
+  /// belongs to: sent to any other host, the token is readable on the way.
   ({String host, int port, String token})? _getDirectServerFor([
     String? serverId,
   ]) {
     if (serverId != null && serverId.isNotEmpty) {
       final config = _serverConfigs.where((c) => c.id == serverId).firstOrNull;
-      if (config != null && !config.useRelay && config.host.isNotEmpty) {
+      if (config != null && !config.useRelay && isLoopbackHost(config.host)) {
         return (host: config.host, port: config.port, token: config.token);
       }
       return null;
@@ -20116,13 +20118,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       final config = _serverConfigs
           .where((c) => c.id == activeServerId)
           .firstOrNull;
-      if (config != null && !config.useRelay && config.host.isNotEmpty) {
+      if (config != null && !config.useRelay && isLoopbackHost(config.host)) {
         return (host: config.host, port: config.port, token: config.token);
       }
     }
 
-    // A download nobody owns may only take its token to this machine. Sent
-    // to any other host over plain HTTP, the token is readable on the way.
     if (isLoopbackHost(_serverHost)) {
       return (host: _serverHost, port: _serverPort, token: _authToken);
     }
@@ -20941,7 +20941,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }) async {
     if (_directServerUsesEncryptedSocket(serverId)) return false;
     final server = _getDirectServerFor(serverId);
-    if (server == null) return false;
+    // The token rides in this URL, so it goes to this machine or nowhere.
+    if (server == null || !isLoopbackHost(server.host)) return false;
     final part = await _downloadPart(fileId);
     final generation = _downloadGenerations[fileId];
     final download = ResumableHttpDownload();
