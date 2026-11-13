@@ -8291,6 +8291,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final List<PendingDevice> _unpromptedDevices = [];
   final Set<String> _serversWithDeviceAuth = {};
   final Set<String> _serversWithComputerLinks = {};
+
+  /// `computerLinks.version` as each computer advertises it. From 2 a link
+  /// can carry a link secret.
+  final Map<String, int> _computerLinkVersions = {};
   final Set<String> _serversWithPairingReset = {};
   final Map<String, List<_DeviceRequestWaiter>> _deviceRequestCompleters = {};
   int _deviceRequestSeq = 0;
@@ -8602,12 +8606,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _serversWithPairingReset.remove(serverId);
     }
-    if (msg['computerLinks'] is Map) {
+    final computerLinks = msg['computerLinks'];
+    if (computerLinks is Map) {
       _serversWithComputerLinks.add(serverId);
+      _computerLinkVersions[serverId] =
+          (computerLinks['version'] as num?)?.toInt() ?? 0;
       _sendKnownComputers(serverId);
       _connMgr.sendToServer(serverId, {'type': 'computer_link_list'});
     } else {
       _serversWithComputerLinks.remove(serverId);
+      _computerLinkVersions.remove(serverId);
       _computerLinks.remove(serverId);
     }
   }
@@ -8847,18 +8855,30 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     DateTime? expiresAt,
   }) async {
     final (source, target) = _linkPair(sourceId, targetId);
+    final linkSecret = _linksTakeSecret(sourceId, targetId)
+        ? newSharedSecret()
+        : null;
     await _authorizeComputer(target, source, {
       'access': access.toJson(),
       'confirm': LinkConfirm.never.wire,
       if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
+      'linkSecret': ?linkSecret,
     });
     await _connectComputerLink(
       source,
       target,
       access: access,
       expiresAt: expiresAt,
+      linkSecret: linkSecret,
     );
   }
+
+  /// Whether a new link from [sourceId] to [targetId] gets a link secret.
+  /// Both computers have to know what one is, or the link runs as it always
+  /// has (wire spec 10.1).
+  bool _linksTakeSecret(String sourceId, String targetId) =>
+      (_computerLinkVersions[sourceId] ?? 0) >= 2 &&
+      (_computerLinkVersions[targetId] ?? 0) >= 2;
 
   /// Lets agents on [sourceId] make the one request whose one-time digest is
   /// [digest] on [targetId]. An existing link keeps its settings. Without
@@ -8869,6 +8889,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required String digest,
   }) async {
     final (source, target) = _linkPair(sourceId, targetId);
+    bool linked(List<ComputerLink> links) =>
+        links.any((link) => link.targetPubkey == target.serverPubkey);
+    // A link secret has to reach both computers or neither. So when one may
+    // be needed, whether a link exists is settled before the target hears
+    // of it. An existing link keeps the secret it has.
+    var links = _linksTakeSecret(sourceId, targetId)
+        ? await loadComputerLinks(sourceId)
+        : null;
+    final linkSecret = links != null && !linked(links)
+        ? newSharedSecret()
+        : null;
     await _authorizeComputer(target, source, {
       'access': const ComputerAccess(
         read: false,
@@ -8877,15 +8908,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       ).toJson(),
       'confirm': LinkConfirm.never.wire,
       'oneTime': {'digest': digest},
+      'linkSecret': ?linkSecret,
     });
-    final links = await loadComputerLinks(sourceId);
-    if (links.any((link) => link.targetPubkey == target.serverPubkey)) return;
+    links ??= await loadComputerLinks(sourceId);
+    if (linked(links)) return;
     await _connectComputerLink(
       source,
       target,
       access: const ComputerAccess(read: false, agents: false, commands: false),
       // The target's grant lasts 15 minutes.
       expiresAt: DateTime.now().add(const Duration(minutes: 15)),
+      linkSecret: linkSecret,
     );
   }
 
@@ -8925,11 +8958,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   /// Gets a ticket for [target]'s link room and stores the link on [source].
+  /// [linkSecret] is the one the target was just given, when there is one.
   Future<void> _connectComputerLink(
     ServerConfig source,
     ServerConfig target, {
     required ComputerAccess access,
     DateTime? expiresAt,
+    String? linkSecret,
   }) async {
     final sourceId = source.id;
     final targetId = target.id;
@@ -8956,6 +8991,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       ticket: ticket,
       access: access,
       expiresAt: expiresAt,
+      linkSecret: linkSecret,
     );
     unawaited(loadComputerLinks(sourceId).catchError((_) => <ComputerLink>[]));
     unawaited(loadDevices(targetId).catchError((_) => _emptyRegistry));
@@ -9034,6 +9070,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     required ComputerLinkTicket ticket,
     required ComputerAccess access,
     DateTime? expiresAt,
+    String? linkSecret,
   }) async {
     final msg = {
       'type': 'computer_link_set',
@@ -9046,6 +9083,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       'access': access.toJson(),
       'confirm': LinkConfirm.never.wire,
       if (expiresAt != null) 'expiresAt': expiresAt.millisecondsSinceEpoch,
+      'linkSecret': ?linkSecret,
     };
     try {
       final result = await _deviceRequest(
@@ -18284,6 +18322,26 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  /// The transfer secret both start messages of [jobId] carry, or null when
+  /// either computer is too old for one and the job runs as it always has
+  /// (wire spec 10.3). A job keeps the secret it started with, so a start
+  /// sent again after a lost answer or an app restart matches the first.
+  Future<String?> _transferSecret(
+    String jobId,
+    String sourceId,
+    String destinationId,
+  ) async {
+    if ((_serverSessionTransferVersions[sourceId] ?? 0) < 4 ||
+        (_serverSessionTransferVersions[destinationId] ?? 0) < 4) {
+      return null;
+    }
+    final kept = await _secureStorage.getTransferSecret(jobId);
+    if (kept != null && decodeKey32(kept) != null) return kept;
+    final secret = newSharedSecret();
+    await _secureStorage.setTransferSecret(jobId, secret);
+    return secret;
+  }
+
   Future<SessionTransferResult?> transferSession({
     required Session source,
     required String destinationServerId,
@@ -18409,6 +18467,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             grant['error']?.toString() ?? 'Could not authorize teleport.',
           );
         }
+        final transferSecret = await _transferSecret(
+          jobId,
+          source.serverId,
+          destinationServerId,
+        );
         await transfer.start(destinationServerId, {
           ...options,
           'jobId': jobId,
@@ -18416,6 +18479,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'relayUrl': relayUrl,
           'ticket': grant['destinationTicket'],
           'peerPublicKey': sourceConfig.serverPubkey,
+          'transferSecret': ?transferSecret,
         });
         await transfer.start(source.serverId, {
           ...options,
@@ -18424,6 +18488,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           'relayUrl': relayUrl,
           'ticket': grant['sourceTicket'],
           'peerPublicKey': destinationConfig.serverPubkey,
+          'transferSecret': ?transferSecret,
         });
       }
       completed = await transfer.watch(
@@ -18461,6 +18526,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _saveSessionCacheSoon();
     notifyListeners();
     await prefs.remove(preferenceKey);
+    await _secureStorage.deleteTransferSecret(jobId);
     return SessionTransferResult(
       session: destination,
       exactNativeResume: result['exactNativeResume'] == true,
@@ -20000,11 +20066,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
     }
 
-    if (_serverHost.isNotEmpty) {
+    // A download nobody owns may only take its token to this machine. Sent
+    // to any other host over plain HTTP, the token is readable on the way.
+    if (isLoopbackHost(_serverHost)) {
       return (host: _serverHost, port: _serverPort, token: _authToken);
     }
     final direct = _serverConfigs
-        .where((c) => !c.useRelay && c.host.isNotEmpty)
+        .where(
+          (c) =>
+              !c.useRelay && isLoopbackHost(c.host) && c.serverPubkey.isEmpty,
+        )
         .firstOrNull;
     if (direct != null) {
       return (host: direct.host, port: direct.port, token: direct.token);

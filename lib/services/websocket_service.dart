@@ -36,6 +36,11 @@ bool shouldStartWebSocketConnection(
           status != ConnectionStatus.connected);
 }
 
+/// Whether [host] names this machine, so nothing sent to it crosses a
+/// network.
+bool isLoopbackHost(String host) =>
+    const {'127.0.0.1', 'localhost', '::1'}.contains(host);
+
 bool relayTransportIsConfigured({
   required String relayUrl,
   required String pairingToken,
@@ -44,10 +49,8 @@ bool relayTransportIsConfigured({
   final uri = Uri.tryParse(relayUrl.trim());
   if (uri == null || uri.host.isEmpty) return false;
   // TLS always. Plain `ws` is for a relay on this machine, which tests use.
-  const loopback = {'127.0.0.1', 'localhost', '::1'};
   final secure =
-      uri.scheme == 'wss' ||
-      (uri.scheme == 'ws' && loopback.contains(uri.host));
+      uri.scheme == 'wss' || (uri.scheme == 'ws' && isLoopbackHost(uri.host));
   return secure && pairingToken.trim().isNotEmpty && cryptoReady;
 }
 

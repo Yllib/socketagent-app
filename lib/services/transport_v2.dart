@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -26,6 +27,12 @@ const Duration hs2Timeout = Duration(seconds: 10);
 
 /// The longest device name message 1 carries.
 const int maxDeviceNameLength = 80;
+
+/// A new link or transfer secret: 32 random bytes as base64.
+String newSharedSecret() {
+  final random = Random.secure();
+  return base64Encode(List.generate(32, (_) => random.nextInt(256)));
+}
 
 /// The first record of every v2 channel.
 const String transportReadyMessage = '{"type":"transport_ready"}';

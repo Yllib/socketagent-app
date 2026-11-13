@@ -33,6 +33,15 @@ class SecureStorageService {
   Future<void> deleteOutgoingSecret(String key) =>
       _storage.delete(key: 'outgoing_secret:$key');
 
+  /// The transfer secret of a session transfer job, kept for the job's life
+  /// so a retry after an app restart sends both computers the same one.
+  Future<String?> getTransferSecret(String jobId) =>
+      _storage.read(key: 'transfer_secret:$jobId');
+  Future<void> setTransferSecret(String jobId, String value) =>
+      _storage.write(key: 'transfer_secret:$jobId', value: value);
+  Future<void> deleteTransferSecret(String jobId) =>
+      _storage.delete(key: 'transfer_secret:$jobId');
+
   // ────────── Credentials ──────────
 
   /// Auth token for direct server connections

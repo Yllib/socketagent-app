@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:crypto/crypto.dart' as hashes;
 import 'package:pinenacl/ed25519.dart';
+import 'package:pinenacl/tweetnacl.dart';
 import 'package:pinenacl/x25519.dart';
 
 /// The keys an account derives from its master key. The relay never sees any
@@ -188,6 +189,18 @@ String formatFingerprintCode(String code) =>
 /// An approval token is a NaCl box from this device's X25519 key to the
 /// target computer's key over the approval payload. Only the target can open
 /// it, and only a key the target has enrolled as a device could have made it.
+/// The static box between [mine] and [theirs]. Throws when their key makes
+/// the raw X25519 result all zeros. Such a key gives every holder the same
+/// shared key, and pinenacl's Box does not check for it.
+Box _staticBox(PrivateKey mine, PublicKey theirs) {
+  final shared = Uint8List(32);
+  TweetNaCl.crypto_scalarmult(shared, mine.asTypedList, theirs.asTypedList);
+  if (shared.every((byte) => byte == 0)) {
+    throw ArgumentError('Invalid public key');
+  }
+  return Box(myPrivateKey: mine, theirPublicKey: theirs);
+}
+
 class ApprovalToken {
   const ApprovalToken({required this.from, required this.n, required this.c});
 
@@ -212,11 +225,9 @@ class ApprovalToken {
     required String targetPublicKeyBase64,
     required Map<String, Object?> payload,
   }) {
-    final box = Box(
-      myPrivateKey: deviceKey,
-      theirPublicKey: PublicKey(
-        Uint8List.fromList(base64Decode(targetPublicKeyBase64)),
-      ),
+    final box = _staticBox(
+      deviceKey,
+      PublicKey(Uint8List.fromList(base64Decode(targetPublicKeyBase64))),
     );
     final sealed = box.encrypt(
       Uint8List.fromList(utf8.encode(jsonEncode(payload))),
@@ -230,9 +241,9 @@ class ApprovalToken {
 
   /// What the target computer does. Throws when the box doesn't verify.
   Map<String, Object?> open(PrivateKey targetKey) {
-    final box = Box(
-      myPrivateKey: targetKey,
-      theirPublicKey: PublicKey(Uint8List.fromList(base64Decode(from))),
+    final box = _staticBox(
+      targetKey,
+      PublicKey(Uint8List.fromList(base64Decode(from))),
     );
     final plaintext = box.decrypt(
       ByteList(Uint8List.fromList(base64Decode(c))),

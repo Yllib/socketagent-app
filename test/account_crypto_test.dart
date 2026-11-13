@@ -142,4 +142,20 @@ void main() {
     expect(() => forged.open(target), throwsA(anything));
     expect(ApprovalToken.fromJson({'from': 'x'}), isNull);
   });
+
+  test('an approval token refuses a key whose shared result is zero', () {
+    final device = PrivateKey.generate();
+    // The all-zero point is low order: X25519 with it gives 32 zero bytes.
+    final lowOrder = base64Encode(Uint8List(32));
+    expect(
+      () => ApprovalToken.seal(
+        deviceKey: device,
+        targetPublicKeyBase64: lowOrder,
+        payload: const {'digest': 'abc'},
+      ),
+      throwsArgumentError,
+    );
+    final token = ApprovalToken(from: lowOrder, n: '', c: '');
+    expect(() => token.open(device), throwsArgumentError);
+  });
 }
