@@ -334,6 +334,10 @@ class VaultAccountPin {
   /// write this, so it only supplies a name to show.
   final String setBy;
 
+  /// What a device remembers of a PIN it knows. The salt and the public key
+  /// are part of it, so new keys under an old id count as a new PIN.
+  String get mark => '$id.$salt.$publicKey';
+
   Map<String, Object?> toJson() => {
     'id': id,
     'salt': salt,
@@ -504,9 +508,9 @@ class VaultSubscription {
 /// item and drops the tombstone. Neither input is changed.
 ///
 /// The account PIN does not merge by time. [a] is this device's vault and
-/// [b] the relay's. [a]'s PIN wins when [relayPinId], the id the relay's
-/// PIN record reports, is its id. Otherwise [b]'s wins when it has one. The
-/// repair id is [b]'s when it has one.
+/// [b] the relay's. The PIN whose id is [relayPinId], the id the relay's
+/// PIN record reports, wins, and [b]'s when both carry it. Otherwise [b]'s
+/// wins when it has one. The repair id is [b]'s when it has one.
 AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
   final computers = _mergeItems<VaultComputer>(
     a.computers,
@@ -571,13 +575,23 @@ AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
     preferences: newer.preferences.isEmpty
         ? (newer == a ? b : a).preferences
         : newer.preferences,
-    pin: a.pin != null && a.pin?.id == relayPinId ? a.pin : b.pin ?? a.pin,
+    pin: _mergePin(a.pin, b.pin, relayPinId),
     resetId: b.resetId ?? a.resetId,
     unknownFields: {
       ...(newer == a ? b : a).unknownFields,
       ...newer.unknownFields,
     },
   );
+}
+
+VaultAccountPin? _mergePin(
+  VaultAccountPin? a,
+  VaultAccountPin? b,
+  String? relayPinId,
+) {
+  if (b != null && b.id == relayPinId) return b;
+  if (a != null && a.id == relayPinId) return a;
+  return b ?? a;
 }
 
 ({List<T> items, List<VaultTombstone> tombstones}) _mergeItems<T>(

@@ -18,9 +18,11 @@ import 'package:pinenacl/ed25519.dart';
 // tables say, a Google Drive app data folder, and devices that can die
 // after any request and start again from what they had saved.
 //
-// The relay here has no rate limits, no size limits, no account cap and no
-// 503 on an empty folder. Everything else follows `account-vault.ts`,
-// `account-pin.ts` and the account routes in `api.ts` of the relay.
+// The relay here counts no requests, so its only rate limit is the one a
+// test switches on for new accounts. It has no size limits, no account cap,
+// no clock check and no 503 on an empty folder. Everything else follows
+// `account-vault.ts`, `account-pin.ts` and the account routes in `api.ts`
+// of the relay.
 
 /// Stands in for Argon2id, which takes 64 MiB and a native library.
 Future<Uint8List> fakeStretch(String pin, Uint8List salt) async =>
@@ -106,6 +108,11 @@ class FakeCloud {
 
   /// Drive requests that fail with this status while set.
   int? driveFailure;
+
+  /// While set, a write that would make an account answers 429
+  /// `rate_limited`, as the relay does past 30 new accounts a day from one
+  /// address.
+  bool newAccountsLimited = false;
   int _nextFile = 1;
   int _nextCreated = 1760300000000;
 
@@ -378,6 +385,11 @@ class FakeCloud {
       return _json(409, {'version': version, 'rotated': true});
     }
     if (expected != version) return _json(409, {'version': version});
+    if (record == null) {
+      // A first write cannot freeze the account it makes.
+      if (newAccountId != null) return _json(400, {'error': 'invalid_body'});
+      if (newAccountsLimited) return _json(429, {'error': 'rate_limited'});
+    }
     accounts[account] =
         RelayAccount(
             version: version + 1,
@@ -410,6 +422,8 @@ class FakeCloud {
     if (!record.live) return _json(410, {'error': 'gone'});
     final current = pins[account];
     if (current?.id != expectedId) return _json(409, {'id': current?.id});
+    // A new PIN needs a new id, so every device sees that it changed.
+    if (current?.id == id) return _json(409, {'id': current?.id});
     pins[account] =
         RelayPinRecord(
             id: id as String,
@@ -436,9 +450,8 @@ class FakeCloud {
     if (accounts[from]?.newAccountId != caller) {
       return _json(409, {'error': 'not_successor'});
     }
-    if (record == null || !record.live) {
-      return _json(404, {'error': 'not_found'});
-    }
+    if (record == null) return _json(404, {'error': 'not_found'});
+    if (!record.live) return _json(410, {'error': 'gone'});
     final theirs = pins[from];
     final ours = pins[caller];
     if (theirs == null) return _json(200, {'pin': ours != null});

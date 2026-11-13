@@ -119,12 +119,22 @@ class PinConflict implements Exception {
 class VaultRequestFailed implements Exception {
   const VaultRequestFailed(this.statusCode, this.error);
 
+  /// Shown when the relay's limit for an address or an account is used up.
+  /// The limits run by the hour, and by the day for new accounts.
+  static const rateLimitedWords =
+      'Too many requests from this network. Try again later.';
+
   final int statusCode;
   final String error;
 
+  /// The relay's limiter refused the request. Nothing was read, written or
+  /// counted, and on `unlock` no try was spent.
+  bool get rateLimited => statusCode == 429 && error == 'rate_limited';
+
   @override
-  String toString() =>
-      'Relay answered $statusCode${error.isEmpty ? '' : ' ($error)'}';
+  String toString() => rateLimited
+      ? rateLimitedWords
+      : 'Relay answered $statusCode${error.isEmpty ? '' : ' ($error)'}';
 }
 
 /// The relay's answer to a PIN try from a device with no account.
@@ -307,7 +317,10 @@ class AccountVaultClient {
 
   /// Signed by the account a change moved to. Brings the PIN record, or its
   /// counts, over from [from], the account it left. Returns whether the
-  /// account now has a PIN record. Safe to repeat.
+  /// account now has a PIN record. Safe to repeat. The relay answers 409
+  /// `not_successor` when [from] did not move to this account, 410 when
+  /// this account has moved or was deleted, and 404 when it has no record
+  /// of this account. All three throw [VaultRequestFailed].
   Future<bool> claimPin(AccountKeys keys, {required String from}) async {
     final response = await _send(
       keys,

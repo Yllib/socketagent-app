@@ -7,6 +7,7 @@ import 'package:app/services/account_key_file.dart';
 import 'package:app/services/account_pending.dart';
 import 'package:app/services/account_pin.dart';
 import 'package:app/services/account_service.dart';
+import 'package:app/services/account_vault_client.dart';
 import 'package:app/services/google_auth.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -120,6 +121,31 @@ void main() {
       cloud.beforeRelay = null;
       await a.service.createAccount(goodPin);
       expect(a.service.hasAccount, isTrue);
+    });
+
+    test('the relay\'s limit on new accounts leaves the sign-in '
+        'waiting', () async {
+      final cloud = FakeCloud()..newAccountsLimited = true;
+      final a = Device('Pixel', cloud);
+      expect(await a.service.signInWithGoogle(), isA<FirstAccount>());
+
+      await expectLater(
+        a.service.createAccount(goodPin),
+        throwsA(
+          _stateError(
+            'No account was made: ${VaultRequestFailed.rateLimitedWords}',
+          ),
+        ),
+      );
+      expect(a.service.hasAccount, isFalse);
+      expect(a.storage.record, isNull);
+      expect(cloud.accounts, isEmpty);
+      expect(cloud.driveFiles, isEmpty);
+      expect(a.service.signInEmail, 'billy@example.com');
+
+      cloud.newAccountsLimited = false;
+      await a.service.createAccount(goodPin);
+      expect(a.service.pinState, AccountPinState.set);
     });
 
     test('the app dying before the vault lands drops the key', () async {
@@ -247,6 +273,27 @@ void main() {
       await a.sync();
       expect(a.service.wrongTriesNotice, isNull);
       expect(a.service.relayPin!.wrongTotal, 10);
+    });
+
+    test('a request the relay\'s limiter refused is not a locked PIN and '
+        'costs no try', () async {
+      final cloud = FakeCloud();
+      final a = Device('Pixel', cloud);
+      await a.createAccount(goodPin);
+      final b = Device('Laptop', cloud);
+      expect(await b.service.signInWithGoogle(), isA<JoinAccount>());
+      cloud.beforeRelay = (request) async =>
+          http.Response('{"error":"rate_limited"}', 429);
+
+      await expectLater(
+        b.service.joinWithPin(goodPin),
+        throwsA(_stateError(VaultRequestFailed.rateLimitedWords)),
+      );
+      expect(cloud.pins[a.service.accountId]!.tries, 10);
+      expect(cloud.pins[a.service.accountId]!.wrongTotal, 0);
+
+      cloud.beforeRelay = null;
+      expect(await b.service.joinWithPin(goodPin), isA<Joined>());
     });
 
     test('a PIN that is not one never reaches the relay', () async {
@@ -867,7 +914,6 @@ void main() {
       newPin: pin,
       commitVersion: 7,
       stage: KeyChangeStage.lost,
-      claimed: true,
     );
     final read =
         PendingChange.fromJson(jsonDecode(jsonEncode(change.toJson())))

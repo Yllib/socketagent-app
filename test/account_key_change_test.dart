@@ -6,6 +6,7 @@ import 'package:app/services/account_key_file.dart';
 import 'package:app/services/account_pending.dart';
 import 'package:app/services/account_pin.dart';
 import 'package:app/services/account_service.dart';
+import 'package:app/services/account_vault_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:pinenacl/x25519.dart';
@@ -142,6 +143,62 @@ void main() {
 
       await b.sync();
       expect(b.service.newPinNotice!.deviceName, 'Laptop');
+    });
+
+    test('shows the notice when the vault gives a PIN id it knows other '
+        'keys', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      final keys = AccountKeys.fromMasterKey(
+        decodeRecoveryKey(a.service.recoveryKey!)!,
+      );
+      final pin = a.service.vault!.pin!;
+      cloud.now += 5000;
+      final forged = a.service.vault!.copyWith(
+        pin: VaultAccountPin(
+          id: pin.id,
+          salt: base64Encode(List.filled(16, 7)),
+          publicKey: base64Encode(List.filled(32, 8)),
+          setAt: cloud.now,
+          setBy: b.publicKey,
+        ),
+      );
+      cloud.accounts[keys.accountId]!
+        ..version += 1
+        ..ciphertext = keys.sealVault(jsonEncode(forged.toJson()));
+
+      // The device that set the PIN and the one that typed it both see it.
+      for (final device in [a, b]) {
+        expect(await device.sync(), AccountSyncOutcome.synced);
+        expect(device.service.newPinNotice, (
+          setAt: cloud.now,
+          deviceName: 'Laptop',
+        ));
+        expect(device.service.vault!.pin!.salt, forged.pin!.salt);
+        await device.service.acknowledgeNewPin();
+        expect(device.service.newPinNotice, isNull);
+      }
+    });
+
+    test('a wrong-try total that starts again from zero still raises the '
+        'notice', () async {
+      final cloud = FakeCloud();
+      final [a, _] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      final stranger = Device('Stranger', cloud);
+      expect(await stranger.service.signInWithGoogle(), isA<JoinAccount>());
+      await stranger.service.joinWithPin('555000');
+      await stranger.service.joinWithPin('555001');
+      await a.sync();
+      expect(a.service.wrongTriesNotice!.count, 2);
+      await a.service.acknowledgeWrongTries(reset: false);
+
+      // The record is replaced by one that never counted them.
+      cloud.pins[a.service.accountId]!.wrongTotal = 0;
+      await a.sync();
+      expect(a.service.wrongTriesNotice, isNull);
+      await stranger.service.joinWithPin('555002');
+      await a.sync();
+      expect(a.service.wrongTriesNotice!.count, 1);
     });
 
     test('loses to another device that set one a moment before', () async {
@@ -638,6 +695,51 @@ void main() {
       expect(cloud.accounts[oldAccount]!.ciphertext, record);
     });
 
+    test('changes nothing when the relay\'s limit on new accounts is '
+        'used up', () async {
+      final cloud = FakeCloud();
+      final [a, _, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
+      final oldAccount = a.service.accountId!;
+      final record = cloud.accounts[oldAccount]!.ciphertext;
+      cloud.newAccountsLimited = true;
+
+      await expectLater(
+        a.service.removeDevice(c.publicKey),
+        throwsA(
+          _stateError(
+            'Nothing changed: ${VaultRequestFailed.rateLimitedWords}',
+          ),
+        ),
+      );
+      expect(a.service.accountId, oldAccount);
+      expect(a.service.pending, isNull);
+      expect(a.removedKeys, isEmpty);
+      expect(cloud.accounts, hasLength(1));
+      expect(cloud.accounts[oldAccount]!.ciphertext, record);
+
+      // The first PIN on a plain account stops the same way.
+      final plain = FakeCloud();
+      final d = Device('Pixel', plain);
+      final e = Device('Laptop', plain);
+      final plainKeys = await plantPlainAccount(plain, [d, e]);
+      await d.sync();
+      final drive = plain.driveFiles.values.single.body;
+      plain.newAccountsLimited = true;
+      await expectLater(
+        d.service.setFirstPin(goodPin),
+        throwsA(
+          _stateError(
+            'Nothing changed: ${VaultRequestFailed.rateLimitedWords}',
+          ),
+        ),
+      );
+      expect(d.service.accountId, plainKeys.accountId);
+      expect(d.service.pinState, AccountPinState.none);
+      expect(d.service.pending, isNull);
+      expect(plain.accounts, hasLength(1));
+      expect(plain.driveFiles.values.single.body, drive);
+    });
+
     test('loses to another device that removed at the same moment', () async {
       final cloud = FakeCloud();
       final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
@@ -710,6 +812,85 @@ void main() {
       final d = Device('Phone', cloud);
       expect(await d.join(goodPin), isA<Joined>());
       expect(d.service.accountId, b.service.accountId);
+    });
+
+    test('the others carry the old wrong tries over when the device is '
+        'lost after a commit with a new PIN', () async {
+      final cloud = FakeCloud();
+      final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
+      final oldAccount = a.service.accountId!;
+      final stranger = Device('Stranger', cloud);
+      expect(await stranger.service.signInWithGoogle(), isA<JoinAccount>());
+      await stranger.service.joinWithPin('555000');
+      await b.sync();
+      await b.service.acknowledgeWrongTries(reset: false);
+      _dieOn(cloud, a, _isCommit, afterLanding: true);
+      await expectLater(
+        a.service.removeDevice(c.publicKey, newPin: otherPin),
+        throwsStateError,
+      );
+      // The new account has its own PIN record, and the old one is still
+      // there with its keys and its count.
+      expect(cloud.pins.keys, hasLength(2));
+
+      expect(await b.sync(), AccountSyncOutcome.synced);
+      final newAccount = b.service.accountId!;
+      expect(newAccount, isNot(oldAccount));
+      expect(cloud.pins.keys, [newAccount]);
+      expect(cloud.pins[newAccount]!.wrongTotal, 1);
+      expect(b.service.wrongTriesNotice, isNull);
+
+      // One claim for the account it left, and no more after it.
+      cloud.relayLog.clear();
+      await b.sync();
+      expect(cloud.relayLog.where((line) => line.contains('claim')), isEmpty);
+    });
+
+    test('a claim the relay cannot place starts no repair', () async {
+      for (final (status, error, askedAgain) in [
+        (404, 'not_found', true),
+        (429, 'rate_limited', true),
+        (410, 'gone', false),
+        (409, 'not_successor', false),
+      ]) {
+        final cloud = FakeCloud();
+        final [a, b, c] = await pinAccount(cloud, [
+          'Pixel',
+          'Laptop',
+          'Tablet',
+        ]);
+        _dieOn(cloud, a, _isCommit, afterLanding: true);
+        await expectLater(
+          a.service.removeDevice(c.publicKey),
+          throwsStateError,
+        );
+        cloud.beforeRelay = (request) async =>
+            request.url.path == '/api/account/pin/claim'
+            ? http.Response('{"error":"$error"}', status)
+            : null;
+
+        expect(await b.sync(), AccountSyncOutcome.synced, reason: error);
+        final newAccount = b.service.accountId!;
+        expect(b.service.vault!.resetId, isNull, reason: error);
+        expect(b.service.pinState, AccountPinState.mustSetAgain, reason: error);
+        expect(cloud.accounts[newAccount]!.live, isTrue, reason: error);
+
+        cloud
+          ..beforeRelay = null
+          ..relayLog.clear();
+        expect(await b.sync(), AccountSyncOutcome.synced, reason: error);
+        expect(
+          cloud.relayLog.any((line) => line.contains('claim')),
+          askedAgain,
+          reason: error,
+        );
+        expect(
+          b.service.pinState,
+          askedAgain ? AccountPinState.set : AccountPinState.mustSetAgain,
+          reason: error,
+        );
+        expect(b.service.accountId, newAccount, reason: error);
+      }
     });
 
     test('carries on when the commit landed and its reply was lost', () async {

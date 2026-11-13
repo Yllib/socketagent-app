@@ -194,8 +194,15 @@ class AccountService extends ChangeNotifier {
   PendingChange? _pending;
   final Set<String> _seenResets = {};
   int? _shownWrongTotal;
-  String? _knownPinId;
+
+  /// The [VaultAccountPin.mark] of the PIN this device last set, typed or
+  /// showed the notice for.
+  String? _knownPin;
   List<String> _leftAccounts = [];
+
+  /// The accounts in [_leftAccounts] whose PIN record the relay was asked to
+  /// carry over, and gave an answer that asking again would not change.
+  final Set<String> _claimedFrom = {};
   bool _pinAsked = false;
 
   /// A Google sign-in on a device with no account, waiting for the PIN.
@@ -205,10 +212,6 @@ class AccountService extends ChangeNotifier {
   RelayPin? _relayPin;
   bool _pinMustBeSet = false;
   bool _driveHoldsUnknownKey = false;
-
-  /// The account this run already asked the relay to carry a PIN record
-  /// into, so a relay with no record is not asked again on every sync.
-  String? _claimTriedFor;
 
   /// True while [_changeMasterKey] runs its rounds, so a sync inside it
   /// does not take the change for one a dead app left behind.
@@ -300,11 +303,11 @@ class AccountService extends ChangeNotifier {
   }
 
   /// The vault names a PIN this device has not set, typed or been told of,
-  /// or null. [deviceName] is who the vault says set it, which any member
-  /// can write.
+  /// or null. A known id with another salt or public key is such a PIN.
+  /// [deviceName] is who the vault says set it, which any member can write.
   ({int setAt, String? deviceName})? get newPinNotice {
     final pin = _vault?.pin;
-    if (_keys == null || pin == null || pin.id == _knownPinId) return null;
+    if (_keys == null || pin == null || pin.mark == _knownPin) return null;
     return (setAt: pin.setAt, deviceName: deviceNameOf(pin.setBy));
   }
 
@@ -331,8 +334,9 @@ class AccountService extends ChangeNotifier {
         _pending = PendingChange.fromJson(record['pending']);
         _seenResets.addAll(_strings(record['seenResets']));
         _shownWrongTotal = (record['shownWrongTotal'] as num?)?.toInt();
-        _knownPinId = record['knownPinId'] as String?;
+        _knownPin = record['knownPin'] as String?;
         _leftAccounts = _strings(record['leftAccounts']);
+        _claimedFrom.addAll(_strings(record['claimedFrom']));
         _pinAsked = record['pinAsked'] == true;
       } catch (error) {
         debugPrint('[Account] Stored record unreadable: ${error.runtimeType}');
@@ -375,8 +379,9 @@ class AccountService extends ChangeNotifier {
         if (_pending case final pending?) 'pending': pending.toJson(),
         if (_seenResets.isNotEmpty) 'seenResets': _seenResets.toList(),
         'shownWrongTotal': ?_shownWrongTotal,
-        'knownPinId': ?_knownPinId,
+        'knownPin': ?_knownPin,
         if (_leftAccounts.isNotEmpty) 'leftAccounts': _leftAccounts,
+        if (_claimedFrom.isNotEmpty) 'claimedFrom': _claimedFrom.toList(),
         if (_pinAsked) 'pinAsked': true,
       }),
     );
@@ -587,7 +592,7 @@ class AccountService extends ChangeNotifier {
         _signIn = null;
         _pending = null;
         _synced = true;
-        _knownPinId = made.public.id;
+        _knownPin = made.public.mark;
         _shownWrongTotal = 0;
         _lastSyncedAt = _clock();
         await _persist();
@@ -649,13 +654,10 @@ class AccountService extends ChangeNotifier {
       case UnlockNoPin():
         return const JoinNoPin();
       case UnlockOpened(:final relayKey):
+        final private = pinPrivateKey(pinWrapSeed(stretched), relayKey);
         final AccountKeys keys;
         try {
-          keys = openKeyBox(
-            file.box,
-            pinPrivateKey(pinWrapSeed(stretched), relayKey),
-            account: file.account,
-          );
+          keys = openKeyBox(file.box, private, account: file.account);
         } on FormatException {
           return const JoinDamaged();
         }
@@ -666,7 +668,15 @@ class AccountService extends ChangeNotifier {
         _synced = false;
         _session = signIn.session;
         _googleEmail = signIn.session.email;
-        _knownPinId = file.pinId;
+        // The PIN as this device typed it. A vault that gives the same id
+        // another salt or public key raises the new-PIN notice.
+        _knownPin = VaultAccountPin(
+          id: file.pinId,
+          salt: base64Encode(file.salt),
+          publicKey: base64Encode(private.publicKey.asTypedList),
+          setAt: 0,
+          setBy: '',
+        ).mark;
         _pinAsked = true;
         await _persist();
         notifyListeners();
@@ -890,7 +900,7 @@ class AccountService extends ChangeNotifier {
       if (reply.pin?.id == pending.pin.id) {
         // The PIN write landed. The vault and the Drive file follow.
         local = local.copyWith(pin: pending.pin);
-        _knownPinId = pending.pin.id;
+        _knownPin = pending.pin.mark;
       } else {
         _notice = pinNotChangedWords;
       }
@@ -917,9 +927,9 @@ class AccountService extends ChangeNotifier {
     }
     final previous = _vault;
     if (!_synced) {
-      // A device that restored with the recovery key stores the PIN id it
+      // A device that restored with the recovery key stores the PIN it
       // finds and shows no notice.
-      _knownPinId ??= merged.pin?.id;
+      _knownPin ??= merged.pin?.mark;
     }
     _vault = merged;
     _lastVersion = version;
@@ -941,7 +951,7 @@ class AccountService extends ChangeNotifier {
     return again ? null : AccountSyncOutcome.synced;
   }
 
-  /// After a sync of a live account: carries the PIN record over from the
+  /// After a sync of a live account: carries the PIN record over from each
   /// account this device left, works out whether the PIN has to be set
   /// again, and keeps the Drive key file right. A plain account does none
   /// of it, and nothing in Drive is read or written for one. Returns true
@@ -959,31 +969,36 @@ class AccountService extends ChangeNotifier {
       _driveHoldsUnknownKey = false;
       return false;
     }
-    final pending = _pending;
-    final owed =
-        pending is PendingKeyChange &&
-        pending.stage == KeyChangeStage.committed &&
-        !pending.claimed;
-    final unclaimed = relayPin == null && _claimTriedFor != keys.accountId;
-    if (_leftAccounts.isNotEmpty && (unclaimed || owed)) {
-      _claimTriedFor = keys.accountId;
+    // One claim for each account this device left, whatever the relay says
+    // of this account's own PIN record: the old record's wrong tries are
+    // added to it, and the old keys are deleted.
+    var asked = false;
+    for (final left in _leftAccounts) {
+      if (_claimedFrom.contains(left)) continue;
+      asked = true;
       try {
-        await client.claimPin(keys, from: _leftAccounts.last);
+        await client.claimPin(keys, from: left);
       } on VaultRequestFailed catch (error) {
-        // The relay refused, as it does when it lost the record of the
-        // move. Asking again would not change that.
+        // `not_found` is this account lost by the relay, which the next
+        // read repairs, and a limit passes. Both are asked again on a later
+        // sync. Any other refusal stands: the other account did not move
+        // here, or this one has moved on. None of them starts a repair.
         debugPrint('[Account] PIN record not carried over: $error');
+        if (error.statusCode == 404 || error.rateLimited) continue;
       }
-      if (owed) {
-        _pending = pending.copyWith(claimed: true);
-        await _persist();
-      }
+      _claimedFrom.add(left);
+      await _persist();
+    }
+    if (asked) {
       final again = await client.get(keys);
       if (again is! VaultLive) return true;
       relayPin = again.pin;
       _relayPin = relayPin;
     }
     if (relayPin != null) {
+      // A total below the one last shown is a record that started again
+      // from zero. The lower number is the new mark, so later wrong tries
+      // still raise the notice.
       final shown = _shownWrongTotal;
       if (shown == null || relayPin.wrongTotal < shown) {
         _shownWrongTotal = relayPin.wrongTotal;
@@ -1028,14 +1043,15 @@ class AccountService extends ChangeNotifier {
     return false;
   }
 
-  /// The last steps of a change of master key, once the PIN record is
-  /// carried over: tell the computers and forget the change. Computers that
-  /// are not connected hear it from the first staying device that connects.
+  /// The last step of a change of master key, once this device is on the
+  /// new key and has synced it: tell the computers and forget the change.
+  /// Computers that are not connected hear it from the first staying device
+  /// that connects. The PIN record is carried over by [_pinStep], which
+  /// keeps its own list and does not need the change.
   Future<void> _finishKeyChange() async {
     final pending = _pending;
     if (pending is! PendingKeyChange ||
-        pending.stage != KeyChangeStage.committed ||
-        !pending.claimed) {
+        pending.stage != KeyChangeStage.committed) {
       return;
     }
     for (final key in pending.removed) {
@@ -1295,7 +1311,7 @@ class AccountService extends ChangeNotifier {
     _lastVersion = 0;
     _synced = true;
     _pinAsked = true;
-    if (pending.newPin case final pin?) _knownPinId = pin.id;
+    if (pending.newPin case final pin?) _knownPin = pin.mark;
     _pending = pending.copyWith(stage: KeyChangeStage.committed);
     await _persist();
     notifyListeners();
@@ -1623,7 +1639,7 @@ class AccountService extends ChangeNotifier {
   Future<void> acknowledgeNewPin() async {
     final pin = _vault?.pin;
     if (_keys == null || pin == null) return;
-    _knownPinId = pin.id;
+    _knownPin = pin.mark;
     await _persist();
     notifyListeners();
   }
@@ -1910,8 +1926,9 @@ class AccountService extends ChangeNotifier {
     _pending = null;
     _seenResets.clear();
     _shownWrongTotal = null;
-    _knownPinId = null;
+    _knownPin = null;
     _leftAccounts = [];
+    _claimedFrom.clear();
     _pinAsked = false;
     _relayPin = null;
     _pinMustBeSet = false;

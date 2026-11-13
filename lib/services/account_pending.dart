@@ -40,7 +40,6 @@ sealed class PendingChange {
           newPin: VaultAccountPin.fromJson(raw['newPin']),
           commitVersion: (raw['commitVersion'] as num?)?.toInt(),
           stage: stage,
-          claimed: raw['claimed'] == true,
         );
     }
     return null;
@@ -100,7 +99,6 @@ final class PendingKeyChange extends PendingChange {
     required this.newPin,
     this.commitVersion,
     this.stage = KeyChangeStage.started,
-    this.claimed = false,
   });
 
   final Uint8List newMasterKey;
@@ -121,24 +119,17 @@ final class PendingKeyChange extends PendingChange {
   final int? commitVersion;
   final KeyChangeStage stage;
 
-  /// The PIN record or its counts were carried over to the new account.
-  final bool claimed;
-
   AccountKeys get newKeys => AccountKeys.fromMasterKey(newMasterKey);
 
-  PendingKeyChange copyWith({
-    int? commitVersion,
-    KeyChangeStage? stage,
-    bool? claimed,
-  }) => PendingKeyChange(
-    newMasterKey: newMasterKey,
-    fromAccount: fromAccount,
-    removed: removed,
-    newPin: newPin,
-    commitVersion: commitVersion ?? this.commitVersion,
-    stage: stage ?? this.stage,
-    claimed: claimed ?? this.claimed,
-  );
+  PendingKeyChange copyWith({int? commitVersion, KeyChangeStage? stage}) =>
+      PendingKeyChange(
+        newMasterKey: newMasterKey,
+        fromAccount: fromAccount,
+        removed: removed,
+        newPin: newPin,
+        commitVersion: commitVersion ?? this.commitVersion,
+        stage: stage ?? this.stage,
+      );
 
   /// The same change with no commit sent, for after the relay refused one.
   PendingKeyChange withoutCommit() => PendingKeyChange(
@@ -157,6 +148,5 @@ final class PendingKeyChange extends PendingChange {
     if (newPin case final pin?) 'newPin': pin.toJson(),
     'commitVersion': ?commitVersion,
     'stage': stage.name,
-    if (claimed) 'claimed': true,
   };
 }
