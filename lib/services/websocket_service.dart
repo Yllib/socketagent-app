@@ -195,10 +195,18 @@ class WebSocketService {
   bool _upgradeAsked = false;
   String? _upgradeRequestId;
   // The request a desktop app makes of the server on its own machine when
-  // it holds no secret and no token for it (wire spec 5.3). The owner turns
-  // it on for such a computer. The socket uses it only in direct mode, to a
-  // loopback address, on the control lane.
+  // it holds no token for it and no secret that server answers (wire spec
+  // 5.3). The owner turns it on for such a computer. The socket uses it
+  // only in direct mode, to a loopback address, on the control lane.
   bool _localRequest = false;
+  // Set once that server has left two handshakes in a row unanswered under
+  // the stored pairing, which is what `socketagent pair --reset` on the
+  // computer leaves behind. The next dial asks again instead.
+  bool _askLocalServerAgain = false;
+  // Set when that second request was not let straight in, so the server
+  // has this key on record no longer and a person has to allow it. An
+  // account the owner removed asks once per run, not once a minute.
+  bool _askedAgainUnrecorded = false;
   // Whether this connection is that request. Fixed per connection. Such a
   // channel is never an application channel: it sends `transport_ready` and
   // reads the grant or the refusal.
@@ -310,6 +318,8 @@ class WebSocketService {
     // What the computer refused was the old pairing.
     _retryNotBefore = null;
     _hs2Timeouts = 0;
+    _askLocalServerAgain = false;
+    _askedAgainUnrecorded = false;
     if (_channel != null &&
         (previous == null ||
             pairing == null ||
@@ -318,8 +328,10 @@ class WebSocketService {
     }
   }
 
-  /// Lets this socket ask the server on its own machine for a pairing. Has
-  /// no effect while [setPairing] holds one, or off loopback.
+  /// Lets this socket ask the server on its own machine for a pairing. It
+  /// asks while [setPairing] holds none, and again once the server has left
+  /// two handshakes in a row unanswered under the one it holds. Has no
+  /// effect off loopback.
   void setLocalRequest(bool localRequest) => _localRequest = localRequest;
 
   /// Puts the Windows account in front of the device name this socket
@@ -463,8 +475,10 @@ class WebSocketService {
     final skipLocalRequest = _skipLocalRequest;
     _skipLocalRequest = false;
     _upgradeRefused = false;
+    final askAgain = _askLocalServerAgain;
+    _askLocalServerAgain = false;
     _socketLocalRequest =
-        pairing == null &&
+        (pairing == null || askAgain) &&
         _localRequest &&
         !skipLocalRequest &&
         _mode == ConnectionMode.direct &&
@@ -705,7 +719,7 @@ class WebSocketService {
     final TransportHandshake handshake;
     final String frame;
     try {
-      handshake = pairing == null || secret == null
+      handshake = _socketLocalRequest || pairing == null || secret == null
           ? crypto.startLocalRequest()
           : crypto.startHandshake(
               path: _mode == ConnectionMode.relay ? 'relay' : 'direct',
@@ -744,11 +758,21 @@ class WebSocketService {
 
   /// No `hs2` came. On the relay the computer is in the room, so two silent
   /// handshakes in a row mean what `not_approved` means. On a direct socket
-  /// the address may simply be wrong, and the next route gets its turn.
+  /// the address may simply be wrong, and the next route gets its turn. The
+  /// server on this machine is the exception: it is there, so two silent
+  /// handshakes mean it no longer knows the stored secret, and an app that
+  /// may ask it for a pairing asks on the next dial.
   void _onHs2Timeout() {
     _handshake = null;
-    if (_mode == ConnectionMode.relay && ++_hs2Timeouts >= 2) {
-      _retryNotBefore = DateTime.now().add(_refusedRetry);
+    final silent = ++_hs2Timeouts >= 2;
+    if (_mode == ConnectionMode.relay) {
+      if (silent) _retryNotBefore = DateTime.now().add(_refusedRetry);
+    } else if (silent &&
+        _localRequest &&
+        !_socketLocalRequest &&
+        !_askedAgainUnrecorded) {
+      _askLocalServerAgain = true;
+      _hs2Timeouts = 0;
     }
     _refuseConnection('no hs2 in time');
   }
@@ -775,6 +799,11 @@ class WebSocketService {
     _peerChannel = channel;
     // The first record of every v2 channel, whatever the answer was.
     socket.sink.add(jsonEncode(channel.sealText(transportReadyMessage)));
+    if (_socketLocalRequest &&
+        _pairing != null &&
+        result.answer.status != HandshakeStatus.open) {
+      _askedAgainUnrecorded = true;
+    }
     switch (result.answer.status) {
       case HandshakeStatus.open:
         // A local request that is let in has the grant coming and nothing

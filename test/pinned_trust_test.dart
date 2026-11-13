@@ -281,6 +281,24 @@ void main() {
       expect(updated.serverPubkey, computer.publicKey);
     });
 
+    test('a grant replaces the pairing of a computer already on v2', () async {
+      await store(key: computer.publicKey, v2: true);
+      await provider.applyPairingChange(
+        'computer',
+        PairingChange(
+          secret: newSecret,
+          roomId: 'new-room',
+          computerKey: computer.publicKey,
+          route: (hosts: const <String>[], port: 8085),
+          local: true,
+        ),
+      );
+      final config = provider.serverConfigs.single;
+      expect(config.pairingSecret, newSecret);
+      expect(config.pairingToken, 'new-room');
+      expect(config.relayUrl, isEmpty);
+    });
+
     test('gives no relay to an entry whose address was refused', () async {
       await store(
         key: computer.publicKey,

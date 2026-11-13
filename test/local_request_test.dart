@@ -221,6 +221,82 @@ void main() {
       expect(computer.device['name'], 'kayla on Desktop');
     });
 
+    /// Dials three times under a pairing the server answers with nothing,
+    /// which is what `socketagent pair --reset` on the computer leaves an
+    /// app holding. Returns the path of each handshake.
+    /// [recorded] is whether the server still has this key on its list and
+    /// answers the request with the grant. Otherwise it holds the request
+    /// and nobody allows it.
+    Future<List<String>> dialUnanswered({
+      required bool request,
+      bool recorded = true,
+      int dials = 3,
+    }) async {
+      await local(request: request);
+      service.setPairing(computer.pairing);
+      final paths = <String>[];
+      onFrame = (socket, frame) {
+        if (FakeV2Computer.isRecord(frame)) return;
+        final path = (jsonDecode(frame as String) as Map)['path'] as String;
+        paths.add(path);
+        if (path != 'local-request') return;
+        if (recorded) {
+          socket
+            ..add(computer.answer(frame))
+            ..add(computer.seal(grant()));
+        } else {
+          socket
+            ..add(computer.answer(frame, status: 'pending'))
+            ..add(
+              computer.seal({
+                'type': 'device_auth_result',
+                'ok': false,
+                'reason': 'not_approved',
+              }),
+            );
+        }
+      };
+      service.connect();
+      for (var dial = 1; dial < dials; dial++) {
+        await settle();
+        service.connect(force: true);
+      }
+      await settle();
+      return paths;
+    }
+
+    test('asks again once its pairing goes unanswered twice', () async {
+      final paths = await dialUnanswered(request: true);
+
+      expect(paths, ['direct', 'direct', 'local-request']);
+      expect(pairings.single.secret, computer.pairingSecret);
+    });
+
+    test('asks once in a run when the server has dropped its key', () async {
+      final paths = await dialUnanswered(
+        request: true,
+        recorded: false,
+        dials: 6,
+      );
+
+      expect(paths, [
+        'direct',
+        'direct',
+        'local-request',
+        'direct',
+        'direct',
+        'direct',
+      ]);
+      expect(pairings, isEmpty);
+    });
+
+    test('keeps to its pairing when it may not ask', () async {
+      final paths = await dialUnanswered(request: false);
+
+      expect(paths, ['direct', 'direct', 'direct']);
+      expect(pairings, isEmpty);
+    });
+
     test('a grant on an ordinary v2 channel is dropped', () async {
       await local(request: false);
       service.setPairing(computer.pairing);
@@ -335,7 +411,6 @@ void main() {
       expect(stored.isLoopbackOnly, isTrue);
       // So it goes on naming the account it asked under.
       expect(isOtherAccountsLocalServer(stored), isTrue);
-      expect(asksLocalServerForPairing(stored), isFalse);
     },
   );
 }

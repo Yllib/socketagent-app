@@ -3369,7 +3369,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Stores a pairing its computer handed over in a sealed record on its
   /// own control channel. The answer to a carry-over request, and the grant
   /// to a request made of the server on this machine, move the computer to
-  /// transport v2, for good, and reconnect that way. A new secret on a v2
+  /// transport v2, for good, and reconnect that way. A grant also replaces
+  /// a v2 pairing that server stopped answering. A new secret on a v2
   /// channel leaves the open channel alone and is proved by the next
   /// handshake. Called only with what a socket's `pairingChanges` gave.
   @visibleForTesting
@@ -3385,8 +3386,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       return;
     }
     // A carry-over is for a computer still on the old transport, an update
-    // for one already on v2.
-    if ((route == null) != existing.isV2) return;
+    // for one already on v2. A grant is for either: the server on this
+    // machine hands a new one to an app whose pairing it no longer knows.
+    if (!change.local && (route == null) != existing.isV2) return;
     var updated = existing.copyWith(
       relayUrl: change.local ? null : existing.relayOrDefault,
       pairingToken: change.roomId,
