@@ -3392,20 +3392,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// to a request made of the server on this machine, move the computer to
   /// transport v2, for good, and reconnect that way. A new secret on a v2
   /// channel leaves the open channel alone and is proved by the next
-  /// handshake.
-  Future<void> _applyPairingChange(
-    String serverId,
-    PairingChange change,
-  ) async {
+  /// handshake. Called only with what a socket's `pairingChanges` gave.
+  @visibleForTesting
+  Future<void> applyPairingChange(String serverId, PairingChange change) async {
     final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
     if (idx < 0) return;
     final existing = _serverConfigs[idx];
     final route = change.route;
-    // A carry-over is for a computer still on the old transport, an update
-    // for one already on v2.
-    if (existing.serverPubkey.isEmpty || (route == null) != existing.isV2) {
+    // The entry may have been given another computer's key since the
+    // channel opened. A pairing goes only to the key that sealed it.
+    if (existing.serverPubkey.isEmpty ||
+        existing.serverPubkey != change.computerKey) {
       return;
     }
+    // A carry-over is for a computer still on the old transport, an update
+    // for one already on v2.
+    if ((route == null) != existing.isV2) return;
     var updated = existing.copyWith(
       relayUrl: existing.relayUrl.isEmpty && !change.local
           ? defaultRelayUrl
@@ -3908,8 +3910,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       notifyListeners();
     });
     _pairingChangeSub = _connMgr.pairingChanges.listen(
-      (update) =>
-          unawaited(_applyPairingChange(update.serverId, update.change)),
+      (update) => unawaited(applyPairingChange(update.serverId, update.change)),
     );
     _statusSub = _connMgr.statusStream.listen((update) {
       _sessionListConnectionRevisions[update.serverId] =

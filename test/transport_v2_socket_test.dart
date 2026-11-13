@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:app/models/server_config.dart';
 import 'package:app/services/crypto_service.dart';
 import 'package:app/services/device_auth.dart';
+import 'package:app/services/server_connection_probe.dart';
 import 'package:app/services/transport_v2.dart';
 import 'package:app/services/websocket_service.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -683,6 +685,32 @@ void main() {
       await settle();
       expect(joins, hasLength(1));
       expect(sentOldTransport(), isFalse);
+    });
+
+    test('a probe leaves no mark on the computer key', () async {
+      // A code with a saved computer's key and a secret of its own. The
+      // computer never answers its hs1.
+      service = WebSocketService(manageBulkLane: false);
+      final result = await const ServerConnectionProbe().verify(
+        ServerConfig(
+          id: 'scanned',
+          name: 'Scanned',
+          host: '127.0.0.1',
+          port: server.port,
+          token: '',
+          serverPubkey: computer.publicKey,
+          pairingToken: computer.roomId,
+          pairingSecret: base64Encode(List.filled(32, 9)),
+          transport: 2,
+        ),
+        subscriberToken: '',
+        timeout: const Duration(seconds: 1),
+      );
+
+      expect(result.success, isFalse);
+      expect(joins.single.uri.queryParameters['e2e'], '2');
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getStringList('transport_v2_servers'), isNull);
     });
 
     test('a silent computer gets another hs1 and nothing else', () async {

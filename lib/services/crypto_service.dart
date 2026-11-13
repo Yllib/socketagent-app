@@ -247,7 +247,8 @@ class CryptoService {
   /// Load with [loadServerPins] before each connection.
   bool get serverRequiresSession => _serverRequiresSession;
 
-  String? get _serverKeyBase64 {
+  /// The paired computer's public key as the configs store it.
+  String? get serverKeyBase64 {
     final key = _serverPublicKey;
     return key == null ? null : base64Encode(key);
   }
@@ -260,7 +261,7 @@ class CryptoService {
   /// Reads what this device remembers about the paired computer's key:
   /// whether it has used session keys, and whether it has moved to v2.
   Future<void> loadServerPins() async {
-    final key = _serverKeyBase64;
+    final key = serverKeyBase64;
     if (key == null) return;
     final prefs = await SharedPreferences.getInstance();
     _serverRequiresSession =
@@ -273,7 +274,7 @@ class CryptoService {
   /// awaits it before the first v2 dial, so the pin is saved before
   /// anything is sent.
   Future<void> markServerV2() async {
-    final key = _serverKeyBase64;
+    final key = serverKeyBase64;
     if (key == null || _serverIsV2) return;
     _serverIsV2 = true;
     final prefs = await SharedPreferences.getInstance();
@@ -318,7 +319,7 @@ class CryptoService {
 
   /// Holds the paired computer to session keys from now on.
   void markServerSessionKeyed() {
-    final key = _serverKeyBase64;
+    final key = serverKeyBase64;
     if (key == null || _serverRequiresSession) return;
     _serverRequiresSession = true;
     unawaited(() async {

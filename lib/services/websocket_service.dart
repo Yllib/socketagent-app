@@ -97,15 +97,21 @@ class WebSocketService {
   /// [v2Available] says whether this device can run the v2 handshake. Tests
   /// replace it to stand in for a device where libsodium does not load, and
   /// shorten [hs2Wait], how long a handshake waits for its answer.
+  ///
+  /// [pinsV2] is false for a probe of a computer the user has not saved. A
+  /// v2 dial then leaves no mark on the computer's key, so a code that fails
+  /// its probe cannot hold a saved entry for that key to v2.
   WebSocketService({
     TransportLane lane = TransportLane.control,
     bool manageBulkLane = true,
     bool Function() v2Available = transportV2Available,
     Duration hs2Wait = hs2Timeout,
+    bool pinsV2 = true,
   }) : _lane = lane,
        _manageBulkLane = manageBulkLane,
        _v2Available = v2Available,
-       _hs2Wait = hs2Wait {
+       _hs2Wait = hs2Wait,
+       _pinsV2 = pinsV2 {
     if (_manageBulkLane) {
       final bulk = WebSocketService(
         lane: TransportLane.bulk,
@@ -128,6 +134,7 @@ class WebSocketService {
   final bool _manageBulkLane;
   final bool Function() _v2Available;
   final Duration _hs2Wait;
+  final bool _pinsV2;
   WebSocketService? _bulkLane;
   StreamSubscription<Map<String, dynamic>>? _bulkMessageSubscription;
   WebSocketChannel? _channel;
@@ -205,6 +212,10 @@ class WebSocketService {
   // does, and the one after asks again.
   bool _upgradeRefused = false;
   bool _skipLocalRequest = false;
+  // The computer key this socket's handshake or key exchange was made with.
+  // The owner may set another key on the crypto service while the socket is
+  // still open, and a pairing read here belongs to this one.
+  String? _channelKey;
   // This socket's own retries wait for these moments. The first is about
   // the computer, the second about the relay. A dial the owner asks for,
   // such as the one after the user subscribes, goes out at once as before.
@@ -457,7 +468,7 @@ class WebSocketService {
       _setStatus(ConnectionStatus.error);
       return;
     }
-    if (pairing != null) {
+    if (pairing != null && _pinsV2) {
       // Saved before the first frame goes out, so this computer never gets
       // the old transport from this device again.
       try {
@@ -707,6 +718,7 @@ class WebSocketService {
     }
     _handshake = handshake;
     _handshakeSent = true;
+    _channelKey = crypto.serverKeyBase64;
     _channel?.sink.add(frame);
     final gen = _connectionGeneration;
     _hs2Timer?.cancel();
@@ -1074,7 +1086,9 @@ class WebSocketService {
   /// again with an ordinary `direct` handshake. The computer closes this
   /// socket once it has sent the grant, so nothing is left to do with it.
   void _onPairingGrant(Map<String, dynamic> msg) {
-    final change = PairingChange.parse(msg, withRoute: true);
+    final key = _channelKey;
+    if (key == null) return;
+    final change = PairingChange.parse(msg, withRoute: true, computerKey: key);
     if (change == null) return;
     _closeSocket();
     _lastHandshakeAwaited = false;
@@ -1097,16 +1111,18 @@ class WebSocketService {
   /// which [_onPairingGrant] reads, so here it is dropped.
   void _onPairingMessage(Map<String, dynamic> msg) {
     if (_lane != TransportLane.control) return;
+    final key = _channelKey;
+    if (key == null) return;
     final PairingChange? change;
     if (msg['type'] == 'pairing_update' && _socketV2) {
-      change = PairingChange.parse(msg, withRoute: false);
+      change = PairingChange.parse(msg, withRoute: false, computerKey: key);
     } else if (msg['type'] == 'pairing_upgrade_result' &&
         !_socketV2 &&
         _upgradeRequestId != null &&
         msg['requestId'] == _upgradeRequestId &&
         _peerChannel?.sessionKeyed == true) {
       _upgradeRequestId = null;
-      change = PairingChange.parse(msg, withRoute: true);
+      change = PairingChange.parse(msg, withRoute: true, computerKey: key);
     } else {
       change = null;
     }
@@ -1223,6 +1239,7 @@ class WebSocketService {
     _held = false;
     _upgradeAsked = false;
     _upgradeRequestId = null;
+    _channelKey = null;
   }
 
   /// Closes the current socket and its channel. The caller sets the status
@@ -1334,6 +1351,7 @@ class WebSocketService {
     // encrypting. The session offer in it is public too.
     final offer = crypto.startSession();
     _sessionOffer = offer;
+    _channelKey = crypto.serverKeyBase64;
     _channel?.sink.add(jsonEncode(offer.message()));
   }
 

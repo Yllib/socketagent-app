@@ -88,7 +88,9 @@ class ServerConnectionProbe {
       );
     }
 
-    final socket = WebSocketService(manageBulkLane: false);
+    // Nothing has been saved yet, so the probe leaves no v2 pin on the key.
+    // The saved computer's own socket sets it before its first dial.
+    final socket = WebSocketService(manageBulkLane: false, pinsV2: false);
     final result = Completer<ServerProbeResult>();
     Timer? terminalStatusTimer;
     late final StreamSubscription<Map<String, dynamic>> messageSub;

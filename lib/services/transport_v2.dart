@@ -309,6 +309,7 @@ class PairingChange {
   const PairingChange({
     required this.secret,
     required this.roomId,
+    required this.computerKey,
     this.route,
     this.local = false,
   });
@@ -316,6 +317,10 @@ class PairingChange {
   /// Base64 of the pairing secret to prove from the next handshake on.
   final String secret;
   final String roomId;
+
+  /// Base64 of the computer key the channel that carried this was opened
+  /// to. The pairing belongs to that computer and to no other entry.
+  final String computerKey;
 
   /// The computer's LAN addresses and port. Set by the two messages that
   /// move a computer to v2, the carry-over answer and the grant. Null for a
@@ -328,17 +333,24 @@ class PairingChange {
 
   /// Reads `pairing_update`, or with [withRoute] one of the two messages
   /// that also carry the computer's addresses: `pairing_upgrade_result` and
-  /// `pairing_grant`. Null when a field breaks its rule or the upgrade was
-  /// refused.
+  /// `pairing_grant`. [computerKey] is the key the channel was opened to.
+  /// Null when a field breaks its rule or the upgrade was refused.
   static PairingChange? parse(
     Map<String, dynamic> message, {
     required bool withRoute,
+    required String computerKey,
   }) {
     final secret = message['secret'];
     final roomId = message['roomId'];
     if (secret is! String || decodeKey32(secret) == null) return null;
     if (roomId is! String || !isValidRoomId(roomId)) return null;
-    if (!withRoute) return PairingChange(secret: secret, roomId: roomId);
+    if (!withRoute) {
+      return PairingChange(
+        secret: secret,
+        roomId: roomId,
+        computerKey: computerKey,
+      );
+    }
     final hosts = message['hosts'];
     final port = message['port'];
     if (message['type'] == 'pairing_upgrade_result' && message['ok'] != true) {
@@ -349,6 +361,7 @@ class PairingChange {
     return PairingChange(
       secret: secret,
       roomId: roomId,
+      computerKey: computerKey,
       local: message['type'] == 'pairing_grant',
       route: (
         hosts: hosts.whereType<String>().where((h) => h.isNotEmpty).toList(),
