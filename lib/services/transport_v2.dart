@@ -260,6 +260,54 @@ String deviceHandshakePayload({
   'caps': capabilities,
 });
 
+/// What reaches one computer over v2 beside the two static keys: its control
+/// room ID and the base64 pairing secret, both as stored in its config.
+typedef TransportPairing = ({String roomId, String secret});
+
+/// How this device names itself in message 1.
+typedef DeviceIdentity = ({String name, String platform, String appVersion});
+
+/// A pairing a computer handed this device in a sealed record on its own
+/// control channel: the answer to `pairing_upgrade` on the old transport, or
+/// a `pairing_update` on v2. Nothing else on the wire may change the stored
+/// secret or room ID (wire spec section 14).
+class PairingChange {
+  const PairingChange({required this.secret, required this.roomId, this.route});
+
+  /// Base64 of the pairing secret to prove from the next handshake on.
+  final String secret;
+  final String roomId;
+
+  /// The computer's LAN addresses and port. Set for a carry-over, which
+  /// moves the computer to v2. Null for a `pairing_update`.
+  final ({List<String> hosts, int port})? route;
+
+  /// Reads `pairing_update`, or `pairing_upgrade_result` when [upgrade].
+  /// Null when a field breaks its rule or the upgrade was refused.
+  static PairingChange? parse(
+    Map<String, dynamic> message, {
+    required bool upgrade,
+  }) {
+    final secret = message['secret'];
+    final roomId = message['roomId'];
+    if (secret is! String || decodeKey32(secret) == null) return null;
+    if (roomId is! String || !isValidRoomId(roomId)) return null;
+    if (!upgrade) return PairingChange(secret: secret, roomId: roomId);
+    final hosts = message['hosts'];
+    final port = message['port'];
+    if (message['ok'] != true || hosts is! List) return null;
+    if (port is! int || port < 1 || port > 65535) return null;
+    return PairingChange(
+      secret: secret,
+      roomId: roomId,
+      route: (
+        hosts: hosts.whereType<String>().where((h) => h.isNotEmpty).toList(),
+        port: port,
+      ),
+    );
+  }
+}
+
 /// A 32-byte key or secret as it is stored and sent: 44 characters of
 /// standard base64 with padding. Null for anything else, the URL-safe
 /// alphabet included, because stored keys are compared as strings.

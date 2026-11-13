@@ -6,6 +6,7 @@ import 'local_route.dart';
 import 'websocket_service.dart';
 import 'crypto_service.dart';
 import 'device_auth.dart';
+import 'transport_v2.dart';
 
 /// A message from a server, tagged with which server sent it.
 class ServerMessage {
@@ -46,6 +47,13 @@ ConnectionMode connectionModeForServerId(
   return fallback;
 }
 
+/// A pairing a computer handed over on its own control channel.
+class ServerPairingChange {
+  final String serverId;
+  final PairingChange change;
+  ServerPairingChange(this.serverId, this.change);
+}
+
 /// The route for an auto-routed computer: the relay when it connected while
 /// the LAN search ran, since it answered first, then direct when a LAN
 /// address answered, otherwise the relay if this phone may use it. Without
@@ -72,14 +80,14 @@ class ConnectionManager {
   final Map<String, StreamSubscription> _statusSubs = {};
   final Map<String, StreamSubscription> _deviceAuthSubs = {};
   final Map<String, StreamSubscription> _subscriptionRequiredSubs = {};
+  final Map<String, StreamSubscription> _pairingChangeSubs = {};
   // Computers that sent a LAN route without the token: they approved this
   // device's key, so a direct socket can sign in with it.
   final Set<String> _deviceKeyDirect = {};
 
   String? activeServerId;
   String _subscriberToken = '';
-  String _deviceName = '';
-  String _devicePlatform = '';
+  DeviceIdentity _identity = (name: '', platform: '', appVersion: '');
 
   /// Called when auto routing moves a computer to another route or address,
   /// so the owner can save it. The manager has already switched the socket.
@@ -91,8 +99,9 @@ class ConnectionManager {
       Connectivity().checkConnectivity();
   final Map<String, Future<void>> _routing = {};
   final Map<String, DateTime> _lastRouted = {};
-  // Computers whose relay turned this phone away. Cleared with a new token.
-  final Set<String> _relayRefused = {};
+  // Computers whose relay turned this phone away, and when. The relay is
+  // left out of routing for five minutes, or until a new token arrives.
+  final Map<String, DateTime> _relayRefused = {};
   // Auto-routed computers waiting on the relay, with the next direct check.
   final Map<String, Timer> _relayWatch = {};
 
@@ -116,6 +125,13 @@ class ConnectionManager {
   final _deviceAuthController =
       StreamController<ServerDeviceAuthUpdate>.broadcast();
   final _subscriptionRequiredController = StreamController<String>.broadcast();
+  final _pairingChangeController =
+      StreamController<ServerPairingChange>.broadcast();
+
+  /// Pairings that computers handed over in sealed records on their own
+  /// control channels. The owner stores each one in that computer's config.
+  Stream<ServerPairingChange> get pairingChanges =>
+      _pairingChangeController.stream;
 
   /// The ID of each computer whose relay turned this phone away for lack of
   /// a subscription. The relay says so, not the computer, so this never
@@ -137,18 +153,22 @@ class ConnectionManager {
   DeviceAuthState deviceAuthOf(String serverId) =>
       _connections[serverId]?.deviceAuth ?? DeviceAuthState.idle;
 
-  /// How this device introduces itself in `device_auth`.
+  /// How this device introduces itself in `device_auth` and in v2's
+  /// message 1.
+  DeviceIdentity get deviceIdentity => _identity;
+
   Future<void> setDeviceIdentity({
     required String name,
     required String platform,
+    String appVersion = '',
   }) async {
-    _deviceName = name;
-    _devicePlatform = platform;
+    _identity = (name: name, platform: platform, appVersion: appVersion);
     for (final config in _configs.values) {
       _connections[config.id]?.setDeviceIdentity(
         name: name,
         platform: platform,
         token: config.token,
+        appVersion: appVersion,
       );
     }
   }
@@ -214,15 +234,23 @@ class ConnectionManager {
   Future<void> _configureTransport(ServerConfig config) async {
     final ws = _connections[config.id]!;
     ws.setDeviceIdentity(
-      name: _deviceName,
-      platform: _devicePlatform,
+      name: _identity.name,
+      platform: _identity.platform,
       token: config.token,
+      appVersion: _identity.appVersion,
     );
     final selectedMode = connectionModeForServerConfig(config);
     // Transport selection is a security boundary. Apply it before touching
     // credentials so a relay-selected server can never retain or open a
     // direct socket while relay configuration is incomplete.
     ws.setMode(selectedMode);
+    // The desktop app's entry for the server on its own Windows machine
+    // keeps the old transport until it can read the pairing from the
+    // server's files, so it does not ask over the wire.
+    ws.setPairing(
+      config.transportPairing,
+      carryOver: !(Platform.isWindows && config.isLoopbackOnly),
+    );
 
     if (selectedMode == ConnectionMode.relay) {
       if (!config.isRelayPaired) {
@@ -433,15 +461,21 @@ class ConnectionManager {
   }
 
   // An encrypted direct socket signs in with the token or, once the
-  // computer has approved it, with this device's key.
+  // computer has approved it, with this device's key. On v2 the handshake
+  // is the sign-in.
   bool _canDirect(ServerConfig config) =>
       config.serverPubkey.isNotEmpty &&
-      (config.token.isNotEmpty || _deviceKeyDirect.contains(config.id));
+      (config.isV2 ||
+          config.token.isNotEmpty ||
+          _deviceKeyDirect.contains(config.id));
 
-  bool _canRelay(ServerConfig config) =>
-      config.isRelayPaired &&
-      _subscriberToken.isNotEmpty &&
-      !_relayRefused.contains(config.id);
+  bool _canRelay(ServerConfig config) {
+    final refused = _relayRefused[config.id];
+    return config.isRelayPaired &&
+        _subscriberToken.isNotEmpty &&
+        (refused == null ||
+            DateTime.now().difference(refused) >= const Duration(minutes: 5));
+  }
 
   Future<_NetworkKind> _networkKind() async {
     try {
@@ -557,8 +591,8 @@ class ConnectionManager {
     _subscriptionRequiredSubs[serverId] = ws.subscriptionRequired.listen((_) {
       if (_configs[serverId]?.autoRoute == true) {
         // The relay turned us away. The LAN may still work without it.
-        _relayRefused.add(serverId);
-        // Retrying the relay would only be refused again.
+        _relayRefused[serverId] = DateTime.now();
+        // Retrying the relay now would only be refused again.
         unawaited(
           routeServer(serverId, force: true).then((_) {
             if (ws.mode == ConnectionMode.direct) ws.connect();
@@ -566,6 +600,10 @@ class ConnectionManager {
         );
       }
       _subscriptionRequiredController.add(serverId);
+    });
+
+    _pairingChangeSubs[serverId] = ws.pairingChanges.listen((change) {
+      _pairingChangeController.add(ServerPairingChange(serverId, change));
     });
 
     _deviceAuthSubs[serverId] = ws.deviceAuthStream.listen((state) {
@@ -625,6 +663,8 @@ class ConnectionManager {
     _deviceAuthSubs.remove(id);
     _subscriptionRequiredSubs[id]?.cancel();
     _subscriptionRequiredSubs.remove(id);
+    _pairingChangeSubs[id]?.cancel();
+    _pairingChangeSubs.remove(id);
     _connections[id]?.dispose();
     _connections.remove(id);
     _configs.remove(id);
@@ -662,6 +702,9 @@ class ConnectionManager {
     for (final sub in _subscriptionRequiredSubs.values) {
       sub.cancel();
     }
+    for (final sub in _pairingChangeSubs.values) {
+      sub.cancel();
+    }
     for (final ws in _connections.values) {
       ws.dispose();
     }
@@ -672,6 +715,8 @@ class ConnectionManager {
     _statusSubs.clear();
     _deviceAuthSubs.clear();
     _subscriptionRequiredSubs.clear();
+    _pairingChangeSubs.clear();
+    _pairingChangeController.close();
     _messageController.close();
     _statusController.close();
     _deviceAuthController.close();

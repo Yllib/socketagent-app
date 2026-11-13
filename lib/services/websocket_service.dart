@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -8,6 +9,7 @@ import '../models/file_download_frame.dart';
 import 'crypto_service.dart';
 import 'device_auth.dart';
 import 'socket_frame_decoder.dart';
+import 'transport_v2.dart';
 import '../models/browser_frame_wire.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, error }
@@ -40,11 +42,13 @@ bool relayTransportIsConfigured({
   required bool cryptoReady,
 }) {
   final uri = Uri.tryParse(relayUrl.trim());
-  return uri != null &&
-      (uri.scheme == 'wss' || uri.scheme == 'ws') &&
-      uri.host.isNotEmpty &&
-      pairingToken.trim().isNotEmpty &&
-      cryptoReady;
+  if (uri == null || uri.host.isEmpty) return false;
+  // TLS always. Plain `ws` is for a relay on this machine, which tests use.
+  const loopback = {'127.0.0.1', 'localhost', '::1'};
+  final secure =
+      uri.scheme == 'wss' ||
+      (uri.scheme == 'ws' && loopback.contains(uri.host));
+  return secure && pairingToken.trim().isNotEmpty && cryptoReady;
 }
 
 bool relayConfigurationChanged({
@@ -62,17 +66,49 @@ bool relayConfigurationChanged({
       !sameCryptoService;
 }
 
+/// One computer's socket on one lane. It speaks transport v2 when the
+/// computer's config carries a pairing ([setPairing]) and the old transport
+/// otherwise. The choice is made per connection from stored config and
+/// nothing a computer or relay sends changes it: a v2 socket never sends
+/// `key_exchange`, and a computer this device has dialled over v2 is never
+/// dialled the old way again.
 class WebSocketService {
   static const int _sessionEventAckVersion = 2;
+
+  /// The old transport's handshake and sign-in messages, which a v2 socket
+  /// never sends.
+  static const _oldTransportOnly = {
+    'key_exchange',
+    'device_auth',
+    'direct_auth',
+    'client_capabilities',
+  };
+
+  /// A computer that refused this device, or stayed silent twice, is asked
+  /// again no sooner than this.
+  static const _refusedRetry = Duration(minutes: 1);
+
+  /// A relay that wants a subscription is asked again no sooner than this.
+  static const _subscriptionRetry = Duration(minutes: 5);
+
+  /// [v2Available] says whether this device can run the v2 handshake. Tests
+  /// replace it to stand in for a device where libsodium does not load, and
+  /// shorten [hs2Wait], how long a handshake waits for its answer.
   WebSocketService({
     TransportLane lane = TransportLane.control,
     bool manageBulkLane = true,
+    bool Function() v2Available = transportV2Available,
+    Duration hs2Wait = hs2Timeout,
   }) : _lane = lane,
-       _manageBulkLane = manageBulkLane {
+       _manageBulkLane = manageBulkLane,
+       _v2Available = v2Available,
+       _hs2Wait = hs2Wait {
     if (_manageBulkLane) {
       final bulk = WebSocketService(
         lane: TransportLane.bulk,
         manageBulkLane: false,
+        v2Available: v2Available,
+        hs2Wait: hs2Wait,
       );
       _bulkLane = bulk;
       _bulkMessageSubscription = bulk.messages.listen((message) {
@@ -87,15 +123,22 @@ class WebSocketService {
 
   final TransportLane _lane;
   final bool _manageBulkLane;
+  final bool Function() _v2Available;
+  final Duration _hs2Wait;
   WebSocketService? _bulkLane;
   StreamSubscription<Map<String, dynamic>>? _bulkMessageSubscription;
   WebSocketChannel? _channel;
+  // The dart:io socket under [_channel], once it has connected. The
+  // channel's own close takes only 1000 or 3000 to 4999, and a rejected v2
+  // record closes a direct socket with 1008.
+  WebSocket? _rawSocket;
   StreamSubscription? _channelSubscription;
   int _connectionGeneration =
       0; // prevents stale callbacks from affecting state
   final _messageController = StreamController<Map<String, dynamic>>.broadcast();
   final _statusController = StreamController<ConnectionStatus>.broadcast();
   final _subscriptionRequiredController = StreamController<void>.broadcast();
+  final _pairingChangeController = StreamController<PairingChange>.broadcast();
   ConnectionStatus _status = ConnectionStatus.disconnected;
   String _host = '192.168.1.100';
   int _port = 8085;
@@ -124,6 +167,33 @@ class WebSocketService {
   // past [_onFrame].
   bool _socketKeyed = false;
 
+  // Transport v2. The pairing comes from the computer's stored config, and
+  // null leaves this socket on the old transport.
+  TransportPairing? _pairing;
+  // Whether this connection is a v2 one. Fixed per connection.
+  bool _socketV2 = false;
+  // This socket's handshake, from `hs1` going out to the first `hs2`.
+  TransportHandshake? _handshake;
+  // A socket runs one handshake. To run another the app dials again.
+  bool _handshakeSent = false;
+  Timer? _hs2Timer;
+  // Relay handshakes that got no `hs2`, since the last one that verified.
+  int _hs2Timeouts = 0;
+  // A v2 channel the computer holds until a paired device answers. Only the
+  // verdict is read from it.
+  bool _held = false;
+  // Carry-over on the old transport: whether this socket may ask the
+  // computer for a pairing, whether this connection has, and the request it
+  // is waiting on.
+  bool _carryOver = true;
+  bool _upgradeAsked = false;
+  String? _upgradeRequestId;
+  // This socket's own retries wait for these moments. The first is about
+  // the computer, the second about the relay. A dial the owner asks for,
+  // such as the one after the user subscribes, goes out at once as before.
+  DateTime? _retryNotBefore;
+  DateTime? _relayJoinNotBefore;
+
   // Device registry handshake (relay only). The computer may hold the peer
   // after key exchange until this device proves it knows AUTH_TOKEN or
   // another device approves it.
@@ -131,6 +201,7 @@ class WebSocketService {
   final _deviceAuthController = StreamController<DeviceAuthState>.broadcast();
   String _deviceName = '';
   String _devicePlatform = '';
+  String _appVersion = '';
   // Set once a handshake ended waiting for approval, so the next retry after
   // the computer drops the held peer waits instead of knocking every 3 s.
   bool _lastHandshakeAwaited = false;
@@ -159,21 +230,60 @@ class WebSocketService {
   Stream<void> get subscriptionRequired =>
       _subscriptionRequiredController.stream;
 
+  /// A pairing the computer handed over in a sealed record on this control
+  /// channel: the carry-over answer on the old transport, or a new secret on
+  /// v2. The owner stores it and calls [setPairing]. These messages never
+  /// appear on [messages].
+  Stream<PairingChange> get pairingChanges => _pairingChangeController.stream;
+
   /// Where the device registry handshake stands on this lane.
   Stream<DeviceAuthState> get deviceAuthStream => _deviceAuthController.stream;
   DeviceAuthState get deviceAuth => _deviceAuth.state;
 
-  /// What `device_auth` says about this device. [token] is the computer's
-  /// AUTH_TOKEN when the app has it; it only ever leaves inside the box.
+  /// What `device_auth` and v2's message 1 say about this device. [token] is
+  /// the computer's AUTH_TOKEN when the app has it; it only ever leaves
+  /// inside the box, and never on v2.
   void setDeviceIdentity({
     required String name,
     required String platform,
     required String token,
+    String appVersion = '',
   }) {
     _deviceName = name;
     _devicePlatform = platform;
     _token = token;
-    _bulkLane?.setDeviceIdentity(name: name, platform: platform, token: token);
+    _appVersion = appVersion;
+    _bulkLane?.setDeviceIdentity(
+      name: name,
+      platform: platform,
+      token: token,
+      appVersion: appVersion,
+    );
+  }
+
+  /// Puts this socket on transport v2 with [pairing], or on the old
+  /// transport with null. Both come from the computer's stored config. A new
+  /// secret alone leaves an open channel as it is, because the next
+  /// handshake proves it. Moving between transports or rooms closes the
+  /// socket, and the caller connects again.
+  ///
+  /// [carryOver] lets a control connection on the old transport ask a
+  /// computer that speaks v2 for its pairing.
+  void setPairing(TransportPairing? pairing, {bool carryOver = true}) {
+    final previous = _pairing;
+    _carryOver = carryOver;
+    _bulkLane?.setPairing(pairing, carryOver: false);
+    if (previous == pairing) return;
+    _pairing = pairing;
+    // What the computer refused was the old pairing.
+    _retryNotBefore = null;
+    _hs2Timeouts = 0;
+    if (_channel != null &&
+        (previous == null ||
+            pairing == null ||
+            previous.roomId != pairing.roomId)) {
+      disconnect();
+    }
   }
 
   /// Whether a retry is scheduled. False after an intentional [disconnect].
@@ -216,6 +326,7 @@ class WebSocketService {
       sameCryptoService: identical(_cryptoService, cryptoService),
     );
     if (changed && _channel != null) disconnect();
+    if (changed) _relayJoinNotBefore = null;
     _relayUrl = relayUrl;
     _pairingToken = pairingToken;
     _cryptoService = cryptoService;
@@ -296,22 +407,65 @@ class WebSocketService {
     if (gen != _connectionGeneration) return;
     _resetPeerChannel();
     _serverCapabilitiesReceived = false;
+    final crypto = _cryptoService;
     try {
-      await _cryptoService?.loadSessionRequirement();
+      await crypto?.loadServerPins();
     } catch (error) {
-      debugPrint('[E2E] Could not read session key state: $error');
+      debugPrint('[E2E] Could not read stored key state: $error');
     }
     if (gen != _connectionGeneration) return;
+    final pairing = _pairing;
+    _socketV2 = pairing != null;
+    final blocked = _transportBlocked(pairing, crypto);
+    if (blocked != null) {
+      debugPrint('[Transport] Connection blocked: $blocked');
+      _setStatus(ConnectionStatus.error);
+      return;
+    }
+    if (_socketV2) {
+      // Saved before the first frame goes out, so this computer never gets
+      // the old transport from this device again.
+      try {
+        await crypto?.markServerV2();
+      } catch (error) {
+        debugPrint('[Transport] Could not save the v2 pin: $error');
+      }
+      if (gen != _connectionGeneration) return;
+    }
 
     try {
       final Uri uri;
+      Map<String, dynamic>? headers;
       if (_mode == ConnectionMode.relay) {
-        uri = Uri.parse(
-          '$_relayUrl?token=${Uri.encodeComponent(_pairingToken)}&role=phone&subscriber_token=${Uri.encodeComponent(_subscriberToken)}',
+        // A new-style join, for v2 and the old transport alike: the room and
+        // the subscriber token ride in headers, never in the URL.
+        final relay = Uri.parse(_relayUrl);
+        uri = Uri(
+          scheme: relay.scheme,
+          host: relay.host,
+          port: relay.hasPort ? relay.port : null,
+          path: '/',
+        );
+        headers = {
+          'X-SocketAgent-Protocol': '2',
+          'X-SocketAgent-Role': 'phone',
+          'X-SocketAgent-Room': Uri.encodeComponent(_pairingToken),
+          if (_subscriberToken.isNotEmpty)
+            'X-SocketAgent-Subscriber': _subscriberToken,
+        };
+        _encryptionReady = false;
+        _socketKeyed = true;
+      } else if (_socketV2) {
+        // No token, no lane, nothing else in the URL or the headers.
+        uri = Uri(
+          scheme: 'ws',
+          host: _host,
+          port: _port,
+          path: '/',
+          queryParameters: {'e2e': '2'},
         );
         _encryptionReady = false;
         _socketKeyed = true;
-        // DO NOT log the full URI - it contains pairing and subscriber tokens
       } else {
         final encryptedDirect =
             _cryptoService != null && _cryptoService!.isReady;
@@ -333,21 +487,19 @@ class WebSocketService {
         );
         _encryptionReady = false;
         _socketKeyed = encryptedDirect;
+        if (!encryptedDirect) headers = {'Authorization': 'Bearer $_token'};
       }
 
-      // Use the IOWebSocketChannel.connect factory so it builds the underlying
-      // dart:io WebSocket the same way the abstract WebSocketChannel.connect
-      // does (and binary frame plumbing works correctly), plus we get
-      // pingInterval for free. Without pingInterval, a silently-broken socket
-      // would just hang forever instead of firing onDone.
-      _channel = IOWebSocketChannel.connect(
-        uri,
-        headers:
-            _mode == ConnectionMode.direct &&
-                !(_cryptoService != null && _cryptoService!.isReady)
-            ? {'Authorization': 'Bearer $_token'}
-            : null,
-        pingInterval: const Duration(seconds: 20),
+      // Opened exactly as IOWebSocketChannel.connect opens it, so binary
+      // frames work and pingInterval turns a silently broken socket into
+      // onDone. The one difference is that this keeps the dart:io socket.
+      _rawSocket = null;
+      _channel = IOWebSocketChannel(
+        WebSocket.connect(uri.toString(), headers: headers).then((socket) {
+          socket.pingInterval = const Duration(seconds: 20);
+          if (gen == _connectionGeneration) _rawSocket = socket;
+          return socket;
+        }),
       );
 
       _channelSubscription = _channel!.stream
@@ -356,11 +508,13 @@ class WebSocketService {
             (_) {},
             onError: (error) {
               if (gen != _connectionGeneration) return;
+              _abandonHandshake();
               _setStatus(ConnectionStatus.error);
               _scheduleReconnect();
             },
             onDone: () {
               if (gen != _connectionGeneration) return;
+              _abandonHandshake();
               _encryptionReady = false;
               _serverCapabilitiesReceived = false;
               _serverSupportsBinary = false;
@@ -372,7 +526,10 @@ class WebSocketService {
             },
           );
 
-      if (_mode == ConnectionMode.direct &&
+      if (_socketV2) {
+        // On the relay the handshake waits for `peer_connected`.
+        if (_mode == ConnectionMode.direct) _sendHs1();
+      } else if (_mode == ConnectionMode.direct &&
           _cryptoService != null &&
           _cryptoService!.isReady) {
         Future.delayed(const Duration(milliseconds: 100), () {
@@ -404,12 +561,7 @@ class WebSocketService {
           send({
             'type': 'client_capabilities',
             'lane': _lane.name,
-            'binaryEnvelope': true,
-            'binaryFileDownloadVersion': binaryFileDownloadVersion,
-            'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
-            'transportLaneVersion': transportLaneVersion,
-            'uploadAckVersion': uploadAckVersion,
-            'sessionEventAckVersion': _sessionEventAckVersion,
+            ..._clientCapabilities,
             'sessionKeyVersion': sessionKeyVersion,
           });
         });
@@ -418,6 +570,165 @@ class WebSocketService {
       _setStatus(ConnectionStatus.error);
       _scheduleReconnect();
     }
+  }
+
+  /// What this build can do, as `client_capabilities` announces it on the
+  /// old transport and message 1 carries it on v2.
+  static const Map<String, Object> _clientCapabilities = {
+    'binaryEnvelope': true,
+    'binaryFileDownloadVersion': binaryFileDownloadVersion,
+    'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
+    'transportLaneVersion': transportLaneVersion,
+    'uploadAckVersion': uploadAckVersion,
+    'sessionEventAckVersion': _sessionEventAckVersion,
+  };
+
+  /// How long this socket's next retry has to wait for a computer or relay
+  /// that turned it away.
+  Duration _retryWait() {
+    final now = DateTime.now();
+    var wait = Duration.zero;
+    for (final until in [
+      _retryNotBefore,
+      if (_mode == ConnectionMode.relay) _relayJoinNotBefore,
+    ]) {
+      if (until != null && until.difference(now) > wait) {
+        wait = until.difference(now);
+      }
+    }
+    return wait;
+  }
+
+  /// Why this connection may not be dialled at all, or null when it may.
+  /// Nothing here falls back to the other transport: the socket shows its
+  /// connection error and stays closed until its config changes.
+  String? _transportBlocked(TransportPairing? pairing, CryptoService? crypto) {
+    if (pairing == null) {
+      return crypto != null && crypto.serverIsV2
+          ? 'this computer is on transport v2 and has no stored pairing'
+          : null;
+    }
+    if (crypto == null || !crypto.hasKeyPair || !crypto.isReady) {
+      return 'transport v2 needs the pinned computer key';
+    }
+    if (decodeKey32(pairing.secret) == null || !isValidRoomId(pairing.roomId)) {
+      return 'the stored v2 pairing is incomplete';
+    }
+    if (!_v2Available()) return 'this device cannot run the v2 handshake';
+    return null;
+  }
+
+  /// Sends this socket's one `hs1` and starts the wait for `hs2`.
+  void _sendHs1() {
+    final pairing = _pairing;
+    final crypto = _cryptoService;
+    final secret = decodeKey32(pairing?.secret);
+    if (pairing == null || crypto == null || secret == null) return;
+    final TransportHandshake handshake;
+    final String frame;
+    try {
+      handshake = crypto.startHandshake(
+        path: _mode == ConnectionMode.relay ? 'relay' : 'direct',
+        lane: _lane.name,
+        roomId: pairing.roomId,
+        secret: secret,
+      );
+      frame = handshake.hs1(
+        deviceHandshakePayload(
+          appVersion: _appVersion,
+          name: _deviceName,
+          platform: _devicePlatform,
+          capabilities: _clientCapabilities,
+        ),
+      );
+    } catch (error) {
+      // A pinned key the handshake cannot use. Dialling again changes
+      // nothing, so the socket stays closed.
+      debugPrint('[Transport] Handshake could not start: ${error.runtimeType}');
+      _closeSocket();
+      _setStatus(ConnectionStatus.error);
+      return;
+    }
+    _handshake = handshake;
+    _handshakeSent = true;
+    _channel?.sink.add(frame);
+    final gen = _connectionGeneration;
+    _hs2Timer?.cancel();
+    _hs2Timer = Timer(_hs2Wait, () {
+      if (gen == _connectionGeneration) _onHs2Timeout();
+    });
+  }
+
+  /// No `hs2` came. On the relay the computer is in the room, so two silent
+  /// handshakes in a row mean what `not_approved` means. On a direct socket
+  /// the address may simply be wrong, and the next route gets its turn.
+  void _onHs2Timeout() {
+    _handshake = null;
+    if (_mode == ConnectionMode.relay && ++_hs2Timeouts >= 2) {
+      _retryNotBefore = DateTime.now().add(_refusedRetry);
+    }
+    _refuseConnection('no hs2 in time');
+  }
+
+  /// The first `hs2` decides the handshake. One that does not verify closes
+  /// the socket, and the next dial starts a new handshake.
+  void _onHs2(String frame) {
+    final handshake = _handshake;
+    final socket = _channel;
+    if (handshake == null || socket == null) return;
+    _abandonHandshake();
+    final HandshakeResult result;
+    try {
+      result = handshake.readHs2(frame);
+    } on HandshakeRefused catch (error) {
+      _refuseConnection('hs2 refused: ${error.reason}');
+      return;
+    }
+    _hs2Timeouts = 0;
+    final channel = PeerChannel.transport(
+      sendKey: result.keys.sendKey,
+      receiveKey: result.keys.receiveKey,
+    );
+    _peerChannel = channel;
+    // The first record of every v2 channel, whatever the answer was.
+    socket.sink.add(jsonEncode(channel.sealText(transportReadyMessage)));
+    switch (result.answer.status) {
+      case HandshakeStatus.open:
+        _onTransportOpen();
+      case HandshakeStatus.pending:
+        // The channel exists but carries nothing until a paired device
+        // allows this one. Both sides show the same code.
+        _held = true;
+        _lastHandshakeAwaited = true;
+        _deviceAuth.held(approvalCode(result.keys.handshakeHash));
+        _emitDeviceAuth();
+      case HandshakeStatus.refused:
+        _onNotApproved('refused: ${result.answer.reason}');
+    }
+  }
+
+  void _onTransportOpen() {
+    _held = false;
+    _encryptionReady = true;
+    _lastHandshakeAwaited = false;
+    _retryNotBefore = null;
+    _deviceAuth.opened();
+    _emitDeviceAuth();
+    _setStatus(ConnectionStatus.connected);
+    debugPrint('[Transport] v2 ${_lane.name} channel open');
+  }
+
+  /// The computer will not admit this device now. The socket closes and its
+  /// next retry waits a minute.
+  void _onNotApproved(String reason) {
+    _retryNotBefore = DateTime.now().add(_refusedRetry);
+    _refuseConnection(reason);
+  }
+
+  void _abandonHandshake() {
+    _hs2Timer?.cancel();
+    _hs2Timer = null;
+    _handshake = null;
   }
 
   /// Sorts one incoming frame. On a keyed socket it is either a sealed
@@ -429,6 +740,9 @@ class WebSocketService {
     if (gen != _connectionGeneration) return;
     if (!_socketKeyed) return _onUnkeyedFrame(data, gen);
     final channel = _peerChannel;
+    if (_socketV2 && channel == null) return _onFrameBeforeChannel(data);
+    // A binary frame or a `{n, c}` envelope claims to be a record.
+    final record = data is! String || data.startsWith('{"n":');
     final DecodedSocketFrame? decoded;
     try {
       decoded = await decodeSocketFrame(
@@ -438,7 +752,10 @@ class WebSocketService {
       );
     } catch (error) {
       if (gen == _connectionGeneration) {
-        _rejectFrame('frame did not open (${error.runtimeType})');
+        _rejectFrame(
+          'frame did not open (${error.runtimeType})',
+          record: record,
+        );
       }
       return;
     }
@@ -452,18 +769,55 @@ class WebSocketService {
     try {
       channel.accept(decoded.nonce);
     } catch (error) {
-      _rejectFrame('$error');
+      _rejectFrame('$error', record: true);
       return;
     }
     _routeDecryptedMessage(decoded.message);
   }
 
+  /// A frame on a v2 socket that has no channel yet. Only the relay's
+  /// signals and the first `hs2` mean anything, and the length is checked
+  /// before anything is parsed.
+  void _onFrameBeforeChannel(Object? data) {
+    if (data is! String) return _rejectFrame('binary frame before a channel');
+    if (data.length > maxHandshakeFrameBytes) {
+      // Too big to be a relay signal. While `hs2` is awaited it is a failed
+      // message 2.
+      if (_handshake != null) return _refuseConnection('oversized hs2');
+      return _rejectFrame('oversized frame before a channel');
+    }
+    final Object? json;
+    try {
+      json = jsonDecode(data);
+    } on FormatException {
+      return _rejectFrame('unreadable frame before a channel');
+    }
+    if (json is! Map<String, dynamic>) {
+      return _rejectFrame('unreadable frame before a channel');
+    }
+    if (json['type'] == 'hs2' && _handshake != null) return _onHs2(data);
+    _handleSignal(json);
+  }
+
   /// A frame on a keyed socket that is neither a sealed message nor a
   /// transport signal. The relay forwards whatever a room member sends, so
-  /// there it is only dropped. On a direct socket with its key exchange done
-  /// nothing honest sends one, and the socket closes.
-  void _rejectFrame(String reason) {
-    if (_mode == ConnectionMode.direct && _peerChannel != null) {
+  /// there it is only dropped. On a direct socket nothing honest sends one
+  /// once the key exchange is done, or at any time on v2, and the socket
+  /// closes.
+  ///
+  /// [record] marks a frame that claimed to be a record and was rejected:
+  /// it did not open, or its nonce was wrong. On v2 that closes the channel
+  /// on either path, with code 1008 on a direct socket.
+  void _rejectFrame(String reason, {bool record = false}) {
+    final direct = _mode == ConnectionMode.direct;
+    if (_socketV2 && record) {
+      _refuseConnection(
+        'record rejected: $reason',
+        closeCode: direct ? WebSocketStatus.policyViolation : null,
+      );
+      return;
+    }
+    if (direct && (_socketV2 || _peerChannel != null)) {
       _refuseConnection('unsealed or unreadable frame: $reason');
       return;
     }
@@ -489,9 +843,10 @@ class WebSocketService {
     }
   }
 
-  /// An unsealed frame on a keyed socket. Only the relay's own signals and
-  /// the key exchange answer mean anything, and all they can change is this
-  /// connection's state. None of them reaches [messages].
+  /// An unsealed frame on a keyed socket. Only the relay's own signals and,
+  /// on the old transport, the key exchange answer mean anything, and all
+  /// they can change is this connection's state. None of them reaches
+  /// [messages]. The `hs2` a v2 socket is waiting for never comes here.
   void _handleSignal(Map<String, dynamic> raw) {
     final type = raw['type'];
     if (_mode == ConnectionMode.relay) {
@@ -501,30 +856,40 @@ class WebSocketService {
         if (!_subscriptionRequiredController.isClosed) {
           _subscriptionRequiredController.add(null);
         }
-        // Don't reconnect — user needs to subscribe first
-        _reconnectTimer?.cancel();
-        _channelSubscription?.cancel();
-        _channelSubscription = null;
-        _connectionGeneration++;
-        _channel?.sink.close();
-        _channel = null;
-        _encryptionReady = false;
+        // The user may subscribe on another device, so the socket tries the
+        // join again by itself, but no more than once every five minutes.
+        _relayJoinNotBefore = DateTime.now().add(_subscriptionRetry);
+        _closeSocket();
         _setStatus(ConnectionStatus.disconnected);
+        _scheduleReconnect();
         return;
       }
       if (type == 'peer_connected') {
-        debugPrint('[Relay] Peer connected — sending key exchange');
-        _sendKeyExchange();
+        if (!_socketV2) {
+          debugPrint('[Relay] Peer connected — sending key exchange');
+          _sendKeyExchange();
+        } else if (!_handshakeSent) {
+          _sendHs1();
+        } else {
+          // The computer rejoined the room and has forgotten this peer. A
+          // socket runs one handshake, so dial again.
+          connect(force: true);
+        }
         return;
       }
       if (type == 'peer_disconnected') {
         debugPrint('[Relay] Peer disconnected');
+        if (_socketV2) {
+          // Both sides drop the channel.
+          _refuseConnection('the computer left the room');
+          return;
+        }
         _encryptionReady = false;
         _setStatus(ConnectionStatus.error);
         _scheduleReconnect();
         return;
       }
-      if (type == 'key_exchange_ack') {
+      if (type == 'key_exchange_ack' && !_socketV2) {
         if (_completeKeyExchange(raw)) _onKeyExchangeAck(raw);
         return;
       }
@@ -532,9 +897,9 @@ class WebSocketService {
       return;
     }
 
-    // Direct. The one unsealed frame a computer sends is its answer to this
-    // socket's key exchange.
-    if (type == 'key_exchange_ack' && _peerChannel == null) {
+    // Direct, old transport. The one unsealed frame a computer sends is its
+    // answer to this socket's key exchange.
+    if (type == 'key_exchange_ack' && !_socketV2 && _peerChannel == null) {
       if (_completeKeyExchange(raw)) _onEncryptionEstablished();
       return;
     }
@@ -545,8 +910,26 @@ class WebSocketService {
   /// transparently absorbs the wire-format handshake messages.
   void _routeDecryptedMessage(Map<String, dynamic> msg) {
     final t = msg['type'];
+    if (_held) {
+      // Only the verdict is read from a held channel.
+      if (t == 'device_auth_result') {
+        if (msg['ok'] == true) {
+          _onTransportOpen();
+        } else {
+          // Denied, or nobody answered in ten minutes.
+          _onNotApproved('not approved');
+        }
+      }
+      return;
+    }
+    if (t == 'pairing_update' ||
+        t == 'pairing_grant' ||
+        t == 'pairing_upgrade_result') {
+      _onPairingMessage(msg);
+      return;
+    }
     if (t == 'key_exchange_ack') {
-      _onKeyExchangeAck(msg);
+      if (!_socketV2) _onKeyExchangeAck(msg);
       return;
     }
     if (t == 'device_auth_result') {
@@ -574,7 +957,7 @@ class WebSocketService {
     if (t == 'server_capabilities') {
       final channel = _peerChannel;
       if (channel != null &&
-          !channel.sessionKeyed &&
+          channel.kind == ChannelKind.staticBox &&
           ((msg['sessionKeyVersion'] as num?)?.toInt() ?? 0) >=
               sessionKeyVersion) {
         // The computer speaks session keys, so the handshake that set up
@@ -588,9 +971,61 @@ class WebSocketService {
         '[${_lane.name}] Server capabilities: binary=$_serverSupportsBinary '
         'bulk=$_serverSupportsTransportLanes uploadAcks=$_serverSupportsUploadAcks',
       );
+      _askForPairing(msg);
       // Fall through so listeners can read other fields (e.g., `backends`).
     }
     _messageController.add(msg);
+  }
+
+  /// Carry-over, wire spec 9.3. A computer that speaks v2 hands its pairing
+  /// to a recorded device over a session-keyed channel of the old transport.
+  /// One request per connection. With no answer this connection carries on
+  /// as it is, and the next one asks again. A device that cannot run the
+  /// handshake never asks.
+  void _askForPairing(Map<String, dynamic> capabilities) {
+    if (_socketV2 || !_carryOver || _upgradeAsked) return;
+    if (_lane != TransportLane.control) return;
+    if (_peerChannel?.sessionKeyed != true) return;
+    final transport = capabilities['transport'];
+    final version = transport is Map ? transport['version'] : null;
+    if (version is! num || version < transportVersion) return;
+    if (!_v2Available()) return;
+    _upgradeAsked = true;
+    final requestId =
+        '${DateTime.now().microsecondsSinceEpoch}-'
+        '${Random.secure().nextInt(1 << 32)}';
+    if (_sendOnCurrentLane({
+      'type': 'pairing_upgrade',
+      'requestId': requestId,
+    })) {
+      _upgradeRequestId = requestId;
+    }
+  }
+
+  /// The three sealed messages that carry a pairing secret. They stop here
+  /// whatever happens, so no listener ever sees a secret. Each counts only
+  /// where the spec lets it: `pairing_update` on an open v2 control channel,
+  /// and `pairing_upgrade_result` as the answer this old-transport control
+  /// channel asked for. `pairing_grant` belongs to the Windows local
+  /// request, which this socket never makes.
+  void _onPairingMessage(Map<String, dynamic> msg) {
+    if (_lane != TransportLane.control) return;
+    final PairingChange? change;
+    if (msg['type'] == 'pairing_update' && _socketV2) {
+      change = PairingChange.parse(msg, upgrade: false);
+    } else if (msg['type'] == 'pairing_upgrade_result' &&
+        !_socketV2 &&
+        _upgradeRequestId != null &&
+        msg['requestId'] == _upgradeRequestId &&
+        _peerChannel?.sessionKeyed == true) {
+      _upgradeRequestId = null;
+      change = PairingChange.parse(msg, upgrade: true);
+    } else {
+      change = null;
+    }
+    if (change != null && !_pairingChangeController.isClosed) {
+      _pairingChangeController.add(change);
+    }
   }
 
   void _applyServerCapabilities(Map<String, dynamic> msg) {
@@ -680,23 +1115,46 @@ class WebSocketService {
     }
   }
 
+  /// Forgets everything that belonged to one socket: its key exchange or
+  /// handshake, its channel, and what it had asked the computer.
   void _resetPeerChannel() {
     _sessionOffer = null;
     _peerChannel?.dispose();
     _peerChannel = null;
+    _abandonHandshake();
+    _handshakeSent = false;
+    _held = false;
+    _upgradeAsked = false;
+    _upgradeRequestId = null;
   }
 
-  /// Drops a socket whose encryption cannot be trusted and retries later.
-  void _refuseConnection(String reason) {
-    debugPrint('[E2E] Dropping connection: $reason');
+  /// Closes the current socket and its channel. The caller sets the status
+  /// and decides whether to dial again.
+  void _closeSocket([int? closeCode]) {
+    _reconnectTimer?.cancel();
     _channelSubscription?.cancel();
     _channelSubscription = null;
     _connectionGeneration++;
+    // The first close decides the code the computer sees.
+    if (closeCode != null) unawaited(_rawSocket?.close(closeCode));
+    _rawSocket = null;
     _channel?.sink.close();
     _channel = null;
     _encryptionReady = false;
     _serverCapabilitiesReceived = false;
     _resetPeerChannel();
+  }
+
+  /// Drops a socket whose encryption cannot be trusted and retries later.
+  void _refuseConnection(String reason, {int? closeCode}) {
+    debugPrint('[E2E] Dropping connection: $reason');
+    final wasHeld = _held;
+    _closeSocket(closeCode);
+    if (wasHeld) {
+      // The approval code belonged to the handshake that just ended.
+      _deviceAuth.reset();
+      _emitDeviceAuth();
+    }
     _setStatus(ConnectionStatus.error);
     _scheduleReconnect();
   }
@@ -729,12 +1187,7 @@ class WebSocketService {
         'type': 'direct_auth',
         'token': _token,
         'lane': _lane.name,
-        'binaryEnvelope': true,
-        'binaryFileDownloadVersion': binaryFileDownloadVersion,
-        'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
-        'transportLaneVersion': transportLaneVersion,
-        'uploadAckVersion': uploadAckVersion,
-        'sessionEventAckVersion': _sessionEventAckVersion,
+        ..._clientCapabilities,
         'sessionKeyVersion': sessionKeyVersion,
       });
       return;
@@ -744,12 +1197,7 @@ class WebSocketService {
     send({
       'type': 'client_capabilities',
       'lane': _lane.name,
-      'binaryEnvelope': true,
-      'binaryFileDownloadVersion': binaryFileDownloadVersion,
-      'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
-      'transportLaneVersion': transportLaneVersion,
-      'uploadAckVersion': uploadAckVersion,
-      'sessionEventAckVersion': _sessionEventAckVersion,
+      ..._clientCapabilities,
       'sessionKeyVersion': sessionKeyVersion,
     });
   }
@@ -768,12 +1216,7 @@ class WebSocketService {
       'name': account.isEmpty ? _deviceName : '$account on $_deviceName',
       'platform': _devicePlatform,
       'lane': _lane.name,
-      'binaryEnvelope': true,
-      'binaryFileDownloadVersion': binaryFileDownloadVersion,
-      'binaryBrowserFrameVersion': binaryBrowserFrameVersion,
-      'transportLaneVersion': transportLaneVersion,
-      'uploadAckVersion': uploadAckVersion,
-      'sessionEventAckVersion': _sessionEventAckVersion,
+      ..._clientCapabilities,
       'sessionKeyVersion': sessionKeyVersion,
     });
   }
@@ -781,6 +1224,7 @@ class WebSocketService {
   /// Send our public key to the server for NaCl key exchange
   void _sendKeyExchange() {
     final crypto = _cryptoService;
+    if (_socketV2) return;
     if (crypto == null || !crypto.hasKeyPair || !crypto.isReady) return;
 
     // Key exchange is sent PLAINTEXT — server needs our public key to start
@@ -795,9 +1239,11 @@ class WebSocketService {
     // A device waiting for approval gets opened in place when another device
     // approves it. Only after the computer drops the held peer (10 minutes)
     // does a retry help, and a fast loop would just repeat the prompt.
-    final delay = _lastHandshakeAwaited
+    var delay = _lastHandshakeAwaited
         ? const Duration(seconds: 30)
         : const Duration(seconds: 3);
+    final wait = _retryWait();
+    if (wait > delay) delay = wait;
     _reconnectTimer = Timer(delay, () {
       if (_status != ConnectionStatus.connected) {
         connect();
@@ -891,6 +1337,7 @@ class WebSocketService {
 
   bool _sendOnCurrentLane(Map<String, dynamic> message) {
     if (_channel == null) return false;
+    if (_socketV2 && _oldTransportOnly.contains(message['type'])) return false;
 
     try {
       final peerChannel = _peerChannel;
@@ -1132,6 +1579,7 @@ class WebSocketService {
     _channelSubscription?.cancel();
     _channelSubscription = null;
     _connectionGeneration++; // invalidate any lingering callbacks
+    _rawSocket = null;
     _channel?.sink.close();
     _channel = null;
     _encryptionReady = false;
@@ -1156,6 +1604,7 @@ class WebSocketService {
     _messageController.close();
     _statusController.close();
     _subscriptionRequiredController.close();
+    _pairingChangeController.close();
     _deviceAuthController.close();
   }
 }

@@ -100,6 +100,17 @@ class DeviceAuthHandshake {
     return DeviceAuthAction.none;
   }
 
+  /// Transport v2: message 2 said `pending`. [code] is the approval code
+  /// both sides worked out from the handshake, to match on another device.
+  void held(String code) {
+    _state = DeviceAuthState._(DeviceAuthPhase.awaitingApproval, code: code);
+  }
+
+  /// Transport v2: the channel is open.
+  void opened() {
+    _state = DeviceAuthState.approved;
+  }
+
   /// The socket closed. A reconnect starts the handshake over, but the
   /// socket remembers it was waiting so it retries slowly.
   void reset() {

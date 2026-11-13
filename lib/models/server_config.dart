@@ -64,6 +64,11 @@ class ServerConfig {
   /// Whether this computer is on transport v2 here, for good.
   bool get isV2 => transport == 2;
 
+  /// What a v2 socket to this computer handshakes with, or null while the
+  /// computer is on the old transport.
+  ({String roomId, String secret})? get transportPairing =>
+      isV2 ? (roomId: pairingToken, secret: pairingSecret) : null;
+
   /// This entry with [key] as its computer. A different key is a different
   /// computer, so the v2 pairing made with the old one does not carry over.
   /// Only a pairing code, the account, an import or the user typing may

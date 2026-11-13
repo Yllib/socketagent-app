@@ -77,6 +77,7 @@ import 'websocket_service.dart';
 import 'upload_ack_gate.dart';
 import 'secret_inventory_request_tracker.dart';
 import 'connection_manager.dart';
+import 'transport_v2.dart';
 import 'local_route.dart';
 import 'local_speech_service.dart';
 import 'speech_recognition_settings.dart';
@@ -1043,6 +1044,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription? _messageSub;
   StreamSubscription? _statusSub;
   StreamSubscription<String>? _relaySubscriptionRequiredSub;
+  StreamSubscription<ServerPairingChange>? _pairingChangeSub;
   StreamSubscription? _speechResultSub;
   StreamSubscription? _speechStatusSub;
   Timer? _foregroundResumeTimer;
@@ -2891,6 +2893,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
               final probe = await const ServerConnectionProbe().verify(
                 next,
                 subscriberToken: '',
+                identity: _connMgr.deviceIdentity,
                 timeout: const Duration(seconds: 3),
               );
               if (!probe.success) continue;
@@ -3275,7 +3278,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (route is! Map) return;
     final hosts = route['hosts'];
     final port = route['port'];
-    final sent = route['token'];
+    // Transport v2 never carries AUTH_TOKEN, so one that turns up is ignored.
+    final v2 = _serverConfigs.any((c) => c.id == serverId && c.isV2);
+    final sent = v2 ? null : route['token'];
     if (hosts is! List || port is! int) return;
     final keyNewlyAllowed =
         (sent is! String || sent.isEmpty) &&
@@ -3336,6 +3341,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (idx < 0) return;
     final existing = _serverConfigs[idx];
     if (existing.serverPubkey.isEmpty) return;
+    // On transport v2 the room comes with the pairing secret, from
+    // `pairing_update`, and capabilities teach nothing about the pairing.
+    if (existing.isV2) return;
     final claimedKey = relay['serverPubkey'];
     if (claimedKey is String &&
         claimedKey.isNotEmpty &&
@@ -3363,6 +3371,54 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _connMgr.getConnection(serverId)?.connect();
     }
     await _registerPushNotifications();
+    notifyListeners();
+  }
+
+  /// Stores a pairing its computer handed over in a sealed record on its
+  /// own control channel. The answer to a carry-over request moves the
+  /// computer to transport v2, for good, and reconnects that way. A new
+  /// secret on a v2 channel leaves the open channel alone and is proved by
+  /// the next handshake.
+  Future<void> _applyPairingChange(
+    String serverId,
+    PairingChange change,
+  ) async {
+    final idx = _serverConfigs.indexWhere((c) => c.id == serverId);
+    if (idx < 0) return;
+    final existing = _serverConfigs[idx];
+    final route = change.route;
+    // A carry-over is for a computer still on the old transport, an update
+    // for one already on v2.
+    if (existing.serverPubkey.isEmpty || (route == null) != existing.isV2) {
+      return;
+    }
+    var updated = existing.copyWith(
+      relayUrl: existing.relayUrl.isEmpty ? defaultRelayUrl : null,
+      pairingToken: change.roomId,
+      pairingSecret: change.secret,
+      transport: 2,
+    );
+    // Fixed-route computers keep the address the user entered.
+    if (route != null && existing.autoRoute && route.hosts.isNotEmpty) {
+      updated = updated.copyWith(
+        host: route.hosts.contains(existing.host) ? null : route.hosts.first,
+        port: route.port,
+      );
+    }
+    final reconnect = _requiresServerReconnect(existing, updated);
+    if (!reconnect && existing.pairingSecret == updated.pairingSecret) return;
+    _serverConfigs[idx] = updated;
+    // Saved before the socket hears of it, so the first v2 dial is never
+    // ahead of what is stored.
+    await _saveServerConfigs();
+    final ws = _connMgr.getConnection(serverId);
+    if (reconnect) ws?.disconnect();
+    await _connMgr.setServers(_serverConfigs);
+    if (reconnect) ws?.connect();
+    if (existing.pairingToken != updated.pairingToken) {
+      await _registerPushNotifications();
+    }
+    account.syncSoon();
     notifyListeners();
   }
 
@@ -3394,6 +3450,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return const ServerConnectionProbe().verify(
       candidate,
       subscriberToken: _subscriberToken,
+      identity: _connMgr.deviceIdentity,
       timeout: timeout,
     );
   }
@@ -3818,14 +3875,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     // Disconnect and reconnect with relay
     final ws = _connMgr.getConnection(serverId);
     ws?.disconnect();
-    await _connMgr.configureServerRelay(
-      serverId,
-      relayUrl: relayUrl,
-      pairingToken: pairingToken,
-      serverPubkey: serverPubkey,
-    );
+    await _connMgr.setServers(_serverConfigs);
     await _registerPushNotifications();
     ws?.connect();
+    account.syncSoon();
     notifyListeners();
   }
 
@@ -3838,6 +3891,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _subscriptionRequiredController.add(null);
       notifyListeners();
     });
+    _pairingChangeSub = _connMgr.pairingChanges.listen(
+      (update) =>
+          unawaited(_applyPairingChange(update.serverId, update.change)),
+    );
     _statusSub = _connMgr.statusStream.listen((update) {
       _sessionListConnectionRevisions[update.serverId] =
           (_sessionListConnectionRevisions[update.serverId] ?? 0) + 1;
@@ -8353,9 +8410,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } catch (error) {
       debugPrint('[Devices] Device key unavailable: $error');
     }
+    var appVersion = '';
+    try {
+      appVersion = (await PackageInfo.fromPlatform()).version;
+    } catch (_) {}
     await _connMgr.setDeviceIdentity(
       name: _deviceName,
       platform: _devicePlatform,
+      appVersion: appVersion,
     );
     _deviceAuthSub ??= _connMgr.deviceAuthStream.listen((update) {
       _deviceAuthStates[update.serverId] = update.state;
@@ -8563,6 +8625,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (index < 0 || _serverConfigs[index].token == token) return;
     // A socket with no pinned key delivered this unsealed.
     if (_serverConfigs[index].serverPubkey.isEmpty) return;
+    // Transport v2 never carries AUTH_TOKEN.
+    if (_serverConfigs[index].isV2) return;
     _serverConfigs[index] = _serverConfigs[index].copyWith(token: token);
     await _saveServerConfigs();
     await _connMgr.setServers(_serverConfigs);
@@ -21181,6 +21245,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _messageSub?.cancel();
     _statusSub?.cancel();
     _relaySubscriptionRequiredSub?.cancel();
+    _pairingChangeSub?.cancel();
     _speechResultSub?.cancel();
     _speechStatusSub?.cancel();
     for (final state in _uploadStates.values) {

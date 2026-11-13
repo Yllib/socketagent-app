@@ -20,6 +20,7 @@ void main() {
   late HttpServer relay;
   late List<WebSocket> sockets;
   late List<String?> connectionTokens;
+  late List<String> joinQueries;
   late Completer<void> firstConnection;
   late Map<String, dynamic> computer;
 
@@ -44,11 +45,15 @@ void main() {
     );
     sockets = [];
     connectionTokens = [];
+    joinQueries = [];
     firstConnection = Completer<void>();
     relay = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     relay.listen((request) async {
-      final token = request.uri.queryParameters['subscriber_token'];
+      // A new-style join: the subscriber token and the room ride in
+      // headers and the URL says nothing.
+      final token = request.headers.value('x-socketagent-subscriber');
       connectionTokens.add(token);
+      joinQueries.add(request.uri.query);
       final socket = await WebSocketTransformer.upgrade(request);
       sockets.add(socket);
       socket.listen((_) {});
@@ -122,6 +127,7 @@ void main() {
         await firstConnection.future.timeout(const Duration(seconds: 5));
         expect(connectionTokens, isNotEmpty);
         expect(connectionTokens, everyElement('test-play-access'));
+        expect(joinQueries, everyElement(isEmpty));
         expect(provider.hasCachedRelayAccess, isTrue);
         expect(provider.subscriptionProvider, 'google_play');
         expect(

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import '../models/server_config.dart';
 import 'crypto_service.dart';
+import 'transport_v2.dart';
 import 'websocket_service.dart';
 
 enum ServerProbeFailureKind {
@@ -66,9 +67,14 @@ class ServerProbeResult {
 class ServerConnectionProbe {
   const ServerConnectionProbe();
 
+  /// Opens one connection to [config] the way the app would and reports
+  /// what the computer answered. A v2 computer is probed over v2 and no
+  /// other way. [identity] is what v2's message 1 tells the computer about
+  /// this device, which the computer keeps, so it has to be the real one.
   Future<ServerProbeResult> verify(
     ServerConfig config, {
     required String subscriberToken,
+    DeviceIdentity identity = (name: '', platform: '', appVersion: ''),
     Duration timeout = const Duration(seconds: 18),
   }) async {
     final crypto = CryptoService();
@@ -147,6 +153,14 @@ class ServerConnectionProbe {
       });
     });
 
+    socket.setDeviceIdentity(
+      name: identity.name,
+      platform: identity.platform,
+      token: config.token,
+      appVersion: identity.appVersion,
+    );
+    // A probe is a throwaway connection, so it never asks for a pairing.
+    socket.setPairing(config.transportPairing, carryOver: false);
     if (config.useRelay) {
       socket.configureRelay(
         relayUrl: config.relayUrl,

@@ -34,6 +34,7 @@ void main() {
   late List<Map<String, dynamic>> delivered;
   late Completer<WebSocket> accepted;
   late Completer<int?> closed;
+  late int joins;
   // What the fake does with the device's key exchange.
   late void Function(WebSocket socket, Object? keyExchange) onKeyExchange;
 
@@ -46,8 +47,10 @@ void main() {
     crypto.setServerPublicKey(computer.publicKey);
     accepted = Completer();
     closed = Completer();
+    joins = 0;
     server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     server.listen((request) async {
+      joins++;
       final socket = await WebSocketTransformer.upgrade(request);
       var exchanged = false;
       socket.listen((frame) {
@@ -170,6 +173,12 @@ void main() {
 
       expect(refused, 1);
       expect(delivered, isEmpty);
+      // The socket tries the join again by itself, five minutes on and not
+      // in the usual 3 s.
+      expect(service.status, ConnectionStatus.disconnected);
+      expect(service.reconnecting, isTrue);
+      await Future<void>.delayed(const Duration(seconds: 4));
+      expect(joins, 1);
     },
   );
 }

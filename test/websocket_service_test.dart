@@ -67,6 +67,24 @@ void main() {
       ),
       isFalse,
     );
+    // The join carries the subscriber token, so no relay without TLS
+    // except one on this machine.
+    expect(
+      relayTransportIsConfigured(
+        relayUrl: 'ws://relay.example.test',
+        pairingToken: 'token',
+        cryptoReady: true,
+      ),
+      isFalse,
+    );
+    expect(
+      relayTransportIsConfigured(
+        relayUrl: 'ws://127.0.0.1:9000',
+        pairingToken: 'token',
+        cryptoReady: true,
+      ),
+      isTrue,
+    );
     expect(
       relayTransportIsConfigured(
         relayUrl: 'wss://relay.example.test',

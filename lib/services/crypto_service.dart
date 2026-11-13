@@ -4,6 +4,7 @@ import 'package:pinenacl/x25519.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'nacl_cipher.dart';
 import 'secure_storage_service.dart';
+import 'transport_v2.dart';
 
 /// Session keys, version 1, as in server/src/relay-crypto.ts. The static box
 /// encrypts every frame two keys ever exchange, so a frame recorded off the
@@ -224,6 +225,11 @@ class CryptoService {
   // frames recorded from a static-box connection.
   static const _sessionKeyedServersKey = 'session_keyed_servers';
 
+  // Server keys this device has dialled over transport v2. Each is refused
+  // the old transport from then on, whatever its config says later.
+  static const _transportV2ServersKey = 'transport_v2_servers';
+  bool _serverIsV2 = false;
+
   /// Whether this service has a key pair loaded
   bool get hasKeyPair => _secretKey != null && _publicKey != null;
 
@@ -238,7 +244,7 @@ class CryptoService {
   }
 
   /// Whether the paired computer has answered with a session key before.
-  /// Load with [loadSessionRequirement] before each connection.
+  /// Load with [loadServerPins] before each connection.
   bool get serverRequiresSession => _serverRequiresSession;
 
   String? get _serverKeyBase64 {
@@ -246,12 +252,57 @@ class CryptoService {
     return key == null ? null : base64Encode(key);
   }
 
-  Future<void> loadSessionRequirement() async {
+  /// Whether this device has used transport v2 with the paired computer.
+  /// Such a computer never gets the old transport again. Load with
+  /// [loadServerPins] before each connection.
+  bool get serverIsV2 => _serverIsV2;
+
+  /// Reads what this device remembers about the paired computer's key:
+  /// whether it has used session keys, and whether it has moved to v2.
+  Future<void> loadServerPins() async {
     final key = _serverKeyBase64;
     if (key == null) return;
     final prefs = await SharedPreferences.getInstance();
     _serverRequiresSession =
         prefs.getStringList(_sessionKeyedServersKey)?.contains(key) ?? false;
+    _serverIsV2 =
+        prefs.getStringList(_transportV2ServersKey)?.contains(key) ?? false;
+  }
+
+  /// Holds the paired computer to transport v2 from now on. The caller
+  /// awaits it before the first v2 dial, so the pin is saved before
+  /// anything is sent.
+  Future<void> markServerV2() async {
+    final key = _serverKeyBase64;
+    if (key == null || _serverIsV2) return;
+    _serverIsV2 = true;
+    final prefs = await SharedPreferences.getInstance();
+    final keys = prefs.getStringList(_transportV2ServersKey) ?? const [];
+    if (!keys.contains(key)) {
+      await prefs.setStringList(_transportV2ServersKey, [...keys, key]);
+    }
+  }
+
+  /// Starts one connection's transport v2 handshake with the paired
+  /// computer, as the initiator. [path] is `relay` or `direct`, [lane] the
+  /// socket's lane, [roomId] the computer's control room and [secret] the
+  /// 32-byte pairing secret. The device's private key stays in here.
+  TransportHandshake startHandshake({
+    required String path,
+    required String lane,
+    required String roomId,
+    required Uint8List secret,
+  }) {
+    final computerKey = _serverPublicKey;
+    if (computerKey == null) throw StateError('No computer key set');
+    return TransportHandshake(
+      path: path,
+      lane: lane,
+      roomId: roomId,
+      staticPrivateKey: Uint8List.fromList(privateKey.asTypedList),
+      computerKey: computerKey,
+      secret: secret,
+    );
   }
 
   /// Holds the paired computer to session keys from now on.
@@ -317,6 +368,7 @@ class CryptoService {
   void setServerPublicKey(String base64Key) {
     _serverPublicKey = Uint8List.fromList(base64Decode(base64Key));
     _serverRequiresSession = false;
+    _serverIsV2 = false;
     _initBox();
   }
 
