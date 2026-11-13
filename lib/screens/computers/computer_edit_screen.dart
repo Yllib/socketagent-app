@@ -29,13 +29,15 @@ String routeLabel(ServerConfig config) {
 enum _Route { auto, relay, direct }
 
 /// Whether saving with [route] leaves the computer with no way in until the
-/// relay is paired. Auto can start from direct details alone.
+/// relay is paired. Auto can start from direct details alone: the key, and
+/// the token for a computer on the old transport. A v2 computer signs in
+/// with its pairing and holds no token.
 bool _needsRelayPairing(_Route route, ServerConfig? existing) {
   if (route == _Route.direct || existing?.isRelayPaired == true) return false;
   if (route == _Route.relay) return true;
   return existing == null ||
-      existing.token.isEmpty ||
-      existing.serverPubkey.isEmpty;
+      existing.serverPubkey.isEmpty ||
+      (existing.token.isEmpty && !existing.isV2);
 }
 
 const _badgeColors = <int?>[
