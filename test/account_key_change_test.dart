@@ -158,13 +158,16 @@ void main() {
         decodeRecoveryKey(a.service.recoveryKey!)!,
       );
       final pin = a.service.vault!.pin!;
+      final relaySetAt = cloud.pins[keys.accountId]!.setAt;
       cloud.now += 5000;
+      // The writer says the PIN was set long ago. The notice prints the
+      // relay's time for the record, not the vault's.
       final forged = a.service.vault!.copyWith(
         pin: VaultAccountPin(
           id: pin.id,
           salt: base64Encode(List.filled(16, 7)),
           publicKey: base64Encode(List.filled(32, 8)),
-          setAt: cloud.now,
+          setAt: 1,
           setBy: b.publicKey,
         ),
       );
@@ -176,7 +179,7 @@ void main() {
       for (final device in [a, b]) {
         expect(await device.sync(), AccountSyncOutcome.synced);
         expect(device.service.newPinNotice, (
-          setAt: cloud.now,
+          setAt: relaySetAt,
           deviceName: 'Laptop',
         ));
         expect(device.service.vault!.pin!.salt, forged.pin!.salt);

@@ -430,8 +430,14 @@ String accountPinSummary(AccountService account) {
   final device = account.deviceNameOf(pin.setBy);
   final relay = account.relayPin;
   final wrong = relay?.wrongTotal ?? 0;
+  // The date is the relay's. The vault's own is not printed.
+  final set = [
+    'Set',
+    if (account.pinSetAt case final setAt?) accountDate(setAt),
+    if (device != null) 'on $device',
+  ];
   return [
-    'Set ${accountDate(pin.setAt)}${device == null ? '' : ' on $device'}.',
+    if (set.length > 1) '${set.join(' ')}.',
     if (relay != null) ...[
       relay.lastUnlockAt == 0
           ? 'Not used yet.'

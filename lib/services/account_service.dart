@@ -315,18 +315,26 @@ class AccountService extends ChangeNotifier {
   /// under the id it knows. [deviceName] is who the vault says set it,
   /// which any member can write. It is null when the vault names no device
   /// in the list, and for a record written again, which the vault does not
-  /// tell of.
-  ({int setAt, String? deviceName})? get newPinNotice {
+  /// tell of. `setAt` is [pinSetAt].
+  ({int? setAt, String? deviceName})? get newPinNotice {
     final pin = _vault?.pin;
     if (_keys == null || pin == null) return null;
+    final setAt = pinSetAt;
     if (pin.mark != _knownPin) {
-      return (setAt: pin.setAt, deviceName: deviceNameOf(pin.setBy));
+      return (setAt: setAt, deviceName: deviceNameOf(pin.setBy));
     }
     final known = _knownPinSetAt;
-    final relay = _relayPin;
-    final setAt = relay?.id == pin.id ? relay?.setAt : null;
     if (known == null || setAt == null || setAt == known) return null;
     return (setAt: setAt, deviceName: null);
+  }
+
+  /// When the relay says the vault's PIN was set, or null when the relay
+  /// holds another PIN or none, or names no time. The `setAt` in the vault
+  /// is whatever the device that wrote it chose, so no screen prints it.
+  int? get pinSetAt {
+    final pin = _vault?.pin;
+    final relay = _relayPin;
+    return pin != null && relay?.id == pin.id ? relay?.setAt : null;
   }
 
   /// Drive holds a valid key file for an account this device does not
@@ -1732,9 +1740,8 @@ class AccountService extends ChangeNotifier {
   Future<void> acknowledgeNewPin() async {
     final pin = _vault?.pin;
     if (_keys == null || pin == null) return;
-    final relay = _relayPin;
     _knownPin = pin.mark;
-    _knownPinSetAt = relay?.id == pin.id ? relay?.setAt : null;
+    _knownPinSetAt = pinSetAt;
     await _persist();
     notifyListeners();
   }

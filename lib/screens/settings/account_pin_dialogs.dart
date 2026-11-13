@@ -794,15 +794,17 @@ Future<PinNoticeChoice?> showWrongTriesDialog(
 
 /// The account has a PIN this device did not know. [deviceName] is what
 /// the vault says set it, or null when it names no device in the list.
+/// [setAt] is the relay's time for the PIN, or null when it gave none, and
+/// then the notice prints no date.
 Future<PinNoticeChoice?> showNewPinDialog(
   BuildContext context, {
-  required int setAt,
+  required int? setAt,
   required String? deviceName,
 }) => _showNotice(
   context,
   title: 'New account PIN',
   text:
-      'The account PIN changed on ${accountDate(setAt)}. '
+      'The account PIN changed${setAt == null ? '' : ' on ${accountDate(setAt)}'}. '
       '${deviceName == null ? 'The account does not say which device did it.' : 'The account says $deviceName did it.'} '
       'If that was not you, remove any device you do not know and set a new '
       'PIN.',

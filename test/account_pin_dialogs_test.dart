@@ -997,6 +997,15 @@ void main() {
         accountPinSummary(c.service),
         'Set $day on Pixel. Not used yet. 0 wrong tries.',
       );
+
+      // A relay that names no time for the PIN gets no date printed. The
+      // vault's own date is whatever its writer chose.
+      alone.sendsSetAt = false;
+      await c.sync();
+      expect(
+        accountPinSummary(c.service),
+        'Set on Pixel. Not used yet. 0 wrong tries.',
+      );
     },
   );
 }
