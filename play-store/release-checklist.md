@@ -178,7 +178,7 @@ The following is historical only. Use the current audit above for release decisi
 - Users can report an AI response with explicit consent and a selected reason.
 - A SocketAgent-specific privacy policy is prepared in HTML and Markdown.
 - App icon and feature graphic meet Play's required dimensions.
-- Four 1080 × 2400 phone screenshots are prepared in `play-store/screenshots/`.
+- Eight 1080 × 2400 phone screenshots are prepared in `play-store/screenshots/`.
 - Store listing copy is recorded in `play-store/listing.md` and saved as a Play Console draft.
 - Play bundle `1.0.246+248` is built at `build/app/outputs/bundle/playRelease/app-play-release.aab`.
 - Bundle SHA-256: `b36be9e08144a4c0f0a39edf9888708a36264d341c6e3e1a43b41ce3b6e13666`.
@@ -207,7 +207,7 @@ The following is historical only. Use the current audit above for release decisi
 2. Complete App access with the reusable reviewer instructions and private credentials.
 3. Set the target audience to adults 18 and older.
 4. Submit the completed Data Safety questionnaire.
-5. Upload the four prepared phone screenshots.
+5. Upload the eight prepared phone screenshots.
 6. Replace the stale internal-testing bundle `1.0.245+247` with the current `1.0.246+248` bundle.
 7. Create and select a SocketAgent-specific internal tester list, then roll out the internal release.
 8. Verify the Play subscription product, base plan, price, grace period, and account-hold settings before production.
