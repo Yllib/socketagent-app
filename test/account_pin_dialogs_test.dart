@@ -294,15 +294,20 @@ void main() {
       expect(_button('Set PIN'), findsOneWidget);
     });
 
-    testWidgets('has the number pad until Use letters', (tester) async {
+    testWidgets('switches between the number pad and the full keyboard', (
+      tester,
+    ) async {
       await open(tester);
       TextInputType? keyboard() =>
           tester.widget<TextField>(_field('PIN')).keyboardType;
       expect(keyboard(), TextInputType.number);
-      await tester.tap(find.text('Use letters'));
+      await tester.tap(find.text('Use a password instead'));
       await tester.pump();
       expect(keyboard(), TextInputType.visiblePassword);
-      expect(find.text('Use letters'), findsNothing);
+      await tester.tap(find.text('Use a PIN instead'));
+      await tester.pump();
+      expect(keyboard(), TextInputType.number);
+      expect(find.text('Use a password instead'), findsOneWidget);
     });
   });
 

@@ -181,7 +181,8 @@ class _SetPinDialogState extends State<SetPinDialog> {
     autocorrect: false,
     enableSuggestions: false,
     maxLength: pinMaxLength,
-    // The number pad until "Use letters", since most PINs are digits.
+    // The number pad unless "Use a password instead" is on, since most PINs
+    // are digits. The button switches back and forth and keeps what is typed.
     keyboardType: _letters
         ? TextInputType.visiblePassword
         : TextInputType.number,
@@ -242,13 +243,14 @@ class _SetPinDialogState extends State<SetPinDialog> {
             const Text(_lastLine),
             _field(_pin, 'PIN', _pinError, autofocus: true),
             _field(_again, 'Again', _againError),
-            if (!_letters)
-              TextButton(
-                onPressed: _working
-                    ? null
-                    : () => setState(() => _letters = true),
-                child: const Text('Use letters'),
+            TextButton(
+              onPressed: _working
+                  ? null
+                  : () => setState(() => _letters = !_letters),
+              child: Text(
+                _letters ? 'Use a PIN instead' : 'Use a password instead',
               ),
+            ),
             if (_error case final error?)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
