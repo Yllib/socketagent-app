@@ -16,7 +16,9 @@ public static class SocketAgentInstallerWindow {
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint message, IntPtr wparam, IntPtr lparam);
 }
 '@
-  $window = [SocketAgentInstallerWindow]::FindWindow('SOCKETAGENT_DESKTOP_WINDOW', $null)
+  # PowerShell passes $null to a string parameter as an empty title, which
+  # matches no window.
+  $window = [SocketAgentInstallerWindow]::FindWindow('SOCKETAGENT_DESKTOP_WINDOW', [NullString]::Value)
   [uint32]$windowPid = 0
   if ($window -ne [IntPtr]::Zero) {
     [SocketAgentInstallerWindow]::GetWindowThreadProcessId($window, [ref]$windowPid) | Out-Null
