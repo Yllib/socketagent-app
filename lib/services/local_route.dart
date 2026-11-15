@@ -149,17 +149,25 @@ Stream<String> discoverLanHosts(String routeId) {
       final active = BonsoirDiscovery(type: lanServiceType, printLogs: false);
       discovery = active;
       await active.initialize();
+      void offer(BonsoirService service) {
+        if (service.attributes['id'] != routeId) return;
+        for (final host in advertisedHosts(service)) {
+          if (!controller.isClosed) controller.add(host);
+        }
+      }
+
       events = active.eventStream?.listen((event) {
         switch (event) {
           case BonsoirDiscoveryServiceFoundEvent():
-            unawaited(event.service.resolve(active.serviceResolver));
+            if (needsResolve(event.service, routeId)) {
+              unawaited(event.service.resolve(active.serviceResolver));
+            } else {
+              offer(event.service);
+            }
           case BonsoirDiscoveryServiceResolvedEvent() ||
               BonsoirDiscoveryServiceUpdatedEvent():
             final service = event.service;
-            if (service == null || service.attributes['id'] != routeId) return;
-            for (final host in advertisedHosts(service)) {
-              if (!controller.isClosed) controller.add(host);
-            }
+            if (service != null) offer(service);
           default:
         }
       });
@@ -181,6 +189,19 @@ Stream<String> discoverLanHosts(String routeId) {
     },
   );
   return controller.stream;
+}
+
+/// Whether a service the browse just found has to be resolved before its
+/// addresses are known. Windows reports the TXT record with the service, so
+/// there another server needs nothing more, and ours only when it listed no
+/// address. Android reports the TXT record only after resolving. Skipping the
+/// resolve matters on Windows, where every one leaves a thread behind for
+/// the life of the app.
+@visibleForTesting
+bool needsResolve(BonsoirService service, String routeId) {
+  final id = service.attributes['id'];
+  if (id == null) return true;
+  return id == routeId && advertisedHosts(service).isEmpty;
 }
 
 /// The server's ranked LAN addresses from its TXT record, then any other IPv4

@@ -72,6 +72,12 @@ dev_dependencies:
   shared_preferences_windows: ^2.4.1
   cross_file: ^0.3.5+5
 
+# The published Windows plugin crashes and freezes the desktop app; see
+# third_party/bonsoir_windows/README.md.
+dependency_overrides:
+  bonsoir_windows:
+    path: third_party/bonsoir_windows
+
 flutter:
   uses-material-design: true
   # iOS plugins come from CocoaPods. Swift Package Manager stalled this build

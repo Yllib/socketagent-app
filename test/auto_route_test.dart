@@ -62,6 +62,27 @@ void main() {
     ]);
   });
 
+  test(
+    'a found service is resolved only when its TXT record is not enough',
+    () {
+      BonsoirService found(Map<String, String> attributes) => BonsoirService(
+        name: 'socketagent-x',
+        type: lanServiceType,
+        port: 0,
+        attributes: attributes,
+      );
+      // Android: no TXT record until the service is resolved.
+      expect(needsResolve(found({}), 'x'), isTrue);
+      // Windows: the TXT record came with the service.
+      expect(
+        needsResolve(found({'id': 'x', 'hosts': '10.0.0.5'}), 'x'),
+        isFalse,
+      );
+      expect(needsResolve(found({'id': 'other'}), 'x'), isFalse);
+      expect(needsResolve(found({'id': 'x'}), 'x'), isTrue);
+    },
+  );
+
   test('the finder falls back to the address the server advertises', () async {
     final advertised = StreamController<String>();
     final finder = LocalRouteFinder(

@@ -13,6 +13,7 @@ analyzer:
     - android/**
     - windows/**
     - ios/**
+    - third_party/**
 include: package:flutter_lints/flutter.yaml
 
 linter:
