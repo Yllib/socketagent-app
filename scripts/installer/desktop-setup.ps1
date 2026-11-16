@@ -7,7 +7,9 @@ param(
     # For Fetch: a local SocketAgent-windows-x64.zip to install instead of the
     # latest release, and the folder to unpack it into.
     [string]$Package,
-    [string]$PackageDirectory
+    [string]$PackageDirectory,
+    # For Fetch: setup creates this file when the user cancels the download.
+    [string]$CancelFile
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -46,6 +48,79 @@ public static class SetupWindow {
     }
 }
 
+# How long a web request may wait: for DNS, connect, TLS and the response
+# headers, then for any one read of the body. A slow download is fine as long
+# as bytes keep arriving. The script variables let the test shorten them.
+$ConnectTimeoutMs = 15000
+$ReadTimeoutMs = 30000
+
+function Test-Cancelled {
+    return [bool]$CancelFile -and (Test-Path -LiteralPath $CancelFile)
+}
+
+# Starts a GET and returns the response; the caller closes it. Used instead of
+# Invoke-WebRequest, which has no time limit in Windows PowerShell: a request
+# that stalled when the network dropped left setup waiting until the user
+# ended the task.
+function Open-WebResponse([string]$Url, [string]$Accept) {
+    $request = [Net.HttpWebRequest]::Create($Url)
+    $request.Timeout = $ConnectTimeoutMs
+    $request.ReadWriteTimeout = $ReadTimeoutMs
+    $request.UserAgent = 'SocketAgent-Desktop-Setup'
+    if ($Accept) { $request.Accept = $Accept }
+    $request.Headers['Cache-Control'] = 'no-cache'
+    return $request.GetResponse()
+}
+
+function Get-WebJson([string]$Url) {
+    $response = Open-WebResponse $Url 'application/vnd.github+json'
+    try {
+        $reader = New-Object IO.StreamReader($response.GetResponseStream())
+        return $reader.ReadToEnd() | ConvertFrom-Json
+    } finally {
+        $response.Close()
+    }
+}
+
+# Downloads $Url to $Path, reporting progress as PHASE lines that start with
+# $Label. Stops, and removes the partial file, when the download stalls or the
+# user cancels.
+function Save-WebFile([string]$Url, [string]$Path, [string]$Label) {
+    try {
+        $response = Open-WebResponse $Url ''
+        try {
+            $total = $response.ContentLength
+            $source = $response.GetResponseStream()
+            $target = [IO.File]::Create($Path)
+            try {
+                $buffer = New-Object byte[] 81920
+                [long]$done = 0
+                $shown = 0
+                while (($read = $source.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    if (Test-Cancelled) { throw 'cancelled' }
+                    $target.Write($buffer, 0, $read)
+                    $done += $read
+                    if ($total -gt 0) {
+                        $percent = [int][Math]::Floor(100 * $done / $total)
+                        if ($percent -ge $shown + 5) {
+                            $shown = $percent
+                            Write-Output "PHASE:$Label, $percent%"
+                        }
+                    }
+                }
+            } finally {
+                $target.Dispose()
+            }
+        } finally {
+            $response.Close()
+        }
+    } catch {
+        if (Test-Path -LiteralPath $Path) { Remove-Item -LiteralPath $Path -Force }
+        if (Test-Cancelled) { throw 'Setup was cancelled. Nothing was changed.' }
+        throw 'The download stopped. Check your internet connection and retry.'
+    }
+}
+
 # Downloads the newest released app build, checks it against the SHA-256 GitHub
 # publishes for it, and unpacks it for setup to install. The installer carries
 # no app files, so it only needs rebuilding (and signing) when setup changes.
@@ -58,12 +133,16 @@ function Get-DesktopPackage {
         Write-Output 'PHASE:Finding the latest SocketAgent Desktop release'
         $asset = $null
         # GitHub can keep serving a stale or empty list for the same URL, so
-        # each try uses a new URL, and tries continue for about 5 seconds.
+        # each try uses a new URL, and tries continue for about 5 seconds. With
+        # no network each try can take the full connect timeout, so tries also
+        # stop once 30 seconds have gone by.
+        $giveUp = (Get-Date).AddSeconds(30)
         foreach ($delay in @(0, 500, 1000, 1500, 2000)) {
+            if ((Test-Cancelled) -or (Get-Date) -gt $giveUp) { break }
             Start-Sleep -Milliseconds $delay
             $cacheBust = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             try {
-                $releases = Invoke-RestMethod -UseBasicParsing -Headers @{ Accept = 'application/vnd.github+json'; 'Cache-Control' = 'no-cache' } "https://api.github.com/repos/Yllib/socketagent/releases?per_page=30&t=$cacheBust"
+                $releases = Get-WebJson "https://api.github.com/repos/Yllib/socketagent/releases?per_page=30&t=$cacheBust"
             } catch {
                 continue
             }
@@ -75,10 +154,11 @@ function Get-DesktopPackage {
             }
             if ($asset) { break }
         }
+        if (Test-Cancelled) { throw 'Setup was cancelled. Nothing was changed.' }
         if (!$asset) { throw 'No SocketAgent Desktop release is available to download. Check your internet connection and retry.' }
         $zip = Join-Path $env:TEMP "socketagent-desktop-$version.zip"
         Write-Output "PHASE:Downloading SocketAgent Desktop $version"
-        Invoke-WebRequest -UseBasicParsing $asset.browser_download_url -OutFile $zip
+        Save-WebFile $asset.browser_download_url $zip "Downloading SocketAgent Desktop $version"
         if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zip).Hash -ine $asset.digest.Substring(7)) {
             Remove-Item -LiteralPath $zip -Force
             throw 'The download did not match the published release. Retry setup.'

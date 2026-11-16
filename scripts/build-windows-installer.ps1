@@ -12,6 +12,7 @@ $root = Split-Path $PSScriptRoot -Parent
 if (!$SupportDirectory) { $SupportDirectory = Join-Path $root 'build/installer-input' }
 if (!$OutputDirectory) { $OutputDirectory = Join-Path $root 'build/windows/packages' }
 & "$PSScriptRoot/installer/test-server-discovery.ps1"
+& "$PSScriptRoot/installer/test-desktop-setup.ps1"
 $compiler = Join-Path $env:LOCALAPPDATA 'Programs/Inno Setup 6/ISCC.exe'
 if (!(Test-Path $compiler)) {
     $download = Join-Path $env:TEMP 'socketagent-inno-6.7.3.exe'

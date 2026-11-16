@@ -68,7 +68,7 @@ var
   StatusText, FolderLabel, Explanation: TNewStaticText;
   ServerChoice: TNewCheckBox;
   FolderEdit: TNewEdit;
-  BrowseButton, RefreshButton: TNewButton;
+  BrowseButton, RefreshButton, CancelDownloadButton: TNewButton;
   // ActiveProgress is whichever page helper output (PHASE: lines) updates.
   Progress, DownloadProgress, ActiveProgress: TOutputMarqueeProgressWizardPage;
   ServerStatus, ServerDirectory, ServerTask, LastError, ProgressTitle: String;
@@ -76,6 +76,9 @@ var
   // account reaches by pairing rather than by reading its token.
   ServerReady, Detecting, ServerShared: Boolean;
   PackageVersion: String;
+
+function EnableWindow(Wnd: HWND; Enable: BOOL): BOOL;
+  external 'EnableWindow@user32.dll stdcall';
 
 function IsAppUpdate: Boolean;
 begin
@@ -94,6 +97,11 @@ end;
 
 procedure OnSetupOutput(const S: String; const Error, FirstLine: Boolean);
 begin
+  // Inno disables every setup window while a helper runs. The download page
+  // has a Cancel button, so turn the wizard back on once the helper is up.
+  // The wizard's own buttons are hidden on that page, and closing the window
+  // does nothing while they are.
+  if ActiveProgress = DownloadProgress then EnableWindow(WizardForm.Handle, True);
   if Pos('PHASE:', S) = 1 then
     ActiveProgress.SetText(ProgressTitle, Copy(S, 7, Length(S)))
   else if Pos('ERROR:', S) = 1 then
@@ -115,8 +123,23 @@ begin
   if not Result and (LastError = '') then LastError := 'Server setup did not finish. You can retry or continue without a local server.';
 end;
 
+// The download helper watches for this file and stops when it appears. Setup
+// cannot stop the helper itself while it waits on it.
+function CancelDownloadFile: String;
+begin
+  Result := ExpandConstant('{tmp}\cancel-download');
+end;
+
+procedure CancelDownloadClicked(Sender: TObject);
+begin
+  SaveStringToFile(CancelDownloadFile, '', False);
+  CancelDownloadButton.Enabled := False;
+  DownloadProgress.SetText(ProgressTitle, 'Cancelling...');
+end;
+
 // Downloads and unpacks the app build into {tmp}\package. Runs before the
-// running app is asked to quit, so a failed download leaves it untouched.
+// running app is asked to quit, so a failed or cancelled download leaves it
+// untouched.
 function FetchPackage: Boolean;
 var
   Code: Integer;
@@ -124,8 +147,11 @@ var
 begin
   LastError := '';
   ResultFile := ExpandConstant('{tmp}\package.ini');
+  DeleteFile(CancelDownloadFile);
+  CancelDownloadButton.Enabled := True;
   Params := '-NoProfile -ExecutionPolicy Bypass -File ' + Quote(ExpandConstant('{tmp}\desktop-setup.ps1')) +
-    ' -Action Fetch -ResultFile ' + Quote(ResultFile) + ' -PackageDirectory ' + Quote(ExpandConstant('{tmp}\package'));
+    ' -Action Fetch -ResultFile ' + Quote(ResultFile) + ' -PackageDirectory ' + Quote(ExpandConstant('{tmp}\package')) +
+    ' -CancelFile ' + Quote(CancelDownloadFile);
   if ExpandConstant('{param:PACKAGE|}') <> '' then
     Params := Params + ' -Package ' + Quote(ExpandConstant('{param:PACKAGE|}'));
   ProgressTitle := 'Downloading SocketAgent Desktop';
@@ -140,6 +166,11 @@ begin
     ActiveProgress := Progress;
   end;
   Result := Result and (Code = 0);
+  // A click that landed after the helper's last look at the file still cancels.
+  if Result and FileExists(CancelDownloadFile) then begin
+    Result := False;
+    LastError := 'Setup was cancelled. Nothing was changed.';
+  end;
   if Result then
     PackageVersion := GetIniString('package', 'version', '', ResultFile)
   else if LastError = '' then
@@ -261,6 +292,13 @@ begin
   RefreshButton.OnClick := @RefreshClicked;
   Progress := CreateOutputMarqueeProgressPage('Local server', 'Setting up your connection');
   DownloadProgress := CreateOutputMarqueeProgressPage('SocketAgent Desktop', 'Getting the app');
+  // The wizard's own Cancel is hidden on a progress page, and in an update
+  // this page is all the user sees.
+  CancelDownloadButton := TNewButton.Create(DownloadProgress);
+  CancelDownloadButton.Parent := DownloadProgress.Surface;
+  CancelDownloadButton.SetBounds(DownloadProgress.SurfaceWidth - ScaleX(80), DownloadProgress.ProgressBar.Top + DownloadProgress.ProgressBar.Height + ScaleY(20), ScaleX(80), ScaleY(25));
+  CancelDownloadButton.Caption := 'Cancel';
+  CancelDownloadButton.OnClick := @CancelDownloadClicked;
   ActiveProgress := Progress;
 end;
 
