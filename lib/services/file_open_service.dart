@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 
 import '../config/app_distribution.dart';
+import 'package:app/platform/app_platform.dart';
 
 enum FileOpenOutcome { opened, needsApkPermission, failed }
 
@@ -78,14 +79,16 @@ class FileOpenService {
     DesktopCommandRunner? desktopCommandRunner,
   }) : _nativeChannel = nativeChannel,
        _platformFileOpener = platformFileOpener,
-       _isAndroid = isAndroid ?? Platform.isAndroid,
+       _isAndroid = isAndroid ?? AppPlatform.isAndroid,
        _supportsApkInstalls =
            supportsApkInstalls ?? AppBuild.supportsApkInstalls,
        // Gated on Android so a test naming a mobile platform is not treated as
        // the Linux host it runs on.
        _desktopPlatform =
            desktopPlatform ??
-           ((isAndroid ?? Platform.isAndroid) ? '' : _currentDesktopPlatform()),
+           ((isAndroid ?? AppPlatform.isAndroid)
+               ? ''
+               : _currentDesktopPlatform()),
        _desktopCommandRunner = desktopCommandRunner ?? _runDesktopCommand;
 
   final MethodChannel _nativeChannel;
@@ -98,9 +101,9 @@ class FileOpenService {
   final DesktopCommandRunner _desktopCommandRunner;
 
   static String _currentDesktopPlatform() {
-    if (Platform.isWindows) return 'windows';
-    if (Platform.isMacOS) return 'macos';
-    if (Platform.isLinux) return 'linux';
+    if (AppPlatform.isWindows) return 'windows';
+    if (AppPlatform.isMacOS) return 'macos';
+    if (AppPlatform.isLinux) return 'linux';
     return '';
   }
 
@@ -112,7 +115,7 @@ class FileOpenService {
     ),
     bool? isAndroid,
   }) async {
-    if (!(isAndroid ?? Platform.isAndroid) ||
+    if (!(isAndroid ?? AppPlatform.isAndroid) ||
         path.toLowerCase().endsWith('.apk')) {
       return OpenFilex.open(path, type: type);
     }

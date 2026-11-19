@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -22,6 +21,7 @@ import 'computers/backend_auth.dart' show showBackendSignIn;
 import 'computers/computers_screen.dart';
 import 'settings/settings_v2_screen.dart';
 import 'paywall_screen.dart';
+import 'package:app/platform/app_platform.dart';
 
 class MainShellScreen extends StatefulWidget {
   const MainShellScreen({super.key, this.initialIndex = 0});
@@ -64,7 +64,7 @@ class MainShellScreenState extends State<MainShellScreen>
     super.initState();
     _currentIndex = widget.initialIndex.clamp(0, settingsIndex).toInt();
     WidgetsBinding.instance.addObserver(this);
-    if (Platform.isWindows) {
+    if (AppPlatform.isWindows) {
       HardwareKeyboard.instance.addHandler(_handleDesktopShortcut);
     }
     _updateService.addListener(_onUpdateChange);
@@ -186,7 +186,7 @@ class MainShellScreenState extends State<MainShellScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (Platform.isWindows && _desktopController == null) {
+    if (AppPlatform.isWindows && _desktopController == null) {
       _desktopController = context.read<DesktopWorkspaceController>();
       _desktopController!.addListener(_openDesktopConversation);
     }
@@ -287,12 +287,12 @@ class MainShellScreenState extends State<MainShellScreen>
 
   @override
   void didPushNext() {
-    if (Platform.isWindows) setState(() => _desktopRouteVisible = false);
+    if (AppPlatform.isWindows) setState(() => _desktopRouteVisible = false);
   }
 
   @override
   void didPopNext() {
-    if (Platform.isWindows) setState(() => _desktopRouteVisible = true);
+    if (AppPlatform.isWindows) setState(() => _desktopRouteVisible = true);
     // Returning from HomeScreen — refresh sessions
     context.read<ChatProvider>().requestSessionList();
   }
@@ -432,7 +432,7 @@ class MainShellScreenState extends State<MainShellScreen>
       child: Scaffold(
         body: Row(
           children: [
-            if (Platform.isWindows) ...[
+            if (AppPlatform.isWindows) ...[
               Selector<ChatProvider, int>(
                 selector: (_, provider) => provider.unreadScheduledTaskCount,
                 builder: (context, unreadTasks, _) => NavigationRail(
@@ -477,7 +477,7 @@ class MainShellScreenState extends State<MainShellScreen>
                 children: [
                   // The desktop tab holds the open chat beside the sidebar,
                   // so it keeps listening while covered.
-                  if (Platform.isWindows)
+                  if (AppPlatform.isWindows)
                     _desktopSessions()
                   else
                     const PauseWhileHidden<ChatProvider>(child: SessionsTab()),
@@ -491,7 +491,7 @@ class MainShellScreenState extends State<MainShellScreen>
             ),
           ],
         ),
-        bottomNavigationBar: Platform.isWindows
+        bottomNavigationBar: AppPlatform.isWindows
             ? null
             : Selector<ChatProvider, int>(
                 selector: (_, provider) => provider.unreadScheduledTaskCount,

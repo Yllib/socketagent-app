@@ -1,6 +1,5 @@
-import 'dart:io';
-
 import 'package:flutter/services.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Asks the device to confirm its owner before the app reveals a secret
 /// such as the account recovery key.
@@ -16,7 +15,7 @@ class DeviceUnlock {
   final MethodChannel _channel;
 
   /// Whether this platform can ask the system for a credential check.
-  bool get isSupported => Platform.isAndroid;
+  bool get isSupported => AppPlatform.isAndroid;
 
   /// Resolves true once the user has unlocked, false if they backed out.
   Future<bool> confirm({

@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:io' show Platform;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Microphone and speaker loudness, each 0..1.
 typedef RealtimeLevels = ({double input, double output});
@@ -44,7 +44,7 @@ class WebRtcRealtimeCall implements RealtimeCall {
 
   @override
   Future<String> createOffer() async {
-    if (!kIsWeb && Platform.isAndroid) {
+    if (!kIsWeb && AppPlatform.isAndroid) {
       // Voice-call audio mode keeps hardware echo cancellation on and lets the
       // speakerphone toggle route audio.
       await Helper.setAndroidAudioConfiguration(
@@ -159,7 +159,7 @@ class WebRtcRealtimeCall implements RealtimeCall {
 
   @override
   Future<void> setSpeakerphone(bool enabled) async {
-    if (kIsWeb || !(Platform.isAndroid || Platform.isIOS)) return;
+    if (kIsWeb || !(AppPlatform.isAndroid || AppPlatform.isIOS)) return;
     await Helper.setSpeakerphoneOn(enabled);
   }
 

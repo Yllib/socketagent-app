@@ -752,6 +752,42 @@ Future<void> removeAccountDevice(
   }
 }
 
+/// Signs every browser out: removes the shared web key, which changes the
+/// master key like any Remove. The next browser to sign in makes a new one.
+Future<void> signOutAllBrowsers(
+  BuildContext context,
+  AccountService account,
+  VaultDevice web,
+) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: const Text('Sign out all browsers?'),
+      content: const Text(
+        'Every browser signed in to this account signs out and loses its '
+        'computers. A browser can sign in again with Google and the PIN.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(ctx).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: ctx.palette.danger),
+          onPressed: () => Navigator.of(ctx).pop(true),
+          child: const Text('Sign out all'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true || !context.mounted) return;
+  if (account.pinState == AccountPinState.none) {
+    await setFirstAccountPin(context, account, untick: web.publicKey);
+  } else {
+    await account.removeDevice(web.publicKey);
+  }
+}
+
 // ────────── Notices ──────────
 
 /// What the user answered to a notice.

@@ -1,14 +1,18 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../platform/app_platform.dart';
+import '../platform/web_kv.dart';
 import 'replace_file.dart';
+import 'package:app/platform/off_main.dart';
 
 /// Serializes bulk app data away from the UI isolate. Writes are atomic and
 /// coalesced, so a slow disk cannot build an unbounded queue of stale snapshots.
+/// The web build keeps the same JSON in IndexedDB under `json:<name>`.
 class BackgroundJsonStore {
   BackgroundJsonStore(this.name, {Directory? directory})
     : _directory = directory;
@@ -29,8 +33,9 @@ class BackgroundJsonStore {
     SharedPreferences? legacyPreferences,
     String? legacyKey,
   }) async {
+    if (AppPlatform.isWeb) return _decode(await WebKv.read('json:$name'));
     final path = await _resolvePath();
-    final loaded = await Isolate.run(() async {
+    final loaded = await runOffMain(() async {
       final file = File(path);
       if (!await file.exists()) return null;
       final value = jsonDecode(await file.readAsString());
@@ -44,7 +49,7 @@ class BackgroundJsonStore {
       return loaded;
     }
     if (legacy == null) return null;
-    final decoded = await Isolate.run(() => jsonDecode(legacy));
+    final decoded = await runOffMain(() => jsonDecode(legacy));
     if (decoded is! Map<String, dynamic>) return null;
     // Do not remove the old copy until the replacement is safely on disk.
     await save(decoded);
@@ -59,11 +64,19 @@ class BackgroundJsonStore {
 
   Future<void> _drain() async {
     try {
+      if (AppPlatform.isWeb) {
+        while (_pending != null) {
+          final snapshot = _pending!;
+          _pending = null;
+          await WebKv.write('json:$name', jsonEncode(snapshot));
+        }
+        return;
+      }
       final path = await _resolvePath();
       while (_pending != null) {
         final snapshot = _pending!;
         _pending = null;
-        await Isolate.run(() async {
+        await runOffMain(() async {
           final temp = File('$path.tmp');
           await temp.writeAsString(jsonEncode(snapshot), flush: true);
           await replaceFile(temp, path);
@@ -72,5 +85,11 @@ class BackgroundJsonStore {
     } finally {
       _writing = null;
     }
+  }
+
+  static Map<String, dynamic>? _decode(String? text) {
+    if (text == null) return null;
+    final value = jsonDecode(text);
+    return value is Map<String, dynamic> ? value : null;
   }
 }

@@ -1,4 +1,3 @@
-import 'dart:io';
 import '../widgets/desktop_qr_import_button.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -7,6 +6,7 @@ import '../models/server_config.dart';
 import '../services/crypto_service.dart';
 import '../services/transport_v2.dart';
 import '../config/app_palette.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// A scanned pairing code. Every code pairs the relay; newer servers also
 /// include [local], the details for connecting directly on the same network.
@@ -179,7 +179,7 @@ class PairScreen extends StatefulWidget {
   /// Whether this is the desktop app, which has no camera to scan with and
   /// opens on the paste field. Tests turn it on to reach that field.
   @visibleForTesting
-  static bool desktop = Platform.isWindows;
+  static bool desktop = AppPlatform.isWindows;
   final CryptoService cryptoService;
 
   const PairScreen({super.key, required this.cryptoService});

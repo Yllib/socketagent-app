@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/chat_provider.dart';
@@ -9,6 +8,7 @@ import '../../services/tts_engine.dart';
 import '../../widgets/speech_recognition_controls.dart';
 import 'settings_v2_screen.dart';
 import '../../widgets/app_bottom_sheet.dart';
+import 'package:app/platform/app_platform.dart';
 
 class VoiceSpeechScreen extends StatelessWidget {
   const VoiceSpeechScreen({super.key});
@@ -44,7 +44,7 @@ class VoiceSpeechScreen extends StatelessWidget {
       backgroundColor: Theme.of(context).colorScheme.surface,
       foregroundColor: Theme.of(context).colorScheme.onSurface,
       actions: [
-        if (Platform.isAndroid)
+        if (AppPlatform.isAndroid)
           PopupMenuButton<String>(
             tooltip: 'More options',
             itemBuilder: (_) => [

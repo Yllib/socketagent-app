@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:isolate';
 import 'package:crypto/crypto.dart';
 
 import 'package:path_provider/path_provider.dart';
 import 'replace_file.dart';
+import 'package:app/platform/off_main.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 
 Map<String, dynamic> _retainFileDelivery(
   Map<String, dynamic> incoming,
@@ -412,7 +413,7 @@ class SessionTranscriptCache {
       final file = File('${directory.path}/${_fileName(key)}');
       if (!await file.exists()) return null;
       final raw = await file.readAsString();
-      final decoded = await Isolate.run(() => jsonDecode(raw));
+      final decoded = await runOffMain(() => jsonDecode(raw));
       if ((_generations[key] ?? 0) != generation) return _memory[key];
       if (!isCurrentTranscriptCacheEnvelope(decoded)) {
         await file.delete().catchError((_) => file);
@@ -511,7 +512,7 @@ class SessionTranscriptCache {
       await write;
     } catch (error) {
       // Cache failures must never prevent opening a session.
-      stderr.writeln('[TranscriptCache] Could not persist snapshot: $error');
+      debugPrint('[TranscriptCache] Could not persist snapshot: $error');
     } finally {
       if (identical(_pendingWrites[key], write)) {
         _pendingWrites.remove(key);
@@ -531,7 +532,7 @@ class SessionTranscriptCache {
       } catch (_) {}
     }
     if (_generations[key] != generation) return;
-    final encoded = await Isolate.run(() {
+    final encoded = await runOffMain(() {
       final json = jsonEncode(wrapper);
       return utf8.encode(json).length <= maxSnapshotBytes ? json : null;
     });

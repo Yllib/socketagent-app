@@ -8,6 +8,7 @@ import '../services/chat_provider.dart';
 import '../services/file_open_service.dart';
 import '../util/format.dart';
 import '../config/app_palette.dart';
+import 'package:app/platform/app_platform.dart';
 
 class FileCard extends StatelessWidget {
   final ChatMessage message;
@@ -68,7 +69,7 @@ class FileCard extends StatelessWidget {
   }
 
   static bool get _desktop =>
-      Platform.isWindows || Platform.isMacOS || Platform.isLinux;
+      AppPlatform.isWindows || AppPlatform.isMacOS || AppPlatform.isLinux;
 
   /// Programs run when opened, so the desktop asks first: an agent sent it.
   Future<bool> _confirmRun(BuildContext context, String name) async =>

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:isolate';
 
 import 'package:crypto/crypto.dart' as hashes;
 import 'package:flutter/foundation.dart';
@@ -10,6 +9,7 @@ import 'package:sodium/sodium_sumo.dart'
 
 import 'account_crypto.dart';
 import 'nacl_cipher.dart';
+import 'package:app/platform/off_main.dart';
 
 // The account PIN's crypto. The Drive file holds the master key in a box
 // that opens only with a key made from the PIN and from a value the relay
@@ -112,7 +112,7 @@ Future<Uint8List> stretchPin(
     throw ArgumentError('The salt must be $pinSaltLength bytes');
   }
   try {
-    return await Isolate.run(() => _stretch(pin, salt, load));
+    return await runOffMain(() => _stretch(pin, salt, load));
   } catch (error) {
     debugPrint('[PIN] Argon2id did not run: ${error.runtimeType}');
     throw const PinStretchUnavailable();

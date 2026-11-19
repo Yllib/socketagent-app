@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +9,7 @@ import 'package:flutter_timezone/flutter_timezone.dart';
 import '../models/notification_navigation.dart';
 import '../config/app_distribution.dart';
 import 'desktop_window_service.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Small header label for notifications about a scheduled task's run. Push
 /// payloads for those sessions carry a `scheduledTaskId` query parameter.
@@ -143,7 +143,7 @@ class NotificationService {
 
   /// A toast on its own is easy to miss on the desktop.
   static void _flashTaskbar() {
-    if (!Platform.isWindows) return;
+    if (!AppPlatform.isWindows) return;
     unawaited(
       DesktopWindowService.instance.flash().catchError(
         (Object error) => debugPrint('[Notification] flash failed: $error'),
@@ -189,7 +189,7 @@ class NotificationService {
       ),
     );
 
-    final launchDetails = Platform.isWindows
+    final launchDetails = AppPlatform.isWindows
         ? null
         : await _plugin.getNotificationAppLaunchDetails();
     if (launchDetails?.didNotificationLaunchApp == true) {
@@ -199,7 +199,8 @@ class NotificationService {
     await _plugin.initialize(
       settings: initSettings,
       onDidReceiveNotificationResponse: (NotificationResponse response) {
-        if (Platform.isWindows) unawaited(DesktopWindowService.instance.show());
+        if (AppPlatform.isWindows)
+          unawaited(DesktopWindowService.instance.show());
         final payload = payloadForResponse(response);
         debugPrint('[Notification] tapped: $payload');
         if (onNotificationTap != null) {
@@ -459,7 +460,7 @@ class NotificationService {
   /// process knows the card's own, such as after an app restart.
   Future<bool> markSessionCompletionRead(int id, {required String payload}) {
     // iOS has no quiet channel to repost on; the card simply stays.
-    if (Platform.isIOS) return Future<bool>.value(true);
+    if (AppPlatform.isIOS) return Future<bool>.value(true);
     return _enqueueForId(id, () async {
       if (!_isInitialized) await initialize();
 
@@ -545,7 +546,7 @@ class NotificationService {
   Future<void> _refreshCompletedSessionSummary() {
     // Group summaries and progress cards are Android shade features. On iOS
     // every repost would be a fresh banner, so they are skipped there.
-    if (Platform.isWindows || Platform.isIOS) return Future<void>.value();
+    if (AppPlatform.isWindows || AppPlatform.isIOS) return Future<void>.value();
     final refresh = _groupRefreshTail.then((_) async {
       try {
         final active = await _plugin.getActiveNotifications();
@@ -575,7 +576,8 @@ class NotificationService {
   }
 
   Future<bool> syncActiveSessionSummary(int count) {
-    if (Platform.isWindows || Platform.isIOS) return Future<bool>.value(true);
+    if (AppPlatform.isWindows || AppPlatform.isIOS)
+      return Future<bool>.value(true);
     return _enqueueForId(activeSessionsSummaryId, () async {
       if (!_isInitialized) await initialize();
       try {
@@ -715,7 +717,8 @@ class NotificationService {
     List<AndroidNotificationAction>? actions,
     String? groupKey,
   }) {
-    if (Platform.isWindows || Platform.isIOS) return Future<bool>.value(true);
+    if (AppPlatform.isWindows || AppPlatform.isIOS)
+      return Future<bool>.value(true);
     return _enqueueForId(id, () async {
       if (!_isInitialized) await initialize();
 
@@ -795,7 +798,7 @@ class NotificationService {
   /// in place, and a card from an earlier run or an older app version would
   /// otherwise sit beside the new one.
   Future<void> _cancelOtherCardsWithId(int id, {String? keepTag}) async {
-    if (Platform.isWindows) return;
+    if (AppPlatform.isWindows) return;
     for (final notification in await _plugin.getActiveNotifications()) {
       if (notification.id != id || notification.tag == keepTag) continue;
       await _plugin.cancel(id: id, tag: notification.tag);

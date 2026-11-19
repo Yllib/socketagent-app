@@ -68,6 +68,7 @@ import '../models/device_approval_notification.dart';
 import '../models/device_registry.dart';
 import 'account_crypto.dart';
 import 'account_service.dart';
+import 'board_store.dart';
 import 'computer_links.dart';
 import 'device_auth.dart';
 import 'device_name.dart';
@@ -108,6 +109,9 @@ import '../models/visible_transcript_ledger.dart';
 import 'ai_response_report_service.dart';
 import '../config/app_distribution.dart';
 import '../util/format.dart';
+import 'package:app/platform/app_platform.dart';
+import 'package:app/platform/browser_label.dart';
+import 'package:pinenacl/api.dart' show PineNaClUtils;
 
 const _codexAgentControlTypes = {
   'wait',
@@ -1457,7 +1461,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   bool _isViewingSession(String sessionId, {String? serverId}) {
     if (!_appInForeground || _viewingSessionId != sessionId) return false;
-    if (Platform.isWindows &&
+    if (AppPlatform.isWindows &&
         (!DesktopWindowService.instance.value.visible ||
             !DesktopWindowService.instance.value.active)) {
       return false;
@@ -1581,7 +1585,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     bool notifyCompletion = true,
   }) {
     if (sessionId == null || sessionId.isEmpty) return;
-    if (Platform.isWindows && notifyCompletion) {
+    if (AppPlatform.isWindows && notifyCompletion) {
       final sid = serverId ?? _connMgr.activeServerId ?? '';
       final running =
           _runningSessionNotifications[_runningSessionKey(sid, sessionId)];
@@ -2516,6 +2520,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   @override
   void notifyListeners() {
     _watchTranscriptViews();
+    if (BoardStore.shared.secrets.isNotEmpty || _sentBoardGrants.isNotEmpty) {
+      _scheduleBoardGrants();
+    }
     if (_pendingInjectedMessageCount > 0) {
       _keepPendingInjectedMessagesAtEnd();
     }
@@ -2851,7 +2858,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _discoverLocalServer(SharedPreferences prefs) async {
-    if (Platform.isWindows) {
+    if (AppPlatform.isWindows) {
       final seen = (prefs.getStringList('windows_local_servers_seen') ?? [])
           .toSet();
       try {
@@ -4017,6 +4024,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Sync preferences and resume active session after (re)connect.
   /// If [serverId] is given, syncs only to that server; otherwise syncs to active.
   void _syncStateToServer({String? serverId}) {
+    if (serverId != null) _sentBoardGrants.remove(serverId);
+    if (BoardStore.shared.secrets.isNotEmpty) _scheduleBoardGrants();
     void sendTo(Map<String, dynamic> msg) {
       if (serverId != null) {
         _connMgr.sendToServer(serverId, msg);
@@ -4735,7 +4744,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       appVersion: '${packageInfo.version}+${packageInfo.buildNumber}',
       distribution: AppBuild.distributionName,
       platform:
-          '${Platform.operatingSystem} ${Platform.operatingSystemVersion}',
+          '${AppPlatform.operatingSystem} ${AppPlatform.operatingSystemVersion}',
       serverVersion: serverVersion,
       backend: _activeSessionBackend ?? '',
     );
@@ -5901,6 +5910,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'session_list':
           await _handleSessionList(msg, serverId);
+          break;
+        case 'project_board_member':
+          _handleProjectBoardMember(msg);
           break;
         case 'view_transition':
           if (serverId != null) await _applyViewTransition(msg, serverId);
@@ -8339,7 +8351,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   final AccountService account = AccountService();
   final CryptoService _deviceCrypto = CryptoService();
   String _deviceName = '';
-  final String _devicePlatform = Platform.operatingSystem;
+  final String _devicePlatform = AppPlatform.operatingSystem;
   StreamSubscription<ServerDeviceAuthUpdate>? _deviceAuthSub;
   final Map<String, DeviceAuthState> _deviceAuthStates = {};
   final Map<String, DeviceRegistry> _deviceRegistries = {};
@@ -8467,7 +8479,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     try {
       _deviceName = await localDeviceName();
     } catch (_) {
-      _deviceName = Platform.localHostname;
+      _deviceName = AppPlatform.localHostname;
     }
     try {
       await _deviceCrypto.ensureKeyPair();
@@ -8489,6 +8501,23 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  /// Web: this browser takes the account's shared web key as its device
+  /// key. Called while signing in, before any computer is added.
+  Future<void> _adoptWebDevice(VaultWebDevice web) async {
+    await _secureStorage.setRelaySecretKey(web.privateKey);
+    await _secureStorage.setRelayPublicKey(web.publicKey);
+    await _deviceCrypto.loadKeyPair();
+    account.devicePublicKey = devicePublicKey;
+  }
+
+  Future<String> _browserId() async {
+    final stored = await _secureStorage.getBrowserId();
+    if (stored != null && stored.isNotEmpty) return stored;
+    final id = base64UrlEncode(PineNaClUtils.randombytes(12));
+    await _secureStorage.setBrowserId(id);
+    return id;
+  }
+
   Future<void> _initAccount() async {
     account.readLocal = () => AccountLocalState(
       computers: _serverConfigs,
@@ -8497,6 +8526,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       pinnedSessionIds: _pinnedSessionIds,
       projects: _projects.names,
       sessionProjects: _projects.members,
+      boardSecrets: BoardStore.shared.secrets,
     );
     account.applyMerged = _applyAccountVault;
     account.relayHttpUrl = () => relayHttpUrl;
@@ -8506,8 +8536,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     account.devicePlatform = _devicePlatform;
     account.devicePublicKey = devicePublicKey;
     account.deviceKey = () => _deviceCrypto.privateKey;
+    if (AppPlatform.isWeb) {
+      account.adoptWebDevice = _adoptWebDevice;
+      account.browser = (id: await _browserId(), label: browserLabel());
+    }
     account.addListener(notifyListeners);
     await account.load();
+    // Board secrets must be loaded before the first sync reads them, or
+    // the sync would record every board as turned off. This waits for the
+    // secrets only; the cached cards load in the background.
+    final boards = BoardStore.shared;
+    await boards.ensureLoaded();
+    boards.onSecretsChanged = () {
+      account.syncSoon();
+      _scheduleBoardGrants();
+    };
+    boards.connect(() => relayHttpUrl);
     if (account.hasAccount) unawaited(account.sync());
   }
 
@@ -8606,6 +8650,69 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _persistProjects();
       notifyListeners();
     }
+    BoardStore.shared.applySecrets({
+      for (final b in merged.projectBoards) b.projectId: b.secret,
+    });
+  }
+
+  Timer? _boardGrantsTimer;
+
+  /// The grants message last sent to each computer, to skip repeats.
+  final Map<String, String> _sentBoardGrants = {};
+
+  void _scheduleBoardGrants() {
+    _boardGrantsTimer ??= Timer(const Duration(seconds: 1), () {
+      _boardGrantsTimer = null;
+      _sendBoardGrants();
+    });
+  }
+
+  /// Tells each connected computer which boards its agents may use: the
+  /// boards of projects that hold at least one of its chats. Each message
+  /// is the computer's full set and replaces what it held.
+  void _sendBoardGrants() {
+    final secrets = BoardStore.shared.secrets;
+    for (final config in _serverConfigs) {
+      if (_connMgr.statusOf(config.id) != ConnectionStatus.connected) continue;
+      final members = <String, List<String>>{};
+      for (final session in _sessions) {
+        if (session.serverId != config.id) continue;
+        final project = _projects.projectOf(session.id);
+        if (project != null && secrets.containsKey(project)) {
+          (members[project] ??= []).add(session.id);
+        }
+      }
+      final sent = _sentBoardGrants[config.id];
+      if (members.isEmpty && sent == null) continue;
+      final message = {
+        'type': 'project_board_grants',
+        'boards': [
+          for (final MapEntry(key: projectId, value: ids) in members.entries)
+            {
+              'projectId': projectId,
+              'name': _projects.names[projectId] ?? '',
+              'secret': secrets[projectId],
+              'sessionIds': ids..sort(),
+            },
+        ],
+      };
+      final encoded = jsonEncode(message);
+      if (encoded == sent) continue;
+      if (_connMgr.sendToServer(config.id, message)) {
+        _sentBoardGrants[config.id] = encoded;
+      }
+    }
+  }
+
+  /// An agent on [serverId] started a child chat for a chat in a project:
+  /// the child joins that project, so it can use the board too.
+  void _handleProjectBoardMember(Map<String, dynamic> msg) {
+    final projectId = msg['projectId'];
+    final sessionId = msg['sessionId'];
+    if (projectId is! String || sessionId is! String) return;
+    if (!_projects.names.containsKey(projectId)) return;
+    if (_projects.projectOf(sessionId) == projectId) return;
+    setSessionProject([sessionId], projectId);
   }
 
   /// A key the account vault lists as one of the user's devices and has
@@ -15538,6 +15645,48 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return true;
   }
 
+  /// Sends [text] as the user's message to [sessionId], which need not be
+  /// the open chat. It goes through the outbox like a typed message, so it
+  /// survives a restart and waits for an offline computer. False when the
+  /// chat is unknown or the message could not be saved for sending.
+  Future<bool> sendToSession(String sessionId, String text) async {
+    final session = sessions.where((s) => s.id == sessionId).firstOrNull;
+    if (session == null || text.trim().isEmpty) return false;
+    final id = 'board_${DateTime.now().microsecondsSinceEpoch}';
+    final request = OutgoingRequest(
+      id: id,
+      serverId: session.serverId,
+      payload: {
+        'type': 'prompt',
+        'text': text,
+        'sessionId': sessionId,
+        'commandId': id,
+        'messageId': id,
+      },
+      displayText: text,
+      createdAt: DateTime.now(),
+    );
+    try {
+      await _outgoingReady;
+      await _outgoingQueue.stage(request);
+    } catch (error) {
+      outgoingQueueError = traceError(
+        'outbox_stage',
+        'Board answers not saved for sending: $error',
+        serverId: session.serverId,
+        sessionId: sessionId,
+      );
+      if (!_outgoingDisposed) notifyListeners();
+      return false;
+    }
+    if (_outgoingDisposed) return true;
+    _pendingPromptDispatches[id] = request;
+    _restoreOutgoingBubbles();
+    notifyListeners();
+    unawaited(_drainOutgoingQueue());
+    return true;
+  }
+
   /// Returns unsent attachments to the session they were sent from, ahead of
   /// anything attached since.
   void _handBackToComposer(
@@ -20522,7 +20671,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final name = cleanName.isEmpty || cleanName == '.' || cleanName == '..'
         ? 'file'
         : cleanName;
-    var targetFile = File('${downloadsDir.path}${Platform.pathSeparator}$name');
+    var targetFile = File(
+      '${downloadsDir.path}${AppPlatform.pathSeparator}$name',
+    );
     var counter = 1;
     while (targetFile.existsSync()) {
       final ext = name.contains('.') ? '.${name.split('.').last}' : '';
@@ -20530,7 +20681,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           ? name.substring(0, name.lastIndexOf('.'))
           : name;
       targetFile = File(
-        '${downloadsDir.path}${Platform.pathSeparator}$base ($counter)$ext',
+        '${downloadsDir.path}${AppPlatform.pathSeparator}$base ($counter)$ext',
       );
       counter++;
     }
@@ -20793,6 +20944,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> _restoreDownloads() async {
+    // Browsers save downloads themselves; nothing resumes here.
+    if (AppPlatform.isWeb) return;
     try {
       final directory = await _downloadStateDirectory();
       if (!await directory.exists()) return;

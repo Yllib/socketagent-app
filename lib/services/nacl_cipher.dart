@@ -38,16 +38,52 @@ class NaclCipher {
   /// large frames should be opened off the UI isolate.
   bool get isNative => _native != null;
 
-  static final Sodium? _sodium = () {
+  static Sodium? _loaded;
+  static Object? _init;
+  static bool _started = false;
+
+  /// Calls SodiumInit.init() once. Native platforms get libsodium back
+  /// synchronously. The web gets a Future for libsodium.js, and a second
+  /// call before it resolves would drop the first one's callback.
+  static void _start() {
+    if (_started) return;
+    _started = true;
     try {
-      // Synchronous on native platforms; only the web returns a Future.
-      final sodium = SodiumInit.init();
-      return sodium is Sodium ? sodium : null;
+      final Object init = SodiumInit.init();
+      _init = init;
+      if (init is Sodium) {
+        _loaded = init;
+      } else if (init is Future<Sodium>) {
+        init.then<void>((value) => _loaded = value, onError: _unavailable);
+      }
     } catch (error) {
-      debugPrint('[Crypto] libsodium unavailable, using pinenacl: $error');
-      return null;
+      _unavailable(error);
     }
-  }();
+  }
+
+  /// libsodium, once loaded. Ciphers made before the web's libsodium.js is
+  /// ready use pinenacl.
+  static Sodium? get _sodium {
+    _start();
+    return _loaded;
+  }
+
+  static void _unavailable(Object error) =>
+      debugPrint('[Crypto] libsodium unavailable, using pinenacl: $error');
+
+  /// Waits for libsodium. Only the web needs to; main() does before
+  /// anything connects.
+  static Future<void> ready() async {
+    _start();
+    final init = _init;
+    if (init is Future<Sodium>) {
+      try {
+        _loaded = await init;
+      } catch (_) {
+        // Logged by _start's handler; pinenacl stands in.
+      }
+    }
+  }
 
   static (Sodium, SecureKey)? _nativeKey(BoxBase box) {
     final sodium = _sodium;

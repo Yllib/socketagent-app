@@ -2,7 +2,6 @@
 
 import 'dart:async';
 import 'dart:isolate';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
@@ -11,6 +10,7 @@ import 'tts_engine.dart';
 import 'kokoro_server_engine.dart'
     show kokoroVoices, kokoroV10ExtraVoices, buildTtsLeadInWav;
 import 'kokoro_model_manager.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Convert Float32List audio samples to WAV bytes (16-bit PCM mono).
 Uint8List _float32ToWav(Float32List samples, int sampleRate) {
@@ -457,7 +457,7 @@ class KokoroDeviceEngine extends TtsEngine {
           );
           if (currentGenId != _genId) return;
           final sources = [
-            if (Platform.isAndroid) _WavAudioSource(buildTtsLeadInWav()),
+            if (AppPlatform.isAndroid) _WavAudioSource(buildTtsLeadInWav()),
             ...initialChunks.map(_WavAudioSource.new),
           ];
           if (currentGenId != _genId) return;

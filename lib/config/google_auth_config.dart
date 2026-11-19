@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'package:app/platform/app_platform.dart';
 
 /// The Google OAuth clients the account sign-in uses. These are app config,
 /// not secrets: Google treats a desktop client's secret as public. A
@@ -26,10 +26,19 @@ abstract final class GoogleAuthConfig {
     defaultValue: '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',
   );
 
+  /// The web app signs in with the same "Web application" client. Its
+  /// Authorized JavaScript origins must list every origin that serves it.
+  static const webClientId = String.fromEnvironment(
+    'SA_GOOGLE_WEB_CLIENT_ID',
+    defaultValue: androidServerClientId,
+  );
+
   /// Only this app's hidden Drive folder. Nothing else in the user's Drive.
   static const driveScope = 'https://www.googleapis.com/auth/drive.appdata';
 
-  static bool get isConfigured => Platform.isAndroid
+  static bool get isConfigured => AppPlatform.isWeb
+      ? webClientId.isNotEmpty
+      : AppPlatform.isAndroid
       ? androidServerClientId.isNotEmpty
       : desktopClientId.isNotEmpty;
 }

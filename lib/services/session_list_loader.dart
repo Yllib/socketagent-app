@@ -1,6 +1,6 @@
-import 'dart:isolate';
 import '../models/message.dart';
 import '../models/server_config.dart';
+import 'package:app/platform/off_main.dart';
 
 Future<List<Session>> loadSessionList(
   List<dynamic> entries, {
@@ -8,7 +8,7 @@ Future<List<Session>> loadSessionList(
   String? serverId,
   Map<String, SessionRunStats?> previousRunStats = const {},
   bool cached = false,
-}) => Isolate.run(() {
+}) => runOffMain(() {
   final sessions = entries.whereType<Map>().map((entry) {
     final session =
         Session.fromJson(

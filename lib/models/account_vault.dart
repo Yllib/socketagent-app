@@ -19,6 +19,10 @@ class AccountVault {
     this.removedProjects = const [],
     this.projectMembers = const [],
     this.removedProjectMembers = const [],
+    this.projectBoards = const [],
+    this.removedProjectBoards = const [],
+    this.webDevice,
+    this.browsers = const [],
     this.preferences = const {},
     this.pin,
     this.resetId,
@@ -56,6 +60,20 @@ class AccountVault {
   /// Which project each grouped chat is in, keyed by session ID.
   final List<VaultProjectMember> projectMembers;
   final List<VaultTombstone> removedProjectMembers;
+
+  /// Board secrets by project ID. A list of its own, not a field on the
+  /// project, because builds that don't know boards rewrite projects with
+  /// only the fields they know.
+  final List<VaultProjectBoard> projectBoards;
+  final List<VaultTombstone> removedProjectBoards;
+
+  /// The one device key every browser signed in to this account shares, so
+  /// computers list the web app once however many browsers use it.
+  final VaultWebDevice? webDevice;
+
+  /// The browsers using [webDevice], for the device list only. Each entry
+  /// lapses after [VaultBrowser.lapse] unseen, as the browser itself does.
+  final List<VaultBrowser> browsers;
   final Map<String, Object?> preferences;
 
   /// The account PIN's public values. An account is a PIN account when its
@@ -85,6 +103,10 @@ class AccountVault {
     'removedProjects',
     'projectMembers',
     'removedProjectMembers',
+    'projectBoards',
+    'removedProjectBoards',
+    'webDevice',
+    'browsers',
     'preferences',
     'pin',
     'reset',
@@ -108,6 +130,10 @@ class AccountVault {
     'removedProjectMembers': [
       for (final t in removedProjectMembers) t.toJson(),
     ],
+    'projectBoards': [for (final b in projectBoards) b.toJson()],
+    'removedProjectBoards': [for (final t in removedProjectBoards) t.toJson()],
+    if (webDevice case final web?) 'webDevice': web.toJson(),
+    if (browsers.isNotEmpty) 'browsers': [for (final b in browsers) b.toJson()],
     'preferences': preferences,
     if (pin case final pin?) 'pin': pin.toJson(),
     if (resetId case final id?) 'reset': {'id': id},
@@ -150,6 +176,13 @@ class AccountVault {
         raw['removedProjectMembers'],
         VaultTombstone.fromJson,
       ),
+      projectBoards: list(raw['projectBoards'], VaultProjectBoard.fromJson),
+      removedProjectBoards: list(
+        raw['removedProjectBoards'],
+        VaultTombstone.fromJson,
+      ),
+      webDevice: VaultWebDevice.fromJson(raw['webDevice']),
+      browsers: list(raw['browsers'], VaultBrowser.fromJson),
       preferences: preferences is Map
           ? Map<String, Object?>.from(preferences)
           : const {},
@@ -178,6 +211,11 @@ class AccountVault {
     List<VaultTombstone>? removedProjects,
     List<VaultProjectMember>? projectMembers,
     List<VaultTombstone>? removedProjectMembers,
+    List<VaultProjectBoard>? projectBoards,
+    List<VaultTombstone>? removedProjectBoards,
+    VaultWebDevice? webDevice,
+    bool clearWebDevice = false,
+    List<VaultBrowser>? browsers,
     Map<String, Object?>? preferences,
     VaultAccountPin? pin,
     String? resetId,
@@ -195,6 +233,10 @@ class AccountVault {
     removedProjects: removedProjects ?? this.removedProjects,
     projectMembers: projectMembers ?? this.projectMembers,
     removedProjectMembers: removedProjectMembers ?? this.removedProjectMembers,
+    projectBoards: projectBoards ?? this.projectBoards,
+    removedProjectBoards: removedProjectBoards ?? this.removedProjectBoards,
+    webDevice: clearWebDevice ? null : webDevice ?? this.webDevice,
+    browsers: browsers ?? this.browsers,
     preferences: preferences ?? this.preferences,
     pin: pin ?? this.pin,
     resetId: resetId ?? this.resetId,
@@ -306,6 +348,71 @@ class VaultDevice {
   }
 }
 
+/// The key pair the browsers share. The first browser to sign in gives its
+/// own key; later ones take this one. Any account device could already act
+/// for the account, so holding the private key here trusts nobody new.
+class VaultWebDevice {
+  const VaultWebDevice({
+    required this.publicKey,
+    required this.privateKey,
+    required this.createdAt,
+  });
+
+  /// Standard base64 of the 32-byte X25519 keys.
+  final String publicKey;
+  final String privateKey;
+  final int createdAt;
+
+  Map<String, Object?> toJson() => {
+    'publicKey': publicKey,
+    'privateKey': privateKey,
+    'createdAt': createdAt,
+  };
+
+  static VaultWebDevice? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final public = raw['publicKey'];
+    final private = raw['privateKey'];
+    if (public is! String || public.isEmpty) return null;
+    if (private is! String || private.isEmpty) return null;
+    return VaultWebDevice(
+      publicKey: public,
+      privateKey: private,
+      createdAt: (raw['createdAt'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// One browser signed in as the web device. [id] is random per browser
+/// profile; [label] reads like "Chrome on Windows".
+class VaultBrowser {
+  const VaultBrowser({
+    required this.id,
+    required this.label,
+    required this.seenAt,
+  });
+
+  /// A browser not seen for this long has forgotten the account itself.
+  static const lapse = Duration(days: 30);
+
+  final String id;
+  final String label;
+  final int seenAt;
+
+  Map<String, Object?> toJson() => {'id': id, 'label': label, 'seenAt': seenAt};
+
+  static VaultBrowser? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final id = raw['id'];
+    if (id is! String || id.isEmpty) return null;
+    return VaultBrowser(
+      id: id,
+      label: raw['label'] as String? ?? '',
+      seenAt: (raw['seenAt'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
 /// The account PIN as every signed-in device holds it. All of it is public:
 /// a device can seal the master key for whoever knows the PIN, and holds
 /// nothing a guess can be tested against.
@@ -403,6 +510,42 @@ class VaultProject {
     return VaultProject(
       id: id,
       name: name,
+      at: (raw['at'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+/// A project's board secret, set at [at] (unix ms). A new secret means the
+/// board was rotated; the old one stops working on the relay.
+class VaultProjectBoard {
+  const VaultProjectBoard({
+    required this.projectId,
+    required this.secret,
+    required this.at,
+  });
+
+  final String projectId;
+
+  /// Standard base64 of 32 random bytes.
+  final String secret;
+  final int at;
+
+  Map<String, Object?> toJson() => {
+    'projectId': projectId,
+    'secret': secret,
+    'at': at,
+  };
+
+  static VaultProjectBoard? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final id = raw['projectId'];
+    final secret = raw['secret'];
+    if (id is! String || id.isEmpty || secret is! String || secret.isEmpty) {
+      return null;
+    }
+    return VaultProjectBoard(
+      projectId: id,
+      secret: secret,
       at: (raw['at'] as num?)?.toInt() ?? 0,
     );
   }
@@ -558,12 +701,21 @@ AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
     key: (m) => m.sessionId,
     at: (m) => m.at,
   );
+  final boards = _mergeItems<VaultProjectBoard>(
+    a.projectBoards,
+    b.projectBoards,
+    a.removedProjectBoards,
+    b.removedProjectBoards,
+    key: (x) => x.projectId,
+    at: (x) => x.at,
+  );
   final subscription = switch ((a.subscription, b.subscription)) {
     (null, final s) => s,
     (final s, null) => s,
     (final x?, final y?) => y.updatedAt > x.updatedAt ? y : x,
   };
   final newer = b.updatedAt > a.updatedAt ? b : a;
+  final revoked = {for (final t in devices.tombstones) t.key};
   return AccountVault(
     updatedAt: newer.updatedAt,
     updatedBy: newer.updatedBy,
@@ -578,6 +730,10 @@ AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
     removedProjects: projects.tombstones,
     projectMembers: members.items,
     removedProjectMembers: members.tombstones,
+    projectBoards: boards.items,
+    removedProjectBoards: boards.tombstones,
+    webDevice: _mergeWebDevice(a.webDevice, b.webDevice, revoked),
+    browsers: _mergeBrowsers(a.browsers, b.browsers),
     preferences: newer.preferences.isEmpty
         ? (newer == a ? b : a).preferences
         : newer.preferences,
@@ -588,6 +744,39 @@ AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
       ...newer.unknownFields,
     },
   );
+}
+
+/// Two browsers that both found no web key each made one; the older key
+/// wins, the public key breaking a tie, and the other browser moves to it.
+/// A revoked key is never kept.
+VaultWebDevice? _mergeWebDevice(
+  VaultWebDevice? a,
+  VaultWebDevice? b,
+  Set<String> revoked,
+) {
+  final live = [
+    for (final web in [a, b])
+      if (web != null && !revoked.contains(web.publicKey)) web,
+  ];
+  if (live.isEmpty) return null;
+  live.sort(
+    (x, y) => x.createdAt != y.createdAt
+        ? x.createdAt.compareTo(y.createdAt)
+        : x.publicKey.compareTo(y.publicKey),
+  );
+  return live.first;
+}
+
+/// Per browser, the later sighting wins.
+List<VaultBrowser> _mergeBrowsers(List<VaultBrowser> a, List<VaultBrowser> b) {
+  final byId = <String, VaultBrowser>{};
+  for (final browser in [...a, ...b]) {
+    final existing = byId[browser.id];
+    if (existing == null || browser.seenAt > existing.seenAt) {
+      byId[browser.id] = browser;
+    }
+  }
+  return byId.values.toList();
 }
 
 VaultAccountPin? _mergePin(

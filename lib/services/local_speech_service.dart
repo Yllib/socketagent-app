@@ -1,11 +1,11 @@
 import 'dart:async';
-import 'dart:io';
 import 'asr_model_manager.dart';
 import 'moonshine_speech_service.dart';
 import 'sherpa_speech_service.dart';
 import 'speech_service.dart';
 import 'speech_input.dart';
 import 'speech_recognition_settings.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Keeps UI subscriptions stable when changing the local recognition engine.
 class LocalSpeechService implements SpeechInput {
@@ -34,10 +34,10 @@ class LocalSpeechService implements SpeechInput {
   Future<void> loadSettings() async {
     settings = await SpeechRecognitionSettings.load();
     // The desktop continues using Zipformer until a desktop Moonshine runtime ships.
-    if (!Platform.isAndroid && settings.model.isMoonshine) {
+    if (!AppPlatform.isAndroid && settings.model.isMoonshine) {
       settings = settings.copyWith(model: AsrModel.zipformer);
     }
-    if (!Platform.isWindows && settings.model == AsrModel.nemotron) {
+    if (!AppPlatform.isWindows && settings.model == AsrModel.nemotron) {
       settings = settings.copyWith(model: AsrModel.zipformer);
     }
     manager.selectedModel = settings.model;
@@ -66,7 +66,7 @@ class LocalSpeechService implements SpeechInput {
     if (_disposed) return false;
     if (_engine == null) {
       // iOS dictates with Apple's recognizer instead of a downloaded model.
-      _engine = Platform.isIOS
+      _engine = AppPlatform.isIOS
           ? SpeechService()
           : settings.model.isMoonshine
           ? MoonshineSpeechService(manager, settings)
@@ -96,7 +96,7 @@ class LocalSpeechService implements SpeechInput {
     try {
       if (!await initialize()) {
         throw StateError(
-          Platform.isIOS
+          AppPlatform.isIOS
               ? 'Allow microphone and speech recognition for SocketAgent in Settings.'
               : 'Download the selected speech model in Voice & Speech.',
         );

@@ -1,5 +1,4 @@
 import '../util/markdown_block_split.dart';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +16,7 @@ import 'message_timestamp.dart';
 import 'message_attachments.dart';
 import '../config/app_palette.dart';
 import 'app_bottom_sheet.dart';
+import 'package:app/platform/app_platform.dart';
 
 class MessageBubble extends StatelessWidget {
   static TextStyle _codeStyle(AppPalette palette) => GoogleFonts.jetBrainsMono(
@@ -385,7 +385,7 @@ class MessageBubble extends StatelessWidget {
     BuildContext context,
     bool hasRewind,
   ) {
-    if (!Platform.isWindows || message.textContent.trim().isEmpty) {
+    if (!AppPlatform.isWindows || message.textContent.trim().isEmpty) {
       return const [];
     }
     ContextMenuButtonItem item(String label, VoidCallback action) =>

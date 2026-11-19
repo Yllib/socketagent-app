@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show listEquals, visibleForTesting;
@@ -8,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/server_config.dart';
 import 'nacl_cipher.dart';
 import 'transport_v2.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// One key that opens sealed pushes, with the public tag of the pairing
 /// secret it comes from.
@@ -30,7 +30,7 @@ class PushKeys {
   /// Whether this platform keeps push keys. Only Android receives pushes,
   /// so nowhere else are the keys written.
   @visibleForTesting
-  static bool kept = Platform.isAndroid;
+  static bool kept = AppPlatform.isAndroid;
 
   /// The stored keys after [configs] are saved, given the [held] ones. A
   /// computer whose secret changed keeps the key it had as the previous one.

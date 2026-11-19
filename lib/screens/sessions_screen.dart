@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/account_crypto.dart';
@@ -34,11 +33,15 @@ import '../widgets/light_backdrop.dart';
 import '../widgets/second_ticker.dart';
 import '../widgets/fleeting_time_left.dart';
 import '../widgets/app_bottom_sheet.dart';
+import '../services/board_store.dart';
+import 'boards/board_view.dart' show BoardScreen;
+import 'package:app/platform/app_platform.dart';
 
 /// Teleport asks before sending a transcript at least this large, uncompressed.
 const _largeTranscriptBytes = 100 * 1024 * 1024;
 
 enum _SessionMenuAction {
+  board,
   pin,
   project,
   notifications,
@@ -2173,12 +2176,30 @@ class _SessionsTabState extends State<SessionsTab> {
     String projectId,
     String name,
   ) async {
+    final board = BoardStore.shared.board(projectId);
+    final needsYou = board?.needsYou.length ?? 0;
     final action = await showAdaptiveActionSheet<String>(
       context: context,
       title: name,
       sections: [
-        const AdaptiveSheetSection([
-          AdaptiveSheetAction(
+        AdaptiveSheetSection([
+          if (board != null)
+            AdaptiveSheetAction(
+              value: 'board',
+              label: 'Open board',
+              subtitle: needsYou > 0
+                  ? '$needsYou need${needsYou == 1 ? 's' : ''} you'
+                  : null,
+              icon: Icons.view_kanban_outlined,
+            )
+          else if (provider.account.hasAccount)
+            const AdaptiveSheetAction(
+              value: 'board-on',
+              label: 'Turn on board',
+              subtitle: 'Cards and rules shared by every chat in this project',
+              icon: Icons.view_kanban_outlined,
+            ),
+          const AdaptiveSheetAction(
             value: 'rename',
             label: 'Rename',
             icon: Icons.edit_outlined,
@@ -2198,6 +2219,11 @@ class _SessionsTabState extends State<SessionsTab> {
     );
     if (!context.mounted) return;
     switch (action) {
+      case 'board':
+        await BoardScreen.open(context, projectId);
+      case 'board-on':
+        BoardStore.shared.enable(projectId);
+        await BoardScreen.open(context, projectId);
       case 'rename':
         final renamed = await _askProjectName(context, initial: name);
         if (renamed != null) provider.renameProject(projectId, renamed);
@@ -2866,12 +2892,25 @@ class _SessionsTabState extends State<SessionsTab> {
     final notifEnabled = provider.isNotifEnabled(session.id);
     final isPinned = provider.isSessionPinned(session.id);
     final theme = Theme.of(context);
+    final projectId = provider.sessionProjects.projectOf(session.id);
+    final boards = BoardStore.shared;
+    final hasBoard = projectId != null && boards.board(projectId) != null;
+    final needsYou = boards.needsYouCount(projectId);
     final action = await showAdaptiveActionSheet<_SessionMenuAction>(
       context: context,
       anchor: anchor,
       title: session.title,
       sections: [
         AdaptiveSheetSection([
+          if (hasBoard)
+            AdaptiveSheetAction(
+              value: _SessionMenuAction.board,
+              label: 'Open board',
+              subtitle: needsYou > 0
+                  ? '$needsYou need${needsYou == 1 ? 's' : ''} you'
+                  : provider.sessionProjects.names[projectId],
+              icon: Icons.view_kanban_outlined,
+            ),
           AdaptiveSheetAction(
             value: _SessionMenuAction.pin,
             label: isPinned ? 'Unpin' : 'Pin',
@@ -2976,6 +3015,8 @@ class _SessionsTabState extends State<SessionsTab> {
     if (action == null || !context.mounted) return;
 
     switch (action) {
+      case _SessionMenuAction.board:
+        if (projectId != null) await BoardScreen.open(context, projectId);
       case _SessionMenuAction.pin:
         provider.toggleSessionPin(session.id);
       case _SessionMenuAction.project:
@@ -4268,7 +4309,7 @@ class _SessionsTabState extends State<SessionsTab> {
         },
         child: InkWell(
           onSecondaryTapUp:
-              Platform.isWindows &&
+              AppPlatform.isWindows &&
                   !_selectionMode &&
                   _openingSessionKey == null
               ? (details) {

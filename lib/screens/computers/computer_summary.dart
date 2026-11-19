@@ -1,11 +1,10 @@
-import 'dart:io';
-
 import '../../models/server_build_info.dart';
 import '../../models/server_config.dart';
 import '../../services/chat_provider.dart';
 import '../../services/device_auth.dart';
 import '../../services/websocket_service.dart' show ConnectionStatus;
 import '../../services/account_crypto.dart' show formatFingerprintCode;
+import 'package:app/platform/app_platform.dart';
 
 /// What the Computers tab shows for one computer, read once per build so the
 /// rows stay pure and renderable without a provider.
@@ -76,7 +75,7 @@ List<ComputerSummary> computerSummaries(
 }) {
   final activeServerId =
       provider.activeSessionServerId ?? provider.connMgr.activeServerId;
-  final push = pushApplies ?? Platform.isAndroid;
+  final push = pushApplies ?? AppPlatform.isAndroid;
   final all = [
     for (final config in provider.serverConfigs)
       _summarize(provider, config, activeServerId, pushApplies: push),

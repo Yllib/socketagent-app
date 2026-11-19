@@ -711,6 +711,38 @@ class Device {
   }
 }
 
+/// A browser of the web app: it signs in as the account's one web device,
+/// so its key changes when it takes the shared one.
+class Browser extends Device {
+  Browser(this.id, FakeCloud cloud, {this.label = 'Chrome on Windows'})
+    : super('Web', cloud, platform: 'web') {
+    _asBrowser();
+  }
+
+  final String id;
+  final String label;
+  late PrivateKey current = key;
+
+  @override
+  String get publicKey => base64Encode(current.publicKey.asTypedList);
+
+  @override
+  Future<void> restart() async {
+    await super.restart();
+    _asBrowser();
+  }
+
+  void _asBrowser() {
+    service.devicePublicKey = publicKey;
+    service.deviceKey = () => current;
+    service.browser = (id: id, label: label);
+    service.adoptWebDevice = (web) async {
+      current = PrivateKey(base64Decode(web.privateKey));
+      service.devicePublicKey = publicKey;
+    };
+  }
+}
+
 /// Puts [devices] on one account with no PIN, as apps from before the PIN
 /// left it: the key in the clear in Drive, a vault on the relay that lists
 /// the devices, and each device signed in with Google and synced.

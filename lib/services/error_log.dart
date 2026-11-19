@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 
 import '../models/traced_error.dart';
+import '../platform/app_platform.dart';
 
 /// Appends every traced error to `logs/errors.jsonl` in app support. Past
 /// 1 MB the file becomes `errors.jsonl.previous`, so the log stays small.
@@ -25,7 +26,9 @@ class ErrorLog {
   }
 
   /// Writes are serialized so concurrent errors never interleave lines.
+  /// The web build keeps no log file; errors still reach the console.
   Future<void> record(TracedError error) {
+    if (AppPlatform.isWeb) return Future.value();
     final result = _writes.then((_) async {
       final file = await _file();
       final line = '${jsonEncode(error.toJson())}\n';

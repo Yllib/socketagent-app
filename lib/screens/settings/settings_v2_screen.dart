@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -28,6 +27,7 @@ import 'account_screen.dart';
 import '../../config/app_palette.dart';
 import '../../widgets/light_backdrop.dart';
 import '../main_shell_screen.dart';
+import 'package:app/platform/app_platform.dart';
 
 class SettingsV2Screen extends StatefulWidget {
   const SettingsV2Screen({super.key, required this.updateService});
@@ -413,18 +413,18 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                           ),
                         ),
                       ),
-                      if (Platform.isAndroid)
+                      if (AppPlatform.isAndroid)
                         _NotificationSummaryTile()
                       else
                         _DetailRow(
                           icon: Icons.notifications_outlined,
                           // iOS has no push yet, so the same applies there.
-                          title: Platform.isIOS
+                          title: AppPlatform.isIOS
                               ? 'Notifications'
                               : 'Desktop notifications',
                           trailing: 'While the app is open',
                         ),
-                      if (Platform.isWindows) const _StartWithWindowsTile(),
+                      if (AppPlatform.isWindows) const _StartWithWindowsTile(),
                       SwitchListTile(
                         secondary: const Icon(Icons.volume_up_outlined),
                         title: const Text('Sound when a run finishes'),
@@ -437,7 +437,7 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                     title: 'Chat & Display',
                     children: [
                       const _AppearanceTile(),
-                      if (Platform.isWindows) const _TextSizeTile(),
+                      if (AppPlatform.isWindows) const _TextSizeTile(),
                       SwitchListTile(
                         secondary: const Icon(Icons.view_stream_outlined),
                         title: const Text('Condensed Tool Usage'),

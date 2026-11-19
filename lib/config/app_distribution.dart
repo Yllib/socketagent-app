@@ -1,4 +1,4 @@
-enum AppDistribution { direct, play, windows, ios }
+enum AppDistribution { direct, play, windows, ios, web }
 
 abstract final class AppBuild {
   static const distributionName = String.fromEnvironment(
@@ -6,7 +6,9 @@ abstract final class AppBuild {
     defaultValue: 'direct',
   );
 
-  static const distribution = distributionName == 'windows'
+  static const distribution = distributionName == 'web'
+      ? AppDistribution.web
+      : distributionName == 'windows'
       ? AppDistribution.windows
       : distributionName == 'ios'
       ? AppDistribution.ios

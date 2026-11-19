@@ -1,11 +1,13 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../config/google_auth_config.dart';
+import 'google_auth_browser_stub.dart'
+    if (dart.library.js_interop) 'google_auth_browser.dart';
 import 'google_auth_desktop.dart';
 import 'secure_storage_service.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// A signed-in Google user. [accessToken] returns a bearer token for the
 /// Drive app data scope, refreshing behind the scenes when it has expired.
@@ -33,7 +35,8 @@ class GoogleAuthCanceled implements Exception {
 }
 
 /// Google sign-in, one implementation per platform. Android goes through
-/// the google_sign_in plugin; Windows through [DesktopGoogleAuth].
+/// the google_sign_in plugin, Windows through [DesktopGoogleAuth] and the
+/// web through [BrowserGoogleAuth].
 abstract class GoogleAuth {
   bool get isConfigured;
 
@@ -47,11 +50,13 @@ abstract class GoogleAuth {
   Future<void> signOut();
 
   static GoogleAuth forPlatform(SecureStorageService storage) =>
-      Platform.isAndroid
+      AppPlatform.isWeb
+      ? BrowserGoogleAuth()
+      : AppPlatform.isAndroid
       ? GoogleSignInAuth()
       // iOS has no OAuth client yet. An empty ID makes the Account screen
       // say sign-in isn't set up, and restore and sign-in never start.
-      : Platform.isIOS
+      : AppPlatform.isIOS
       ? DesktopGoogleAuth(storage: storage, clientId: '')
       : DesktopGoogleAuth(storage: storage);
 }

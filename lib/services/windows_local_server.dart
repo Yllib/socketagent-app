@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../models/server_config.dart';
 import 'transport_v2.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// What discovery should do with the server found on this machine, given the
 /// saved computers. Entries pointing at this machine under an older key can
@@ -136,7 +137,7 @@ class WindowsLocalServer {
   /// folder what it is. With that true no ordinary account can swap the
   /// file between the check and the read.
   static Future<String?> _trustedMachineMarker() async {
-    final data = Platform.environment['ProgramData'];
+    final data = AppPlatform.environment['ProgramData'];
     if (data == null) return null;
     final folder = '$data\\SocketAgent';
     final marker = File('$folder\\machine-server.json');
@@ -298,11 +299,11 @@ class WindowsLocalServer {
   }
 
   Future<List<ServerConfig>> discover() async {
-    if (!Platform.isWindows) return const [];
-    final home = Platform.environment['USERPROFILE'];
+    if (!AppPlatform.isWindows) return const [];
+    final home = AppPlatform.environment['USERPROFILE'];
     if (home == null) return const [];
     final installs = <String>{'$home/socketagent', '$home/socketclaude'};
-    final local = Platform.environment['LOCALAPPDATA'];
+    final local = AppPlatform.environment['LOCALAPPDATA'];
     if (local != null) {
       final marker = File('$local/SocketAgent/install-location.txt');
       if (await marker.exists()) {
@@ -318,7 +319,7 @@ class WindowsLocalServer {
         final file = File('$install/server/.env');
         if (!await file.exists()) continue;
         final env = parseEnvironment(await file.readAsString());
-        final process = Platform.environment;
+        final process = AppPlatform.environment;
         final data =
             env['SOCKET_AGENT_DATA_DIR'] ??
             env['SOCKETAGENT_DATA_DIR'] ??

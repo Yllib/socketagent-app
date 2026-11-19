@@ -320,4 +320,50 @@ void main() {
     );
     expect(VaultComputer.keyFor(direct), direct.connectionIdentity);
   });
+
+  test('two browsers that each made a web key settle on the older one, '
+      'and a revoked web key is never kept', () {
+    const older = VaultWebDevice(
+      publicKey: 'w1',
+      privateKey: 'p1',
+      createdAt: 10,
+    );
+    const newer = VaultWebDevice(
+      publicKey: 'w2',
+      privateKey: 'p2',
+      createdAt: 20,
+    );
+    expect(
+      mergeVaults(
+        const AccountVault(webDevice: newer),
+        const AccountVault(webDevice: older),
+      ).webDevice?.publicKey,
+      'w1',
+    );
+    final revoked = AccountVault(
+      webDevice: older,
+      revokedDevices: [VaultTombstone(key: 'w1', at: 30)],
+    );
+    expect(
+      mergeVaults(revoked, const AccountVault(webDevice: older)).webDevice,
+      isNull,
+    );
+  });
+
+  test('each browser keeps its latest sighting', () {
+    final merged = mergeVaults(
+      const AccountVault(
+        browsers: [
+          VaultBrowser(id: 'a', label: 'Chrome on Windows', seenAt: 5),
+          VaultBrowser(id: 'b', label: 'Edge on Windows', seenAt: 9),
+        ],
+      ),
+      const AccountVault(
+        browsers: [
+          VaultBrowser(id: 'a', label: 'Chrome on Windows', seenAt: 7),
+        ],
+      ),
+    );
+    expect({for (final b in merged.browsers) b.id: b.seenAt}, {'a': 7, 'b': 9});
+  });
 }

@@ -1,13 +1,17 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
+import '../platform/browser_session.dart';
+
 /// Wrapper around flutter_secure_storage for managing sensitive credentials.
 /// Uses Android Keystore (hardware-backed when available) for encryption.
 class SecureStorageService {
-  static const _storage = FlutterSecureStorage(
-    aOptions: AndroidOptions(
+  static final _storage = FlutterSecureStorage(
+    aOptions: const AndroidOptions(
       // Use Android Keystore for key storage
       resetOnError: true,
     ),
+    // A browser told not to remember keeps keys for this tab session only.
+    webOptions: WebOptions(useSessionStorage: !BrowserSession.remember),
   );
 
   /// Whether a plugin upgrade left stored data unreadable (Android only).
@@ -71,6 +75,11 @@ class SecureStorageService {
   Future<void> setServerConfigs(String json) =>
       _storage.write(key: 'server_configs', value: json);
 
+  /// Project board secrets: a JSON object of project ID to secret.
+  Future<String?> getBoardSecrets() => _storage.read(key: 'board_secrets');
+  Future<void> setBoardSecrets(String json) =>
+      _storage.write(key: 'board_secrets', value: json);
+
   /// User-provided ElevenLabs key for on-device BYOK TTS requests.
   Future<String?> getElevenLabsApiKey() =>
       _storage.read(key: 'elevenlabs_api_key');
@@ -97,6 +106,11 @@ class SecureStorageService {
   // ────────── NaCl Keys (E2E Encryption) ──────────
 
   /// NaCl secret key (base64) for relay E2E encryption
+  /// Web only: this browser's id in the account's browser list.
+  Future<String?> getBrowserId() => _storage.read(key: 'browser_id');
+  Future<void> setBrowserId(String value) =>
+      _storage.write(key: 'browser_id', value: value);
+
   Future<String?> getRelaySecretKey() => _storage.read(key: 'relay_secret_key');
   Future<void> setRelaySecretKey(String value) =>
       _storage.write(key: 'relay_secret_key', value: value);

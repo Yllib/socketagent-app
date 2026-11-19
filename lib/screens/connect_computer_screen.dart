@@ -5,6 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/server_config.dart';
+import '../platform/app_platform.dart';
+import '../platform/browser_session.dart';
+import '../services/google_auth.dart';
+import 'settings/account_pin_dialogs.dart';
 import '../services/chat_provider.dart';
 import '../services/server_connection_probe.dart';
 import 'pair_screen.dart';
@@ -91,7 +95,11 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
               const SizedBox(height: 10),
               Text(
                 widget.notice ??
-                    'Use Claude or Codex from this phone through an end-to-end encrypted connection.',
+                    (AppPlatform.isWeb
+                        ? 'Sign in with the Google account your phone uses. '
+                              'Your computers join this browser end-to-end '
+                              'encrypted.'
+                        : 'Use Claude or Codex from this phone through an end-to-end encrypted connection.'),
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: widget.notice == null
                       ? theme.colorScheme.onSurfaceVariant
@@ -100,22 +108,50 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: FilledButton.icon(
-                  key: const ValueKey('scan-pairing-code'),
-                  onPressed: _scanPairingCode,
-                  icon: const Icon(Icons.qr_code_scanner),
-                  label: const Text('Scan pairing code'),
+              if (AppPlatform.isWeb)
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton.icon(
+                    key: const ValueKey('web-sign-in'),
+                    onPressed: _saving ? null : _signIn,
+                    icon: const Icon(Icons.login),
+                    label: const Text('Sign in with Google'),
+                  ),
                 ),
-              ),
-              const SizedBox(height: 4),
-              TextButton(
-                key: const ValueKey('use-direct-connection'),
-                onPressed: _openDirectConnection,
-                child: const Text('Use a direct connection instead'),
-              ),
+              if (AppPlatform.isWeb)
+                CheckboxListTile(
+                  key: const ValueKey('web-remember'),
+                  value: BrowserSession.remember,
+                  onChanged: _saving
+                      ? null
+                      : (value) => BrowserSession.setRemember(value ?? true),
+                  title: const Text('Remember this browser'),
+                  subtitle: const Text(
+                    'Off: closing the browser signs it out. On: it signs '
+                    'out after 30 days unused.',
+                  ),
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                )
+              else ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton.icon(
+                    key: const ValueKey('scan-pairing-code'),
+                    onPressed: _scanPairingCode,
+                    icon: const Icon(Icons.qr_code_scanner),
+                    label: const Text('Scan pairing code'),
+                  ),
+                ),
+                const SizedBox(height: 4),
+                TextButton(
+                  key: const ValueKey('use-direct-connection'),
+                  onPressed: _openDirectConnection,
+                  child: const Text('Use a direct connection instead'),
+                ),
+              ],
               const SizedBox(height: 22),
               SizedBox(
                 width: double.infinity,
@@ -127,26 +163,27 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                 ),
               ),
               const SizedBox(height: 24),
-              Text.rich(
-                TextSpan(
-                  text: 'Already installed? Run ',
-                  children: [
-                    TextSpan(
-                      text: 'socketagent pair',
-                      style: TextStyle(
-                        fontFamily: 'monospace',
-                        fontWeight: FontWeight.w700,
-                        color: theme.colorScheme.onSurface,
+              if (!AppPlatform.isWeb)
+                Text.rich(
+                  TextSpan(
+                    text: 'Already installed? Run ',
+                    children: [
+                      TextSpan(
+                        text: 'socketagent pair',
+                        style: TextStyle(
+                          fontFamily: 'monospace',
+                          fontWeight: FontWeight.w700,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
-                    ),
-                    const TextSpan(text: ' on the computer.'),
-                  ],
+                      const TextSpan(text: ' on the computer.'),
+                    ],
+                  ),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  textAlign: TextAlign.center,
                 ),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-                textAlign: TextAlign.center,
-              ),
             ],
           ),
         ),
@@ -328,6 +365,27 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
         ),
       ),
     );
+  }
+
+  /// Web: the browser joins through the account, so sign-in is the only
+  /// way in. It runs straight from the tap, or the browser blocks Google's
+  /// popup.
+  Future<void> _signIn() async {
+    final account = context.read<ChatProvider>().account;
+    setState(() => _saving = true);
+    try {
+      await signInToAccount(context, account);
+    } on GoogleAuthCanceled {
+      // Closed the popup; nothing to say.
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(accountErrorText(error))));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   Future<void> _scanPairingCode() async {

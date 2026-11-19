@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:path_provider/path_provider.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Chooses where a downloaded file lands, given what the platform reports.
 ///
@@ -26,7 +27,7 @@ String resolveDownloadsPath({
   // put files in, which beats failing the download outright.
   final base = home?.trim();
   if (base != null && base.isNotEmpty) {
-    return '$base${Platform.pathSeparator}Downloads';
+    return '$base${AppPlatform.pathSeparator}Downloads';
   }
   return Directory.systemTemp.path;
 }
@@ -43,10 +44,10 @@ Future<Directory> downloadsDirectory() async {
   if (cached != null) return cached;
 
   String? platformDownloads;
-  if (Platform.isIOS) {
+  if (AppPlatform.isIOS) {
     // Info.plist shares Documents, so downloads show up in the Files app.
     platformDownloads = (await getApplicationDocumentsDirectory()).path;
-  } else if (!Platform.isAndroid) {
+  } else if (!AppPlatform.isAndroid) {
     try {
       platformDownloads = (await getDownloadsDirectory())?.path;
     } catch (_) {
@@ -56,9 +57,9 @@ Future<Directory> downloadsDirectory() async {
 
   final directory = Directory(
     resolveDownloadsPath(
-      isAndroid: Platform.isAndroid,
+      isAndroid: AppPlatform.isAndroid,
       platformDownloads: platformDownloads,
-      home: homeDirectoryFrom(Platform.environment),
+      home: homeDirectoryFrom(AppPlatform.environment),
     ),
   );
   if (!directory.existsSync()) {
@@ -79,9 +80,9 @@ Directory downloadsDirectorySync() =>
     _cached ??
     Directory(
       resolveDownloadsPath(
-        isAndroid: Platform.isAndroid,
+        isAndroid: AppPlatform.isAndroid,
         platformDownloads: null,
-        home: homeDirectoryFrom(Platform.environment),
+        home: homeDirectoryFrom(AppPlatform.environment),
       ),
     );
 

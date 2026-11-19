@@ -1,7 +1,7 @@
 import 'services/desktop_shortcuts.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
+import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -27,6 +27,9 @@ import 'screens/main_shell_screen.dart';
 import 'screens/settings/account_pin_dialogs.dart';
 import 'screens/tasks/tasks_screen.dart';
 import 'screens/home_screen.dart';
+import 'package:app/platform/app_platform.dart';
+import 'platform/browser_session.dart';
+import 'services/nacl_cipher.dart';
 
 /// Global notifier for assist intent events — HomeScreen listens to this
 final assistVoiceTrigger = ValueNotifier<int>(0);
@@ -36,7 +39,16 @@ final routeObserver = RouteObserver<ModalRoute<void>>();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  if (Platform.isWindows) {
+  if (AppPlatform.isWeb) {
+    // A browser shows uncaught Dart errors as a bare "Error"; log them whole.
+    PlatformDispatcher.instance.onError = (error, stack) {
+      debugPrint('Uncaught: $error\n$stack');
+      return false;
+    };
+    BrowserSession.start();
+    await NaclCipher.ready();
+  }
+  if (AppPlatform.isWindows) {
     SharedPreferencesStorePlatform.instance = WindowsPreferencesWorker();
     runApp(DesktopStartup(initialize: _initializeApp));
   } else {
@@ -47,11 +59,11 @@ void main() async {
 Future<Widget> _initializeApp() async {
   initializeDesktopAudio();
   await _verifyDistribution();
-  if (Platform.isWindows) {
+  if (AppPlatform.isWindows) {
     await DesktopWindowService.instance.initialize();
     await DesktopTextScale.load();
   }
-  if (Platform.isAndroid) {
+  if (AppPlatform.isAndroid) {
     await FirebaseProjectConfigurationService.instance.initialize();
   }
   await NotificationService().initialize();
@@ -65,7 +77,7 @@ Future<Widget> _initializeApp() async {
         chatProvider.verifyGooglePlayPurchase,
       );
     }
-    if (Platform.isAndroid) await PushNotificationService().initialize();
+    if (AppPlatform.isAndroid) await PushNotificationService().initialize();
     return ClaudeAssistantApp(chatProvider: chatProvider, themeMode: themeMode);
   } catch (_) {
     chatProvider.dispose();
@@ -74,13 +86,19 @@ Future<Widget> _initializeApp() async {
 }
 
 Future<void> _verifyDistribution() async {
-  if (Platform.isWindows) {
+  if (AppPlatform.isWeb) {
+    if (AppBuild.distribution != AppDistribution.web) {
+      throw StateError('Build the web app with build-app.sh --web.');
+    }
+    return;
+  }
+  if (AppPlatform.isWindows) {
     if (AppBuild.distribution != AppDistribution.windows) {
       throw StateError('Build Windows with build-app.sh --windows.');
     }
     return;
   }
-  if (Platform.isIOS) {
+  if (AppPlatform.isIOS) {
     if (AppBuild.distribution != AppDistribution.ios) {
       throw StateError(
         'Build iOS with --dart-define=SOCKETAGENT_DISTRIBUTION=ios.',
@@ -120,7 +138,7 @@ class ClaudeAssistantApp extends StatelessWidget {
       ],
       child: Consumer<ThemeModeController>(
         builder: (context, themeMode, _) => MaterialApp(
-          title: Platform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
+          title: AppPlatform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
           builder: (context, child) {
             // Status and navigation bar icons follow the theme on screens
             // without an AppBar; an AppBar's own style still wins at the top.
@@ -140,7 +158,7 @@ class ClaudeAssistantApp extends StatelessWidget {
               ),
               child: child ?? const SizedBox.shrink(),
             );
-            return Platform.isWindows
+            return AppPlatform.isWindows
                 ? Overlay.wrap(
                     child: DesktopWindowFrame(
                       child: ValueListenableBuilder<double>(
@@ -181,7 +199,7 @@ class _AppLauncherState extends State<AppLauncher>
   static const _channel = MethodChannel('com.socketagent.app/intent');
   bool _checked = false;
   int _navigationIntentVersion = 0;
-  bool _splashDone = Platform.isWindows;
+  bool _splashDone = AppPlatform.isWindows;
   late final AnimationController _fadeController;
   final GlobalKey<MainShellScreenState> _mainShellKey = GlobalKey();
   NotificationParentDestination _mainShellDestination =
@@ -257,7 +275,7 @@ class _AppLauncherState extends State<AppLauncher>
     setState(() => _checked = true);
 
     // Wait for connection + session list before dismissing splash
-    if (!Platform.isWindows) _waitForReady(provider);
+    if (!AppPlatform.isWindows) _waitForReady(provider);
   }
 
   bool _handleSessionDeepLink(String? value) {
@@ -576,7 +594,7 @@ class _AppLauncherState extends State<AppLauncher>
 
   void _navigateToNotificationSession() {
     if (!mounted) return;
-    if (Platform.isWindows) {
+    if (AppPlatform.isWindows) {
       openConversation(context);
       return;
     }
@@ -637,7 +655,7 @@ class _AppLauncherState extends State<AppLauncher>
             ),
             const SizedBox(height: 20),
             Text(
-              Platform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
+              AppPlatform.isWindows ? 'SocketAgent Desktop' : 'SocketAgent',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w600,

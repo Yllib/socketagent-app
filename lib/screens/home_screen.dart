@@ -7,7 +7,6 @@ import '../models/session_scheduled_tasks.dart';
 import 'tasks/linked_tasks_strip.dart';
 import 'tasks/tasks_screen.dart';
 import '../widgets/outgoing_queue_notice.dart';
-import 'dart:io';
 import '../services/desktop_clipboard_attachments.dart';
 import '../models/chat_find.dart';
 import '../models/context_meter.dart';
@@ -59,6 +58,11 @@ import '../widgets/session_backend_watermark.dart';
 import '../config/app_palette.dart';
 import '../widgets/second_ticker.dart';
 import '../widgets/app_bottom_sheet.dart';
+import '../models/project_board.dart' show StatusKind;
+import '../services/board_store.dart';
+import 'boards/board_style.dart';
+import 'boards/board_view.dart' show BoardScreen;
+import 'package:app/platform/app_platform.dart';
 
 /// One row of the context dialog, optionally opening onto its own rows.
 ///
@@ -289,7 +293,7 @@ Future<void> openConversation(
   BuildContext context, {
   bool autoStartVoice = false,
 }) async {
-  if (Platform.isWindows) {
+  if (AppPlatform.isWindows) {
     context.read<DesktopWorkspaceController>().openConversation();
     Navigator.of(context).popUntil((route) => route.isFirst);
     return;
@@ -526,7 +530,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     });
     final provider = context.read<ChatProvider>();
     _lifecycleProvider = provider;
-    if (Platform.isWindows) {
+    if (AppPlatform.isWindows) {
       _findShortcutSub = context
           .read<DesktopWorkspaceController>()
           .shortcuts
@@ -687,7 +691,8 @@ class _ChatScreenState extends State<_ChatScreen> {
     try {
       // iOS uses Apple's recognizer, which needs no download.
       final installed =
-          Platform.isIOS || await provider.asrModelManager.isModelInstalled();
+          AppPlatform.isIOS ||
+          await provider.asrModelManager.isModelInstalled();
       if (!mounted || !_pttPressed) return;
       if (!installed) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1137,7 +1142,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   }
 
   Widget _conversationLayout(Widget child) =>
-      Platform.isWindows ? DesktopConversationWidth(child: child) : child;
+      AppPlatform.isWindows ? DesktopConversationWidth(child: child) : child;
 
   /// Opens the find bar, or selects its query when it is already open.
   void openFind() {
@@ -1244,7 +1249,7 @@ class _ChatScreenState extends State<_ChatScreen> {
   /// On Windows, files dragged from Explorer onto the chat attach to the
   /// composer. Folders are skipped; only files can be uploaded.
   Widget _fileDropTarget(ChatProvider provider, Widget child) {
-    if (!Platform.isWindows) return child;
+    if (!AppPlatform.isWindows) return child;
     return DropTarget(
       enable: widget.visible,
       onDragEntered: (_) => setState(() => _fileDragOver = true),
@@ -1467,6 +1472,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                         ],
                       ),
                     ),
+                    if (hasSession) _buildBoardButton(provider),
                     if (provider.lastUsage != null)
                       _buildUsageIndicator(provider, provider.lastUsage!),
                     _buildConnectionIndicator(provider.connectionStatus),
@@ -1806,6 +1812,87 @@ class _ChatScreenState extends State<_ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  /// Opens the board of the chat's project, as a full-height button just
+  /// left of the context meter. Shows how many cards wait on the user, in
+  /// that status's color. Nothing shows when the project has no board.
+  Widget _buildBoardButton(ChatProvider provider) {
+    final sessionId = provider.activeSessionId;
+    final projectId = sessionId == null
+        ? null
+        : provider.sessionProjects.projectOf(sessionId);
+    if (projectId == null) return const SizedBox.shrink();
+    // Board changes don't notify the chat provider, so the button listens.
+    return ListenableBuilder(
+      listenable: BoardStore.shared,
+      builder: (context, _) {
+        if (BoardStore.shared.board(projectId) == null) {
+          return const SizedBox.shrink();
+        }
+        final needsYou = BoardStore.shared.needsYouCount(projectId);
+        final color = needsYou > 0
+            ? StatusKind.user.color(context.palette)
+            : _headerControlColor().withAlpha(220);
+        return Tooltip(
+          message: needsYou > 0
+              ? "Project board: $needsYou need${needsYou == 1 ? 's' : ''} you"
+              : 'Project board',
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: InkWell(
+              key: const Key('header-board'),
+              onTap: () => BoardScreen.open(context, projectId),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                height: 46,
+                constraints: const BoxConstraints(minWidth: 54),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
+                  border: Border.all(color: color.withAlpha(110)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.view_kanban_outlined,
+                          size: 20,
+                          color: color,
+                        ),
+                        if (needsYou > 0) ...[
+                          const SizedBox(width: 4),
+                          Text(
+                            '$needsYou',
+                            style: TextStyle(
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
+                              color: color,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Board',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: color,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -2696,7 +2783,9 @@ class _ChatScreenState extends State<_ChatScreen> {
     final muted = onSurface.withAlpha(150);
     final color = meter == null ? muted : _contextMeterColor(meter);
     final percent = meter == null ? null : (meter.fill * 100).round();
-    final detail = Platform.isWindows ? 'Click for details' : 'Tap for details';
+    final detail = AppPlatform.isWindows
+        ? 'Click for details'
+        : 'Tap for details';
     return Tooltip(
       message: meter == null
           ? 'Context details'
@@ -4106,7 +4195,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                                       as RenderBox;
                               _showAttachmentMenu(
                                 provider,
-                                anchor: Platform.isWindows
+                                anchor: AppPlatform.isWindows
                                     ? box.localToGlobal(Offset.zero) & box.size
                                     : null,
                               );

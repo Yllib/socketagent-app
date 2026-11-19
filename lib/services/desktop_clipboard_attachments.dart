@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:image/image.dart' as img;
 import 'package:pasteboard/pasteboard.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Paths to attach when Ctrl+V is pressed in the desktop composer: files
 /// and folders copied in Explorer, or a copied image saved as a PNG. Returns
@@ -23,14 +24,16 @@ Future<List<String>> clipboardAttachmentPaths() async {
     throw const FormatException('The copied image is not a readable bitmap');
   }
   final folder = Directory(
-    '${(await getTemporaryDirectory()).path}${Platform.pathSeparator}socketagent-paste',
+    '${(await getTemporaryDirectory()).path}${AppPlatform.pathSeparator}socketagent-paste',
   );
   await folder.create(recursive: true);
   final stamp = DateTime.now()
       .toIso8601String()
       .replaceAll(RegExp(r'[^0-9]'), '')
       .substring(0, 17);
-  final file = File('${folder.path}${Platform.pathSeparator}pasted-$stamp.png');
+  final file = File(
+    '${folder.path}${AppPlatform.pathSeparator}pasted-$stamp.png',
+  );
   await file.writeAsBytes(png);
   return [file.path];
 }

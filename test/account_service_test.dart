@@ -922,6 +922,65 @@ void main() {
     });
   });
 
+  group('browsers', () {
+    test('every browser signs in as the one web device', () async {
+      final cloud = FakeCloud();
+      final phone = Device('Pixel', cloud);
+      await phone.createAccount(goodPin);
+      final chrome = Browser('b1', cloud);
+      final edge = Browser('b2', cloud, label: 'Edge on Windows');
+      final chromeKey = chrome.publicKey;
+      cloud.now += 1000;
+      expect(await chrome.join(goodPin), isA<Joined>());
+      await chrome.sync();
+      cloud.now += 1000;
+      expect(await edge.join(goodPin), isA<Joined>());
+      await edge.sync();
+
+      expect(edge.publicKey, chromeKey, reason: 'the first browser gave it');
+      await phone.sync();
+      final vault = phone.service.vault!;
+      expect(vault.webDevice?.publicKey, chromeKey);
+      expect(vault.devices.map((d) => d.publicKey).toSet(), {
+        phone.publicKey,
+        chromeKey,
+      });
+      expect(phone.joined, ['Web']);
+      expect(phone.service.browsers.map((b) => b.label).toSet(), {
+        'Chrome on Windows',
+        'Edge on Windows',
+      });
+    });
+
+    test('signing out all browsers takes the web key away; the next '
+        'browser makes a new one', () async {
+      final cloud = FakeCloud();
+      final phone = Device('Pixel', cloud);
+      await phone.createAccount(goodPin);
+      final chrome = Browser('b1', cloud);
+      cloud.now += 1000;
+      expect(await chrome.join(goodPin), isA<Joined>());
+      await chrome.sync();
+      await phone.sync();
+      final oldKey = chrome.publicKey;
+
+      cloud.now += 1000;
+      await phone.service.removeDevice(oldKey);
+      expect(phone.service.vault!.webDevice, isNull);
+      expect(phone.service.browsers, isEmpty);
+      expect(phone.removedKeys, [oldKey]);
+      expect(await chrome.sync(), AccountSyncOutcome.noAccount);
+
+      final firefox = Browser('b3', cloud, label: 'Firefox on Linux');
+      cloud.now += 1000;
+      expect(await firefox.join(goodPin), isA<Joined>());
+      await firefox.sync();
+      await phone.sync();
+      expect(phone.service.vault!.webDevice?.publicKey, isNot(oldKey));
+      expect(phone.service.vault!.webDevice?.publicKey, firefox.publicKey);
+    });
+  });
+
   test('a pending change survives the stored record', () {
     final pin = VaultAccountPin(
       id: base64Encode(List.filled(16, 1)),

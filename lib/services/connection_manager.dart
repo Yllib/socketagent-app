@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../models/server_config.dart';
@@ -8,6 +7,7 @@ import 'websocket_service.dart';
 import 'crypto_service.dart';
 import 'device_auth.dart';
 import 'transport_v2.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// A message from a server, tagged with which server sent it.
 class ServerMessage {
@@ -88,7 +88,7 @@ class ConnectionManager {
   /// pairing. Only the Windows desktop app finds such entries. Tests turn
   /// this on to run that path elsewhere.
   @visibleForTesting
-  bool localRequests = Platform.isWindows;
+  bool localRequests = AppPlatform.isWindows;
 
   final Map<String, WebSocketService> _connections = {};
   final Map<String, ServerConfig> _configs = {};
@@ -296,7 +296,7 @@ class ConnectionManager {
     // from the server's files, and any other account makes a local request.
     ws.setPairing(
       config.transportPairing,
-      carryOver: !(Platform.isWindows && config.isLoopbackOnly),
+      carryOver: !(AppPlatform.isWindows && config.isLoopbackOnly),
     );
     // Such an entry asks for its pairing, and asks again when the server
     // stops answering the one it holds. The name it asked under is the name
@@ -355,7 +355,7 @@ class ConnectionManager {
   /// Re-picks routes whenever the phone changes networks. Called once from
   /// main(), so host tests, which have no connectivity plugin, never start it.
   void watchNetworkChanges() {
-    if (!Platform.isAndroid && !Platform.isWindows) return;
+    if (!AppPlatform.isAndroid && !AppPlatform.isWindows) return;
     if (_networkChanges != null) return;
     unawaited(
       checkNetwork().then(

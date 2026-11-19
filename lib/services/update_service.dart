@@ -13,6 +13,7 @@ import 'package:http/http.dart' as http;
 import 'package:crypto/crypto.dart' as crypto;
 import '../config/app_distribution.dart';
 import '../util/format.dart';
+import 'package:app/platform/app_platform.dart';
 
 class UpdateInfo {
   final String latestVersion;
@@ -76,8 +77,11 @@ class UpdateService extends ChangeNotifier {
   bool get _fromPlay => distribution == AppDistribution.play;
   bool get isDesktopUpdate => distribution == AppDistribution.windows;
 
-  /// iOS updates come only from the App Store, so the app never checks.
-  bool get selfUpdates => distribution != AppDistribution.ios;
+  /// iOS updates come only from the App Store and the web app updates when
+  /// the page reloads, so neither checks.
+  bool get selfUpdates =>
+      distribution != AppDistribution.ios &&
+      distribution != AppDistribution.web;
 
   UpdateInfo? _updateInfo;
   double? _downloadProgress;
@@ -456,7 +460,7 @@ class UpdateService extends ChangeNotifier {
           '/SILENT',
           '/NORESTART',
           '/UPDATE=1',
-          '/DIR=${File(Platform.resolvedExecutable).parent.path}',
+          '/DIR=${File(AppPlatform.resolvedExecutable).parent.path}',
         ]);
       } catch (_) {
         _error = 'Could not start the update. Please try again.';

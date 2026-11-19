@@ -6,6 +6,8 @@ import 'package:path_provider/path_provider.dart';
 import '../models/composer_attachment.dart';
 import '../models/traced_error.dart';
 import 'secure_storage_service.dart';
+import '../platform/app_platform.dart';
+import '../platform/web_kv.dart';
 
 /// A secret attached to a queued message. The value lives in secure storage
 /// until the computer saves it; [saved] then holds the computer's reference
@@ -140,7 +142,23 @@ class OutgoingQueue {
     return result;
   }
 
+  // The web build keeps each request as `outbox:<name>` in IndexedDB.
+  // Browsers attach files as bytes, so there is nothing to copy.
+  static String _webKey(String name) => 'outbox:$name';
+
   Future<List<OutgoingRequest>> load() => _serial(() async {
+    if (AppPlatform.isWeb) {
+      final requests = <OutgoingRequest>[];
+      for (final key in await WebKv.keys(_webKey(''))) {
+        final text = await WebKv.read(key);
+        final value = text == null ? null : jsonDecode(text);
+        if (value is Map<String, dynamic>) {
+          requests.add(OutgoingRequest.fromJson(value));
+        }
+      }
+      requests.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+      return requests;
+    }
     final root = await _root();
     final requests = <OutgoingRequest>[];
     await for (final file in root.list()) {
@@ -155,10 +173,15 @@ class OutgoingQueue {
     return requests;
   });
   Future<void> stage(OutgoingRequest request) => _serial(() async {
-    final root = await _root();
-    final attachments = Directory('${root.path}/${_name(request.id)}');
-    if (request.files.isNotEmpty) await attachments.create(recursive: true);
-    for (var i = 0; i < request.files.length; i++) {
+    final web = AppPlatform.isWeb;
+    final root = web ? null : await _root();
+    final attachments = web
+        ? null
+        : Directory('${root!.path}/${_name(request.id)}');
+    if (attachments != null && request.files.isNotEmpty) {
+      await attachments.create(recursive: true);
+    }
+    for (var i = 0; attachments != null && i < request.files.length; i++) {
       final item = request.files[i];
       final copy = await File(
         item['path'] as String,
@@ -181,7 +204,9 @@ class OutgoingQueue {
       for (final key in written) {
         await _secretStore.deleteOutgoingSecret(key);
       }
-      if (await attachments.exists()) await attachments.delete(recursive: true);
+      if (attachments != null && await attachments.exists()) {
+        await attachments.delete(recursive: true);
+      }
       rethrow;
     }
     for (final secret in request.secrets) {
@@ -201,10 +226,15 @@ class OutgoingQueue {
       _secretStore.deleteOutgoingSecret(_secretKey(requestId, secret));
   Future<void> save(OutgoingRequest request) {
     final encoded = jsonEncode(request.toJson());
-    return _serial(() async => _write(await _root(), request.id, encoded));
+    return _serial(
+      () async =>
+          _write(AppPlatform.isWeb ? null : await _root(), request.id, encoded),
+    );
   }
 
-  Future<void> _write(Directory root, String id, String encoded) async {
+  /// [root] is null on the web.
+  Future<void> _write(Directory? root, String id, String encoded) async {
+    if (root == null) return WebKv.write(_webKey(_name(id)), encoded);
     final file = File('${root.path}/${_name(id)}.json');
     final temporary = File('${file.path}.tmp');
     await temporary.writeAsString(encoded, flush: true);
@@ -212,6 +242,16 @@ class OutgoingQueue {
   }
 
   Future<void> remove(String id) => _serial(() async {
+    if (AppPlatform.isWeb) {
+      final text = await WebKv.read(_webKey(_name(id)));
+      final value = text == null ? null : jsonDecode(text);
+      if (value is Map<String, dynamic>) {
+        for (final secret in OutgoingRequest.fromJson(value).secrets) {
+          await _secretStore.deleteOutgoingSecret(_secretKey(id, secret));
+        }
+      }
+      return WebKv.delete(_webKey(_name(id)));
+    }
     final root = await _root();
     final file = File('${root.path}/${_name(id)}.json');
     if (await file.exists()) {

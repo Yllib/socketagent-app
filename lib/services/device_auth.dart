@@ -128,5 +128,11 @@ Map<String, dynamic> deviceAuthMessage({
   'type': 'device_auth',
   if (token.isNotEmpty) 'token': token,
   'name': name,
-  'platform': platform,
+  // Servers before "web" saved this path's platform unchecked and then
+  // could not read their device list back, so only these five travel here.
+  // The v2 handshake carries the real one; old servers there read an
+  // unknown platform as android.
+  'platform': _oldPathPlatforms.contains(platform) ? platform : 'android',
 };
+
+const _oldPathPlatforms = {'android', 'windows', 'linux', 'macos', 'ios'};

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:app/platform/app_platform.dart';
 
 /// Windows readers and antivirus can briefly prevent replacing an existing
 /// file. Keep the previous copy intact and retry the atomic rename.
@@ -8,7 +9,7 @@ Future<void> replaceFile(File temporary, String destination) async {
       await temporary.rename(destination);
       return;
     } on FileSystemException catch (error) {
-      if (!Platform.isWindows ||
+      if (!AppPlatform.isWindows ||
           !const {5, 32, 33}.contains(error.osError?.errorCode) ||
           attempt >= 5) {
         rethrow;

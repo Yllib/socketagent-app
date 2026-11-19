@@ -194,6 +194,40 @@ class _AccountScreenState extends State<AccountScreen> {
     await account.deleteAccount();
   });
 
+  /// The one row for every browser: they share a key, so computers list
+  /// them as one device. Each browser shows on its own line beneath.
+  Widget _webDeviceTile(
+    AccountService account,
+    VaultDevice web, {
+    required bool isThis,
+  }) {
+    final palette = context.palette;
+    final browsers = account.browsers;
+    return ListTile(
+      leading: Icon(Icons.language, color: isThis ? palette.success : null),
+      title: Text(isThis ? 'Web (this browser)' : 'Web'),
+      subtitle: Text(
+        [
+          'code ${formatFingerprintCode(deviceFingerprintCode(web.publicKey))}',
+          for (final b in browsers)
+            '${b.label.isEmpty ? 'A browser' : b.label} · seen ${accountDate(b.seenAt)}',
+        ].join('\n'),
+      ),
+      isThreeLine: browsers.isNotEmpty,
+      trailing: isThis
+          ? null
+          : TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => _run(() => signOutAllBrowsers(context, account, web)),
+              child: Text(
+                'Sign out all',
+                style: TextStyle(color: palette.danger),
+              ),
+            ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.palette;
@@ -312,34 +346,41 @@ class _AccountScreenState extends State<AccountScreen> {
       ..._pinRows(account),
       const SettingsGroupLabel('Devices'),
       for (final device in account.devices)
-        ListTile(
-          leading: Icon(
-            device.platform == 'windows'
-                ? Icons.desktop_windows_outlined
-                : Icons.smartphone,
-            color: device.publicKey == provider.devicePublicKey
-                ? palette.success
-                : null,
+        if (device.publicKey == account.webDevicePublicKey)
+          _webDeviceTile(
+            account,
+            device,
+            isThis: device.publicKey == provider.devicePublicKey,
+          )
+        else
+          ListTile(
+            leading: Icon(
+              device.platform == 'windows'
+                  ? Icons.desktop_windows_outlined
+                  : Icons.smartphone,
+              color: device.publicKey == provider.devicePublicKey
+                  ? palette.success
+                  : null,
+            ),
+            title: Text(
+              device.publicKey == provider.devicePublicKey
+                  ? '${device.name} (this device)'
+                  : device.name,
+            ),
+            subtitle: Text(
+              '${device.platform} · added ${accountDate(device.addedAt)} · '
+              'code ${formatFingerprintCode(deviceFingerprintCode(device.publicKey))}',
+            ),
+            trailing: device.publicKey == provider.devicePublicKey
+                ? null
+                : IconButton(
+                    tooltip: 'Remove',
+                    icon: Icon(Icons.delete_outline, color: palette.danger),
+                    onPressed: _busy
+                        ? null
+                        : () => _removeDevice(account, device),
+                  ),
           ),
-          title: Text(
-            device.publicKey == provider.devicePublicKey
-                ? '${device.name} (this device)'
-                : device.name,
-          ),
-          subtitle: Text(
-            '${device.platform} · added ${accountDate(device.addedAt)} · '
-            'code ${formatFingerprintCode(deviceFingerprintCode(device.publicKey))}',
-          ),
-          trailing: device.publicKey == provider.devicePublicKey
-              ? null
-              : IconButton(
-                  tooltip: 'Remove',
-                  icon: Icon(Icons.delete_outline, color: palette.danger),
-                  onPressed: _busy
-                      ? null
-                      : () => _removeDevice(account, device),
-                ),
-        ),
       const Divider(height: 1, indent: 16, endIndent: 16),
       ListTile(
         leading: const Icon(Icons.key_outlined),

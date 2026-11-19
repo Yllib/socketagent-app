@@ -1,9 +1,9 @@
 import 'dart:convert';
-import 'dart:isolate';
 import 'dart:typed_data';
 import '../models/browser_frame_wire.dart';
 import '../models/file_download_frame.dart';
 import 'nacl_cipher.dart';
+import 'package:app/platform/off_main.dart';
 
 /// [nonce] is the opened frame's nonce, for the session replay check. Null
 /// for a frame that was not sealed.
@@ -34,7 +34,7 @@ Future<DecodedSocketFrame?> decodeSocketFrame(
   final large = size >= _largeFrameBytes;
   if (large && cipher != null && !cipher.isNative) {
     final box = cipher.box;
-    return Isolate.run(
+    return runOffMain(
       () => _decode(frame, NaclCipher(box, native: false), encryptedBinary),
     );
   }
@@ -42,7 +42,7 @@ Future<DecodedSocketFrame?> decodeSocketFrame(
   if (opened == null) return null;
   final (:body, :encrypted, :nonce) = opened;
   final json = body is String || (body is Uint8List && body.first == 0x4A);
-  if (large && json) return Isolate.run(() => _parse(body, encrypted, nonce));
+  if (large && json) return runOffMain(() => _parse(body, encrypted, nonce));
   return _parse(body, encrypted, nonce);
 }
 

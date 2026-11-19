@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -28,6 +27,7 @@ import 'computer_actions.dart';
 import 'computer_edit_screen.dart';
 import 'computer_summary.dart';
 import 'relay_pairing.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Everything about one computer: its link, devices, version, backends,
 /// notifications and defaults. Reached from the Computers tab.
@@ -308,13 +308,13 @@ class _ComputerDetailScreenState extends State<ComputerDetailScreen>
                           ),
                       ],
               ),
-              if (Platform.isAndroid)
+              if (AppPlatform.isAndroid)
                 _Section(
                   title: 'Notifications',
                   children: _notificationRows(provider, config, connected),
                 ),
               // The work sign-in screens are not part of the iOS app.
-              if (!Platform.isIOS &&
+              if (!AppPlatform.isIOS &&
                   (plugins.contains('outlook-auth') ||
                       plugins.contains('ibs-auth')))
                 _Section(

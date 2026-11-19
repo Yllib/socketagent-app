@@ -12,6 +12,7 @@ import 'device_auth.dart';
 import 'socket_frame_decoder.dart';
 import 'transport_v2.dart';
 import '../models/browser_frame_wire.dart';
+import 'package:app/platform/app_platform.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, error }
 
@@ -228,7 +229,7 @@ class WebSocketService {
   /// The signed-in Windows account. Tests replace it.
   @visibleForTesting
   String Function() windowsAccount = () =>
-      Platform.environment['USERNAME']?.trim() ?? '';
+      AppPlatform.environment['USERNAME']?.trim() ?? '';
   // A server from before transport v2 answers the request's upgrade with an
   // HTTP error. The next dial then goes the old way, as the released app
   // does, and the one after asks again.
@@ -595,32 +596,17 @@ class WebSocketService {
         if (!encryptedDirect) headers = {'Authorization': 'Bearer $_token'};
       }
 
-      // Opened exactly as IOWebSocketChannel.connect opens it, so binary
-      // frames work and pingInterval turns a silently broken socket into
-      // onDone. The one difference is that this keeps the dart:io socket.
       _rawSocket = null;
-      // A direct dial notes when its TCP connection opens, for [dialOpened].
-      final dial = _mode == ConnectionMode.direct
-          ? _dialNotingOpen(uri, headers, () {
-              if (gen == _connectionGeneration) _dialOpened = true;
-            })
-          : WebSocket.connect(uri.toString(), headers: headers);
-      _channel = IOWebSocketChannel(
-        dial.then(
-          (socket) {
-            socket.pingInterval = const Duration(seconds: 20);
-            if (gen == _connectionGeneration) _rawSocket = socket;
-            return socket;
-          },
-          onError: (Object error, StackTrace stack) {
-            // The server answered over HTTP and would not upgrade.
-            if (gen == _connectionGeneration && error is WebSocketException) {
-              _upgradeRefused = true;
-            }
-            Error.throwWithStackTrace(error, stack);
-          },
-        ),
-      );
+      if (AppPlatform.isWeb) {
+        // A browser can't set headers, so the relay join rides in
+        // subprotocols. Browsers only reach computers through the relay.
+        _channel = WebSocketChannel.connect(
+          uri,
+          protocols: relayJoinProtocols(headers ?? const {}),
+        );
+      } else {
+        _channel = _openNative(uri, headers, gen);
+      }
 
       // A dial that fails is reported once, on the stream below.
       _channel!.ready.ignore();
@@ -699,6 +685,39 @@ class WebSocketService {
       _setStatus(ConnectionStatus.error);
       _scheduleReconnect();
     }
+  }
+
+  /// Opens the socket with dart:io, exactly as IOWebSocketChannel.connect
+  /// does, so binary frames work and pingInterval turns a silently broken
+  /// socket into onDone. The one difference is that this keeps the dart:io
+  /// socket in [_rawSocket].
+  WebSocketChannel _openNative(
+    Uri uri,
+    Map<String, dynamic>? headers,
+    int gen,
+  ) {
+    // A direct dial notes when its TCP connection opens, for [dialOpened].
+    final dial = _mode == ConnectionMode.direct
+        ? _dialNotingOpen(uri, headers, () {
+            if (gen == _connectionGeneration) _dialOpened = true;
+          })
+        : WebSocket.connect(uri.toString(), headers: headers);
+    return IOWebSocketChannel(
+      dial.then(
+        (socket) {
+          socket.pingInterval = const Duration(seconds: 20);
+          if (gen == _connectionGeneration) _rawSocket = socket;
+          return socket;
+        },
+        onError: (Object error, StackTrace stack) {
+          // The server answered over HTTP and would not upgrade.
+          if (gen == _connectionGeneration && error is WebSocketException) {
+            _upgradeRefused = true;
+          }
+          Error.throwWithStackTrace(error, stack);
+        },
+      ),
+    );
   }
 
   /// Opens a WebSocket to [uri] and calls [opened] once its TCP connection
@@ -1849,3 +1868,15 @@ class WebSocketService {
     _deviceAuthController.close();
   }
 }
+
+/// The relay join [headers] as WebSocket subprotocols, for a browser:
+/// `socketagent-v2`, then `sa.<field>.<base64url value>` for each
+/// `X-SocketAgent-<field>` header the relay reads.
+List<String> relayJoinProtocols(Map<String, dynamic> headers) => [
+  'socketagent-v2',
+  for (final MapEntry(:key, :value) in headers.entries)
+    if (key.toLowerCase().startsWith('x-socketagent-') &&
+        key.toLowerCase() != 'x-socketagent-protocol')
+      'sa.${key.substring('x-socketagent-'.length).toLowerCase()}.'
+          '${base64Url.encode(utf8.encode('$value')).replaceAll('=', '')}',
+];

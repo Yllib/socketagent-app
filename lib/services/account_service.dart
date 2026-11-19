@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:pinenacl/x25519.dart';
 
 import '../models/account_vault.dart';
+import '../platform/app_platform.dart';
 import '../models/server_config.dart';
 import 'account_crypto.dart';
 import 'account_key_file.dart';
@@ -25,6 +26,7 @@ class AccountLocalState {
     this.pinnedSessionIds = const {},
     this.projects = const {},
     this.sessionProjects = const {},
+    this.boardSecrets = const {},
   });
 
   final List<ServerConfig> computers;
@@ -35,6 +37,9 @@ class AccountLocalState {
 
   /// Project IDs by session ID.
   final Map<String, String> sessionProjects;
+
+  /// Board secrets by project ID, for projects with a board turned on.
+  final Map<String, String> boardSecrets;
   final String subscriberToken;
   final String subscriberEmail;
 }
@@ -171,6 +176,13 @@ class AccountService extends ChangeNotifier {
   /// [devicePublicKey]. Opens and seals handover boxes.
   PrivateKey Function()? deviceKey;
 
+  /// Web only: makes the account's shared web key this browser's device
+  /// key, and sets [devicePublicKey] to it.
+  Future<void> Function(VaultWebDevice web)? adoptWebDevice;
+
+  /// Web only: this browser in the account's browser list.
+  ({String id, String label})? browser;
+
   /// Another device joined the account: approve it on every computer this
   /// device can reach.
   void Function(VaultDevice device)? onDeviceJoined;
@@ -236,6 +248,19 @@ class AccountService extends ChangeNotifier {
   String? get accountId => _keys?.accountId;
   AccountVault? get vault => _vault;
   List<VaultDevice> get devices => _vault?.devices ?? const [];
+
+  /// The key every browser shares, when one has signed in.
+  String? get webDevicePublicKey => _vault?.webDevice?.publicKey;
+
+  /// Browsers using the web device that have not lapsed, latest first.
+  List<VaultBrowser> get browsers {
+    final lapsed = _now - VaultBrowser.lapse.inMilliseconds;
+    return [
+      for (final b in _vault?.browsers ?? const <VaultBrowser>[])
+        if (b.seenAt > lapsed) b,
+    ]..sort((a, b) => b.seenAt.compareTo(a.seenAt));
+  }
+
   int get lastVersion => _lastVersion;
   bool get syncing => _syncing;
   DateTime? get lastSyncedAt => _lastSyncedAt;
@@ -376,7 +401,9 @@ class AccountService extends ChangeNotifier {
       } catch (error) {
         debugPrint('[Account] Google restore failed: ${error.runtimeType}');
       }
-      if (_session == null) {
+      // A browser can't restore Google without a tap, and syncing works
+      // without it; the actions that need Google ask for it themselves.
+      if (_session == null && !AppPlatform.isWeb) {
         _lastError = 'Signed out of Google. Sign in again to keep syncing.';
       }
     }
@@ -946,6 +973,7 @@ class AccountService extends ChangeNotifier {
       await _leaveLocally(removedWords);
       return AccountSyncOutcome.noAccount;
     }
+    if (browser != null) merged = await _asWebDevice(merged);
     merged = _withSelf(merged);
     var version = reply.version;
     if (!_sameVault(merged, remote)) {
@@ -1427,7 +1455,12 @@ class AccountService extends ChangeNotifier {
     int now,
   ) {
     final gone = removed.toSet();
+    // Removing the web device signs every browser out: the new account
+    // must not hand its private key to the next browser.
+    final webGone = gone.contains(vault.webDevice?.publicKey);
     return vault.copyWith(
+      clearWebDevice: webGone,
+      browsers: webGone ? const [] : null,
       devices: [
         for (final device in vault.devices)
           if (!gone.contains(device.publicKey)) device,
@@ -1878,6 +1911,16 @@ class AccountService extends ChangeNotifier {
           VaultProjectMember(sessionId: id, projectId: project, at: now),
       now: now,
     );
+    final boards = _diffLocal<VaultProjectBoard, String>(
+      base.projectBoards,
+      base.removedProjectBoards,
+      local.boardSecrets,
+      key: (b) => b.projectId,
+      value: (b) => b.secret,
+      make: (id, secret) =>
+          VaultProjectBoard(projectId: id, secret: secret, at: now),
+      now: now,
+    );
     return base.copyWith(
       computers: computers.values.toList(),
       removedComputers: tombstones.values.toList(),
@@ -1888,6 +1931,8 @@ class AccountService extends ChangeNotifier {
       removedProjects: projects.stones,
       projectMembers: members.items,
       removedProjectMembers: members.stones,
+      projectBoards: boards.items,
+      removedProjectBoards: boards.stones,
     );
   }
 
@@ -1941,6 +1986,61 @@ class AccountService extends ChangeNotifier {
     return vault.copyWith(devices: [...vault.devices, _self]);
   }
 
+  /// A browser signs in as the account's one web device: it gives its own
+  /// key when the account has none, or moves to the one there. It also
+  /// marks itself seen in the browser list, at most twice a day, and drops
+  /// browsers that lapsed.
+  Future<AccountVault> _asWebDevice(AccountVault vault) async {
+    final web = vault.webDevice;
+    if (web == null) {
+      final key = _deviceKey();
+      if (key == null) return vault;
+      vault = vault.copyWith(
+        webDevice: VaultWebDevice(
+          publicKey: devicePublicKey,
+          privateKey: base64Encode(key.asTypedList),
+          createdAt: _now,
+        ),
+      );
+    } else if (web.publicKey != devicePublicKey) {
+      final own = devicePublicKey;
+      await adoptWebDevice?.call(web);
+      // Listed only when two browsers made a web key at once and this one
+      // lost. Forgotten, so computers that let it in drop it again.
+      if (vault.devices.any((d) => d.publicKey == own)) {
+        vault = _without(vault, [own], _now).copyWith(
+          revokedDevices: [
+            for (final stone in vault.revokedDevices)
+              if (stone.key != own) stone,
+            VaultTombstone(key: own, at: _now, forgotten: true),
+          ],
+        );
+      }
+    }
+    final self = browser;
+    if (self == null) return vault;
+    final now = _now;
+    final lapsed = now - VaultBrowser.lapse.inMilliseconds;
+    final mine = vault.browsers.where((b) => b.id == self.id).firstOrNull;
+    final fresh =
+        mine != null &&
+        mine.label == self.label &&
+        now - mine.seenAt < const Duration(hours: 12).inMilliseconds;
+    final kept = [
+      for (final b in vault.browsers)
+        if (b.seenAt > lapsed && b.id != self.id) b,
+    ];
+    if (fresh && kept.length == vault.browsers.length - 1) return vault;
+    return vault.copyWith(
+      browsers: [
+        ...kept,
+        fresh
+            ? mine
+            : VaultBrowser(id: self.id, label: self.label, seenAt: now),
+      ],
+    );
+  }
+
   /// Same contents, ignoring who wrote it and when. Both sides go through
   /// a self-merge so list order cannot make equal vaults look different.
   static bool _sameVault(AccountVault a, AccountVault b) {
@@ -1963,6 +2063,10 @@ class AccountService extends ChangeNotifier {
     }
     if (publicKey == devicePublicKey) {
       throw StateError('Use Sign out to remove this device');
+    }
+    if (publicKey == vault.webDevice?.publicKey) {
+      // Browsers still hold the key and would only ask to be let in again.
+      throw StateError('Use Sign out all browsers instead');
     }
     onDeviceRemoved?.call(publicKey, keepToken: true);
     _vault = vault.copyWith(

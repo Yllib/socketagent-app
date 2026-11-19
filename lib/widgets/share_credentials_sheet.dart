@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -14,6 +13,7 @@ import '../services/config_transfer.dart';
 import '../services/device_name.dart';
 import 'adaptive_action_sheet.dart';
 import 'app_bottom_sheet.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Writes [bytes] somewhere the user picks. Returns false when they cancel.
 /// Swapped in tests, where no file dialog can open.
@@ -203,7 +203,7 @@ class _ShareSheetState extends State<_ShareSheet> {
                 ),
               ),
             const Divider(height: 1),
-            if (!Platform.isWindows)
+            if (!AppPlatform.isWindows)
               ListTile(
                 enabled: hasContent,
                 leading: const Icon(Icons.qr_code_scanner),

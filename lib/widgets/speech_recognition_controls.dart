@@ -1,8 +1,8 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import '../services/chat_provider.dart';
 import '../services/moonshine_speech_service.dart';
 import '../services/speech_recognition_settings.dart';
+import 'package:app/platform/app_platform.dart';
 
 enum SpeechSettingsView { overview, models, tuning }
 
@@ -47,7 +47,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
       }
     }
     var supported = false;
-    if (Platform.isAndroid) {
+    if (AppPlatform.isAndroid) {
       try {
         supported =
             await MoonshineSpeechService.channel.invokeMethod<bool>(
@@ -213,7 +213,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // iOS dictates with Apple's recognizer: no models to pick or tune.
-        if (Platform.isIOS)
+        if (AppPlatform.isIOS)
           const ListTile(
             contentPadding: EdgeInsets.zero,
             leading: Icon(Icons.mic_none),
@@ -260,7 +260,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
                   },
           ),
         ),
-        if (!Platform.isIOS)
+        if (!AppPlatform.isIOS)
           ListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Fine-tune dictation'),
@@ -269,7 +269,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
             onTap: () =>
                 _open(SpeechSettingsView.tuning, 'Fine-tune dictation'),
           ),
-        if (Platform.isAndroid)
+        if (AppPlatform.isAndroid)
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('Listen on assistant shortcut'),
@@ -289,7 +289,7 @@ class _SpeechRecognitionControlsState extends State<SpeechRecognitionControls> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         for (final model in AsrModel.values.where(
-          (model) => model != AsrModel.nemotron || Platform.isWindows,
+          (model) => model != AsrModel.nemotron || AppPlatform.isWindows,
         )) ...[
           ListTile(
             contentPadding: EdgeInsets.zero,

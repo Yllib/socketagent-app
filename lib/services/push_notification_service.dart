@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
@@ -8,6 +7,7 @@ import '../models/device_approval_notification.dart';
 import '../models/session_notification_policy.dart';
 import 'notification_service.dart';
 import 'push_keys.dart';
+import 'package:app/platform/app_platform.dart';
 
 @pragma('vm:entry-point')
 Future<void> socketAgentFirebaseBackgroundHandler(RemoteMessage message) async {
@@ -56,7 +56,7 @@ class PushNotificationService {
   }
 
   Future<bool> initialize() async {
-    if (!Platform.isAndroid) return false;
+    if (!AppPlatform.isAndroid) return false;
     if (_initialized) return _available;
     final inFlight = _initializationInFlight;
     if (inFlight != null) return inFlight;

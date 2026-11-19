@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:isolate';
-import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:record/record.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
@@ -9,6 +8,7 @@ import 'asr_model_manager.dart';
 import 'pcm_audio.dart';
 import 'speech_input.dart';
 import 'speech_recognition_settings.dart';
+import 'package:app/platform/app_platform.dart';
 
 /// Convert PCM16 little-endian bytes to Float32List normalized to [-1.0, 1.0].
 Float32List _pcm16ToFloat32(Uint8List bytes) {
@@ -93,7 +93,7 @@ void _asrIsolateEntry(SendPort mainSendPort) {
                   '${message.modelDir}/${AsrModelManager.joinerFor(message.settings.model)}',
             ),
             tokens: '${message.modelDir}/${AsrModelManager.tokensFile}',
-            numThreads: Platform.isWindows ? 4 : 2,
+            numThreads: AppPlatform.isWindows ? 4 : 2,
             provider: 'cpu',
             debug: false,
           ),
