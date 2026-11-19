@@ -8953,9 +8953,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       }
       _pendingDevices.add(device);
       if (!known.contains(device.publicKey)) {
-        _promptPendingDevice(device);
+        unawaited(_approveOrPrompt(device));
       }
     }
+  }
+
+  /// A device this one doesn't know is waiting on a computer. It may have
+  /// just signed in to the account and written itself to the vault after
+  /// this device last read it, so the vault is read again before the user
+  /// is asked. An account device is approved without a prompt. [pending]
+  /// is already in [_pendingDevices]; a `device_pending_cleared` that comes
+  /// in meanwhile removes it, and then nothing is shown.
+  Future<void> _approveOrPrompt(PendingDevice pending) async {
+    if (account.hasAccount) await account.sync();
+    bool same(PendingDevice p) =>
+        p.serverId == pending.serverId && p.publicKey == pending.publicKey;
+    if (!_pendingDevices.any(same)) return;
+    if (_isAccountDevice(pending.publicKey)) {
+      await approveDevice(pending).catchError((_) {});
+      return;
+    }
+    _promptPendingDevice(pending);
   }
 
   /// Asks [serverId] for its device registry.
@@ -9478,7 +9496,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       (p) => p.serverId == serverId && p.publicKey == pending.publicKey,
     );
     _pendingDevices.add(pending);
-    _promptPendingDevice(pending);
+    unawaited(_approveOrPrompt(pending));
     notifyListeners();
   }
 
