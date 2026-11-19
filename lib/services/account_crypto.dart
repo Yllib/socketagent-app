@@ -10,7 +10,7 @@ import 'nacl_cipher.dart';
 /// of them: it only ever gets the Ed25519 public key as the account ID and
 /// signatures made with it.
 class AccountKeys {
-  AccountKeys._(this.masterKey, this.vaultKey, this.signingKey);
+  AccountKeys._(this.masterKey, this.vaultKey, this.signingKey, this.passKey);
 
   /// 32 random bytes. The recovery key is this value in Crockford base32.
   final Uint8List masterKey;
@@ -21,8 +21,17 @@ class AccountKeys {
   /// Signs vault API requests. Its public key is the account ID.
   final SigningKey signingKey;
 
+  /// Signs device passes: "this device key is on my account". Computers
+  /// that trust its public key let such a device in without asking. Kept
+  /// apart from [signingKey] so computers never learn the account ID.
+  final SigningKey passKey;
+
   static const _vaultInfo = 'socketagent-vault-v1';
   static const _authInfo = 'socketagent-account-auth-v1';
+  static const _passInfo = 'socketagent-device-pass-key-v1';
+
+  /// Signed before the device key in a pass. The server checks the same.
+  static const devicePassContext = 'socketagent-device-pass-v1';
 
   factory AccountKeys.fromMasterKey(Uint8List masterKey) {
     if (masterKey.length != 32) {
@@ -30,7 +39,12 @@ class AccountKeys {
     }
     final vaultKey = _derive(_vaultInfo, masterKey);
     final authSeed = _derive(_authInfo, masterKey);
-    return AccountKeys._(masterKey, vaultKey, SigningKey(seed: authSeed));
+    return AccountKeys._(
+      masterKey,
+      vaultKey,
+      SigningKey(seed: authSeed),
+      SigningKey(seed: _derive(_passInfo, masterKey)),
+    );
   }
 
   factory AccountKeys.generate() =>
@@ -40,6 +54,25 @@ class AccountKeys {
   static Uint8List _derive(String info, Uint8List masterKey) {
     final digest = hashes.sha512.convert([...utf8.encode(info), ...masterKey]);
     return Uint8List.fromList(digest.bytes.sublist(0, 32));
+  }
+
+  /// [passKey]'s public half, standard base64.
+  String get passVerifyKey =>
+      base64Encode(Uint8List.fromList(passKey.verifyKey.asTypedList));
+
+  /// A pass for [devicePublicKey] (32 bytes): `{k, s}` with [passVerifyKey]
+  /// and the signature over the context, a zero byte and the key.
+  Map<String, String> devicePass(Uint8List devicePublicKey) {
+    final message = Uint8List.fromList([
+      ...utf8.encode(devicePassContext),
+      0,
+      ...devicePublicKey,
+    ]);
+    final signature = passKey.sign(message).signature;
+    return {
+      'k': passVerifyKey,
+      's': base64Encode(Uint8List.fromList(signature.asTypedList)),
+    };
   }
 
   /// The Ed25519 public key, base64url without padding.

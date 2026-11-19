@@ -27,6 +27,25 @@ void main() {
     expect(() => AccountKeys.fromMasterKey(Uint8List(16)), throwsArgumentError);
   });
 
+  test('a device pass matches the vector the server verifies', () {
+    // The same vector is in the server's account-pass test, which checks
+    // the signature with its own Ed25519 code.
+    final keys = AccountKeys.fromMasterKey(
+      Uint8List.fromList(List.filled(32, 1)),
+    );
+    final pass = keys.devicePass(Uint8List.fromList(List.filled(32, 2)));
+    expect(pass, {
+      'k': 'hEoLS8SUHi9ndkDdfX3V71KZeJzAb59HeGoJPPkYBTo=',
+      's':
+          'cuNhFoI79bv+Dhg9YJZxujufs46RsJMh3pzJO+XyWWedRRYX3LpO0I6yrTkxLrzONr9SR1N5q6OxlsEUK39EDA==',
+    });
+    // Not the account ID's key, so computers can't link it to the relay's records.
+    expect(
+      keys.passKey.verifyKey.asTypedList,
+      isNot(keys.signingKey.verifyKey.asTypedList),
+    );
+  });
+
   test('request signatures verify against the account id', () {
     final keys = AccountKeys.fromMasterKey(masterKey);
     final body = Uint8List.fromList(utf8.encode('{"expectedVersion":0}'));

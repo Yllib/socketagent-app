@@ -106,6 +106,10 @@ class ConnectionManager {
   String _subscriberToken = '';
   DeviceIdentity _identity = (name: '', platform: '', appVersion: '');
 
+  /// The account's pass for this device key, which every control socket
+  /// puts in its handshake. See [WebSocketService.devicePass].
+  Map<String, String>? Function()? devicePass;
+
   /// Called when auto routing moves a computer to another route or address,
   /// so the owner can save it. The manager has already switched the socket.
   void Function(ServerConfig config)? onRouteChanged;
@@ -280,6 +284,8 @@ class ConnectionManager {
   /// Points [config]'s socket at the route its config selects.
   Future<void> _configureTransport(ServerConfig config) async {
     final ws = _connections[config.id]!;
+    // Read at each handshake, so the account may sign in after this.
+    ws.devicePass = () => devicePass?.call();
     ws.setDeviceIdentity(
       name: _identity.name,
       platform: _identity.platform,

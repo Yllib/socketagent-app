@@ -252,6 +252,10 @@ class WebSocketService {
   final _deviceAuthController = StreamController<DeviceAuthState>.broadcast();
   String _deviceName = '';
   String _devicePlatform = '';
+
+  /// The account's pass for this device key, sent in message 1 on the
+  /// control lane. Set by the owner; null or returning null sends none.
+  Map<String, String>? Function()? devicePass;
   String _appVersion = '';
   // Set once a handshake ended waiting for approval, so the next retry after
   // the computer drops the held peer waits instead of knocking every 3 s.
@@ -825,6 +829,11 @@ class WebSocketService {
               : _deviceName,
           platform: _devicePlatform,
           capabilities: _clientCapabilities,
+          // Only a key a computer doesn't know yet needs one, and such a
+          // key is only ever added on control.
+          pass: _socketLocalRequest || _lane != TransportLane.control
+              ? null
+              : devicePass?.call(),
         ),
       );
     } catch (error) {

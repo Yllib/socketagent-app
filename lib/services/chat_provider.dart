@@ -8536,6 +8536,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     account.devicePlatform = _devicePlatform;
     account.devicePublicKey = devicePublicKey;
     account.deviceKey = () => _deviceCrypto.privateKey;
+    _connMgr.devicePass = account.devicePass;
     if (AppPlatform.isWeb) {
       account.adoptWebDevice = _adoptWebDevice;
       account.browser = (id: await _browserId(), label: browserLabel());
@@ -8767,6 +8768,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
+  /// Tells [serverId] this account's pass key, so it lets the account's
+  /// other devices in without asking, and which pass keys the account
+  /// retired. The computer only takes it from a device it already knows.
+  void _sendAccountPassKey(String serverId) {
+    final pass = account.devicePass();
+    if (pass == null) return;
+    _connMgr.sendToServer(serverId, {
+      'type': 'account_pass_key',
+      'pass': pass,
+      if (account.retiredPassKeys.isNotEmpty)
+        'retired': account.retiredPassKeys,
+    });
+  }
+
   void _captureDeviceCapabilities(Map<String, dynamic> msg, String serverId) {
     final deviceAuth = msg['deviceAuth'];
     if (deviceAuth is Map) {
@@ -8782,6 +8797,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Every connection reloads the list: a device_pending notice sent
       // while this device was away only lives in the computer's list.
       _connMgr.sendToServer(serverId, {'type': 'device_list'});
+      if (msg['accountPasses'] is Map) _sendAccountPassKey(serverId);
     } else {
       _serversWithDeviceAuth.remove(serverId);
       _deviceRegistries.remove(serverId);

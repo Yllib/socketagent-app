@@ -23,6 +23,7 @@ class AccountVault {
     this.removedProjectBoards = const [],
     this.webDevice,
     this.browsers = const [],
+    this.retiredPassKeys = const [],
     this.preferences = const {},
     this.pin,
     this.resetId,
@@ -74,6 +75,10 @@ class AccountVault {
   /// The browsers using [webDevice], for the device list only. Each entry
   /// lapses after [VaultBrowser.lapse] unseen, as the browser itself does.
   final List<VaultBrowser> browsers;
+
+  /// Pass keys of master keys this account left behind (base64). Devices
+  /// send them to computers, which then stop trusting passes they sign.
+  final List<String> retiredPassKeys;
   final Map<String, Object?> preferences;
 
   /// The account PIN's public values. An account is a PIN account when its
@@ -107,6 +112,7 @@ class AccountVault {
     'removedProjectBoards',
     'webDevice',
     'browsers',
+    'retiredPassKeys',
     'preferences',
     'pin',
     'reset',
@@ -134,6 +140,7 @@ class AccountVault {
     'removedProjectBoards': [for (final t in removedProjectBoards) t.toJson()],
     if (webDevice case final web?) 'webDevice': web.toJson(),
     if (browsers.isNotEmpty) 'browsers': [for (final b in browsers) b.toJson()],
+    if (retiredPassKeys.isNotEmpty) 'retiredPassKeys': retiredPassKeys,
     'preferences': preferences,
     if (pin case final pin?) 'pin': pin.toJson(),
     if (resetId case final id?) 'reset': {'id': id},
@@ -183,6 +190,11 @@ class AccountVault {
       ),
       webDevice: VaultWebDevice.fromJson(raw['webDevice']),
       browsers: list(raw['browsers'], VaultBrowser.fromJson),
+      retiredPassKeys: [
+        if (raw['retiredPassKeys'] case final List<Object?> keys)
+          for (final key in keys)
+            if (key is String && key.isNotEmpty) key,
+      ],
       preferences: preferences is Map
           ? Map<String, Object?>.from(preferences)
           : const {},
@@ -216,6 +228,7 @@ class AccountVault {
     VaultWebDevice? webDevice,
     bool clearWebDevice = false,
     List<VaultBrowser>? browsers,
+    List<String>? retiredPassKeys,
     Map<String, Object?>? preferences,
     VaultAccountPin? pin,
     String? resetId,
@@ -237,6 +250,7 @@ class AccountVault {
     removedProjectBoards: removedProjectBoards ?? this.removedProjectBoards,
     webDevice: clearWebDevice ? null : webDevice ?? this.webDevice,
     browsers: browsers ?? this.browsers,
+    retiredPassKeys: retiredPassKeys ?? this.retiredPassKeys,
     preferences: preferences ?? this.preferences,
     pin: pin ?? this.pin,
     resetId: resetId ?? this.resetId,
@@ -734,6 +748,8 @@ AccountVault mergeVaults(AccountVault a, AccountVault b, {String? relayPinId}) {
     removedProjectBoards: boards.tombstones,
     webDevice: _mergeWebDevice(a.webDevice, b.webDevice, revoked),
     browsers: _mergeBrowsers(a.browsers, b.browsers),
+    // Retired for good: nothing ever takes one off the list.
+    retiredPassKeys: {...a.retiredPassKeys, ...b.retiredPassKeys}.toList(),
     preferences: newer.preferences.isEmpty
         ? (newer == a ? b : a).preferences
         : newer.preferences,

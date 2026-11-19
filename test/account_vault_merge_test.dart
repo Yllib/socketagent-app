@@ -8,6 +8,22 @@ void main() {
   VaultDevice device(String key, int at) =>
       VaultDevice(publicKey: key, name: key, platform: 'android', addedAt: at);
 
+  test(
+    'retired pass keys are a union that survives json and never shrinks',
+    () {
+      final a = AccountVault(updatedAt: 2, retiredPassKeys: const ['old1']);
+      final b = AccountVault(
+        updatedAt: 1,
+        retiredPassKeys: const ['old2', 'old1'],
+      );
+      final merged = mergeVaults(a, b);
+      expect(merged.retiredPassKeys.toSet(), {'old1', 'old2'});
+      final reread = AccountVault.fromJson(merged.toJson());
+      expect(reread.retiredPassKeys.toSet(), {'old1', 'old2'});
+      expect(reread.unknownFields, isEmpty);
+    },
+  );
+
   test('newer write wins per computer and both sides keep their others', () {
     final a = AccountVault(
       computers: [

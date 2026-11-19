@@ -249,6 +249,23 @@ class AccountService extends ChangeNotifier {
   AccountVault? get vault => _vault;
   List<VaultDevice> get devices => _vault?.devices ?? const [];
 
+  /// The account's pass for this device's key, which a computer that trusts
+  /// the account takes in place of Allow. Null with no account or no key.
+  Map<String, String>? devicePass() {
+    final keys = _keys;
+    if (keys == null || devicePublicKey.isEmpty) return null;
+    final Uint8List key;
+    try {
+      key = base64Decode(devicePublicKey);
+    } on FormatException {
+      return null;
+    }
+    return key.length == 32 ? keys.devicePass(key) : null;
+  }
+
+  /// Pass keys this account retired. Computers are told so they drop them.
+  List<String> get retiredPassKeys => _vault?.retiredPassKeys ?? const [];
+
   /// The key every browser shares, when one has signed in.
   String? get webDevicePublicKey => _vault?.webDevice?.publicKey;
 
@@ -1528,11 +1545,18 @@ class AccountService extends ChangeNotifier {
       var pinSent = false;
       for (var round = 0; ; round++) {
         final now = _now;
-        final changed = _without(
-          vault,
-          remove,
-          now,
-        ).copyWith(pin: made?.public, updatedAt: now, updatedBy: deviceName);
+        // The old master key's pass key goes with it. Computers that hear
+        // about it from any device on the account stop trusting its passes,
+        // so a removed device can't vouch for a new key of its own.
+        final changed = _without(vault, remove, now).copyWith(
+          pin: made?.public,
+          updatedAt: now,
+          updatedBy: deviceName,
+          retiredPassKeys: {
+            ...vault.retiredPassKeys,
+            keys.passVerifyKey,
+          }.toList(),
+        );
         final Map<String, String> wrapped;
         try {
           newVersion = await client.put(

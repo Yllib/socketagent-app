@@ -281,16 +281,20 @@ Uint8List decodeHs2(String frame) {
 /// The payload a device seals into message 1. [name] is cut to 80
 /// characters, and [capabilities] is what `client_capabilities` announces
 /// on the old transport, minus `type`, `lane` and `sessionKeyVersion`.
+/// [pass] is the account's pass for this device key, when it has one: a
+/// locked computer that trusts the account lets the device in without Allow.
 String deviceHandshakePayload({
   required String appVersion,
   required String name,
   required String platform,
   required Map<String, Object> capabilities,
+  Map<String, String>? pass,
 }) => jsonEncode({
   'app': appVersion,
   'name': String.fromCharCodes(name.runes.take(maxDeviceNameLength)),
   'platform': platform,
   'caps': capabilities,
+  'pass': ?pass,
 });
 
 /// What reaches one computer over v2 beside the two static keys: its control
