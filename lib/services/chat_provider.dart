@@ -8828,8 +8828,13 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (deviceAuth is Map && msg['accountPasses'] is Map) {
       // Sent on every capabilities message: the first on a connection, and
       // after any change to the computer's record, which may have dropped
-      // what it was told.
+      // what it was told. A vault read more than two minutes ago is read
+      // again, in case the account changed its master key while this app
+      // sat open. The connection does not wait for that: the computer is
+      // told what this device holds now, and _announceAccountPass tells it
+      // again if the sync brings a new key or retires one.
       _serversWithAccountPasses.add(serverId);
+      account.syncIfStale();
       _sendAccountPassKey(serverId);
     } else {
       _serversWithAccountPasses.remove(serverId);

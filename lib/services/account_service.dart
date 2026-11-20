@@ -241,6 +241,9 @@ class AccountService extends ChangeNotifier {
   Future<void> _queue = Future.value();
   Timer? _syncDebounce;
   DateTime? _lastSyncedAt;
+
+  /// When [syncIfStale] last started a sync.
+  DateTime? _staleSyncAt;
   String? _lastError;
   String? _notice;
 
@@ -828,6 +831,33 @@ class AccountService extends ChangeNotifier {
     _syncDebounce = Timer(const Duration(seconds: 2), () {
       unawaited(sync());
     });
+  }
+
+  /// How old the last successful sync may be when this device tells a
+  /// computer its pass key. Past that the vault is read again, because the
+  /// account may have changed its master key since.
+  static const passKeyFreshness = Duration(minutes: 2);
+
+  /// How long [syncIfStale] waits before it tries again after a sync that
+  /// did not succeed.
+  static const _staleSyncRetry = Duration(seconds: 30);
+
+  /// Starts a sync when the last successful one is older than
+  /// [passKeyFreshness], or this run has had none. It does not wait for it.
+  /// The app calls this as it tells a computer its pass key, so a device
+  /// left running hears of a key change when a sleeping computer comes
+  /// back, not at its next sync. Listeners hear when the sync changed
+  /// anything. Computers send their capabilities often, so while the relay
+  /// can't be reached this tries once in [_staleSyncRetry], not every time.
+  void syncIfStale() {
+    if (_keys == null) return;
+    final now = _clock();
+    final synced = _lastSyncedAt;
+    if (synced != null && now.difference(synced) < passKeyFreshness) return;
+    final tried = _staleSyncAt;
+    if (tried != null && now.difference(tried) < _staleSyncRetry) return;
+    _staleSyncAt = now;
+    unawaited(sync());
   }
 
   /// Asks the relay for the vault, then read, merge, write with

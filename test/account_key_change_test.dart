@@ -744,6 +744,62 @@ void main() {
       expect(onRelay().retiredPassKeys, [oldPassKey]);
     });
 
+    test('a vault read two minutes ago is read again before a computer is '
+        'told the pass key', () async {
+      final cloud = FakeCloud();
+      final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
+      final oldPassKey = b.service.passKey!;
+      expect(await b.sync(), AccountSyncOutcome.synced);
+
+      // A vault read a minute ago is not read again.
+      cloud.now += 60 * 1000;
+      b.service.syncIfStale();
+      expect(b.service.syncing, isFalse);
+
+      // The account changes its master key while the laptop's app sits open.
+      cloud.now += 1000;
+      await a.service.removeDevice(c.publicKey);
+      cloud.now += 60 * 1000;
+      var announced = 0;
+      b.service.addListener(() {
+        if (b.service.retiredPassKeys.contains(oldPassKey)) announced++;
+      });
+      b.service.syncIfStale();
+      // Nothing waits for the read: the laptop still holds the old key.
+      expect(b.service.syncing, isTrue);
+      expect(b.service.passKey, oldPassKey);
+
+      // This joins the read already running.
+      expect(await b.sync(), AccountSyncOutcome.synced);
+      expect(b.service.passKey, a.service.passKey);
+      expect(b.service.retiredPassKeys, [oldPassKey]);
+      expect(announced, greaterThan(0));
+    });
+
+    test('a relay that is down is asked again after thirty seconds, not on '
+        'every message from a computer', () async {
+      final cloud = FakeCloud();
+      final [_, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      expect(await b.sync(), AccountSyncOutcome.synced);
+      cloud.now += 3 * 60 * 1000;
+      cloud.beforeRelay = (_) async => http.Response('{}', 503);
+
+      b.service.syncIfStale();
+      expect(b.service.syncing, isTrue);
+      expect(await b.sync(), isNot(AccountSyncOutcome.synced));
+      final asked = b.requests;
+      cloud.now += 10 * 1000;
+      b.service.syncIfStale();
+      expect(b.service.syncing, isFalse);
+      expect(b.requests, asked);
+
+      cloud.now += 21 * 1000;
+      b.service.syncIfStale();
+      expect(b.service.syncing, isTrue);
+      await b.sync();
+      expect(b.requests, greaterThan(asked));
+    });
+
     test('a device changes nothing when it cannot check the move', () async {
       final cloud = FakeCloud();
       final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
