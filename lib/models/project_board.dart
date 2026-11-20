@@ -490,7 +490,8 @@ class ProjectBoard {
   BoardStatus statusOf(BoardCard card) => status(card.status) ?? statuses.first;
 
   /// Cards in [statusKey], newest change first, without done cards past
-  /// [doneHiddenAfter].
+  /// [doneHiddenAfter]. Cards waiting on the user keep their place instead,
+  /// newest arrival first, so answering one doesn't move it out of view.
   List<BoardCard> cardsIn(String statusKey, {DateTime? now}) {
     final at = now ?? DateTime.now();
     final list = cards.where((c) {
@@ -498,7 +499,11 @@ class ProjectBoard {
       return statusOf(c).kind != StatusKind.done ||
           at.difference(c.statusSince) < doneHiddenAfter;
     }).toList();
-    list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    if (status(statusKey)?.kind == StatusKind.user) {
+      list.sort((a, b) => b.statusSince.compareTo(a.statusSince));
+    } else {
+      list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    }
     return list;
   }
 

@@ -87,6 +87,26 @@ void main() {
     expect(board.cardsIn('inbox').single.id, 'a');
   });
 
+  test('answering a card waiting on the user keeps its place', () {
+    BoardCard arrived(String id, DateTime at, DateTime updated) => BoardCard(
+      id: id,
+      title: 'Card $id',
+      status: 'needs_you',
+      createdAt: at,
+      updatedAt: updated,
+      history: [CardMove(at: at, by: 'Agent', to: 'needs_you')],
+    );
+    final board = ProjectBoard(
+      projectId: 'p_1',
+      cards: [
+        // Arrived first, answered last.
+        arrived('a', DateTime(2026, 11, 1), DateTime(2026, 11, 3)),
+        arrived('b', DateTime(2026, 11, 2), DateTime(2026, 11, 2)),
+      ],
+    );
+    expect(board.cardsIn('needs_you').map((c) => c.id), ['b', 'a']);
+  });
+
   test('done cards drop out of lists after 30 days', () {
     final board = ProjectBoard(projectId: 'p_1', cards: [_card('a', 'done')]);
     expect(board.cardsIn('done', now: DateTime(2026, 11, 20)), hasLength(1));
