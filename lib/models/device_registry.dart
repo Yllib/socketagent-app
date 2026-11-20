@@ -139,6 +139,7 @@ class DeviceRegistry {
     required this.devices,
     required this.self,
     this.pending = const [],
+    this.accounts = const [],
   });
 
   /// `learning` or `enforced`.
@@ -150,6 +151,9 @@ class DeviceRegistry {
 
   /// Keys held at the handshake, waiting for an approval.
   final List<PendingDevice> pending;
+
+  /// Accounts whose new devices this computer adds without Allow.
+  final List<TrustedAccount> accounts;
 
   bool get learning => mode == 'learning';
 
@@ -178,7 +182,35 @@ class DeviceRegistry {
           if (item is Map)
             ?PendingDevice.fromJson(Map<String, dynamic>.from(item), serverId),
     ],
+    accounts: [
+      if (raw['accounts'] is List)
+        for (final item in raw['accounts'] as List)
+          ?TrustedAccount.fromJson(item),
+    ],
   );
+}
+
+/// An account pass key a computer trusts. It trusts the key only while one
+/// of [devices], the listed devices that told it about the account, stays
+/// on its list.
+class TrustedAccount {
+  const TrustedAccount({required this.passKey, required this.devices});
+
+  final String passKey;
+
+  /// Public keys of the devices that carry the pass key.
+  final List<String> devices;
+
+  static TrustedAccount? fromJson(Object? raw) {
+    if (raw is! Map) return null;
+    final passKey = raw['passKey'];
+    final devices = raw['devices'];
+    if (passKey is! String || passKey.isEmpty || devices is! List) return null;
+    return TrustedAccount(
+      passKey: passKey,
+      devices: devices.whereType<String>().toList(),
+    );
+  }
 }
 
 /// A `device_pending` notice: a device waiting for approval on a computer.

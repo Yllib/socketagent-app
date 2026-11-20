@@ -611,6 +611,24 @@ void main() {
       expect(await d.join(goodPin), isA<Joined>());
     });
 
+    test('gives no pass until the PIN is set, and retires the plain key\'s '
+        'pass key', () async {
+      final cloud = FakeCloud();
+      final a = Device('Old phone', cloud);
+      final plain = await plantPlainAccount(cloud, [a]);
+      await a.sync();
+      // The plain master key sits unsealed in Drive, so it vouches for
+      // nothing.
+      expect(a.service.passKey, isNull);
+      expect(a.service.devicePass(), isNull);
+
+      await a.service.setFirstPin(goodPin);
+
+      expect(a.service.devicePass()!['k'], a.service.passKey);
+      expect(a.service.passKey, isNot(plain.passVerifyKey));
+      expect(a.service.retiredPassKeys, [plain.passVerifyKey]);
+    });
+
     test('takes at most 64 devices', () async {
       final cloud = FakeCloud();
       final a = Device('Old phone', cloud);
@@ -687,6 +705,43 @@ void main() {
       expect(await d.sync(), AccountSyncOutcome.noAccount);
       expect(d.service.notice, AccountService.removedWords);
       expect(await c.sync(), AccountSyncOutcome.noAccount);
+    });
+
+    test('retires the old pass key when the device that made the change '
+        'did not', () async {
+      final cloud = FakeCloud();
+      final [a, b, c] = await pinAccount(cloud, ['Pixel', 'Laptop', 'Tablet']);
+      final oldPassKey = a.service.passKey!;
+      var announced = 0;
+      b.service.addListener(() {
+        if (b.service.retiredPassKeys.contains(oldPassKey)) announced++;
+      });
+      cloud.now += 1000;
+      await a.service.removeDevice(c.publicKey);
+      // The device that made the change holds the retired key before its
+      // next sync, so it can tell computers at once.
+      expect(a.service.retiredPassKeys, [oldPassKey]);
+
+      // The new vault as a build from before passes leaves it.
+      final keys = AccountKeys.fromMasterKey(
+        decodeRecoveryKey(a.service.recoveryKey!)!,
+      );
+      AccountVault onRelay() => AccountVault.fromJson(
+        jsonDecode(keys.openVault(cloud.accounts[keys.accountId]!.ciphertext)),
+      );
+      cloud.accounts[keys.accountId]!
+        ..version += 1
+        ..ciphertext = keys.sealVault(
+          jsonEncode(onRelay().copyWith(retiredPassKeys: const []).toJson()),
+        );
+      expect(onRelay().retiredPassKeys, isEmpty);
+
+      expect(await b.sync(), AccountSyncOutcome.synced);
+      expect(b.service.passKey, keys.passVerifyKey);
+      expect(b.service.retiredPassKeys, [oldPassKey]);
+      expect(announced, greaterThan(0));
+      // And it writes the retirement into the vault for the others.
+      expect(onRelay().retiredPassKeys, [oldPassKey]);
     });
 
     test('a device changes nothing when it cannot check the move', () async {

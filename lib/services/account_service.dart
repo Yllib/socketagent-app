@@ -249,11 +249,20 @@ class AccountService extends ChangeNotifier {
   AccountVault? get vault => _vault;
   List<VaultDevice> get devices => _vault?.devices ?? const [];
 
+  /// The account's pass key, public half, base64. Null with no account, and
+  /// while the vault has no PIN: the master key then sits unsealed in Drive,
+  /// and this device does not tell computers to trust a pass key made from
+  /// it. That only covers honest devices. Whoever holds the master key can
+  /// write a PIN entry into the vault, as they can write a device entry.
+  /// Setting the first PIN changes the master key and retires this one.
+  String? get passKey => _vault?.pin == null ? null : _keys?.passVerifyKey;
+
   /// The account's pass for this device's key, which a computer that trusts
-  /// the account takes in place of Allow. Null with no account or no key.
+  /// the account takes in place of Allow. Null whenever [passKey] is, and
+  /// with no device key.
   Map<String, String>? devicePass() {
     final keys = _keys;
-    if (keys == null || devicePublicKey.isEmpty) return null;
+    if (keys == null || passKey == null || devicePublicKey.isEmpty) return null;
     final Uint8List key;
     try {
       key = base64Decode(devicePublicKey);
@@ -1235,7 +1244,8 @@ class AccountService extends ChangeNotifier {
     }
     _left(keys.accountId);
     _keys = next;
-    _vault = merged;
+    // The device that made the change may run a build that retires nothing.
+    _vault = _retiringPassKey(merged, left: keys, taken: next);
     _lastVersion = 0;
     _lastSyncedAt = null;
     await _persist();
@@ -1254,6 +1264,22 @@ class AccountService extends ChangeNotifier {
       debugPrint('[Account] Frozen list unreadable: ${error.runtimeType}');
       return null;
     }
+  }
+
+  /// [vault] with the pass key of [left] retired. Every device that moves
+  /// to a new master key does this, so one updated device that stays is
+  /// enough for computers to hear the old pass key is dead.
+  static AccountVault _retiringPassKey(
+    AccountVault vault, {
+    required AccountKeys left,
+    required AccountKeys taken,
+  }) {
+    final retired = left.passVerifyKey;
+    if (retired == taken.passVerifyKey ||
+        vault.retiredPassKeys.contains(retired)) {
+      return vault;
+    }
+    return vault.copyWith(retiredPassKeys: [...vault.retiredPassKeys, retired]);
   }
 
   /// Adds [account] as the last account this device moved away from.
@@ -1444,13 +1470,19 @@ class AccountService extends ChangeNotifier {
   /// the change can be repeated, and runs on every sync until it is done.
   Future<void> _takeNewKey(PendingKeyChange pending) async {
     final vault = _vault ?? const AccountVault();
+    final left = _keys;
     _left(pending.fromAccount);
     _keys = pending.newKeys;
-    _vault = _without(
+    final changed = _without(
       vault,
       pending.removed,
       _now,
     ).copyWith(pin: pending.newPin);
+    // The new account's vault already lists the old pass key. This copy
+    // must too, so computers hear of it before the next sync.
+    _vault = left == null
+        ? changed
+        : _retiringPassKey(changed, left: left, taken: pending.newKeys);
     _lastVersion = 0;
     _synced = true;
     _pinAsked = true;

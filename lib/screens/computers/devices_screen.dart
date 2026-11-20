@@ -284,6 +284,19 @@ class _DevicesScreenState extends State<DevicesScreen> {
                       ? null
                       : () => _remove(device, name),
                 ),
+              if (registry != null && registry.accounts.isNotEmpty) ...[
+                _Heading('Trusted accounts'),
+                for (final trusted in registry.accounts)
+                  ListTile(
+                    leading: const Icon(Icons.verified_user_outlined),
+                    title: Text(
+                      trusted.passKey == provider.account.passKey
+                          ? 'Your account'
+                          : 'Another account',
+                    ),
+                    subtitle: Text(_accountDetails(trusted, phones)),
+                  ),
+              ],
               if (computers.isNotEmpty) ...[
                 _Heading('Linked computers'),
                 for (final device in computers)
@@ -318,6 +331,18 @@ class _DevicesScreenState extends State<DevicesScreen> {
       },
     );
   }
+}
+
+/// What trusting [trusted] does, and the listed devices it lasts with: the
+/// computer drops the trust once none of them is on its list.
+String _accountDetails(TrustedAccount trusted, List<RegisteredDevice> phones) {
+  final names = [
+    for (final device in phones)
+      if (trusted.devices.contains(device.publicKey))
+        device.name.isEmpty ? 'Unnamed' : device.name,
+  ];
+  final carriers = names.isEmpty ? 'its device' : names.join(' or ');
+  return 'Its new devices join without asking while $carriers is listed';
 }
 
 class _Heading extends StatelessWidget {

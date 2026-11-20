@@ -8362,6 +8362,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Prompts raised before the shell listened, shown once it does.
   final List<PendingDevice> _unpromptedDevices = [];
   final Set<String> _serversWithDeviceAuth = {};
+
+  /// Computers that take `account_pass_key`, and the pass key and retired
+  /// list each was last sent.
+  final Set<String> _serversWithAccountPasses = {};
+  final Map<String, String> _toldAccountPass = {};
   final Set<String> _serversWithComputerLinks = {};
 
   /// `computerLinks.version` as each computer advertises it. From 2 a link
@@ -8542,6 +8547,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       account.browser = (id: await _browserId(), label: browserLabel());
     }
     account.addListener(notifyListeners);
+    account.addListener(_announceAccountPass);
     await account.load();
     // Board secrets must be loaded before the first sync reads them, or
     // the sync would record every board as turned off. This waits for the
@@ -8771,15 +8777,33 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Tells [serverId] this account's pass key, so it lets the account's
   /// other devices in without asking, and which pass keys the account
   /// retired. The computer only takes it from a device it already knows.
-  void _sendAccountPassKey(String serverId) {
+  /// With [onlyIfChanged], nothing is sent when the computer was already
+  /// told the same on this connection.
+  void _sendAccountPassKey(String serverId, {bool onlyIfChanged = false}) {
+    final passKey = account.passKey;
+    if (passKey == null) return;
+    final retired = account.retiredPassKeys;
+    final told = [passKey, ...retired].join(' ');
+    if (onlyIfChanged && _toldAccountPass[serverId] == told) return;
     final pass = account.devicePass();
     if (pass == null) return;
-    _connMgr.sendToServer(serverId, {
+    final sent = _connMgr.sendToServer(serverId, {
       'type': 'account_pass_key',
       'pass': pass,
-      if (account.retiredPassKeys.isNotEmpty)
-        'retired': account.retiredPassKeys,
+      if (retired.isNotEmpty) 'retired': retired,
     });
+    if (sent) _toldAccountPass[serverId] = told;
+  }
+
+  /// The account changed. After a new master key, here or on another
+  /// device, every connected computer hears the new pass key and the
+  /// retired one now, not at its next connection: until then it would go on
+  /// taking passes a removed device can still sign.
+  void _announceAccountPass() {
+    for (final serverId in _serversWithAccountPasses) {
+      if (_connMgr.statusOf(serverId) != ConnectionStatus.connected) continue;
+      _sendAccountPassKey(serverId, onlyIfChanged: true);
+    }
   }
 
   void _captureDeviceCapabilities(Map<String, dynamic> msg, String serverId) {
@@ -8797,10 +8821,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       // Every connection reloads the list: a device_pending notice sent
       // while this device was away only lives in the computer's list.
       _connMgr.sendToServer(serverId, {'type': 'device_list'});
-      if (msg['accountPasses'] is Map) _sendAccountPassKey(serverId);
     } else {
       _serversWithDeviceAuth.remove(serverId);
       _deviceRegistries.remove(serverId);
+    }
+    if (deviceAuth is Map && msg['accountPasses'] is Map) {
+      // Sent on every capabilities message: the first on a connection, and
+      // after any change to the computer's record, which may have dropped
+      // what it was told.
+      _serversWithAccountPasses.add(serverId);
+      _sendAccountPassKey(serverId);
+    } else {
+      _serversWithAccountPasses.remove(serverId);
+      _toldAccountPass.remove(serverId);
     }
     if (msg['pairingReset'] is Map) {
       _serversWithPairingReset.add(serverId);
