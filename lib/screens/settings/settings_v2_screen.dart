@@ -16,6 +16,8 @@ import '../../services/websocket_service.dart';
 import '../../util/format.dart';
 import '../../widgets/adaptive_action_sheet.dart';
 import '../../widgets/transcript_cache_setting.dart';
+import '../connect_computer_screen.dart';
+import '../../platform/web_install.dart';
 import '../credential_manager_screen.dart';
 import '../protected_files_screen.dart';
 import '../paywall_screen.dart';
@@ -372,6 +374,24 @@ class _SettingsV2ScreenState extends State<SettingsV2Screen> {
                       const _SubscriptionTile(),
                     ],
                   ),
+                  // In a browser tab the Install tab links the page.
+                  if (AppPlatform.isWeb && WebInstall.installed)
+                    _SettingsGroup(
+                      title: 'Install',
+                      children: [
+                        _NavTile(
+                          icon: Icons.download_outlined,
+                          title: 'Install SocketAgent',
+                          subtitle: 'Web app, desktop app and server',
+                          trailing: Icons.chevron_right,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const ComputerInstallScreen(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   _SettingsGroup(
                     title: 'Integrations',
                     children: [

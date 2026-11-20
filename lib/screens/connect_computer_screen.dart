@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/server_config.dart';
 import '../platform/app_platform.dart';
 import '../platform/browser_session.dart';
+import '../platform/web_install.dart';
 import '../services/google_auth.dart';
 import 'settings/account_pin_dialogs.dart';
 import '../services/chat_provider.dart';
@@ -152,16 +154,19 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                   child: const Text('Use a direct connection instead'),
                 ),
               ],
-              const SizedBox(height: 22),
-              SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: OutlinedButton.icon(
-                  onPressed: _openInstallHelp,
-                  icon: const Icon(Icons.download_outlined),
-                  label: const Text('Install on a computer'),
+              // The browser build opens the install page from its Install tab.
+              if (!AppPlatform.isWeb) ...[
+                const SizedBox(height: 22),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    onPressed: _openInstallHelp,
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Install SocketAgent'),
+                  ),
                 ),
-              ),
+              ],
               const SizedBox(height: 24),
               if (!AppPlatform.isWeb)
                 Text.rich(
@@ -779,8 +784,38 @@ class _DirectConnectionScreenState extends State<DirectConnectionScreen> {
   }
 }
 
-enum _ComputerOs { windows, macos, linux }
+/// Stable installer downloads. publish-desktop-installer.sh in the server repo
+/// repoints them at each new signed build.
+const windowsServerInstallerUrl =
+    'https://rubanoenterprises.com/socketagent_server_installer.exe';
+const windowsDesktopAppUrl =
+    'https://rubanoenterprises.com/socketagent_desktop_installer.exe';
+const webAppUrl = 'https://socketagent.rbno.net';
 
+/// Opens [url] in the browser. For an installer, that downloads it.
+Future<void> openDownload(BuildContext context, String url) async {
+  final opened = await launchUrl(
+    Uri.parse(url),
+    mode: LaunchMode.externalApplication,
+  );
+  if (!opened && context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('Could not open $url')));
+  }
+}
+
+/// One-line Windows setup. Rerunning it over an install keeps the pairing.
+const windowsInstallCommand =
+    'powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Yllib/socketagent/master/install-windows.ps1 | iex"';
+
+/// One-line macOS and Linux setup.
+const unixInstallCommand =
+    'curl -fsSL https://raw.githubusercontent.com/Yllib/socketagent/master/install.sh | bash';
+
+/// Every way to install SocketAgent: the web app, the Windows desktop app,
+/// and the server, by Windows installer or by command line on each OS.
+/// Pops true when the user is ready to scan a new computer's pairing code.
 class ComputerInstallScreen extends StatefulWidget {
   const ComputerInstallScreen({super.key});
 
@@ -788,104 +823,146 @@ class ComputerInstallScreen extends StatefulWidget {
   State<ComputerInstallScreen> createState() => _ComputerInstallScreenState();
 }
 
-/// One-line Windows setup. Rerunning it over an install keeps the pairing.
-const windowsInstallCommand =
-    'powershell -ExecutionPolicy Bypass -Command "irm https://raw.githubusercontent.com/Yllib/socketagent/master/install-windows.ps1 | iex"';
-
 class _ComputerInstallScreenState extends State<ComputerInstallScreen> {
-  static const _unixCommand =
-      'curl -fsSL https://raw.githubusercontent.com/Yllib/socketagent/master/install.sh | bash';
-
-  _ComputerOs _selected = _ComputerOs.windows;
-
-  String get _command =>
-      _selected == _ComputerOs.windows ? windowsInstallCommand : _unixCommand;
+  Future<void> _installWebApp() async {
+    await WebInstall.prompt();
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final heading = theme.textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.w700,
+    );
     return Scaffold(
       appBar: AppBar(title: const Text('Install SocketAgent')),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 30),
+          padding: const EdgeInsets.fromLTRB(20, 8, 20, 30),
           children: [
-            Text(
-              'Choose the computer you are setting up',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Then run one command on that computer. The installer will show a pairing code when it finishes.',
-              style: TextStyle(color: theme.colorScheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 20),
-            SegmentedButton<_ComputerOs>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(
-                  value: _ComputerOs.windows,
-                  icon: Icon(Icons.window),
-                  label: Text('Windows'),
-                ),
-                ButtonSegment(
-                  value: _ComputerOs.macos,
-                  icon: Icon(Icons.laptop_mac),
-                  label: Text('macOS'),
-                ),
-                ButtonSegment(
-                  value: _ComputerOs.linux,
-                  icon: Icon(Icons.terminal),
-                  label: Text('Linux'),
-                ),
-              ],
-              selected: {_selected},
-              onSelectionChanged: (value) => setState(() {
-                _selected = value.first;
-              }),
-            ),
-            const SizedBox(height: 22),
-            Text(
-              _selected == _ComputerOs.windows
-                  ? 'Open PowerShell and paste:'
-                  : 'Open Terminal and paste:',
-              style: theme.textTheme.titleSmall,
-            ),
+            Text('Web app', style: heading),
             const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
+            _webAppAction(theme),
+            if (!AppPlatform.isWindows) ...[
+              const SizedBox(height: 28),
+              Text('Windows desktop app', style: heading),
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                key: const ValueKey('download-desktop-app'),
+                onPressed: () => openDownload(context, windowsDesktopAppUrl),
+                icon: const Icon(Icons.download),
+                label: const Text('Download for Windows'),
               ),
-              child: SelectableText(
-                _command,
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-              ),
+            ],
+            const SizedBox(height: 28),
+            Text('SocketAgent server', style: heading),
+            const SizedBox(height: 4),
+            const Text(
+              'Runs your agents on a computer. The installer shows a pairing '
+              'code when it finishes.',
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             OutlinedButton.icon(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: _command));
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Install command copied')),
-                );
-              },
-              icon: const Icon(Icons.copy),
-              label: const Text('Copy command'),
+              key: const ValueKey('download-server-installer'),
+              onPressed: () => openDownload(context, windowsServerInstallerUrl),
+              icon: const Icon(Icons.download),
+              label: const Text('Windows installer'),
             ),
-            const SizedBox(height: 26),
-            FilledButton.icon(
-              onPressed: () => Navigator.of(context).pop(true),
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('I see the pairing code'),
+            const SizedBox(height: 16),
+            const _InstallCommand(
+              label: 'Windows, in PowerShell',
+              command: windowsInstallCommand,
             ),
+            const SizedBox(height: 16),
+            const _InstallCommand(
+              label: 'macOS and Linux, in Terminal',
+              command: unixInstallCommand,
+            ),
+            // A browser can't scan the code; the phone app pairs instead.
+            if (!AppPlatform.isWeb) ...[
+              const SizedBox(height: 26),
+              FilledButton.icon(
+                onPressed: () => Navigator.of(context).pop(true),
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('I see the pairing code'),
+              ),
+            ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _webAppAction(ThemeData theme) {
+    if (!AppPlatform.isWeb) {
+      return OutlinedButton.icon(
+        key: const ValueKey('open-web-app'),
+        onPressed: () => openDownload(context, webAppUrl),
+        icon: const Icon(Icons.open_in_new),
+        label: const Text('socketagent.rbno.net'),
+      );
+    }
+    if (WebInstall.installed) return const Text('Installed on this device.');
+    if (WebInstall.canPrompt) {
+      return OutlinedButton.icon(
+        key: const ValueKey('install-web-app'),
+        onPressed: _installWebApp,
+        icon: const Icon(Icons.install_desktop),
+        label: const Text('Install the web app'),
+      );
+    }
+    return const Text(
+      "Use your browser's menu: Install app, or Share then Add to Home "
+      'Screen on iPhone.',
+    );
+  }
+}
+
+/// One install command with a copy button.
+class _InstallCommand extends StatelessWidget {
+  const _InstallCommand({required this.label, required this.command});
+
+  final String label;
+  final String command;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(label, style: theme.textTheme.titleSmall),
+        const SizedBox(height: 6),
+        Container(
+          padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surfaceContainerHighest,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: SelectableText(
+                  command,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Copy',
+                icon: const Icon(Icons.copy, size: 20),
+                onPressed: () async {
+                  await Clipboard.setData(ClipboardData(text: command));
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Install command copied')),
+                  );
+                },
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

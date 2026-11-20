@@ -13,7 +13,7 @@ void main() {
     expect(find.text('Connect a computer'), findsWidgets);
     expect(find.text('Scan pairing code'), findsOneWidget);
     expect(find.text('Use a direct connection instead'), findsOneWidget);
-    expect(find.text('Install on a computer'), findsOneWidget);
+    expect(find.text('Install SocketAgent'), findsOneWidget);
 
     final scan = tester.widget<FilledButton>(
       find.byKey(const ValueKey('scan-pairing-code')),
@@ -46,17 +46,20 @@ void main() {
     expect(find.textContaining('Enter a reachable address'), findsOneWidget);
   });
 
-  testWidgets('install help presents one OS-specific command', (tester) async {
+  testWidgets('install screen offers every install path', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: ConnectComputerScreen()));
 
-    await tester.tap(find.text('Install on a computer'));
+    await tester.tap(find.text('Install SocketAgent'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Install SocketAgent'), findsOneWidget);
-    expect(find.text('Windows'), findsOneWidget);
-    expect(find.text('macOS'), findsOneWidget);
-    expect(find.text('Linux'), findsOneWidget);
+    expect(find.byKey(const ValueKey('open-web-app')), findsOneWidget);
+    expect(find.byKey(const ValueKey('download-desktop-app')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('download-server-installer')),
+      findsOneWidget,
+    );
     expect(find.textContaining('install-windows.ps1'), findsOneWidget);
+    expect(find.textContaining('install.sh | bash'), findsOneWidget);
     expect(find.textContaining('/install.ps1 | iex'), findsNothing);
   });
 

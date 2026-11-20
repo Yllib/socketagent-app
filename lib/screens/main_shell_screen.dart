@@ -19,6 +19,8 @@ import 'sessions_screen.dart';
 import 'tasks/tasks_screen.dart';
 import 'computers/backend_auth.dart' show showBackendSignIn;
 import 'computers/computers_screen.dart';
+import 'connect_computer_screen.dart' show ComputerInstallScreen;
+import '../platform/web_install.dart';
 import 'settings/settings_v2_screen.dart';
 import 'paywall_screen.dart';
 import 'package:app/platform/app_platform.dart';
@@ -350,6 +352,16 @@ class MainShellScreenState extends State<MainShellScreen>
     return await _showPaywall();
   }
 
+  /// The browser build's Install destination. It opens the install page
+  /// instead of switching tabs, and is gone once the web app runs installed;
+  /// Settings links the page there instead.
+  static const _installIndex = 4;
+  static final _showInstallTab = AppPlatform.isWeb && !WebInstall.installed;
+
+  void _openInstall() => Navigator.of(context).push(
+    MaterialPageRoute<bool>(builder: (_) => const ComputerInstallScreen()),
+  );
+
   void _onTabChanged(int index) {
     if (index == _currentIndex) return;
     setState(() => _currentIndex = index);
@@ -498,7 +510,9 @@ class MainShellScreenState extends State<MainShellScreen>
                 builder: (context, unreadTasks, _) {
                   return NavigationBar(
                     selectedIndex: _currentIndex,
-                    onDestinationSelected: _onTabChanged,
+                    onDestinationSelected: (index) => index == _installIndex
+                        ? _openInstall()
+                        : _onTabChanged(index),
                     destinations: [
                       const NavigationDestination(
                         icon: Icon(Icons.chat_bubble_outline),
@@ -530,6 +544,11 @@ class MainShellScreenState extends State<MainShellScreen>
                         selectedIcon: Icon(Icons.settings),
                         label: 'Settings',
                       ),
+                      if (_showInstallTab)
+                        const NavigationDestination(
+                          icon: Icon(Icons.download_outlined),
+                          label: 'Install',
+                        ),
                     ],
                   );
                 },
