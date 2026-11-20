@@ -6476,6 +6476,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
             _completeDeviceRequest(serverId, type, msg);
             break;
           }
+        case 'account_pass_key_result':
+          _handleAccountPassKeyResult(msg);
+          break;
         case 'device_pending':
           _handleDevicePending(msg, serverId);
           break;
@@ -8367,6 +8370,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// list each was last sent.
   final Set<String> _serversWithAccountPasses = {};
   final Map<String, String> _toldAccountPass = {};
+
+  /// Pass keys of this account that a computer has refused as retired, and
+  /// that already set off a sync.
+  final Set<String> _refusedAccountPassKeys = {};
   final Set<String> _serversWithComputerLinks = {};
 
   /// `computerLinks.version` as each computer advertises it. From 2 a link
@@ -8731,6 +8738,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     return vault.devices.any((d) => d.publicKey == publicKey);
   }
 
+  /// Whether [publicKey] may be approved from the vault copy held now, with
+  /// no sync first: the vault lists it and was read in the last two minutes.
+  /// An older copy may still list a device the account has since removed,
+  /// and a key approved here gets a record the computer fully trusts.
+  bool _isAccountDeviceNow(String publicKey) =>
+      account.syncedWithin(AccountService.passKeyFreshness) &&
+      _isAccountDevice(publicKey);
+
   /// A device joined the account. Computers that have no token in the
   /// vault can't enroll it by token, so approve it here.
   void _approveJoinedDevice(VaultDevice device) {
@@ -8793,6 +8808,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (retired.isNotEmpty) 'retired': retired,
     });
     if (sent) _toldAccountPass[serverId] = told;
+  }
+
+  /// A computer refused this device's pass key as retired. The account has
+  /// moved to a new master key and this device's vault copy is old, so it
+  /// is read again at once. Once per pass key: a computer may go on
+  /// refusing a key that is in fact current, and each of its capabilities
+  /// messages brings another refusal.
+  void _handleAccountPassKeyResult(Map<String, dynamic> msg) {
+    if (msg['ok'] != false || msg['reason'] != 'retired') return;
+    final passKey = account.passKey;
+    if (passKey == null || !_refusedAccountPassKeys.add(passKey)) return;
+    unawaited(account.sync());
   }
 
   /// The account changed. After a new master key, here or on another
@@ -9001,7 +9028,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     _pendingDevices.removeWhere((p) => p.serverId == serverId);
     for (final device in pending) {
       if (device.publicKey == devicePublicKey) continue;
-      if (_isAccountDevice(device.publicKey)) {
+      if (_isAccountDeviceNow(device.publicKey)) {
         unawaited(approveDevice(device).catchError((_) {}));
         continue;
       }
@@ -9012,18 +9039,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// A device this one doesn't know is waiting on a computer. It may have
-  /// just signed in to the account and written itself to the vault after
-  /// this device last read it, so the vault is read again before the user
-  /// is asked. An account device is approved without a prompt. [pending]
-  /// is already in [_pendingDevices]; a `device_pending_cleared` that comes
-  /// in meanwhile removes it, and then nothing is shown.
+  /// A device is waiting on a computer, and this one's vault copy either
+  /// doesn't list it or is too old to go by. It may have just signed in to
+  /// the account and written itself to the vault after this device last
+  /// read it, or the account may have removed it since. So the vault is
+  /// read again before the user is asked. An account device is approved
+  /// without a prompt, but only on the word of a vault this sync just read:
+  /// when the sync fails the user is asked. [pending] is already in
+  /// [_pendingDevices]; a `device_pending_cleared` that comes in meanwhile
+  /// removes it, and then nothing is shown.
   Future<void> _approveOrPrompt(PendingDevice pending) async {
-    if (account.hasAccount) await account.sync();
+    final synced =
+        account.hasAccount && await account.sync() == AccountSyncOutcome.synced;
     bool same(PendingDevice p) =>
         p.serverId == pending.serverId && p.publicKey == pending.publicKey;
     if (!_pendingDevices.any(same)) return;
-    if (_isAccountDevice(pending.publicKey)) {
+    if (synced && _isAccountDevice(pending.publicKey)) {
       await approveDevice(pending).catchError((_) {});
       return;
     }
@@ -9542,7 +9573,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final pending = PendingDevice.fromJson(msg, serverId);
     if (pending == null) return;
     if (pending.publicKey == devicePublicKey) return;
-    if (_isAccountDevice(pending.publicKey)) {
+    if (_isAccountDeviceNow(pending.publicKey)) {
       unawaited(approveDevice(pending).catchError((_) {}));
       return;
     }

@@ -838,6 +838,13 @@ class AccountService extends ChangeNotifier {
   /// account may have changed its master key since.
   static const passKeyFreshness = Duration(minutes: 2);
 
+  /// Whether this run's last successful sync was less than [age] ago. An
+  /// older vault copy may still list a device the account has removed.
+  bool syncedWithin(Duration age) {
+    final synced = _lastSyncedAt;
+    return synced != null && _clock().difference(synced) < age;
+  }
+
   /// How long [syncIfStale] waits before it tries again after a sync that
   /// did not succeed.
   static const _staleSyncRetry = Duration(seconds: 30);
@@ -851,9 +858,8 @@ class AccountService extends ChangeNotifier {
   /// can't be reached this tries once in [_staleSyncRetry], not every time.
   void syncIfStale() {
     if (_keys == null) return;
+    if (syncedWithin(passKeyFreshness)) return;
     final now = _clock();
-    final synced = _lastSyncedAt;
-    if (synced != null && now.difference(synced) < passKeyFreshness) return;
     final tried = _staleSyncAt;
     if (tried != null && now.difference(tried) < _staleSyncRetry) return;
     _staleSyncAt = now;

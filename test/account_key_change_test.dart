@@ -753,6 +753,7 @@ void main() {
 
       // A vault read a minute ago is not read again.
       cloud.now += 60 * 1000;
+      expect(b.service.syncedWithin(AccountService.passKeyFreshness), isTrue);
       b.service.syncIfStale();
       expect(b.service.syncing, isFalse);
 
@@ -764,6 +765,7 @@ void main() {
       b.service.addListener(() {
         if (b.service.retiredPassKeys.contains(oldPassKey)) announced++;
       });
+      expect(b.service.syncedWithin(AccountService.passKeyFreshness), isFalse);
       b.service.syncIfStale();
       // Nothing waits for the read: the laptop still holds the old key.
       expect(b.service.syncing, isTrue);
