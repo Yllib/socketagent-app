@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:app/models/message.dart';
 
 import 'multi_client_prompt_test.dart' show withSession;
 
@@ -85,6 +86,48 @@ void main() {
           commands.singleWhere((c) => c['name'] == 'local-only')['kind'],
           'skill',
         );
+      });
+    },
+  );
+
+  test(
+    'Gemini supported commands appear in the slash command picker and single-underscore MCP names normalize',
+    () async {
+      expect(
+        normalizeSocketAgentToolName('mcp_socketagent_app_SendFile'),
+        'SendFile',
+      );
+      await withSession((provider, send) async {
+        await send({'type': 'session_created', 'backend': 'gemini'});
+        await send({
+          'type': 'supported_commands',
+          'commands': [
+            {
+              'name': 'plan',
+              'description': 'Plan carefully',
+              'kind': 'command',
+              'agent': 'gemini',
+            },
+            {
+              'name': '/goal',
+              'description': 'Run until finished',
+              'kind': 'command',
+              'agent': 'gemini',
+            },
+            {
+              'name': 'codex-only',
+              'description': 'Ignored',
+              'kind': 'command',
+              'agent': 'codex',
+            },
+          ],
+        });
+
+        expect(provider.activeSessionBackend, 'gemini');
+        expect(provider.slashCommands.map((c) => c['name']).toList(), [
+          'goal',
+          'plan',
+        ]);
       });
     },
   );

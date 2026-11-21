@@ -112,6 +112,7 @@ import '../util/format.dart';
 import 'package:app/platform/app_platform.dart';
 import 'package:app/platform/browser_label.dart';
 import 'package:pinenacl/api.dart' show PineNaClUtils;
+import '../models/agent_backend.dart' as agent_backend;
 
 const _codexAgentControlTypes = {
   'wait',
@@ -710,7 +711,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   static const _transcriptCacheLimitKey = 'transcript_cache_limit';
   final Map<String, Timer> _scheduledTaskRefreshRetries = {};
   final Map<String, String> _scheduledTaskLoadedRevisions = {};
-  // Backend driving the currently active session ('claude' | 'codex' | null).
+  // Backend driving the currently active session (see [agentBackends]), or null.
   // Surfaced by the chat header so the user knows what they're talking to.
   String? _activeSessionBackend;
   String? _viewingSessionId; // set by HomeScreen when user is on that screen
@@ -1025,6 +1026,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Completer<Map<String, dynamic>>? _pendingForceUpdate;
   Completer<Map<String, dynamic>?>? _pendingCodexStatus;
   Completer<Map<String, dynamic>?>? _pendingClaudeUsage;
+  Completer<Map<String, dynamic>?>? _pendingGeminiUsage;
   final Map<String, Completer<Map<String, dynamic>>> _pendingCodexResets = {};
   final Map<String, String?> _codexResetServers = {};
   final _codexResetAttempts = CodexResetAttempts();
@@ -1995,6 +1997,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   List<Map<String, dynamic>> get slashCommands {
+    if (_activeSessionBackend == 'gemini') {
+      final merged = <String, Map<String, dynamic>>{};
+      for (final raw in _supportedCommands ?? const []) {
+        if (raw is! Map) continue;
+        final mapped = Map<String, dynamic>.from(raw);
+        if (mapped['agent'] != null && mapped['agent'] != 'gemini') continue;
+        final name = _cleanSlashName(
+          (mapped['name'] ?? '').toString(),
+        ).replaceFirst(RegExp(r'^/+'), '');
+        if (name.isEmpty) continue;
+        merged[name.toLowerCase()] = {
+          ...mapped,
+          'name': name,
+          'kind': mapped['kind'] ?? 'command',
+          'agent': 'gemini',
+        };
+      }
+      final result = merged.values.toList()
+        ..sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+      return result;
+    }
     if (_activeSessionBackend == 'codex') {
       final serverId = _connMgr.activeServerId;
       if (serverId == null) return const [];
@@ -6174,6 +6197,19 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
                 : null;
             _pendingClaudeUsage?.complete(usage);
             _pendingClaudeUsage = null;
+            break;
+          }
+        case 'gemini_usage':
+          {
+            final usage = msg['error'] == null && msg['usage'] is Map
+                ? {
+                    ...Map<String, dynamic>.from(msg['usage'] as Map),
+                    if (msg['fetchedAt'] is String)
+                      'fetched_at': msg['fetchedAt'],
+                  }
+                : null;
+            _pendingGeminiUsage?.complete(usage);
+            _pendingGeminiUsage = null;
             break;
           }
         case 'usage_restore':
@@ -16911,10 +16947,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final key = _backendInstallKey(serverId, backend);
     final requestId =
         'backend_${operation}_${backend}_${DateTime.now().millisecondsSinceEpoch}';
-    final backendName = backend == 'codex'
-        ? 'Codex'
-        : backend == 'claude'
-        ? 'Claude'
+    final backendName = agent_backend.isAgentBackend(backend)
+        ? agent_backend.backendName(backend)
         : 'Backend';
     final operationName = operation == 'auth' ? 'sign-in' : 'repair';
     _backendInstallAckTimers.remove(key)?.cancel();
@@ -17091,10 +17125,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _handleBackendAuthRequired(Map<String, dynamic> msg, String? serverId) {
     if (serverId == null || serverId.isEmpty) return;
     final backend = msg['backend'] as String? ?? 'codex';
-    final backendName = backend == 'codex'
-        ? 'Codex'
-        : backend == 'claude'
-        ? 'Claude'
+    final backendName = agent_backend.isAgentBackend(backend)
+        ? agent_backend.backendName(backend)
         : 'Backend';
     final authScope = msg['authScope']?.toString() ?? 'openai';
     final targetSessionId = msg['sessionId']?.toString();
@@ -17409,8 +17441,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         state.phase = 'probe';
         state.status = 'completed';
         state.running = false;
-        state.message = backend == 'codex'
-            ? 'Codex backend is available.'
+        state.message = agent_backend.isAgentBackend(backend)
+            ? '${agent_backend.backendName(backend)} is available.'
             : 'Backend is available.';
         state.authUrl = null;
         state.authCode = null;
@@ -17712,6 +17744,21 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     );
   }
 
+  /// The Gemini / Antigravity account's quota windows, fetched on demand.
+  Future<Map<String, dynamic>?> requestGeminiUsage() {
+    _pendingGeminiUsage?.complete(null);
+    final completer = Completer<Map<String, dynamic>?>();
+    _pendingGeminiUsage = completer;
+    _connMgr.send({'type': 'get_gemini_usage'});
+    return completer.future.timeout(
+      const Duration(seconds: 6),
+      onTimeout: () {
+        if (_pendingGeminiUsage == completer) _pendingGeminiUsage = null;
+        return null;
+      },
+    );
+  }
+
   Future<Map<String, dynamic>?> requestCodexStatus() {
     _pendingCodexStatus?.complete(null);
     final completer = Completer<Map<String, dynamic>?>();
@@ -17743,6 +17790,11 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   String? get activeSessionBackend => _activeSessionBackend;
+
+  /// Claude, including sessions saved before backends were recorded. Claude
+  /// has features the others lack: thinking off, compaction control, rewind.
+  bool get activeSessionIsClaude =>
+      _activeSessionBackend != 'codex' && _activeSessionBackend != 'gemini';
   String? get _activeCodexGoalKey {
     final sessionId = _activeSessionId;
     final serverId = activeSessionServerId;
@@ -20185,7 +20237,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// background. Codex has no equivalent.
   bool get canBackgroundClaudeTasks {
     final serverId = activeSessionServerId;
-    return activeSessionBackend != 'codex' &&
+    return activeSessionIsClaude &&
         serverId != null &&
         _serversWithClaudeBackgroundTasks.contains(serverId);
   }

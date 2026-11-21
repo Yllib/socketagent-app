@@ -1,8 +1,10 @@
+import 'agent_backend.dart';
+
 enum HarnessRateLimitWindow { fiveHour, weekly }
 
 String? normalizeHarnessBackend(String? value) {
   final backend = value?.trim().toLowerCase();
-  return backend == 'claude' || backend == 'codex' ? backend : null;
+  return isAgentBackend(backend) ? backend : null;
 }
 
 /// Resolves the harness for active-session UI that must remain stable while a

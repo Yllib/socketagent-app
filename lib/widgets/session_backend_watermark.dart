@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../config/app_theme.dart';
+import '../models/agent_backend.dart';
 
 /// Brand color for a session's backend, readable on [palette]'s background.
-/// Anything other than Codex is Claude.
-Color backendColor(AppPalette palette, String? backend) =>
-    backend == 'codex' ? palette.codex : palette.claude;
+/// Anything other than Codex or Gemini is Claude.
+Color backendColor(AppPalette palette, String? backend) => switch (backend) {
+  'codex' => palette.codex,
+  'gemini' => palette.gemini,
+  _ => palette.claude,
+};
 
 /// The app theme around the backend's brand color, so a session's row and
-/// chat window read as Claude or Codex at a glance. Light mode uses the darker
+/// chat window show its backend at a glance. Light mode uses the darker
 /// brand variants from the palette so the accent stays readable on white.
 ThemeData backendTheme(BuildContext context, String? backend) {
   final brightness = Theme.of(context).brightness;
@@ -43,7 +47,7 @@ class SessionBackendWatermark extends StatelessWidget {
           child: Opacity(
             opacity: .22,
             child: Image.asset(
-              'assets/backend_logos/${backend == 'codex' ? 'codex' : 'claude'}.png',
+              'assets/backend_logos/${isAgentBackend(backend) ? backend : 'claude'}.png',
               color: backendColor(context.palette, backend),
               colorBlendMode: BlendMode.srcIn,
               fit: BoxFit.contain,
@@ -52,10 +56,7 @@ class SessionBackendWatermark extends StatelessWidget {
           ),
         ),
       ),
-      Semantics(
-        label: backend == 'codex' ? 'Codex session' : 'Claude session',
-        child: child,
-      ),
+      Semantics(label: '${backendName(backend)} session', child: child),
     ],
   );
 }

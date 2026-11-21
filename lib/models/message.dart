@@ -15,6 +15,7 @@ String normalizeSocketAgentToolName(String rawName) {
     'mcp__app__',
     'mcp__socketagent_app__',
     'mcp__socketagent-app__',
+    'mcp_socketagent_app_',
     'mcp:socketagent_app/',
     'mcp:socketagent-app/',
   ]) {
@@ -778,7 +779,7 @@ class Session {
   final String serverId;
   final String serverName;
   final int? serverColor;
-  // 'claude' | 'codex' | null. Null on legacy sessions persisted before the
+  // A backend from agentBackends, or null. Null on legacy sessions persisted before the
   // codex backend existed — treat absent as claude everywhere downstream.
   final String? backend;
   final String? codexDriver;

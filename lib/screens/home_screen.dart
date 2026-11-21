@@ -18,6 +18,7 @@ import '../services/desktop_workspace_controller.dart';
 import '../widgets/desktop_split_view.dart';
 import '../widgets/adaptive_action_sheet.dart';
 import '../widgets/claude_account_usage.dart';
+import '../widgets/gemini_account_usage.dart';
 import '../widgets/context_window_breakdown.dart';
 import '../widgets/codex_account_usage.dart';
 import 'dart:async';
@@ -63,6 +64,7 @@ import '../services/board_store.dart';
 import 'boards/board_style.dart';
 import 'boards/board_view.dart' show BoardScreen;
 import 'package:app/platform/app_platform.dart';
+import '../models/agent_backend.dart';
 
 /// One row of the context dialog, optionally opening onto its own rows.
 ///
@@ -1653,12 +1655,15 @@ class _ChatScreenState extends State<_ChatScreen> {
                               true,
                             ),
                             onDismissTasks: provider.dismissTasks,
-                            onRewindConversation: provider.rewindConversation,
+                            onRewindConversation:
+                                provider.activeSessionBackend == 'gemini'
+                                ? null
+                                : provider.rewindConversation,
                             codexRewind:
                                 provider.activeSessionBackend == 'codex',
-                            onBranch: provider.activeSessionBackend == 'codex'
-                                ? null
-                                : provider.branchFromMessage,
+                            onBranch: provider.activeSessionIsClaude
+                                ? provider.branchFromMessage
+                                : null,
                             onRetractQueuedMessage: (messageId) {
                               final text = provider.retractQueuedMessage(
                                 messageId,
@@ -2043,7 +2048,7 @@ class _ChatScreenState extends State<_ChatScreen> {
       facts: [
         SessionDetailsFact('Computer', _activeComputerName(provider)),
         if (cwd.isNotEmpty) SessionDetailsFact('Folder', cwd, copyable: true),
-        SessionDetailsFact('Agent', codex ? 'Codex' : 'Claude'),
+        SessionDetailsFact('Agent', backendName(provider.activeSessionBackend)),
         if (hasSession)
           SessionDetailsFact('Session ID', sessionId, copyable: true),
       ],
@@ -2165,14 +2170,14 @@ class _ChatScreenState extends State<_ChatScreen> {
                 final count => '$count folders',
               },
             ),
-          if (!codex)
+          if (provider.activeSessionIsClaude)
             SessionAction(
               'claude_auto_compact',
               'Auto compact',
               Icons.memory_outlined,
               selected: provider.claudeAutoCompactEnabled,
             ),
-          if (!codex)
+          if (provider.activeSessionIsClaude)
             SessionAction(
               'claude_auto_compact_window',
               'Auto-compact window',
@@ -2488,8 +2493,8 @@ class _ChatScreenState extends State<_ChatScreen> {
   /// the one thinking setting that still matters on current models; picking
   /// any effort level turns adaptive thinking back on.
   Widget _buildEffortChip(ChatProvider provider) {
-    final isCodex = provider.activeSessionBackend == 'codex';
-    final thinkingOff = !isCodex && provider.thinking['type'] == 'disabled';
+    final isClaude = provider.activeSessionIsClaude;
+    final thinkingOff = isClaude && provider.thinking['type'] == 'disabled';
     final color = thinkingOff
         ? Theme.of(context).colorScheme.onSurfaceVariant
         : switch (provider.effort) {
@@ -2527,12 +2532,12 @@ class _ChatScreenState extends State<_ChatScreen> {
           provider.setThinking({'type': 'disabled'});
           return;
         }
-        if (!isCodex && provider.thinking['type'] != 'adaptive') {
+        if (isClaude && provider.thinking['type'] != 'adaptive') {
           provider.setThinking({'type': 'adaptive'});
         }
         provider.setEffort(value);
       },
-      tooltip: isCodex ? 'Reasoning effort: $label' : 'Effort: $label',
+      tooltip: isClaude ? 'Effort: $label' : 'Reasoning effort: $label',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
       child: _headerControl(label, color: color, dropdown: true),
@@ -2543,7 +2548,7 @@ class _ChatScreenState extends State<_ChatScreen> {
             height: 36,
             child: item(_effortLabel(e), !thinkingOff && e == provider.effort),
           ),
-        if (!isCodex) ...[
+        if (isClaude) ...[
           const PopupMenuDivider(),
           PopupMenuItem(
             value: _thinkingOffValue,
@@ -2626,6 +2631,10 @@ class _ChatScreenState extends State<_ChatScreen> {
         ('plan', 'Read Only', 'No commands or file writes', Icons.visibility),
       ];
     }
+    // Gemini has no Smart Auto classifier.
+    if (backend == 'gemini') {
+      return _permModes.where((mode) => mode.$1 != 'auto').toList();
+    }
     return _permModes;
   }
 
@@ -2633,6 +2642,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     if (backend == 'codex' && (mode == 'auto' || mode == 'acceptEdits')) {
       return 'default';
     }
+    if (backend == 'gemini' && mode == 'auto') return 'default';
     return mode;
   }
 
@@ -2754,7 +2764,7 @@ class _ChatScreenState extends State<_ChatScreen> {
     ChatProvider provider,
     Map<String, dynamic> usage,
   ) {
-    final claude = provider.activeSessionBackend != 'codex';
+    final claude = provider.activeSessionIsClaude;
     final reported = provider.contextUsage;
     return ContextMeter.from(
       usage: usage,
@@ -2968,9 +2978,12 @@ class _ChatScreenState extends State<_ChatScreen> {
     }
     // Started before the dialog so the panel fills in without blocking the
     // tap; a FutureBuilder below renders it when it lands.
-    final claudeUsageFuture = provider.activeSessionBackend == 'codex'
-        ? null
-        : provider.requestClaudeUsage();
+    final claudeUsageFuture = provider.activeSessionIsClaude
+        ? provider.requestClaudeUsage()
+        : null;
+    final geminiUsageFuture = provider.activeSessionBackend == 'gemini'
+        ? provider.requestGeminiUsage()
+        : null;
     final ctx = provider.contextUsage;
     final inputTokens = (usage['inputTokens'] as num?)?.toInt() ?? 0;
     final outputTokens = (usage['outputTokens'] as num?)?.toInt() ?? 0;
@@ -3103,7 +3116,7 @@ class _ChatScreenState extends State<_ChatScreen> {
                   ),
                 // Where this session compacts, measured the way the header
                 // meter measures it, and the control that moves it.
-                if (provider.activeSessionBackend != 'codex')
+                if (provider.activeSessionIsClaude)
                   Row(
                     children: [
                       Expanded(
@@ -3169,6 +3182,20 @@ class _ChatScreenState extends State<_ChatScreen> {
                             children: [
                               const Divider(height: 20),
                               ClaudeAccountUsage(usage: snap.data!),
+                            ],
+                          ),
+                  ),
+
+                if (geminiUsageFuture != null)
+                  FutureBuilder<Map<String, dynamic>?>(
+                    future: geminiUsageFuture,
+                    builder: (_, snap) => snap.data == null
+                        ? const SizedBox.shrink()
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Divider(height: 20),
+                              GeminiAccountUsage(usage: snap.data!),
                             ],
                           ),
                   ),
@@ -3920,6 +3947,8 @@ class _ChatScreenState extends State<_ChatScreen> {
               ? context.palette.success
               : agent == 'codex'
               ? theme.colorScheme.tertiary
+              : agent == 'gemini'
+              ? context.palette.gemini
               : theme.colorScheme.primary;
           return InkWell(
             onTap: () => _insertSlashCommand(cmd),

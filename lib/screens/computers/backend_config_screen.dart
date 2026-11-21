@@ -10,6 +10,7 @@ import '../../models/computer_issue.dart';
 import '../../services/chat_provider.dart';
 import '../../util/format.dart';
 import '../../widgets/code_editing_controller.dart';
+import '../../models/agent_backend.dart';
 
 /// The syntax to colour a config file name with, or null for plain text.
 String? configLanguageFor(String fileName) {
@@ -145,11 +146,7 @@ class _BackendConfigFilesScreenState extends State<BackendConfigFilesScreen> {
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
               child: Text(
-                backend == 'codex'
-                    ? 'Codex'
-                    : backend == 'claude'
-                    ? 'Claude'
-                    : backend,
+                isAgentBackend(backend) ? backendName(backend) : backend,
                 style: theme.textTheme.labelLarge?.copyWith(
                   color: theme.colorScheme.primary,
                   fontWeight: FontWeight.w700,

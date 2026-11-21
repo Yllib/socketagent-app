@@ -28,6 +28,7 @@ import 'computer_edit_screen.dart';
 import 'computer_summary.dart';
 import 'relay_pairing.dart';
 import 'package:app/platform/app_platform.dart';
+import '../../models/agent_backend.dart' as agent_backend;
 
 /// Everything about one computer: its link, devices, version, backends,
 /// notifications and defaults. Reached from the Computers tab.
@@ -1360,7 +1361,7 @@ class _BackendDetailTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final backend = entry['backend']?.toString() ?? 'backend';
-    final backendName = backend == 'codex' ? 'Codex' : 'Claude';
+    final backendName = agent_backend.backendName(backend);
     final severity = entry['severity']?.toString() ?? 'unknown';
     final reason = entry['reason']?.toString();
     final detail = entry['detail']?.toString();
@@ -1368,8 +1369,13 @@ class _BackendDetailTile extends StatelessWidget {
     // Servers older than the auth-tracking build send no kind, so anything
     // unlabelled stays a generic backend error.
     final isAuthProblem = !ok && entry['kind']?.toString() == 'auth';
+    // An optional backend this computer has never installed, like Gemini.
+    final notInstalled =
+        severity == 'disabled' && entry['kind']?.toString() == 'install';
     final status = ok
         ? 'OK'
+        : notInstalled
+        ? 'Not installed'
         : severity == 'warning'
         ? 'Warning'
         : severity == 'disabled'
@@ -1441,6 +1447,8 @@ class _BackendDetailTile extends StatelessWidget {
               Icon(
                 ok
                     ? Icons.check_circle_outline
+                    : notInstalled
+                    ? Icons.download_outlined
                     : isAuthProblem
                     ? Icons.lock_outline
                     : severity == 'warning'
@@ -1449,6 +1457,8 @@ class _BackendDetailTile extends StatelessWidget {
                 size: 22,
                 color: ok
                     ? context.palette.success
+                    : notInstalled
+                    ? Theme.of(context).colorScheme.onSurfaceVariant
                     : severity == 'warning'
                     ? context.palette.warning
                     : context.palette.danger,
@@ -1475,7 +1485,10 @@ class _BackendDetailTile extends StatelessWidget {
               const SizedBox(width: 8),
               _RowButton('Sign in', onPressed: connected ? signIn : null),
               const SizedBox(width: 6),
-              _RowButton('Reinstall', onPressed: connected ? reinstall : null),
+              _RowButton(
+                notInstalled ? 'Install' : 'Reinstall',
+                onPressed: connected ? reinstall : null,
+              ),
             ],
           ),
         );

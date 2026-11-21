@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../models/agent_backend.dart';
 import '../models/message.dart';
 import '../screens/settings/mcp_servers_screen.dart';
 import '../screens/computers/backend_auth.dart';
@@ -19,6 +20,11 @@ class BackendAuthCard extends StatelessWidget {
     final backend = input['backend']?.toString() ?? 'codex';
     final authScope = input['authScope']?.toString() ?? 'openai';
     final mcpServerName = input['mcpServerName']?.toString();
+    final account = switch (backend) {
+      'gemini' => 'Google',
+      'claude' => 'Claude',
+      _ => 'OpenAI',
+    };
 
     return Consumer<ChatProvider>(
       builder: (context, provider, _) {
@@ -61,10 +67,12 @@ class BackendAuthCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       completed
-                          ? 'OpenAI signed in'
+                          ? '$account signed in'
                           : isMcp
                           ? '${mcpServerName ?? 'Connected app'} sign-in expired'
-                          : 'OpenAI sign-in expired',
+                          : backend == 'gemini'
+                          ? 'Google sign-in needed'
+                          : '$account sign-in expired',
                       style: const TextStyle(fontWeight: FontWeight.w600),
                     ),
                   ),
@@ -79,7 +87,7 @@ class BackendAuthCard extends StatelessWidget {
               const SizedBox(height: 8),
               Text(
                 completed
-                    ? 'Codex is ready.'
+                    ? '${backendName(backend)} is ready.'
                     : state?.message.isNotEmpty == true
                     ? state!.message
                     : message.textContent,
@@ -114,6 +122,8 @@ class BackendAuthCard extends StatelessWidget {
                         ? 'Open MCP servers'
                         : running
                         ? 'Open sign-in'
+                        : backend == 'gemini'
+                        ? 'Sign in'
                         : 'Re-authenticate',
                   ),
                 ),

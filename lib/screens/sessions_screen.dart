@@ -36,6 +36,7 @@ import '../widgets/app_bottom_sheet.dart';
 import '../services/board_store.dart';
 import 'boards/board_view.dart' show BoardScreen;
 import 'package:app/platform/app_platform.dart';
+import '../models/agent_backend.dart';
 
 /// Teleport asks before sending a transcript at least this large, uncompressed.
 const _largeTranscriptBytes = 100 * 1024 * 1024;
@@ -944,10 +945,7 @@ class _SessionsTabState extends State<SessionsTab> {
                         value: b,
                         child: Row(
                           children: [
-                            Icon(
-                              b == 'codex' ? Icons.code : Icons.psychology_alt,
-                              size: 16,
-                            ),
+                            Icon(_backendIcon(b), size: 16),
                             const SizedBox(width: 8),
                             Text(_backendLabel(b)),
                           ],
@@ -957,9 +955,7 @@ class _SessionsTabState extends State<SessionsTab> {
                     .toList(),
                 child: AbsorbPointer(
                   child: miniChip(
-                    icon: selectedBackend == 'codex'
-                        ? Icons.code
-                        : Icons.psychology_alt,
+                    icon: _backendIcon(selectedBackend),
                     label: _backendLabel(selectedBackend),
                     onTap: () {},
                   ),
@@ -1582,6 +1578,7 @@ class _SessionsTabState extends State<SessionsTab> {
     final parts = [
       if (_backendFilter == 'claude') 'Claude',
       if (_backendFilter == 'codex') 'Codex',
+      if (_backendFilter == 'gemini') 'Gemini',
       if (selected.length == 1)
         provider.serverConfigs
                 .where((c) => selected.contains(c.id))
@@ -2395,10 +2392,7 @@ class _SessionsTabState extends State<SessionsTab> {
               final serverName = session['_serverName']?.toString() ?? '';
               return ListTile(
                 leading: CircleAvatar(
-                  child: Icon(
-                    backend == 'codex' ? Icons.code : Icons.psychology_alt,
-                    size: 18,
-                  ),
+                  child: Icon(_backendIcon(backend), size: 18),
                 ),
                 title: Text(
                   title != null && title.isNotEmpty ? title : preview,
@@ -2958,11 +2952,14 @@ class _SessionsTabState extends State<SessionsTab> {
             ),
         ]),
         AdaptiveSheetSection([
-          AdaptiveSheetAction(
-            value: _SessionMenuAction.fork,
-            label: session.backend == 'codex' ? 'Fork thread' : 'Fork session',
-            icon: Icons.fork_right,
-          ),
+          if (session.backend != 'gemini')
+            AdaptiveSheetAction(
+              value: _SessionMenuAction.fork,
+              label: session.backend == 'codex'
+                  ? 'Fork thread'
+                  : 'Fork session',
+              icon: Icons.fork_right,
+            ),
           const AdaptiveSheetAction(
             value: _SessionMenuAction.teleport,
             label: 'Teleport session',
@@ -3082,7 +3079,7 @@ class _SessionsTabState extends State<SessionsTab> {
             label: 'Clear context',
             icon: Icons.refresh,
           ),
-          if (session.backend != 'codex')
+          if (_isClaude(session.backend))
             AdaptiveSheetAction(
               value: _SessionToolsAction.blockedTools,
               label: 'Blocked tools',
@@ -3094,7 +3091,7 @@ class _SessionsTabState extends State<SessionsTab> {
               }(),
               icon: Icons.block,
             ),
-          if (session.backend != 'codex' &&
+          if (_isClaude(session.backend) &&
               provider.supportsAdditionalDirectories(session.serverId))
             AdaptiveSheetAction(
               value: _SessionToolsAction.extraFolders,
@@ -3334,9 +3331,11 @@ class _SessionsTabState extends State<SessionsTab> {
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (sheetContext, setSheetState) {
-            final destinationBackends = provider.backendsForServer(
-              destinationServerId,
-            );
+            // Teleport lands in Claude or Codex; Gemini has no import yet.
+            final destinationBackends = provider
+                .backendsForServer(destinationServerId)
+                .where((backend) => backend != 'gemini')
+                .toList();
             if (!destinationBackends.contains(destinationBackend)) {
               destinationBackend = destinationBackends.firstOrNull ?? 'claude';
             }
@@ -3417,7 +3416,7 @@ class _SessionsTabState extends State<SessionsTab> {
                 final verb = move ? 'moved' : 'cloned';
                 final resumeDescription = result.exactNativeResume
                     ? 'with its native Claude thread'
-                    : 'with a new ${destinationBackend == 'codex' ? 'Codex' : 'Claude'} thread';
+                    : 'with a new ${backendName(destinationBackend)} thread';
                 if (!context.mounted) return;
                 showDialog<void>(
                   context: context,
@@ -3567,9 +3566,7 @@ class _SessionsTabState extends State<SessionsTab> {
                           .map(
                             (backend) => DropdownMenuItem(
                               value: backend,
-                              child: Text(
-                                backend == 'codex' ? 'Codex' : 'Claude',
-                              ),
+                              child: Text(backendName(backend)),
                             ),
                           )
                           .toList(),
@@ -4733,4 +4730,17 @@ Future<({String? serverId, String backend})?> pickServerAndBackend(
   );
 }
 
-String _backendLabel(String b) => b == 'codex' ? 'Codex (ChatGPT)' : 'Claude';
+String _backendLabel(String b) => switch (b) {
+  'codex' => 'Codex (ChatGPT)',
+  'gemini' => 'Gemini (Google)',
+  _ => 'Claude',
+};
+
+IconData _backendIcon(String? b) => switch (b) {
+  'codex' => Icons.code,
+  'gemini' => Icons.auto_awesome,
+  _ => Icons.psychology_alt,
+};
+
+/// Claude-only session tools also cover sessions saved before backends.
+bool _isClaude(String? backend) => backend == null || backend == 'claude';

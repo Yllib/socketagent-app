@@ -28,6 +28,27 @@ void main() {
       },
     );
 
+    test(
+      'switching a task to Gemini keeps it Gemini and drops the old run',
+      () {
+        final updated = applyScheduledTaskUpdate(
+          {
+            'id': 'task-1',
+            'backend': 'codex',
+            'codexDriver': 'app-server',
+            'sessionId': 'thread-1',
+            'model': 'gpt-5.5',
+          },
+          {'backend': 'gemini'},
+        );
+
+        expect(updated['backend'], 'gemini');
+        expect(updated.containsKey('codexDriver'), isFalse);
+        expect(updated.containsKey('sessionId'), isFalse);
+        expect(updated.containsKey('model'), isFalse);
+      },
+    );
+
     test('clears optional fields the same way as the server', () {
       final updated = applyScheduledTaskUpdate(
         {

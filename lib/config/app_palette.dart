@@ -37,6 +37,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     required this.info,
     required this.claude,
     required this.codex,
+    required this.gemini,
   });
 
   final Brightness brightness;
@@ -90,6 +91,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
   /// Brand colors readable on this brightness's background.
   final Color claude;
   final Color codex;
+  final Color gemini;
 
   static const dark = AppPalette(
     brightness: Brightness.dark,
@@ -119,6 +121,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     info: Color(0xFF2196F3),
     claude: Color(0xFFD97757),
     codex: Color(0xFF4D9FFF),
+    gemini: Color(0xFFA78BFA),
   );
 
   static const light = AppPalette(
@@ -149,6 +152,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
     info: Color(0xFF1976D2),
     claude: Color(0xFFBF5F3F),
     codex: Color(0xFF1A6FE0),
+    gemini: Color(0xFF7C3AED),
   );
 
   static AppPalette of(Brightness brightness) =>
@@ -209,6 +213,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
       info: mix(info, other.info),
       claude: mix(claude, other.claude),
       codex: mix(codex, other.codex),
+      gemini: mix(gemini, other.gemini),
     );
   }
 }

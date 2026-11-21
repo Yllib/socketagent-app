@@ -8,6 +8,7 @@ import '../services/websocket_service.dart';
 import '../util/format.dart';
 import '../config/app_palette.dart';
 import '../widgets/app_bottom_sheet.dart';
+import '../models/agent_backend.dart';
 
 enum SessionBrowserMode { create, resume }
 
@@ -452,13 +453,16 @@ class _SessionBrowserScreenState extends State<SessionBrowserScreen> {
         final cwd = session['cwd']?.toString() ?? _selectedPath;
         return ListTile(
           leading: CircleAvatar(
-            backgroundColor: backend == 'codex'
-                ? theme.colorScheme.primaryContainer
-                : theme.colorScheme.tertiaryContainer,
-            child: Icon(
-              backend == 'codex' ? Icons.code : Icons.psychology_alt,
-              size: 18,
-            ),
+            backgroundColor: switch (backend) {
+              'codex' => theme.colorScheme.primaryContainer,
+              'gemini' => context.palette.gemini.withAlpha(48),
+              _ => theme.colorScheme.tertiaryContainer,
+            },
+            child: Icon(switch (backend) {
+              'codex' => Icons.code,
+              'gemini' => Icons.auto_awesome,
+              _ => Icons.psychology_alt,
+            }, size: 18),
           ),
           title: Text(
             session['title']?.toString().trim().isNotEmpty == true
@@ -839,4 +843,4 @@ String _folderName(String path) {
   return parts.lastOrNull ?? path;
 }
 
-String _backendLabel(String backend) => backend == 'codex' ? 'Codex' : 'Claude';
+String _backendLabel(String backend) => backendName(backend);

@@ -91,9 +91,11 @@ class MainShellScreenState extends State<MainShellScreen>
         final isMcp = event['authScope']?.toString() == 'mcp';
         final backend = isMcp
             ? (event['mcpServerName']?.toString() ?? 'Connected app')
-            : event['backend']?.toString() == 'codex'
-            ? 'OpenAI'
-            : 'Backend';
+            : switch (event['backend']?.toString()) {
+                'codex' => 'OpenAI',
+                'gemini' => 'Google',
+                _ => 'Backend',
+              };
         _backendAuthSnackBar?.close();
         _backendAuthSnackBarServerId = event['serverId']?.toString();
         _backendAuthSnackBarBackend = event['backend']?.toString();
@@ -110,7 +112,9 @@ class MainShellScreenState extends State<MainShellScreen>
                     context,
                     provider,
                     serverId,
-                    'codex',
+                    event['backend']?.toString() == 'gemini'
+                        ? 'gemini'
+                        : 'codex',
                     force: true,
                   );
                   return;

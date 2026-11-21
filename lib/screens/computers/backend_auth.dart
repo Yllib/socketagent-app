@@ -7,6 +7,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../config/app_distribution.dart';
 import '../../services/chat_provider.dart';
+import '../../models/agent_backend.dart' as agent_backend;
 import '../../services/codex_sign_in_callback.dart';
 import '../../services/notification_service.dart';
 
@@ -206,7 +207,7 @@ Widget _buildBackendDeviceAuthCard(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            backend == 'claude' || browserSignIn
+            backend != 'codex' || browserSignIn
                 ? '$backendName sign-in'
                 : 'Device sign-in',
             style: theme.textTheme.titleSmall?.copyWith(
@@ -399,8 +400,10 @@ void showBackendOperationDialog(
   required String fallbackOperation,
 }) {
   final rootContext = context;
-  final backendName = backend == 'codex' ? 'Codex' : 'Claude';
-  final claudeAuthCodeCtrl = TextEditingController();
+  final backendName = agent_backend.backendName(backend);
+  // Claude and Gemini finish sign-in with a code pasted from the browser.
+  final pastesCode = backend == 'claude' || backend == 'gemini';
+  final authCodeCtrl = TextEditingController();
   CodexSignInCallback? codexCallback;
   String? callbackRequestId;
 
@@ -475,6 +478,8 @@ void showBackendOperationDialog(
                         ? 'Signed in successfully. You can now use $backendName on this computer.'
                         : cancelled && isAuthOperation
                         ? 'You can sign in again whenever you are ready.'
+                        : showDeviceAuthCard && backend == 'gemini'
+                        ? 'Sign in to Google in your browser. Google then shows a code. Copy it and paste it here.'
                         : showDeviceAuthCard
                         ? 'Finish $backendName sign-in in your browser, then return to SocketAgent.'
                         : state?.message ??
@@ -560,26 +565,28 @@ void showBackendOperationDialog(
                       ),
                     ),
                   ],
-                  if (backend == 'claude' &&
+                  if (pastesCode &&
                       isAuthOperation &&
                       running &&
                       hasAuthUrl) ...[
                     const SizedBox(height: 12),
                     TextField(
-                      controller: claudeAuthCodeCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'Claude auth code',
+                      controller: authCodeCtrl,
+                      decoration: InputDecoration(
+                        labelText: backend == 'gemini'
+                            ? 'Code from Google'
+                            : 'Claude auth code',
                         hintText: 'Paste copied code',
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
                       minLines: 1,
                       maxLines: 3,
-                      onSubmitted: (_) => _submitClaudeAuthCode(
+                      onSubmitted: (_) => _submitAuthCode(
                         currentProvider,
                         serverId,
                         state?.requestId,
-                        claudeAuthCodeCtrl.text,
+                        authCodeCtrl.text,
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -588,11 +595,11 @@ void showBackendOperationDialog(
                       child: FilledButton.icon(
                         icon: const Icon(Icons.check),
                         label: const Text('Submit Code'),
-                        onPressed: () => _submitClaudeAuthCode(
+                        onPressed: () => _submitAuthCode(
                           currentProvider,
                           serverId,
                           state?.requestId,
-                          claudeAuthCodeCtrl.text,
+                          authCodeCtrl.text,
                         ),
                       ),
                     ),
@@ -684,11 +691,11 @@ void showBackendOperationDialog(
   ).whenComplete(() {
     pollTimer.cancel();
     unawaited(codexCallback?.close());
-    claudeAuthCodeCtrl.dispose();
+    authCodeCtrl.dispose();
   });
 }
 
-void _submitClaudeAuthCode(
+void _submitAuthCode(
   ChatProvider provider,
   String serverId,
   String? requestId,

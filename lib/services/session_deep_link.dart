@@ -1,3 +1,5 @@
+import '../models/agent_backend.dart';
+
 class SessionDeepLink {
   const SessionDeepLink({
     required this.sessionId,
@@ -22,7 +24,7 @@ class SessionDeepLink {
     final backend = (uri.queryParameters['backend'] ?? 'codex').trim();
     final serverId = (uri.queryParameters['serverId'] ?? '').trim();
     if (sessionId.isEmpty || cwd.isEmpty) return null;
-    if (backend != 'codex' && backend != 'claude') return null;
+    if (!isAgentBackend(backend)) return null;
     return SessionDeepLink(
       sessionId: sessionId,
       cwd: cwd,

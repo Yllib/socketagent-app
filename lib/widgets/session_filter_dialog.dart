@@ -23,7 +23,7 @@ class SessionFilterSelection {
   final Set<String> ids;
   final bool connectedOnly;
 
-  /// 'claude' or 'codex', or null for both.
+  /// A backend from [agentBackends], or null for all.
   final String? backend;
 
   bool includes(String id, {required bool connected}) =>
@@ -80,6 +80,7 @@ class _SessionFilterDialogState extends State<SessionFilterDialog> {
                   ButtonSegment(value: 'all', label: Text('All')),
                   ButtonSegment(value: 'claude', label: Text('Claude')),
                   ButtonSegment(value: 'codex', label: Text('Codex')),
+                  ButtonSegment(value: 'gemini', label: Text('Gemini')),
                 ],
                 selected: {_backend},
                 onSelectionChanged: (value) =>

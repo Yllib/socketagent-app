@@ -442,15 +442,18 @@ enum TaskRecurrence {
 
 enum TaskHarness {
   claude('claude', 'Claude'),
-  codex('codex', 'Codex');
+  codex('codex', 'Codex'),
+  gemini('gemini', 'Gemini');
 
   const TaskHarness(this.wire, this.label);
   final String wire;
   final String label;
 
-  /// Anything that is not codex is claude, as on the server.
-  static TaskHarness parse(String? value) =>
-      value == 'codex' ? TaskHarness.codex : TaskHarness.claude;
+  /// Anything unknown is claude, as on the server.
+  static TaskHarness parse(String? value) => TaskHarness.values.firstWhere(
+    (harness) => harness.wire == value,
+    orElse: () => TaskHarness.claude,
+  );
 }
 
 enum TaskNotify {
@@ -475,6 +478,7 @@ List<String> effortsFor(TaskHarness harness) => switch (harness) {
     'max',
     'ultra',
   ],
+  TaskHarness.gemini => const ['low', 'medium', 'high', 'xhigh'],
 };
 
 /// Access modes the server accepts for a scheduled run, in rising order of

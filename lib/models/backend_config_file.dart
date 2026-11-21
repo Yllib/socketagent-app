@@ -1,3 +1,5 @@
+import 'agent_backend.dart' as agent_backend;
+
 /// One Codex or Claude config file a computer lets the app edit. The server
 /// resolves every path from a fixed allowlist; the app only ever sends [id].
 class BackendConfigFile {
@@ -33,7 +35,7 @@ class BackendConfigFile {
   /// Content fingerprint sent back with a save. Null when the file is missing.
   final String? version;
 
-  String get backendName => backend == 'codex' ? 'Codex' : 'Claude';
+  String get backendName => agent_backend.backendName(backend);
 
   static BackendConfigFile? fromPayload(Object? payload) {
     if (payload is! Map) return null;

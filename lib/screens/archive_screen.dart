@@ -16,6 +16,7 @@ import '../widgets/socketagent_tool_card.dart';
 import '../widgets/speak_card.dart';
 import '../widgets/tool_output_block.dart';
 import '../config/app_palette.dart';
+import '../models/agent_backend.dart';
 
 class ArchiveScreen extends StatefulWidget {
   const ArchiveScreen({super.key});
@@ -100,12 +101,14 @@ class _ArchiveScreenState extends State<ArchiveScreen>
   }
 
   String _backendLabel(String? backend) {
-    return backend == 'codex' ? 'Codex' : 'Claude';
+    return backendName(backend);
   }
 
-  IconData _backendIcon(String? backend) {
-    return backend == 'codex' ? Icons.terminal : Icons.auto_awesome;
-  }
+  IconData _backendIcon(String? backend) => switch (backend) {
+    'codex' => Icons.terminal,
+    'gemini' => Icons.auto_awesome,
+    _ => Icons.psychology_alt,
+  };
 
   List<ArchiveEntry> _sortedArchives(List<ArchiveEntry> xs) {
     final list = [...xs];
@@ -848,7 +851,7 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
         title: const Text('Restore Session'),
         content: Text(
           'Put back "${widget.entry.title}" and its history. '
-          '${widget.entry.backend == 'codex' ? 'Codex' : 'Claude'} will resume with full prior context.',
+          '${backendName(widget.entry.backend)} will resume with full prior context.',
         ),
         actions: [
           TextButton(
@@ -955,7 +958,7 @@ class _ArchiveDetailScreenState extends State<ArchiveDetailScreen> {
                           style: const TextStyle(fontSize: 12),
                         ),
                       Text(
-                        '${widget.entry.backend == 'codex' ? 'Codex' : 'Claude'}'
+                        '${backendName(widget.entry.backend)}'
                         '${widget.entry.serverName.isNotEmpty ? ' · ${widget.entry.serverName}' : ''}'
                         ' · ${widget.entry.messageCount} messages · cleared ${_formatAbsolute(widget.entry.clearedAt)}',
                         style: TextStyle(

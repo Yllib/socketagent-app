@@ -1,4 +1,5 @@
 import 'package:shared_preferences/shared_preferences.dart';
+import 'agent_backend.dart';
 
 /// How the session list groups chats: working, pinned and recent only, also
 /// by the user's projects, or by computer and working directory.
@@ -26,7 +27,7 @@ class SessionListFilter {
   final Set<String> computerIds;
   final bool connectedOnly;
 
-  /// 'claude' or 'codex', or null for both.
+  /// A backend from [agentBackends], or null for all.
   final String? backend;
   final SessionListView view;
 
@@ -41,7 +42,7 @@ class SessionListFilter {
     return SessionListFilter(
       computerIds: {...?prefs.getStringList(_computersKey)},
       connectedOnly: prefs.getBool(_connectedOnlyKey) ?? false,
-      backend: backend == 'claude' || backend == 'codex' ? backend : null,
+      backend: isAgentBackend(backend) ? backend : null,
       view:
           SessionListView.values
               .where((view) => view.name == prefs.getString(_viewKey))

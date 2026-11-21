@@ -1,3 +1,5 @@
+import 'agent_backend.dart';
+
 Map<String, dynamic> applyScheduledTaskUpdate(
   Map<String, dynamic> current,
   Map<String, dynamic> update,
@@ -17,7 +19,9 @@ Map<String, dynamic> applyScheduledTaskUpdate(
   if (update.containsKey('cwd')) task['cwd'] = update['cwd'];
 
   if (update.containsKey('backend')) {
-    final backend = update['backend'] == 'codex' ? 'codex' : 'claude';
+    final backend = isAgentBackend(update['backend'])
+        ? update['backend'] as String
+        : 'claude';
     if (task['backend'] != null && task['backend'] != backend) {
       task.remove('sessionId');
       if (!update.containsKey('model')) task.remove('model');
