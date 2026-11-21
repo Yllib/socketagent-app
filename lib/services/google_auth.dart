@@ -5,6 +5,9 @@ import 'package:google_sign_in/google_sign_in.dart';
 import '../config/google_auth_config.dart';
 import 'google_auth_browser_stub.dart'
     if (dart.library.js_interop) 'google_auth_browser.dart';
+export 'google_auth_browser_stub.dart'
+    if (dart.library.js_interop) 'google_auth_browser.dart'
+    show BrowserGoogleAuth;
 import 'google_auth_desktop.dart';
 import 'secure_storage_service.dart';
 import 'package:app/platform/app_platform.dart';

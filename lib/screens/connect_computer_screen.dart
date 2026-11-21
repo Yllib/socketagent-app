@@ -43,6 +43,15 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
   bool _saving = false;
 
   @override
+  void initState() {
+    super.initState();
+    // Web: back from Google's sign-in page, so the sign-in carries on.
+    if (BrowserGoogleAuth.returnedFromGoogle) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _signIn());
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: widget.firstRun

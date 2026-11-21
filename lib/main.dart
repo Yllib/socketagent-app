@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'config/app_distribution.dart';
 import 'services/chat_provider.dart';
+import 'services/google_auth.dart';
 import 'config/app_theme.dart';
 import 'services/desktop_workspace_controller.dart';
 import 'services/desktop_window_service.dart';
@@ -46,6 +47,7 @@ void main() async {
       return false;
     };
     BrowserSession.start();
+    BrowserGoogleAuth.captureRedirect();
     await NaclCipher.ready();
   }
   if (AppPlatform.isWindows) {

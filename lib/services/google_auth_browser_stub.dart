@@ -6,6 +6,9 @@ class BrowserGoogleAuth implements GoogleAuth {
     throw UnsupportedError('BrowserGoogleAuth is only for the web build');
   }
 
+  static void captureRedirect() {}
+  static bool get returnedFromGoogle => false;
+
   @override
   bool get isConfigured => false;
   @override

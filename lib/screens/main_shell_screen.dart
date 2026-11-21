@@ -21,6 +21,7 @@ import 'computers/backend_auth.dart' show showBackendSignIn;
 import 'computers/computers_screen.dart';
 import 'connect_computer_screen.dart' show ComputerInstallScreen;
 import '../platform/web_install.dart';
+import 'settings/account_pin_dialogs.dart';
 import 'settings/settings_v2_screen.dart';
 import 'paywall_screen.dart';
 import 'package:app/platform/app_platform.dart';
@@ -72,6 +73,8 @@ class MainShellScreenState extends State<MainShellScreen>
     _updateService.addListener(_onUpdateChange);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final provider = context.read<ChatProvider>();
+      // Web: back from Google's sign-in page, started from Settings.
+      unawaited(resumeGoogleSignIn(context, provider.account));
       _pendingDeviceSub = provider.pendingDeviceEvents.listen((pending) {
         if (!mounted) return;
         showDeviceApprovalDialog(context, pending);

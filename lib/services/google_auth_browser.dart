@@ -1,31 +1,57 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
-import 'package:google_identity_services_web/loader.dart' as gis;
-import 'package:google_identity_services_web/oauth2.dart';
 import 'package:http/http.dart' as http;
+import 'package:web/web.dart' as web;
 
 import '../config/google_auth_config.dart';
 import 'google_auth.dart';
 
-/// Web: Google Identity Services' token client. It opens Google's consent
-/// popup and hands back an access token for the Drive app data scope.
-/// Browsers allow that popup only from a tap, so [restore] can't refresh a
-/// token and returns null; the web app needs Google only to unlock the
-/// account, not to stay signed in.
+/// Web: Google's OAuth redirect in the same tab, with no popup. Sign-in
+/// sends the page to Google, and Google sends it back with an access token
+/// for the Drive app data scope in the address. Popups fail on phones: on
+/// an iPhone the popup is a new tab, and the token often never reaches the
+/// page that opened it.
+///
+/// Leaving the page ends the app, so the sign-in runs in two halves.
+/// [signIn] saves a state value and leaves. When the page comes back,
+/// [captureRedirect] reads the answer before the app starts,
+/// [returnedFromGoogle] tells the first screen to carry on, and the next
+/// [signIn] returns the session. [restore] can't sign in again without
+/// leaving the page, so it returns null: the web app needs Google only to
+/// unlock the account, not to stay signed in.
 class BrowserGoogleAuth implements GoogleAuth {
-  /// Starts loading Google's script right away, so the tap on Sign in
-  /// opens the popup at once. Safari blocks a popup that opens after a
-  /// network wait.
-  BrowserGoogleAuth() {
-    if (isConfigured) _loaded = gis.loadWebSdk();
+  static const _scopes = [GoogleAuthConfig.driveScope, 'email'];
+  static const _stateKey = 'sa.googleState';
+
+  /// Google's answer from the redirect this page came back from, until
+  /// [signIn] takes it.
+  static Map<String, String>? _answer;
+
+  String? _token;
+
+  /// Reads Google's answer from the address and clears it, so the token
+  /// leaves the address bar and history. Call in main() before runApp: the
+  /// app's routing would read the address too. An answer whose state isn't
+  /// the one this tab saved is dropped, since this tab didn't ask for it.
+  static void captureRedirect() {
+    final hash = web.window.location.hash;
+    if (!hash.contains('state=')) return;
+    final answer = Uri.splitQueryString(hash.substring(1));
+    final saved = web.window.sessionStorage.getItem(_stateKey);
+    web.window.sessionStorage.removeItem(_stateKey);
+    final location = web.window.location;
+    web.window.history.replaceState(
+      null,
+      '',
+      '${location.pathname}${location.search}',
+    );
+    if (saved != null && answer['state'] == saved) _answer = answer;
   }
 
-  static const _scopes = [GoogleAuthConfig.driveScope, 'email'];
-
-  Future<void>? _loaded;
-  String? _token;
-  DateTime _expires = DateTime.fromMillisecondsSinceEpoch(0);
+  /// The page just came back from Google with an answer for [signIn].
+  static bool get returnedFromGoogle => _answer != null;
 
   @override
   bool get isConfigured => GoogleAuthConfig.webClientId.isNotEmpty;
@@ -36,81 +62,57 @@ class BrowserGoogleAuth implements GoogleAuth {
   @override
   Future<GoogleSession> signIn() async {
     if (!isConfigured) throw const GoogleAuthNotConfigured();
-    await (_loaded ??= gis.loadWebSdk());
-    final token = await _requestToken();
+    final answer = _answer;
+    if (answer == null) return _leaveForGoogle();
+    _answer = null;
+    final error = answer['error'];
+    if (error == 'access_denied') throw const GoogleAuthCanceled();
+    final token = answer['access_token'];
+    if (error != null || token == null) {
+      throw StateError('Google sign-in failed: ${error ?? 'no token'}');
+    }
+    final granted = (answer['scope'] ?? '').split(' ');
+    if (!granted.contains(GoogleAuthConfig.driveScope)) {
+      throw StateError('Google sign-in needs access to the app folder');
+    }
+    _token = token;
+    // A minute early, so a request never starts with a dying token.
+    final expires = DateTime.now().add(
+      Duration(
+        seconds: (int.tryParse(answer['expires_in'] ?? '') ?? 3600) - 60,
+      ),
+    );
     final email = await _email(token);
     return GoogleSession(
       email: email,
-      accessToken: () async =>
-          _token != null && DateTime.now().isBefore(_expires)
-          ? _token!
-          : _requestToken(),
+      accessToken: () async {
+        final current = _token;
+        if (current == null || DateTime.now().isAfter(expires)) {
+          throw StateError('The Google sign-in expired. Sign in again.');
+        }
+        return current;
+      },
     );
   }
 
-  Future<String> _requestToken() {
-    final done = Completer<String>();
-    final client = oauth2.initTokenClient(
-      TokenClientConfig(
-        client_id: GoogleAuthConfig.webClientId,
-        scope: _scopes,
-        callback: (response) {
-          final token = response.access_token;
-          if (token == null || response.error != null) {
-            done.completeError(
-              StateError('Google sign-in failed: ${response.error}'),
-            );
-            return;
-          }
-          if (!oauth2.hasGrantedAllScopes(response, const [
-            GoogleAuthConfig.driveScope,
-          ])) {
-            done.completeError(
-              StateError('Google sign-in needs access to the app folder'),
-            );
-            return;
-          }
-          _token = token;
-          // A minute early, so a request never starts with a dying token.
-          _expires = DateTime.now().add(
-            Duration(seconds: (response.expires_in ?? 3600) - 60),
-          );
-          done.complete(token);
-        },
-        error_callback: (error) {
-          if (!done.isCompleted) done.completeError(_popupError(error));
-        },
-      ),
-    );
-    client.requestAccessToken();
-    return done.future;
-  }
-
-  /// Google's popup ended without a token. Every case gets a message:
-  /// a popup that closes on its own looks the same as one the user closed.
-  static StateError _popupError(GoogleIdentityServicesError? error) {
-    final type = error == null ? null : _typeOf(error);
-    return StateError(switch (type) {
-      GoogleIdentityServicesErrorType.popup_failed_to_open =>
-        'The browser blocked Google\'s sign-in window. Allow pop-ups for '
-            'this site and try again.',
-      GoogleIdentityServicesErrorType.popup_closed =>
-        'Google\'s sign-in window closed before sign-in finished. Try again, '
-            'or try another browser.',
-      _ =>
-        'Google sign-in failed: ${error?.message ?? type ?? 'no reason given'}',
+  /// Sends this tab to Google. The returned future never completes: the
+  /// page unloads, and the sign-in carries on when Google sends it back.
+  Future<GoogleSession> _leaveForGoogle() {
+    final random = Random.secure();
+    final state = base64Url
+        .encode(List<int>.generate(24, (_) => random.nextInt(256)))
+        .replaceAll('=', '');
+    web.window.sessionStorage.setItem(_stateKey, state);
+    final url = Uri.https('accounts.google.com', '/o/oauth2/v2/auth', {
+      'client_id': GoogleAuthConfig.webClientId,
+      'redirect_uri': '${web.window.location.origin}/',
+      'response_type': 'token',
+      'scope': _scopes.join(' '),
+      'include_granted_scopes': 'true',
+      'state': state,
     });
-  }
-
-  /// The error's type, or null for a type this package doesn't know.
-  static GoogleIdentityServicesErrorType? _typeOf(
-    GoogleIdentityServicesError error,
-  ) {
-    try {
-      return error.type;
-    } on ArgumentError {
-      return null;
-    }
+    web.window.location.assign(url.toString());
+    return Completer<GoogleSession>().future;
   }
 
   static Future<String> _email(String token) async {
@@ -130,6 +132,14 @@ class BrowserGoogleAuth implements GoogleAuth {
   Future<void> signOut() async {
     final token = _token;
     _token = null;
-    if (token != null) oauth2.revoke(token);
+    if (token == null) return;
+    try {
+      await http.post(
+        Uri.parse('https://oauth2.googleapis.com/revoke'),
+        body: {'token': token},
+      );
+    } catch (_) {
+      // The token expires within the hour anyway.
+    }
   }
 }

@@ -499,6 +499,27 @@ Future<void> signInToAccount(
   if (!done) await account.cancelSignIn();
 }
 
+/// Web: the page just came back from Google's sign-in, which left the page
+/// partway through [signInToAccount]. Carries it on from whichever screen
+/// the app opened on. A failure shows in a snackbar.
+Future<void> resumeGoogleSignIn(
+  BuildContext context,
+  AccountService account,
+) async {
+  if (!BrowserGoogleAuth.returnedFromGoogle) return;
+  try {
+    await signInToAccount(context, account);
+  } on GoogleAuthCanceled {
+    // Backed out on Google's page.
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(accountErrorText(error))));
+    }
+  }
+}
+
 Future<bool> _finishSignIn(
   BuildContext context,
   AccountService account,
