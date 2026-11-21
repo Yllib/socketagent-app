@@ -46,8 +46,13 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
   void initState() {
     super.initState();
     // Web: back from Google's sign-in page, so the sign-in carries on.
+    // Checked again in the callback: the shell around this screen may have
+    // taken Google's answer first, and a second sign-in would leave for
+    // Google again.
     if (BrowserGoogleAuth.returnedFromGoogle) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _signIn());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && BrowserGoogleAuth.returnedFromGoogle) _signIn();
+      });
     }
   }
 
