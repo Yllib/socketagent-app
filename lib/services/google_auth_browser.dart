@@ -14,6 +14,13 @@ import 'google_auth.dart';
 /// token and returns null; the web app needs Google only to unlock the
 /// account, not to stay signed in.
 class BrowserGoogleAuth implements GoogleAuth {
+  /// Starts loading Google's script right away, so the tap on Sign in
+  /// opens the popup at once. Safari blocks a popup that opens after a
+  /// network wait.
+  BrowserGoogleAuth() {
+    if (isConfigured) _loaded = gis.loadWebSdk();
+  }
+
   static const _scopes = [GoogleAuthConfig.driveScope, 'email'];
 
   Future<void>? _loaded;
@@ -71,12 +78,39 @@ class BrowserGoogleAuth implements GoogleAuth {
           done.complete(token);
         },
         error_callback: (error) {
-          if (!done.isCompleted) done.completeError(const GoogleAuthCanceled());
+          if (!done.isCompleted) done.completeError(_popupError(error));
         },
       ),
     );
     client.requestAccessToken();
     return done.future;
+  }
+
+  /// Google's popup ended without a token. Every case gets a message:
+  /// a popup that closes on its own looks the same as one the user closed.
+  static StateError _popupError(GoogleIdentityServicesError? error) {
+    final type = error == null ? null : _typeOf(error);
+    return StateError(switch (type) {
+      GoogleIdentityServicesErrorType.popup_failed_to_open =>
+        'The browser blocked Google\'s sign-in window. Allow pop-ups for '
+            'this site and try again.',
+      GoogleIdentityServicesErrorType.popup_closed =>
+        'Google\'s sign-in window closed before sign-in finished. Try again, '
+            'or try another browser.',
+      _ =>
+        'Google sign-in failed: ${error?.message ?? type ?? 'no reason given'}',
+    });
+  }
+
+  /// The error's type, or null for a type this package doesn't know.
+  static GoogleIdentityServicesErrorType? _typeOf(
+    GoogleIdentityServicesError error,
+  ) {
+    try {
+      return error.type;
+    } on ArgumentError {
+      return null;
+    }
   }
 
   static Future<String> _email(String token) async {
