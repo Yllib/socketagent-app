@@ -2219,6 +2219,8 @@ class _SessionsTabState extends State<SessionsTab> {
       case 'board':
         await BoardScreen.open(context, projectId);
       case 'board-on':
+        // A second tap while the first still waits on the computers.
+        if (provider.isTurningOnBoard(projectId)) return;
         final messenger = ScaffoldMessenger.of(context);
         messenger.showSnackBar(
           const SnackBar(content: Text('Asking your computers for this board')),

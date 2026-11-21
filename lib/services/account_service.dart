@@ -50,6 +50,14 @@ class AccountLocalState {
   final String subscriberEmail;
 }
 
+/// The keys [AccountService.readLocal] gave at the last sync, per list.
+typedef AccountLocalKeys = ({
+  Set<String> pins,
+  Set<String> projects,
+  Set<String> members,
+  Set<String> boards,
+});
+
 /// Why the last sync did nothing.
 enum AccountSyncOutcome { synced, noAccount, offline, stale }
 
@@ -841,6 +849,13 @@ class AccountService extends ChangeNotifier {
   /// already writing when one came in merges it back over what it read.
   final List<({VaultList list, String key, int at})> _unsentRemovals = [];
 
+  AccountLocalKeys? _lastReadKeys;
+
+  /// What this device held when the last sync read it. An item held now
+  /// and not then was added during the sync, so [applyMerged] keeps it
+  /// even when the vault records an older removal. Null before any sync.
+  AccountLocalKeys? get lastReadKeys => _lastReadKeys;
+
   /// Records that the user removed [key] from [list] on this device. This
   /// is the only way anything leaves those vault lists: a device whose
   /// local copy failed to load must not erase the item everywhere. The
@@ -1104,7 +1119,9 @@ class AccountService extends ChangeNotifier {
         return AccountSyncOutcome.stale;
       }
     }
-    var local = _localVault();
+    // A path that wrote [_vault] from an older copy may have dropped a
+    // removal still waiting to be sent.
+    var local = _withRemovals(_localVault(), _unsentRemovals);
     // Removals recorded from here on are not in [local]; they are merged
     // back over the result below and sent next time.
     final sentRemovals = _unsentRemovals.length;
@@ -1161,7 +1178,9 @@ class AccountService extends ChangeNotifier {
     _lastSyncedAt = _clock();
     _lastError = null;
     await _persist();
-    await applyMerged?.call(merged);
+    // Removals recorded while saving are in [_vault], not [merged].
+    final latest = _vault;
+    if (latest != null) await applyMerged?.call(latest);
     _announceJoined(previous, merged);
     var again = false;
     try {
@@ -2031,6 +2050,12 @@ class AccountService extends ChangeNotifier {
   AccountVault _localVault() {
     final base = _vault ?? const AccountVault();
     final local = readLocal?.call() ?? const AccountLocalState(computers: []);
+    _lastReadKeys = (
+      pins: {...local.pinnedSessionIds},
+      projects: {...local.projects.keys},
+      members: {...local.sessionProjects.keys},
+      boards: {...local.boardSecrets.keys},
+    );
     final now = _now;
     final computers = {for (final c in base.computers) c.key: c};
     final tombstones = {for (final t in base.removedComputers) t.key: t};
@@ -2048,14 +2073,15 @@ class AccountService extends ChangeNotifier {
       if (config.isLoopbackOnly) continue;
       final fields = VaultComputer.sharedFields(config);
       final existing = computers[key];
+      final stone = tombstones.remove(key);
       if (existing == null || !existing.sameFieldsAs(fields)) {
         computers[key] = VaultComputer(
           key: key,
-          updatedAt: now,
+          // After a removal another device's fast clock dated ahead.
+          updatedAt: max(now, (stone?.at ?? 0) + 1),
           fields: fields,
         );
       }
-      tombstones.remove(key);
     }
     var subscription = base.subscription;
     if (local.subscriberToken.isNotEmpty &&
@@ -2072,7 +2098,7 @@ class AccountService extends ChangeNotifier {
       {for (final id in local.pinnedSessionIds) id: true},
       key: (p) => p.sessionId,
       value: (_) => true,
-      make: (id, _) => VaultPin(sessionId: id, at: now),
+      make: (id, _, at) => VaultPin(sessionId: id, at: at),
       now: now,
     );
     final projects = _diffLocal<VaultProject, String>(
@@ -2081,7 +2107,7 @@ class AccountService extends ChangeNotifier {
       local.projects,
       key: (p) => p.id,
       value: (p) => p.name,
-      make: (id, name) => VaultProject(id: id, name: name, at: now),
+      make: (id, name, at) => VaultProject(id: id, name: name, at: at),
       now: now,
     );
     final members = _diffLocal<VaultProjectMember, String>(
@@ -2090,8 +2116,8 @@ class AccountService extends ChangeNotifier {
       local.sessionProjects,
       key: (m) => m.sessionId,
       value: (m) => m.projectId,
-      make: (id, project) =>
-          VaultProjectMember(sessionId: id, projectId: project, at: now),
+      make: (id, project, at) =>
+          VaultProjectMember(sessionId: id, projectId: project, at: at),
       now: now,
     );
     final boards = _diffLocal<VaultProjectBoard, String>(
@@ -2100,8 +2126,8 @@ class AccountService extends ChangeNotifier {
       local.boardSecrets,
       key: (b) => b.projectId,
       value: (b) => b.secret,
-      make: (id, secret) =>
-          VaultProjectBoard(projectId: id, secret: secret, at: now),
+      make: (id, secret, at) =>
+          VaultProjectBoard(projectId: id, secret: secret, at: at),
       now: now,
     );
     return base.copyWith(
@@ -2128,7 +2154,7 @@ class AccountService extends ChangeNotifier {
     Map<String, V> local, {
     required String Function(T) key,
     required V Function(T) value,
-    required T Function(String key, V value) make,
+    required T Function(String key, V value, int at) make,
     required int now,
   }) {
     final byKey = {for (final item in items) key(item): item};
@@ -2136,8 +2162,9 @@ class AccountService extends ChangeNotifier {
     for (final MapEntry(key: id, value: localValue) in local.entries) {
       final existing = byKey[id];
       if (existing != null && value(existing) == localValue) continue;
-      byKey[id] = make(id, localValue);
-      removed.remove(id);
+      // Stamped after a removal another device's fast clock dated ahead.
+      final at = max(now, (removed.remove(id)?.at ?? 0) + 1);
+      byKey[id] = make(id, localValue, at);
     }
     return (items: byKey.values.toList(), stones: removed.values.toList());
   }

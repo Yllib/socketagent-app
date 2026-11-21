@@ -592,6 +592,24 @@ void main() {
       },
     );
 
+    test('a re-add beats a removal dated ahead by another clock', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Desktop']);
+      cloud.now += 60000;
+      b.pins = {'chat-1'};
+      await b.sync();
+      b.pins = {};
+      b.service.recordRemoval(VaultList.pins, 'chat-1');
+      await b.sync();
+      // This device's clock runs a minute behind the one that unpinned.
+      cloud.now -= 59000;
+      await a.sync();
+      a.pins = {'chat-1'};
+      await a.sync();
+      await b.sync();
+      expect(b.pins, {'chat-1'});
+    });
+
     test('a board turned off on one device goes on the other', () async {
       final cloud = FakeCloud();
       final [a, b] = await pinAccount(cloud, ['Pixel', 'Desktop']);

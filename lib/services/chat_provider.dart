@@ -8659,23 +8659,35 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       account.syncSoon();
       _scheduleBoardGrants();
     };
-    boards.onTurnedOff = (projectId, secret) {
-      // A board turned on again elsewhere has a new secret; the old one
-      // going away must not remove it.
-      final listed = account.vault?.projectBoards
-          .where((b) => b.projectId == projectId)
-          .firstOrNull;
-      if (listed == null || listed.secret == secret) {
-        account.recordRemoval(VaultList.boards, projectId);
-      }
-    };
+    boards.onTurnedOff = (projectId, secret, {required here}) =>
+        unawaited(_boardTurnedOff(projectId, secret, here: here));
     boards.connect(() => relayHttpUrl);
     if (account.hasAccount) unawaited(account.sync());
   }
 
-  /// Brings this device's computers and subscription in line with the
-  /// merged vault. Local-only fields (id, route, order) are kept.
+  /// Records a board's removal in the vault. A board found deleted on the
+  /// relay ([here] false) may have been turned on again elsewhere with a
+  /// new secret, so the vault is synced first and the removal recorded
+  /// only if it still lists the deleted secret.
+  Future<void> _boardTurnedOff(
+    String projectId,
+    String secret, {
+    required bool here,
+  }) async {
+    if (!here) await account.sync();
+    final listed = account.vault?.projectBoards
+        .where((b) => b.projectId == projectId)
+        .firstOrNull;
+    if (listed == null ? here : listed.secret == secret) {
+      account.recordRemoval(VaultList.boards, projectId);
+    }
+  }
+
+  /// Brings this device in line with the merged vault: pins, projects and
+  /// boards first, then computers and the subscription. Local-only
+  /// computer fields (id, route, order) are kept.
   Future<void> _applyAccountVault(AccountVault merged) async {
+    _applyVaultLists(merged);
     final byKey = {for (final c in _serverConfigs) VaultComputer.keyFor(c): c};
     for (final computer in merged.computers) {
       // An entry whose pairing secret does not decode is not applied.
@@ -8752,10 +8764,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await saveSubscriberToken(subscription.token, subscription.email);
       unawaited(checkSubscriptionStatus());
     }
-    // Only what the vault records as removed goes. Anything else held here
-    // and missing from [merged] was added after the sync read this device,
-    // and the next sync uploads it.
-    final unpinned = {for (final t in merged.unpinnedSessions) t.key};
+  }
+
+  /// Applies the vault's pins, projects and boards. It runs before any
+  /// await, so a change made while the computers apply is not undone.
+  /// Something held here goes only when the vault records its removal and
+  /// it was here when the sync read this device; anything added since
+  /// stays, and the next sync uploads it.
+  void _applyVaultLists(AccountVault merged) {
+    final read = account.lastReadKeys;
+    Set<String> removedOf(List<VaultTombstone> stones, Set<String>? held) => {
+      for (final t in stones)
+        if (held == null || held.contains(t.key)) t.key,
+    };
+    final unpinned = removedOf(merged.unpinnedSessions, read?.pins);
     final pins = {
       for (final p in merged.pinnedSessions) p.sessionId,
       ..._pinnedSessionIds.where((id) => !unpinned.contains(id)),
@@ -8765,15 +8787,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _persistPinnedSessions();
       notifyListeners();
     }
-    final removedProjects = {for (final t in merged.removedProjects) t.key};
+    final removedProjects = removedOf(merged.removedProjects, read?.projects);
     final names = {
       for (final MapEntry(:key, :value) in _projects.names.entries)
         if (!removedProjects.contains(key)) key: value,
       for (final p in merged.projects) p.id: p.name,
     };
-    final removedMembers = {
-      for (final t in merged.removedProjectMembers) t.key,
-    };
+    final removedMembers = removedOf(
+      merged.removedProjectMembers,
+      read?.members,
+    );
     final members = {
       for (final MapEntry(:key, :value) in _projects.members.entries)
         if (!removedMembers.contains(key) && names.containsKey(value))
@@ -8786,10 +8809,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _persistProjects();
       notifyListeners();
     }
-    BoardStore.shared.applySecrets(
-      {for (final b in merged.projectBoards) b.projectId: b.secret},
-      removed: {for (final t in merged.removedProjectBoards) t.key},
-    );
+    BoardStore.shared.applySecrets({
+      for (final b in merged.projectBoards) b.projectId: b.secret,
+    }, removed: removedOf(merged.removedProjectBoards, read?.boards));
   }
 
   Timer? _boardGrantsTimer;
@@ -8847,12 +8869,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   /// Turn-ons in progress, by project, so a second tap waits on the first.
   final Map<String, Future<BoardTurnOn>> _turningOnBoards = {};
 
-  /// Turns on [projectId]'s board. Connected computers are asked first for
-  /// a key they still hold, so a board this device lost comes back with its
-  /// cards. When none answers with one and the vault shows the board was
-  /// turned off before, nothing happens until the user confirms with
-  /// [startEmpty]: a new key would replace the one a computer that is
-  /// offline right now still holds.
+  /// Whether [turnOnBoard] is still working on [projectId].
+  bool isTurningOnBoard(String projectId) =>
+      _turningOnBoards.containsKey(projectId);
+
+  /// Turns on [projectId]'s board. A key the vault lists is used first,
+  /// then connected computers are asked for one they still hold, so a board
+  /// this device lost comes back with its cards. A key whose board is gone
+  /// from the relay does not count. When no key works and the vault shows
+  /// the board was turned off before, nothing happens until the user
+  /// confirms with [startEmpty]: a new key would replace the one a computer
+  /// that is offline right now still holds.
   Future<BoardTurnOn> turnOnBoard(String projectId, {bool startEmpty = false}) {
     return _turningOnBoards[projectId] ??= _turnOnBoard(
       projectId,
@@ -8863,6 +8890,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   Future<BoardTurnOn> _turnOnBoard(String projectId, bool startEmpty) async {
     final boards = BoardStore.shared;
     if (boards.board(projectId) != null) return BoardTurnOn.on;
+    final listed = account.vault?.projectBoards
+        .where((b) => b.projectId == projectId)
+        .firstOrNull;
+    if (listed != null && await boards.adopt(projectId, listed.secret)) {
+      return BoardTurnOn.restored;
+    }
     final asks = <Future<String?>>[];
     for (final config in _serverConfigs) {
       if (_connMgr.statusOf(config.id) != ConnectionStatus.connected) continue;
@@ -8887,10 +8920,12 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _boardKeyRequests.remove((config.id, projectId));
     }
     if (boards.board(projectId) != null) return BoardTurnOn.on;
-    final held = keys.whereType<String>().firstOrNull;
-    if (held != null && boards.adopt(projectId, held)) {
-      return BoardTurnOn.restored;
+    for (final held in keys.whereType<String>().toSet()) {
+      if (boards.board(projectId) != null) return BoardTurnOn.on;
+      if (held == listed?.secret) continue;
+      if (await boards.adopt(projectId, held)) return BoardTurnOn.restored;
     }
+    if (boards.board(projectId) != null) return BoardTurnOn.on;
     final turnedOffBefore =
         account.vault?.removedProjectBoards.any((t) => t.key == projectId) ??
         false;

@@ -175,17 +175,23 @@ void main() {
     final secret = phone.secrets['p_1']!;
     final lost = _device(relay);
     addTearDown(lost.dispose);
-    expect(lost.adopt('p_1', secret), isTrue);
-    await lost.syncAll();
+    expect(await lost.adopt('p_1', secret), isTrue);
     expect(lost.board('p_1')!.cards.single.notes, 'kept');
     expect(lost.secrets, {'p_1': secret});
-    expect(lost.adopt('p_2', 'not a secret'), isFalse);
+    expect(await lost.adopt('p_2', 'not a secret'), isFalse);
+
+    // A key whose board was deleted brings nothing back.
+    phone.disable('p_1');
+    final late = _device(relay);
+    addTearDown(late.dispose);
+    expect(await late.adopt('p_1', secret), isFalse);
+    expect(late.board('p_1'), isNull);
   });
 
   test('turning a board off tells the vault; losing it does not', () async {
     final turnedOff = <String>[];
-    phone.onTurnedOff = (id, _) => turnedOff.add(id);
-    desktop.onTurnedOff = (id, _) => turnedOff.add(id);
+    phone.onTurnedOff = (id, _, {required here}) => turnedOff.add(id);
+    desktop.onTurnedOff = (id, _, {required here}) => turnedOff.add(id);
     // A vault without the board leaves it alone; only a removal drops it.
     desktop.applySecrets({});
     expect(desktop.board('p_1'), isNotNull);
