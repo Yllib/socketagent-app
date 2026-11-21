@@ -2221,19 +2221,25 @@ class _SessionsTabState extends State<SessionsTab> {
       case 'board-on':
         // A second tap while the first still waits on the computers.
         if (provider.isTurningOnBoard(projectId)) return;
+        // The project row may rebuild while the computers answer, so the
+        // rest runs on the navigator's context, which outlives it.
+        final navigator = Navigator.of(context);
         final messenger = ScaffoldMessenger.of(context);
         messenger.showSnackBar(
           const SnackBar(content: Text('Asking your computers for this board')),
         );
         final result = await provider.turnOnBoard(projectId);
         messenger.hideCurrentSnackBar();
-        if (!context.mounted) return;
+        debugPrint('[Boards] Turn on $projectId: ${result.name}');
+        if (!navigator.mounted) return;
+        final here = navigator.context;
+        if (!here.mounted) return;
         if (result == BoardTurnOn.noKeyFound) {
-          if (!await _confirmEmptyBoard(context) || !context.mounted) return;
+          if (!await _confirmEmptyBoard(here) || !here.mounted) return;
           await provider.turnOnBoard(projectId, startEmpty: true);
-          if (!context.mounted) return;
+          if (!here.mounted) return;
         }
-        await BoardScreen.open(context, projectId);
+        await BoardScreen.open(here, projectId);
       case 'rename':
         final renamed = await _askProjectName(context, initial: name);
         if (renamed != null) provider.renameProject(projectId, renamed);
