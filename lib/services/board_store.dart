@@ -51,10 +51,10 @@ class BoardStore extends ChangeNotifier {
   /// so the vault and the computers' grants follow.
   VoidCallback? onSecretsChanged;
 
-  /// Called when a board is turned off here, or found deleted on the relay,
-  /// so the vault records the removal. A board that only goes missing
-  /// locally is never removed from the vault.
-  void Function(String projectId)? onTurnedOff;
+  /// Called with the board's secret when a board is turned off here, or
+  /// found deleted on the relay, so the vault records the removal. A board
+  /// that only goes missing locally is never removed from the vault.
+  void Function(String projectId, String secret)? onTurnedOff;
 
   /// The relay allows 300 board requests an hour per board from one address.
   /// A phone, a desktop and a computer behind one router share that, so
@@ -173,7 +173,7 @@ class BoardStore extends ChangeNotifier {
   void disable(String projectId) {
     final board = _boards.remove(projectId);
     if (board == null) return;
-    onTurnedOff?.call(projectId);
+    onTurnedOff?.call(projectId, board.secret);
     _secretsChanged();
     _save();
     notifyListeners();
@@ -187,12 +187,16 @@ class BoardStore extends ChangeNotifier {
   }
 
   /// Brings the boards in line with the account vault: boards turned on
-  /// elsewhere appear, boards turned off elsewhere go, a new secret starts
-  /// the board over from the relay.
-  void applySecrets(Map<String, String> secrets) {
+  /// elsewhere appear, boards in [removed] (turned off elsewhere) go, a new
+  /// secret starts the board over from the relay. A board in neither stays:
+  /// it was turned on here after the sync read this device's boards.
+  void applySecrets(
+    Map<String, String> secrets, {
+    Set<String> removed = const {},
+  }) {
     var changed = false;
     for (final id in _boards.keys.toList()) {
-      if (!secrets.containsKey(id)) {
+      if (removed.contains(id) && !secrets.containsKey(id)) {
         _boards.remove(id);
         changed = true;
       }
@@ -486,7 +490,7 @@ class BoardStore extends ChangeNotifier {
   void _gone(_Board board) {
     if (_boards[board.projectId] != board) return;
     _boards.remove(board.projectId);
-    onTurnedOff?.call(board.projectId);
+    onTurnedOff?.call(board.projectId, board.secret);
     _secretsChanged();
     _save();
     notifyListeners();

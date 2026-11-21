@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -652,6 +653,7 @@ class AccountService extends ChangeNotifier {
         final keys = AccountKeys.generate();
         _keys = keys;
         _vault = null;
+        _unsentRemovals.clear();
         _lastVersion = 0;
         _synced = false;
         _session = session;
@@ -755,6 +757,7 @@ class AccountService extends ChangeNotifier {
         _signIn = null;
         _keys = keys;
         _vault = null;
+        _unsentRemovals.clear();
         _lastVersion = 0;
         _synced = false;
         _session = signIn.session;
@@ -808,6 +811,7 @@ class AccountService extends ChangeNotifier {
     }
     _keys = keys;
     _vault = null;
+    _unsentRemovals.clear();
     _lastVersion = 0;
     _synced = false;
     _notice = null;
@@ -833,33 +837,82 @@ class AccountService extends ChangeNotifier {
 
   // ────────── Sync ──────────
 
+  /// Removals recorded here that no sync has written yet. A sync that was
+  /// already writing when one came in merges it back over what it read.
+  final List<({VaultList list, String key, int at})> _unsentRemovals = [];
+
   /// Records that the user removed [key] from [list] on this device. This
   /// is the only way anything leaves those vault lists: a device whose
   /// local copy failed to load must not erase the item everywhere. The
-  /// removal is stamped now, kept in this device's vault and sent on the
+  /// removal is stamped now, or just after the item when another device's
+  /// clock stamped it later, kept in this device's vault and sent on the
   /// next sync.
   void recordRemoval(VaultList list, String key) {
     final vault = _vault;
     if (_keys == null || vault == null || key.isEmpty) return;
-    final stone = [VaultTombstone(key: key, at: _now)];
-    final removal = switch (list) {
-      VaultList.computers => const AccountVault().copyWith(
-        removedComputers: stone,
-      ),
-      VaultList.pins => const AccountVault().copyWith(unpinnedSessions: stone),
-      VaultList.projects => const AccountVault().copyWith(
-        removedProjects: stone,
-      ),
-      VaultList.members => const AccountVault().copyWith(
-        removedProjectMembers: stone,
-      ),
-      VaultList.boards => const AccountVault().copyWith(
-        removedProjectBoards: stone,
-      ),
-    };
-    _vault = mergeVaults(vault, removal);
+    final removal = (
+      list: list,
+      key: key,
+      at: max(_now, _itemAt(vault, list, key) + 1),
+    );
+    _unsentRemovals.add(removal);
+    _vault = _withRemovals(vault, [removal]);
     unawaited(_persist());
     syncSoon();
+  }
+
+  static int _itemAt(AccountVault vault, VaultList list, String key) {
+    final times = switch (list) {
+      VaultList.computers => [
+        for (final c in vault.computers)
+          if (c.key == key) c.updatedAt,
+      ],
+      VaultList.pins => [
+        for (final p in vault.pinnedSessions)
+          if (p.sessionId == key) p.at,
+      ],
+      VaultList.projects => [
+        for (final p in vault.projects)
+          if (p.id == key) p.at,
+      ],
+      VaultList.members => [
+        for (final m in vault.projectMembers)
+          if (m.sessionId == key) m.at,
+      ],
+      VaultList.boards => [
+        for (final b in vault.projectBoards)
+          if (b.projectId == key) b.at,
+      ],
+    };
+    return times.fold(0, max);
+  }
+
+  static AccountVault _withRemovals(
+    AccountVault vault,
+    Iterable<({VaultList list, String key, int at})> removals,
+  ) {
+    var out = vault;
+    for (final removal in removals) {
+      final stone = [VaultTombstone(key: removal.key, at: removal.at)];
+      out = mergeVaults(out, switch (removal.list) {
+        VaultList.computers => const AccountVault().copyWith(
+          removedComputers: stone,
+        ),
+        VaultList.pins => const AccountVault().copyWith(
+          unpinnedSessions: stone,
+        ),
+        VaultList.projects => const AccountVault().copyWith(
+          removedProjects: stone,
+        ),
+        VaultList.members => const AccountVault().copyWith(
+          removedProjectMembers: stone,
+        ),
+        VaultList.boards => const AccountVault().copyWith(
+          removedProjectBoards: stone,
+        ),
+      });
+    }
+    return out;
   }
 
   /// Asks for a sync once things settle, for example after a computer is
@@ -1052,6 +1105,9 @@ class AccountService extends ChangeNotifier {
       }
     }
     var local = _localVault();
+    // Removals recorded from here on are not in [local]; they are merged
+    // back over the result below and sent next time.
+    final sentRemovals = _unsentRemovals.length;
     var pending = _pending;
     if (pending is PendingCreate) {
       // First account died after the relay took the vault.
@@ -1095,6 +1151,8 @@ class AccountService extends ChangeNotifier {
       // finds and shows no notice.
       _knownPin ??= merged.pin?.mark;
     }
+    _unsentRemovals.removeRange(0, sentRemovals);
+    merged = _withRemovals(merged, _unsentRemovals);
     _vault = merged;
     _lastVersion = version;
     _synced = true;
@@ -1968,8 +2026,8 @@ class AccountService extends ChangeNotifier {
   }
 
   /// The last merged vault brought up to date with what this device has
-  /// now. Computers that disappeared locally since then become tombstones;
-  /// changed or new ones get a fresh `updatedAt`.
+  /// now: changed or new computers get a fresh `updatedAt`. One missing
+  /// locally stays; only [recordRemoval] removes it.
   AccountVault _localVault() {
     final base = _vault ?? const AccountVault();
     final local = readLocal?.call() ?? const AccountLocalState(computers: []);
@@ -2259,6 +2317,7 @@ class AccountService extends ChangeNotifier {
     _session = null;
     _keys = null;
     _vault = null;
+    _unsentRemovals.clear();
     _lastVersion = 0;
     _synced = false;
     _googleEmail = null;

@@ -154,6 +154,7 @@ class FakeCloud {
   /// the device at the one it was told to die on.
   http.Client clientFor(Device device) => MockClient((request) async {
     device.requests++;
+    device.onRequest?.call(request);
     if (device.dead ||
         (device.dieAt == device.requests && !device.dieAfterLanding)) {
       device.die();
@@ -611,6 +612,9 @@ class Device {
 
   /// Requests this device has sent since it started.
   int requests = 0;
+
+  /// Runs as each request leaves, for a change made while a sync waits.
+  void Function(http.Request request)? onRequest;
 
   /// The request the app dies on, counted from 1, or null to live.
   int? dieAt;

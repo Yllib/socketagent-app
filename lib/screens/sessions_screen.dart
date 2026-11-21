@@ -2219,8 +2219,18 @@ class _SessionsTabState extends State<SessionsTab> {
       case 'board':
         await BoardScreen.open(context, projectId);
       case 'board-on':
-        await provider.turnOnBoard(projectId);
+        final messenger = ScaffoldMessenger.of(context);
+        messenger.showSnackBar(
+          const SnackBar(content: Text('Asking your computers for this board')),
+        );
+        final result = await provider.turnOnBoard(projectId);
+        messenger.hideCurrentSnackBar();
         if (!context.mounted) return;
+        if (result == BoardTurnOn.noKeyFound) {
+          if (!await _confirmEmptyBoard(context) || !context.mounted) return;
+          await provider.turnOnBoard(projectId, startEmpty: true);
+          if (!context.mounted) return;
+        }
         await BoardScreen.open(context, projectId);
       case 'rename':
         final renamed = await _askProjectName(context, initial: name);
@@ -2228,6 +2238,33 @@ class _SessionsTabState extends State<SessionsTab> {
       case 'delete':
         provider.deleteProject(projectId);
     }
+  }
+
+  /// Asks before starting an empty board for a project whose old board no
+  /// connected computer holds a key for.
+  Future<bool> _confirmEmptyBoard(BuildContext context) async {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Start an empty board?'),
+        content: const Text(
+          'This project had a board, and no connected computer holds its '
+          'key. Connect the computer that ran its chats to bring the cards '
+          'back. An empty board replaces that key everywhere.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Start empty'),
+          ),
+        ],
+      ),
+    );
+    return yes ?? false;
   }
 
   /// Asks for a project name. Null when cancelled or left empty.

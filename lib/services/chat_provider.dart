@@ -2780,6 +2780,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await _saveServerConfigs();
     }
 
+    _savedComputerKeys = {
+      for (final c in _serverConfigs)
+        if (!c.isLoopbackOnly) c.id: VaultComputer.keyFor(c),
+    };
     await PushKeys.sync(_serverConfigs);
     _loadServerBuildCache(prefs);
     _loadScheduledTaskCache(prefs);
@@ -2904,7 +2908,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           final identity = '${candidate.port}:${candidate.serverPubkey}';
           final plan = LocalServerPlan.of(_serverConfigs, candidate);
           for (final id in plan.remove) {
-            await removeServer(id);
+            await removeServer(id, record: false);
           }
           final update = plan.update;
           // The server's own files are where this pairing comes from, so it
@@ -2999,7 +3003,29 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   // ── Multi-server CRUD ──
 
+  /// The vault key each shareable computer had at the last save, by id.
+  Map<String, String> _savedComputerKeys = {};
+
+  /// A computer re-paired or edited in place is filed in the vault under a
+  /// new key. The old key is recorded as removed, or the vault would keep
+  /// listing it and give it back to every device.
+  void _recordChangedComputerKeys() {
+    final now = {
+      for (final c in _serverConfigs)
+        if (!c.isLoopbackOnly) c.id: VaultComputer.keyFor(c),
+    };
+    final kept = now.values.toSet();
+    for (final MapEntry(key: id, value: old) in _savedComputerKeys.entries) {
+      final key = now[id];
+      if (key != null && key != old && !kept.contains(old)) {
+        account.recordRemoval(VaultList.computers, old);
+      }
+    }
+    _savedComputerKeys = now;
+  }
+
   Future<void> _saveServerConfigs() async {
+    _recordChangedComputerKeys();
     final json = jsonEncode(_serverConfigs.map((c) => c.toJson()).toList());
     await _secureStorage.setServerConfigs(json);
     // Every pairing secret arrives through a save, so the keys that open
@@ -3546,11 +3572,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
         previous.transport != next.transport;
   }
 
-  Future<void> removeServer(String serverId) async {
-    for (final config in _serverConfigs.where((c) => c.id == serverId)) {
-      account.recordRemoval(VaultList.computers, VaultComputer.keyFor(config));
-    }
+  /// Removes a computer from this device. [record] tells the account vault
+  /// so the user's other devices drop it too; removals that follow the
+  /// vault or replace a duplicate entry pass false.
+  Future<void> removeServer(String serverId, {bool record = true}) async {
+    final gone = _serverConfigs.where((c) => c.id == serverId).toList();
     _serverConfigs.removeWhere((c) => c.id == serverId);
+    if (record) {
+      final kept = {for (final c in _serverConfigs) VaultComputer.keyFor(c)};
+      for (final config in gone) {
+        // Loopback entries are never uploaded, so there is nothing to
+        // remove, and another entry for the same computer keeps it listed.
+        final key = VaultComputer.keyFor(config);
+        if (config.isLoopbackOnly || kept.contains(key)) continue;
+        account.recordRemoval(VaultList.computers, key);
+      }
+    }
     if (_serverRuntimeInfo.remove(serverId) != null) {
       unawaited(_persistServerBuildCache());
     }
@@ -8622,8 +8659,16 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       account.syncSoon();
       _scheduleBoardGrants();
     };
-    boards.onTurnedOff = (projectId) =>
+    boards.onTurnedOff = (projectId, secret) {
+      // A board turned on again elsewhere has a new secret; the old one
+      // going away must not remove it.
+      final listed = account.vault?.projectBoards
+          .where((b) => b.projectId == projectId)
+          .firstOrNull;
+      if (listed == null || listed.secret == secret) {
         account.recordRemoval(VaultList.boards, projectId);
+      }
+    };
     boards.connect(() => relayHttpUrl);
     if (account.hasAccount) unawaited(account.sync());
   }
@@ -8697,7 +8742,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final removed = {for (final t in merged.removedComputers) t.key};
     for (final config in _serverConfigs.toList()) {
       if (removed.contains(VaultComputer.keyFor(config))) {
-        await removeServer(config.id);
+        await removeServer(config.id, record: false);
       }
     }
     final subscription = merged.subscription;
@@ -8707,14 +8752,32 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       await saveSubscriberToken(subscription.token, subscription.email);
       unawaited(checkSubscriptionStatus());
     }
-    final pins = {for (final p in merged.pinnedSessions) p.sessionId};
+    // Only what the vault records as removed goes. Anything else held here
+    // and missing from [merged] was added after the sync read this device,
+    // and the next sync uploads it.
+    final unpinned = {for (final t in merged.unpinnedSessions) t.key};
+    final pins = {
+      for (final p in merged.pinnedSessions) p.sessionId,
+      ..._pinnedSessionIds.where((id) => !unpinned.contains(id)),
+    };
     if (!setEquals(pins, _pinnedSessionIds)) {
       _pinnedSessionIds = pins;
       _persistPinnedSessions();
       notifyListeners();
     }
-    final names = {for (final p in merged.projects) p.id: p.name};
+    final removedProjects = {for (final t in merged.removedProjects) t.key};
+    final names = {
+      for (final MapEntry(:key, :value) in _projects.names.entries)
+        if (!removedProjects.contains(key)) key: value,
+      for (final p in merged.projects) p.id: p.name,
+    };
+    final removedMembers = {
+      for (final t in merged.removedProjectMembers) t.key,
+    };
     final members = {
+      for (final MapEntry(:key, :value) in _projects.members.entries)
+        if (!removedMembers.contains(key) && names.containsKey(value))
+          key: value,
       for (final m in merged.projectMembers) m.sessionId: m.projectId,
     };
     if (!mapEquals(names, _projects.names) ||
@@ -8723,9 +8786,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _persistProjects();
       notifyListeners();
     }
-    BoardStore.shared.applySecrets({
-      for (final b in merged.projectBoards) b.projectId: b.secret,
-    });
+    BoardStore.shared.applySecrets(
+      {for (final b in merged.projectBoards) b.projectId: b.secret},
+      removed: {for (final t in merged.removedProjectBoards) t.key},
+    );
   }
 
   Timer? _boardGrantsTimer;
@@ -8777,17 +8841,28 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     }
   }
 
-  /// An agent on [serverId] started a child chat for a chat in a project:
-  /// the child joins that project, so it can use the board too.
   /// Board key requests waiting on a computer's answer, by server and project.
   final Map<(String, String), Completer<String?>> _boardKeyRequests = {};
 
-  /// Turns on [projectId]'s board. A connected computer that still holds a
-  /// key for it is asked first, so a board this device lost comes back with
-  /// its cards instead of starting over empty.
-  Future<void> turnOnBoard(String projectId) async {
+  /// Turn-ons in progress, by project, so a second tap waits on the first.
+  final Map<String, Future<BoardTurnOn>> _turningOnBoards = {};
+
+  /// Turns on [projectId]'s board. Connected computers are asked first for
+  /// a key they still hold, so a board this device lost comes back with its
+  /// cards. When none answers with one and the vault shows the board was
+  /// turned off before, nothing happens until the user confirms with
+  /// [startEmpty]: a new key would replace the one a computer that is
+  /// offline right now still holds.
+  Future<BoardTurnOn> turnOnBoard(String projectId, {bool startEmpty = false}) {
+    return _turningOnBoards[projectId] ??= _turnOnBoard(
+      projectId,
+      startEmpty,
+    ).whenComplete(() => _turningOnBoards.remove(projectId));
+  }
+
+  Future<BoardTurnOn> _turnOnBoard(String projectId, bool startEmpty) async {
     final boards = BoardStore.shared;
-    if (boards.board(projectId) != null) return;
+    if (boards.board(projectId) != null) return BoardTurnOn.on;
     final asks = <Future<String?>>[];
     for (final config in _serverConfigs) {
       if (_connMgr.statusOf(config.id) != ConnectionStatus.connected) continue;
@@ -8811,10 +8886,17 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     for (final config in _serverConfigs) {
       _boardKeyRequests.remove((config.id, projectId));
     }
-    if (boards.board(projectId) != null) return;
+    if (boards.board(projectId) != null) return BoardTurnOn.on;
     final held = keys.whereType<String>().firstOrNull;
-    if (held != null && boards.adopt(projectId, held)) return;
+    if (held != null && boards.adopt(projectId, held)) {
+      return BoardTurnOn.restored;
+    }
+    final turnedOffBefore =
+        account.vault?.removedProjectBoards.any((t) => t.key == projectId) ??
+        false;
+    if (turnedOffBefore && !startEmpty) return BoardTurnOn.noKeyFound;
     boards.enable(projectId);
+    return BoardTurnOn.on;
   }
 
   void _handleProjectBoardKey(Map<String, dynamic> msg, String? serverId) {
@@ -8826,6 +8908,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     waiting.complete(secret is String && secret.isNotEmpty ? secret : null);
   }
 
+  /// An agent on [serverId] started a child chat for a chat in a project:
+  /// the child joins that project, so it can use the board too.
   void _handleProjectBoardMember(Map<String, dynamic> msg) {
     final projectId = msg['projectId'];
     final sessionId = msg['sessionId'];
@@ -22015,4 +22099,17 @@ class _DeviceRequestWaiter {
 
   final String requestId;
   final Completer<Map<String, dynamic>> completer = Completer();
+}
+
+/// What [ChatProvider.turnOnBoard] did.
+enum BoardTurnOn {
+  /// The board is on, new or already on.
+  on,
+
+  /// A computer still held the board's key; its cards come back.
+  restored,
+
+  /// The board was turned off before and no connected computer holds its
+  /// key. Nothing changed; starting over needs the user's yes.
+  noKeyFound,
 }

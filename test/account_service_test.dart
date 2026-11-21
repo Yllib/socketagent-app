@@ -549,6 +549,49 @@ void main() {
       }, reason: 'the browser gets them back');
     });
 
+    test('a removal made while a sync writes is kept and sent', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Desktop']);
+      cloud.now += 1000;
+      a.pins = {'chat-1', 'chat-2'};
+      await a.sync();
+
+      cloud.now += 1000;
+      a.pins.add('chat-3');
+      a.onRequest = (request) {
+        if (request.method != 'PUT') return;
+        a.onRequest = null;
+        a.pins.remove('chat-1');
+        a.service.recordRemoval(VaultList.pins, 'chat-1');
+      };
+      await a.sync();
+      expect(a.pins, {'chat-2', 'chat-3'});
+
+      cloud.now += 1000;
+      await a.sync();
+      await b.sync();
+      expect(b.pins, {'chat-2', 'chat-3'});
+    });
+
+    test(
+      'a removal beats an item stamped by a clock ahead of this one',
+      () async {
+        final cloud = FakeCloud();
+        final [a, b] = await pinAccount(cloud, ['Pixel', 'Desktop']);
+        cloud.now += 60000;
+        b.pins = {'chat-1'};
+        await b.sync();
+        // This device's clock runs a minute behind the one that pinned.
+        cloud.now -= 60000;
+        await a.sync();
+        a.pins = {};
+        a.service.recordRemoval(VaultList.pins, 'chat-1');
+        await a.sync();
+        await b.sync();
+        expect(b.pins, isEmpty);
+      },
+    );
+
     test('a board turned off on one device goes on the other', () async {
       final cloud = FakeCloud();
       final [a, b] = await pinAccount(cloud, ['Pixel', 'Desktop']);

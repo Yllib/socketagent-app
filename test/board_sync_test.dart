@@ -184,9 +184,13 @@ void main() {
 
   test('turning a board off tells the vault; losing it does not', () async {
     final turnedOff = <String>[];
-    phone.onTurnedOff = turnedOff.add;
-    desktop.onTurnedOff = turnedOff.add;
+    phone.onTurnedOff = (id, _) => turnedOff.add(id);
+    desktop.onTurnedOff = (id, _) => turnedOff.add(id);
+    // A vault without the board leaves it alone; only a removal drops it.
     desktop.applySecrets({});
+    expect(desktop.board('p_1'), isNotNull);
+    desktop.applySecrets({}, removed: {'p_1'});
+    expect(desktop.board('p_1'), isNull);
     expect(turnedOff, isEmpty);
     phone.disable('p_1');
     expect(turnedOff, ['p_1']);
