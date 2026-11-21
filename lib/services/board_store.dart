@@ -51,6 +51,11 @@ class BoardStore extends ChangeNotifier {
   /// so the vault and the computers' grants follow.
   VoidCallback? onSecretsChanged;
 
+  /// Called when a board is turned off here, or found deleted on the relay,
+  /// so the vault records the removal. A board that only goes missing
+  /// locally is never removed from the vault.
+  void Function(String projectId)? onTurnedOff;
+
   /// The relay allows 300 board requests an hour per board from one address.
   /// A phone, a desktop and a computer behind one router share that, so
   /// each device polls at most 60 times an hour.
@@ -149,10 +154,26 @@ class BoardStore extends ChangeNotifier {
     _changed(board);
   }
 
+  /// Turns on [projectId]'s existing board from a [secret] a computer still
+  /// held, pulling its cards from the relay. False when the secret is not a
+  /// board secret.
+  bool adopt(String projectId, String secret) {
+    if (_boards.containsKey(projectId)) return true;
+    final board = _Board.tryCreate(projectId, secret);
+    if (board == null) return false;
+    _boards[projectId] = board;
+    _secretsChanged();
+    _save();
+    notifyListeners();
+    unawaited(_sync(board));
+    return true;
+  }
+
   /// Turns the board off everywhere and deletes it from the relay.
   void disable(String projectId) {
     final board = _boards.remove(projectId);
     if (board == null) return;
+    onTurnedOff?.call(projectId);
     _secretsChanged();
     _save();
     notifyListeners();
@@ -465,6 +486,7 @@ class BoardStore extends ChangeNotifier {
   void _gone(_Board board) {
     if (_boards[board.projectId] != board) return;
     _boards.remove(board.projectId);
+    onTurnedOff?.call(board.projectId);
     _secretsChanged();
     _save();
     notifyListeners();

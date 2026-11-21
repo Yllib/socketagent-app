@@ -2219,7 +2219,8 @@ class _SessionsTabState extends State<SessionsTab> {
       case 'board':
         await BoardScreen.open(context, projectId);
       case 'board-on':
-        BoardStore.shared.enable(projectId);
+        await provider.turnOnBoard(projectId);
+        if (!context.mounted) return;
         await BoardScreen.open(context, projectId);
       case 'rename':
         final renamed = await _askProjectName(context, initial: name);

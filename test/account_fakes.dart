@@ -605,6 +605,7 @@ class Device {
   Set<String> pins = {};
   Map<String, String> projects = {};
   Map<String, String> members = {};
+  Map<String, String> boards = {};
   String subscriberToken = '';
   late AccountService service;
 
@@ -661,6 +662,7 @@ class Device {
       pinnedSessionIds: pins,
       projects: projects,
       sessionProjects: members,
+      boardSecrets: boards,
     );
     service.applyMerged = (vault) async {
       applied.add(vault);
@@ -669,6 +671,7 @@ class Device {
       members = {
         for (final m in vault.projectMembers) m.sessionId: m.projectId,
       };
+      boards = {for (final b in vault.projectBoards) b.projectId: b.secret};
       computers.removeWhere(
         (c) =>
             vault.removedComputers.any((t) => t.key == VaultComputer.keyFor(c)),

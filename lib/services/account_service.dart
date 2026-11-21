@@ -17,7 +17,12 @@ import 'drive_key_store.dart';
 import 'google_auth.dart';
 import 'secure_storage_service.dart';
 
-/// What the app shares through the vault, read fresh on every sync.
+/// The vault lists a removal can be recorded in.
+enum VaultList { computers, pins, projects, members, boards }
+
+/// What the app shares through the vault, read fresh on every sync. Only
+/// adds and changes are taken from it: a value missing here is never read
+/// as removed. Removals go through [AccountService.recordRemoval].
 class AccountLocalState {
   const AccountLocalState({
     required this.computers,
@@ -827,6 +832,35 @@ class AccountService extends ChangeNotifier {
   });
 
   // ────────── Sync ──────────
+
+  /// Records that the user removed [key] from [list] on this device. This
+  /// is the only way anything leaves those vault lists: a device whose
+  /// local copy failed to load must not erase the item everywhere. The
+  /// removal is stamped now, kept in this device's vault and sent on the
+  /// next sync.
+  void recordRemoval(VaultList list, String key) {
+    final vault = _vault;
+    if (_keys == null || vault == null || key.isEmpty) return;
+    final stone = [VaultTombstone(key: key, at: _now)];
+    final removal = switch (list) {
+      VaultList.computers => const AccountVault().copyWith(
+        removedComputers: stone,
+      ),
+      VaultList.pins => const AccountVault().copyWith(unpinnedSessions: stone),
+      VaultList.projects => const AccountVault().copyWith(
+        removedProjects: stone,
+      ),
+      VaultList.members => const AccountVault().copyWith(
+        removedProjectMembers: stone,
+      ),
+      VaultList.boards => const AccountVault().copyWith(
+        removedProjectBoards: stone,
+      ),
+    };
+    _vault = mergeVaults(vault, removal);
+    unawaited(_persist());
+    syncSoon();
+  }
 
   /// Asks for a sync once things settle, for example after a computer is
   /// edited.
@@ -1945,8 +1979,7 @@ class AccountService extends ChangeNotifier {
     final present = <String>{};
     // Loopback-only entries go last so a shareable entry for the same
     // computer wins, and they are never uploaded: 127.0.0.1 means a
-    // different machine on every other device. They still count as present
-    // so the computer isn't deleted everywhere.
+    // different machine on every other device.
     final ordered = [
       ...local.computers.where((c) => !c.isLoopbackOnly),
       ...local.computers.where((c) => c.isLoopbackOnly),
@@ -1965,11 +1998,6 @@ class AccountService extends ChangeNotifier {
         );
       }
       tombstones.remove(key);
-    }
-    for (final key in base.computers.map((c) => c.key)) {
-      if (present.contains(key)) continue;
-      computers.remove(key);
-      tombstones[key] = VaultTombstone(key: key, at: now);
     }
     var subscription = base.subscription;
     if (local.subscriberToken.isNotEmpty &&
@@ -2034,8 +2062,8 @@ class AccountService extends ChangeNotifier {
   }
 
   /// Folds this device's [local] values into the vault's [items]: new or
-  /// changed values are stamped [now], and items missing locally get a
-  /// tombstone.
+  /// changed values are stamped [now]. Items missing locally are kept;
+  /// only [AccountService.recordRemoval] removes them.
   static ({List<T> items, List<VaultTombstone> stones}) _diffLocal<T, V>(
     List<T> items,
     List<VaultTombstone> stones,
@@ -2052,11 +2080,6 @@ class AccountService extends ChangeNotifier {
       if (existing != null && value(existing) == localValue) continue;
       byKey[id] = make(id, localValue);
       removed.remove(id);
-    }
-    for (final id in byKey.keys.toList()) {
-      if (local.containsKey(id)) continue;
-      byKey.remove(id);
-      removed[id] = VaultTombstone(key: id, at: now);
     }
     return (items: byKey.values.toList(), stones: removed.values.toList());
   }

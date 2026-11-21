@@ -1264,6 +1264,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void toggleSessionPin(String sessionId) {
     if (_pinnedSessionIds.contains(sessionId)) {
       _pinnedSessionIds.remove(sessionId);
+      account.recordRemoval(VaultList.pins, sessionId);
     } else {
       _pinnedSessionIds.add(sessionId);
     }
@@ -1297,13 +1298,27 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void deleteProject(String id) {
+    final chats = [
+      for (final MapEntry(:key, :value) in _projects.members.entries)
+        if (value == id) key,
+    ];
     _projects.delete(id);
+    account.recordRemoval(VaultList.projects, id);
+    for (final sessionId in chats) {
+      account.recordRemoval(VaultList.members, sessionId);
+    }
     _projectsChanged();
   }
 
   /// Puts chats in a project, or ungroups them when [projectId] is null.
   void setSessionProject(Iterable<String> sessionIds, String? projectId) {
-    _projects.assign(sessionIds, projectId);
+    final ids = sessionIds.toList();
+    _projects.assign(ids, projectId);
+    if (projectId == null) {
+      for (final sessionId in ids) {
+        account.recordRemoval(VaultList.members, sessionId);
+      }
+    }
     _projectsChanged();
   }
 
@@ -3532,6 +3547,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<void> removeServer(String serverId) async {
+    for (final config in _serverConfigs.where((c) => c.id == serverId)) {
+      account.recordRemoval(VaultList.computers, VaultComputer.keyFor(config));
+    }
     _serverConfigs.removeWhere((c) => c.id == serverId);
     if (_serverRuntimeInfo.remove(serverId) != null) {
       unawaited(_persistServerBuildCache());
@@ -5936,6 +5954,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
           break;
         case 'project_board_member':
           _handleProjectBoardMember(msg);
+          break;
+        case 'project_board_key':
+          _handleProjectBoardKey(msg, serverId);
           break;
         case 'view_transition':
           if (serverId != null) await _applyViewTransition(msg, serverId);
@@ -8601,6 +8622,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       account.syncSoon();
       _scheduleBoardGrants();
     };
+    boards.onTurnedOff = (projectId) =>
+        account.recordRemoval(VaultList.boards, projectId);
     boards.connect(() => relayHttpUrl);
     if (account.hasAccount) unawaited(account.sync());
   }
@@ -8756,6 +8779,53 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   /// An agent on [serverId] started a child chat for a chat in a project:
   /// the child joins that project, so it can use the board too.
+  /// Board key requests waiting on a computer's answer, by server and project.
+  final Map<(String, String), Completer<String?>> _boardKeyRequests = {};
+
+  /// Turns on [projectId]'s board. A connected computer that still holds a
+  /// key for it is asked first, so a board this device lost comes back with
+  /// its cards instead of starting over empty.
+  Future<void> turnOnBoard(String projectId) async {
+    final boards = BoardStore.shared;
+    if (boards.board(projectId) != null) return;
+    final asks = <Future<String?>>[];
+    for (final config in _serverConfigs) {
+      if (_connMgr.statusOf(config.id) != ConnectionStatus.connected) continue;
+      final key = (config.id, projectId);
+      final completer = _boardKeyRequests[key] ??= Completer<String?>();
+      if (_connMgr.sendToServer(config.id, {
+        'type': 'project_board_key_request',
+        'projectId': projectId,
+      })) {
+        asks.add(
+          completer.future.timeout(
+            const Duration(seconds: 4),
+            onTimeout: () => null,
+          ),
+        );
+      } else {
+        _boardKeyRequests.remove(key);
+      }
+    }
+    final keys = await Future.wait(asks);
+    for (final config in _serverConfigs) {
+      _boardKeyRequests.remove((config.id, projectId));
+    }
+    if (boards.board(projectId) != null) return;
+    final held = keys.whereType<String>().firstOrNull;
+    if (held != null && boards.adopt(projectId, held)) return;
+    boards.enable(projectId);
+  }
+
+  void _handleProjectBoardKey(Map<String, dynamic> msg, String? serverId) {
+    final projectId = msg['projectId'];
+    final secret = msg['secret'];
+    if (serverId == null || projectId is! String) return;
+    final waiting = _boardKeyRequests[(serverId, projectId)];
+    if (waiting == null || waiting.isCompleted) return;
+    waiting.complete(secret is String && secret.isNotEmpty ? secret : null);
+  }
+
   void _handleProjectBoardMember(Map<String, dynamic> msg) {
     final projectId = msg['projectId'];
     final sessionId = msg['sessionId'];
@@ -13726,8 +13796,14 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _viewingServerId = serverId;
     }
 
-    if (pinChanged) _persistPinnedSessions();
-    if (projectChanged) _persistProjects();
+    if (pinChanged) {
+      _persistPinnedSessions();
+      account.recordRemoval(VaultList.pins, oldId);
+    }
+    if (projectChanged) {
+      _persistProjects();
+      account.recordRemoval(VaultList.members, oldId);
+    }
     if (pinChanged || projectChanged) account.syncSoon();
     if (muteChanged) _persistMutedSessions();
     if (draftChanged) _persistDrafts();

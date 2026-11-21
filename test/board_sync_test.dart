@@ -167,6 +167,31 @@ void main() {
     expect(told, 1);
   });
 
+  test('a board lost on one device comes back with its cards from a '
+      'held key', () async {
+    phone.putCard('p_1', _card('a', notes: 'kept'));
+    await phone.syncAll();
+
+    final secret = phone.secrets['p_1']!;
+    final lost = _device(relay);
+    addTearDown(lost.dispose);
+    expect(lost.adopt('p_1', secret), isTrue);
+    await lost.syncAll();
+    expect(lost.board('p_1')!.cards.single.notes, 'kept');
+    expect(lost.secrets, {'p_1': secret});
+    expect(lost.adopt('p_2', 'not a secret'), isFalse);
+  });
+
+  test('turning a board off tells the vault; losing it does not', () async {
+    final turnedOff = <String>[];
+    phone.onTurnedOff = turnedOff.add;
+    desktop.onTurnedOff = turnedOff.add;
+    desktop.applySecrets({});
+    expect(turnedOff, isEmpty);
+    phone.disable('p_1');
+    expect(turnedOff, ['p_1']);
+  });
+
   test('an approved proposal becomes the board config', () async {
     relay.records['proposal.x'] = (
       version: 1,

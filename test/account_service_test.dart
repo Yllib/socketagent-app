@@ -473,6 +473,7 @@ void main() {
 
       a.computers.removeWhere((c) => c.name == 'Vm');
       cloud.now += 1000;
+      a.service.recordRemoval(VaultList.computers, 'V');
       await a.sync();
       expect(a.service.vault!.removedComputers.single.key, 'V');
       await b.sync();
@@ -503,6 +504,7 @@ void main() {
 
       cloud.now += 1000;
       b.pins = {'chat-2'};
+      b.service.recordRemoval(VaultList.pins, 'chat-1');
       b.projects = {'p1': 'Website', 'p2': 'Infra'};
       b.members = {'chat-1': 'p2'};
       await b.sync();
@@ -511,6 +513,57 @@ void main() {
       expect(a.pins, {'chat-2'}, reason: 'the unpin wins over the older pin');
       expect(a.projects['p1'], 'Website');
       expect(a.members, {'chat-1': 'p2'});
+    });
+
+    test('a device whose local copy is empty erases nothing', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Browser']);
+      cloud.now += 1000;
+      a.computers.add(computer('Desk', pubkey: 'D'));
+      a.pins = {'chat-1'};
+      a.projects = {'p1': 'Site'};
+      a.members = {'chat-1': 'p1'};
+      a.boards = {'p1': 'secret-1'};
+      await a.sync();
+      await b.sync();
+      expect(b.boards, {'p1': 'secret-1'});
+
+      // The browser's stores fail to load: everything it shares reads as
+      // missing, while its saved vault still lists it all.
+      b.computers.clear();
+      b.pins = {};
+      b.projects = {};
+      b.members = {};
+      b.boards = {};
+      cloud.now += 1000;
+      await b.sync();
+      cloud.now += 1000;
+      await a.sync();
+      expect(a.computers.map((c) => c.name), ['Desk']);
+      expect(a.pins, {'chat-1'});
+      expect(a.projects, {'p1': 'Site'});
+      expect(a.members, {'chat-1': 'p1'});
+      expect(a.boards, {'p1': 'secret-1'});
+      expect(b.boards, {
+        'p1': 'secret-1',
+      }, reason: 'the browser gets them back');
+    });
+
+    test('a board turned off on one device goes on the other', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Desktop']);
+      cloud.now += 1000;
+      a.boards = {'p1': 'secret-1'};
+      await a.sync();
+      await b.sync();
+      expect(b.boards, {'p1': 'secret-1'});
+
+      cloud.now += 1000;
+      a.boards = {};
+      a.service.recordRemoval(VaultList.boards, 'p1');
+      await a.sync();
+      await b.sync();
+      expect(b.boards, isEmpty);
     });
 
     test('forgetting a device keeps the account key and every other '
