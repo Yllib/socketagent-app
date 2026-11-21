@@ -769,6 +769,11 @@ class AccountService extends ChangeNotifier {
         await _persist();
         notifyListeners();
         await _sync();
+        if (_keys == null) {
+          throw StateError(
+            _notice ?? _lastError ?? 'Could not join this account. Try again.',
+          );
+        }
         return const Joined();
     }
   });

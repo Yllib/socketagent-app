@@ -979,6 +979,37 @@ void main() {
       expect(phone.service.vault!.webDevice?.publicKey, isNot(oldKey));
       expect(phone.service.vault!.webDevice?.publicKey, firefox.publicKey);
     });
+
+    test(
+      'joinWithPin throws instead of silently closing when initial sync leaves the account',
+      () async {
+        final cloud = FakeCloud();
+        final a = Device('Pixel', cloud);
+        await a.createAccount(goodPin);
+        final b = Device('Laptop', cloud);
+        expect(await b.service.signInWithGoogle(), isA<JoinAccount>());
+        // Simulate the account being deleted on the relay after unlock succeeds
+        // but before the initial vault GET runs.
+        var sawUnlock = false;
+        cloud.beforeRelay = (request) async {
+          if (request.url.path.endsWith('/unlock')) {
+            sawUnlock = true;
+            return null;
+          }
+          if (sawUnlock && request.method == 'GET') {
+            return http.Response('{"error":"gone"}', 404);
+          }
+          return null;
+        };
+
+        await expectLater(
+          b.service.joinWithPin(goodPin),
+          throwsA(_stateError(AccountService.deletedWords)),
+        );
+        expect(b.service.hasAccount, isFalse);
+        expect(b.service.notice, AccountService.deletedWords);
+      },
+    );
   });
 
   test('a pending change survives the stored record', () {

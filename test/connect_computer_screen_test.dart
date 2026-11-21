@@ -3,6 +3,9 @@ import 'package:app/screens/pair_screen.dart';
 import 'package:app/services/server_connection_probe.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+
+import 'account_fakes.dart';
 
 void main() {
   testWidgets('connect flow makes QR primary and direct a text alternative', (
@@ -121,5 +124,55 @@ void main() {
     expect(result.platform, 'linux');
     expect(result.serverVersion, '1.1.9');
     expect(result.backends, ['claude', 'codex']);
+  });
+
+  testWidgets(
+    'web onboarding shows signed-in empty state instead of Sign in again',
+    (tester) async {
+      final cloud = FakeCloud();
+      final browser = Device('Chrome', cloud);
+      await browser.createAccount(goodPin);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ConnectComputerScreen(
+            firstRun: true,
+            isWebOverride: true,
+            accountOverride: browser.service,
+          ),
+        ),
+      );
+
+      expect(find.byKey(const ValueKey('web-sign-in')), findsNothing);
+      expect(find.text('No computers yet'), findsOneWidget);
+      expect(find.textContaining(browser.service.googleEmail!), findsOneWidget);
+      expect(find.byKey(const ValueKey('web-sync-now')), findsOneWidget);
+      expect(find.byKey(const ValueKey('web-install-help')), findsOneWidget);
+    },
+  );
+
+  testWidgets('web onboarding surfaces sync errors and account notices', (
+    tester,
+  ) async {
+    final cloud = FakeCloud();
+    final browser = Device('Chrome', cloud);
+    await browser.createAccount(goodPin);
+    cloud.beforeRelay = (_) async =>
+        http.Response('{"error":"storage_unavailable"}', 503);
+    await browser.sync();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ConnectComputerScreen(
+          firstRun: true,
+          isWebOverride: true,
+          accountOverride: browser.service,
+        ),
+      ),
+    );
+
+    expect(find.text('Could not sync computers'), findsOneWidget);
+    expect(find.byKey(const ValueKey('web-sync-error')), findsOneWidget);
+    expect(find.byKey(const ValueKey('web-sign-in')), findsNothing);
   });
 }

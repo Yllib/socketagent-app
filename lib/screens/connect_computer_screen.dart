@@ -9,6 +9,7 @@ import '../models/server_config.dart';
 import '../platform/app_platform.dart';
 import '../platform/browser_session.dart';
 import '../platform/web_install.dart';
+import '../services/account_service.dart';
 import '../services/google_auth.dart';
 import 'settings/account_pin_dialogs.dart';
 import '../services/chat_provider.dart';
@@ -20,12 +21,24 @@ import '../config/app_palette.dart';
 enum _ConnectStage { ready, verifying, success, failure }
 
 class ConnectComputerScreen extends StatefulWidget {
-  const ConnectComputerScreen({super.key, this.firstRun = false, this.notice});
+  const ConnectComputerScreen({
+    super.key,
+    this.firstRun = false,
+    this.notice,
+    @visibleForTesting this.isWebOverride,
+    @visibleForTesting this.accountOverride,
+  });
 
   final bool firstRun;
 
   /// Replaces the intro line, for example to explain lost computers.
   final String? notice;
+
+  /// Overrides [AppPlatform.isWeb] in widget tests.
+  final bool? isWebOverride;
+
+  /// Supplies an [AccountService] directly in widget tests without a provider.
+  final AccountService? accountOverride;
 
   @override
   State<ConnectComputerScreen> createState() => _ConnectComputerScreenState();
@@ -76,8 +89,33 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
     );
   }
 
+  bool get _isWeb => widget.isWebOverride ?? AppPlatform.isWeb;
+
+  AccountService? _accountFor(BuildContext context) {
+    if (widget.accountOverride case final override?) return override;
+    try {
+      return Provider.of<ChatProvider>(context, listen: false).account;
+    } on ProviderNotFoundException {
+      return null;
+    }
+  }
+
   Widget _buildReady(BuildContext context) {
+    final account = _accountFor(context);
+    if (account == null) return _buildReadyContent(context, null);
+    return ListenableBuilder(
+      listenable: account,
+      builder: (context, _) => _buildReadyContent(context, account),
+    );
+  }
+
+  Widget _buildReadyContent(BuildContext context, AccountService? account) {
     final theme = Theme.of(context);
+    final webSignedIn = _isWeb && (account?.hasAccount ?? false);
+    final email = account?.googleEmail;
+    final syncError = account?.lastError;
+    final accountNotice = account?.notice;
+    final syncing = account?.syncing ?? false;
     return Center(
       key: const ValueKey('connect-ready'),
       child: SingleChildScrollView(
@@ -95,14 +133,20 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                   borderRadius: BorderRadius.circular(24),
                 ),
                 child: Icon(
-                  Icons.computer,
+                  webSignedIn ? Icons.cloud_done_outlined : Icons.computer,
                   size: 40,
                   color: theme.colorScheme.onPrimaryContainer,
                 ),
               ),
               const SizedBox(height: 24),
               Text(
-                'Connect a computer',
+                webSignedIn
+                    ? syncing
+                          ? 'Syncing computers'
+                          : syncError != null
+                          ? 'Could not sync computers'
+                          : 'No computers yet'
+                    : 'Connect a computer',
                 style: theme.textTheme.headlineSmall?.copyWith(
                   fontWeight: FontWeight.w700,
                 ),
@@ -110,12 +154,16 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                widget.notice ??
-                    (AppPlatform.isWeb
-                        ? 'Sign in with the Google account your phone uses. '
-                              'Your computers join this browser end-to-end '
-                              'encrypted.'
-                        : 'Use Claude or Codex from this phone through an end-to-end encrypted connection.'),
+                webSignedIn
+                    ? '${email != null ? 'Signed in as $email.' : 'Signed in to your account.'} '
+                          'Pair a computer in the mobile or desktop app while '
+                          'signed in to the same Google account, then sync.'
+                    : widget.notice ??
+                          (_isWeb
+                              ? 'Sign in with the Google account your phone uses. '
+                                    'Your computers join this browser end-to-end '
+                                    'encrypted.'
+                              : 'Use Claude or Codex from this phone through an end-to-end encrypted connection.'),
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: widget.notice == null
                       ? theme.colorScheme.onSurfaceVariant
@@ -123,8 +171,54 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                 ),
                 textAlign: TextAlign.center,
               ),
+              if (_isWeb && syncError != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  syncError,
+                  key: const ValueKey('web-sync-error'),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: context.palette.danger,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+              if (_isWeb && accountNotice != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  accountNotice,
+                  key: const ValueKey('web-account-notice'),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: context.palette.warning,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ],
               const SizedBox(height: 32),
-              if (AppPlatform.isWeb)
+              if (webSignedIn) ...[
+                SizedBox(
+                  width: double.infinity,
+                  height: 50,
+                  child: FilledButton.icon(
+                    key: const ValueKey('web-sync-now'),
+                    onPressed: syncing
+                        ? null
+                        : () => unawaited(account!.sync()),
+                    icon: const Icon(Icons.sync),
+                    label: Text(syncing ? 'Syncing...' : 'Sync now'),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: OutlinedButton.icon(
+                    key: const ValueKey('web-install-help'),
+                    onPressed: _openInstallHelp,
+                    icon: const Icon(Icons.download_outlined),
+                    label: const Text('Install SocketAgent'),
+                  ),
+                ),
+              ] else if (_isWeb) ...[
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -135,7 +229,6 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                     label: const Text('Sign in with Google'),
                   ),
                 ),
-              if (AppPlatform.isWeb)
                 CheckboxListTile(
                   key: const ValueKey('web-remember'),
                   value: BrowserSession.remember,
@@ -149,8 +242,8 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                   ),
                   controlAffinity: ListTileControlAffinity.leading,
                   contentPadding: EdgeInsets.zero,
-                )
-              else ...[
+                ),
+              ] else ...[
                 SizedBox(
                   width: double.infinity,
                   height: 50,
@@ -169,7 +262,7 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                 ),
               ],
               // The browser build opens the install page from its Install tab.
-              if (!AppPlatform.isWeb) ...[
+              if (!_isWeb) ...[
                 const SizedBox(height: 22),
                 SizedBox(
                   width: double.infinity,
@@ -182,7 +275,7 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                 ),
               ],
               const SizedBox(height: 24),
-              if (!AppPlatform.isWeb)
+              if (!_isWeb)
                 Text.rich(
                   TextSpan(
                     text: 'Already installed? Run ',
@@ -390,7 +483,8 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
   /// way in. It runs straight from the tap, or the browser blocks Google's
   /// popup.
   Future<void> _signIn() async {
-    final account = context.read<ChatProvider>().account;
+    final account = _accountFor(context);
+    if (account == null) return;
     setState(() => _saving = true);
     try {
       await signInToAccount(context, account);
@@ -1023,5 +1117,6 @@ String _platformLabel(String value) => switch (value.toLowerCase()) {
 String _backendLabel(String value) => switch (value.toLowerCase()) {
   'claude' => 'Claude',
   'codex' => 'Codex',
+  'gemini' => 'Gemini',
   _ => value,
 };
