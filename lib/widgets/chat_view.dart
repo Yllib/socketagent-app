@@ -43,6 +43,7 @@ import 'workflow_card.dart';
 import 'codex_activity_card.dart';
 import 'notification_receipt_card.dart';
 import 'socketagent_tool_card.dart';
+import 'prompt_notice_sheet.dart';
 import '../models/composer_attachment.dart';
 import '../config/app_palette.dart';
 import 'light_backdrop.dart';
@@ -1989,6 +1990,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
     final isModelChange = status == 'model_change';
     final isOldModel = status == 'model_old';
     final isDelegationQuestion = status == 'delegation_question';
+    final isScheduledTask = status == 'ScheduleTask';
+    final isScheduledReminder = status == 'scheduled_reminder';
+    // A card standing in for a prompt the server sent opens its full text.
+    final detail = msg.toolInput?['detail'];
     final originToolUseId = msg.originToolUseId ?? msg.parentToolUseId;
     final slashCommandId = originToolUseId ?? msg.toolUseId ?? '';
     final isSlashCommand = slashCommandId.startsWith('codex_slash_');
@@ -2032,6 +2037,14 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       icon = Icons.help_outline;
       color = context.palette.shade(Colors.amber, 300);
       bgColor = Colors.amber.shade900.withAlpha(40);
+    } else if (isScheduledTask) {
+      icon = Icons.schedule;
+      color = context.palette.shade(Colors.blue, 300);
+      bgColor = Colors.blue.shade900.withAlpha(50);
+    } else if (isScheduledReminder) {
+      icon = Icons.alarm;
+      color = context.palette.shade(Colors.blue, 300);
+      bgColor = Colors.blue.shade900.withAlpha(50);
     } else if (isOldModel) {
       icon = Icons.warning_amber_rounded;
       color = context.palette.shade(Colors.amber, 300);
@@ -2062,7 +2075,7 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       bgColor = Colors.blue.shade900.withAlpha(50);
     }
 
-    return Container(
+    final card = Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
@@ -2121,6 +2134,10 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                   ? 'OLD MODEL'
                   : isDelegationQuestion
                   ? 'QUESTION'
+                  : isScheduledTask
+                  ? 'TASK'
+                  : isScheduledReminder
+                  ? 'REMINDER'
                   : status.toUpperCase(),
               style: TextStyle(
                 color: color,
@@ -2129,8 +2146,22 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               ),
             ),
           ),
+          if (detail is String) ...[
+            const SizedBox(width: 4),
+            Icon(Icons.chevron_right, size: 16, color: color),
+          ],
         ],
       ),
+    );
+    if (detail is! String) return card;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => showPromptNoticeSheet(
+        context,
+        markdown: detail,
+        serverId: widget.serverId,
+      ),
+      child: card,
     );
   }
 

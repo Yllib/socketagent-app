@@ -237,7 +237,13 @@ bool isCondensedConversationMessage(ChatMessage message) {
         return true;
       }
       final kind = message.toolInput?['notificationKind'];
-      if (kind == 'server_recovery' || kind == 'action_result') return true;
+      // A card standing in for a prompt the server sent, such as a reminder
+      // or a scheduled task's result, starts the turn after it.
+      if (kind == 'server_recovery' ||
+          kind == 'action_result' ||
+          kind == 'prompt_notice') {
+        return true;
+      }
       // Older servers saved recovery notices as plain info notifications.
       return message.toolName == 'info' &&
           const {

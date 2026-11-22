@@ -1,3 +1,5 @@
+import 'package:intl/intl.dart' show DateFormat;
+
 import 'message_attachment.dart';
 
 // Parsing for the decorations the server adds to a user prompt.
@@ -35,6 +37,7 @@ class UserPromptNotice {
     required this.kind,
     required this.text,
     required this.toolName,
+    this.detail,
   });
 
   final UserPromptNoticeKind kind;
@@ -44,6 +47,9 @@ class UserPromptNotice {
 
   /// The card's icon key, matching what history has always passed.
   final String toolName;
+
+  /// Everything the message said, as Markdown, for the card's detail sheet.
+  final String? detail;
 }
 
 class ParsedUserPrompt {
@@ -172,36 +178,54 @@ ParsedUserPrompt parseUserPrompt(
   }
 
   if (text.startsWith('<socketagent_scheduled_task_report ')) {
-    final name = RegExp(
-      r'^Scheduled task: (.+)$',
-      multiLine: true,
-    ).firstMatch(text)?.group(1);
-    final status = RegExp(
-      r'^Status: (.+)$',
-      multiLine: true,
-    ).firstMatch(text)?.group(1);
+    final name = _field(text, 'Scheduled task');
+    final status = _field(text, 'Status');
+    final runSession = _field(text, 'Run session ID');
+    final result = _between(text, '<task_result>', '</task_result>');
     notices.add(
       UserPromptNotice(
         kind: UserPromptNoticeKind.scheduledTask,
         text: '${name ?? 'Scheduled task'}: ${status ?? 'result received'}',
         toolName: 'ScheduleTask',
+        detail: [
+          '### ${name ?? 'Scheduled task'}',
+          [
+            _capitalized(status ?? 'finished'),
+            if (_when(_attribute(text, 'started_at')) case final time?)
+              'started $time',
+          ].join(' · '),
+          if (runSession != null && runSession != 'unavailable')
+            'Run session `$runSession`',
+          '---',
+          result.isEmpty ? '_The task returned no text._' : result,
+        ].join('\n\n'),
       ),
     );
     return ParsedUserPrompt(text: '', notices: notices, hidden: true);
   }
 
-  // A reminder an agent scheduled for its own session. The card names it; the
-  // instructions under it are the agent's note to itself.
+  // A reminder an agent scheduled for its own session. The card names it, and
+  // its sheet shows the note the agent left itself.
   if (text.startsWith('<socketagent_scheduled_reminder ')) {
-    final name = RegExp(
-      r'^Scheduled reminder: (.+)$',
-      multiLine: true,
-    ).firstMatch(text)?.group(1);
+    final name = _field(text, 'Scheduled reminder');
+    final close = text.indexOf('</socketagent_scheduled_reminder>');
+    final note = close < 0
+        ? ''
+        : text.substring(close + '</socketagent_scheduled_reminder>'.length);
     notices.add(
       UserPromptNotice(
         kind: UserPromptNoticeKind.scheduledReminder,
         text: 'Reminder: ${name ?? 'scheduled follow-up'}',
-        toolName: 'ScheduleTask',
+        toolName: 'scheduled_reminder',
+        detail: [
+          '### ${name ?? 'Scheduled reminder'}',
+          [
+            'Sent to this chat',
+            ?_when(_attribute(text, 'started_at')),
+          ].join(' '),
+          '---',
+          note.trim(),
+        ].join('\n\n'),
       ),
     );
     return ParsedUserPrompt(text: '', notices: notices, hidden: true);
@@ -215,6 +239,19 @@ ParsedUserPrompt parseUserPrompt(
       r'^Question 1(?: \([^)]*\))?: (.+)$',
       multiLine: true,
     ).firstMatch(text)?.group(1)?.replaceAll('**', '').trim();
+    // The body minus the wrapper, the blocked line the heading replaces and
+    // the instruction addressed to the supervising agent.
+    final body = text
+        .split('\n')
+        .skip(1)
+        .where(
+          (line) =>
+              !line.startsWith('</socketagent_delegation_question>') &&
+              !line.contains('is blocked until this is answered') &&
+              !line.startsWith('Answer with AgentSession'),
+        )
+        .join('\n')
+        .trim();
     notices.add(
       UserPromptNotice(
         kind: UserPromptNoticeKind.delegationQuestion,
@@ -223,6 +260,12 @@ ParsedUserPrompt parseUserPrompt(
           if (question != null && question.isNotEmpty) question,
         ].join(': '),
         toolName: 'delegation_question',
+        detail: [
+          '### ${label ?? 'Delegated agent'}',
+          'Waiting on an answer from the agent that started it.',
+          '---',
+          body,
+        ].join('\n\n'),
       ),
     );
     return ParsedUserPrompt(text: '', notices: notices, hidden: true);
@@ -241,4 +284,33 @@ ParsedUserPrompt parseUserPrompt(
     hidden: false,
     attachments: attachments,
   );
+}
+
+/// The value of a `Label: value` line.
+String? _field(String text, String label) => RegExp(
+  '^${RegExp.escape(label)}: (.+)\$',
+  multiLine: true,
+).firstMatch(text)?.group(1)?.trim();
+
+String? _attribute(String text, String name) =>
+    RegExp('$name="([^"]*)"').firstMatch(text)?.group(1);
+
+String _between(String text, String open, String close) {
+  final start = text.indexOf(open);
+  if (start < 0) return '';
+  final end = text.indexOf(close, start + open.length);
+  return text
+      .substring(start + open.length, end < 0 ? text.length : end)
+      .trim();
+}
+
+String _capitalized(String word) =>
+    word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}';
+
+/// A timestamp from the server as local time, such as "Nov 22, 3:46 PM".
+String? _when(String? iso) {
+  final time = iso == null ? null : DateTime.tryParse(iso);
+  return time == null
+      ? null
+      : DateFormat('MMM d, h:mm a').format(time.toLocal());
 }

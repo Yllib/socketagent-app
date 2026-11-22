@@ -91,6 +91,16 @@ void main() {
       'Review Rooster help reference asked: '
       'Bash: List rooster docs and size the help file',
     );
+    expect(
+      parsed.notices.single.detail,
+      '### Review Rooster help reference\n\n'
+      'Waiting on an answer from the agent that started it.\n\n'
+      '---\n\n'
+      'Question 1 (Tool approval): **Bash: List rooster docs and size the help file**\n'
+      '\n'
+      "A command used as a file in this command can't be checked before it runs\n"
+      'Options: Approve | Decline',
+    );
   });
 
   test('a scheduled reminder is one card naming it', () {
@@ -106,6 +116,37 @@ void main() {
     expect(parsed.text, isEmpty);
     expect(parsed.notices.single.kind, UserPromptNoticeKind.scheduledReminder);
     expect(parsed.notices.single.text, 'Reminder: Check Dana');
+    expect(parsed.notices.single.toolName, 'scheduled_reminder');
+    final detail = parsed.notices.single.detail!;
+    expect(detail, startsWith('### Check Dana\n\nSent to this chat Nov 2'));
+    expect(detail, endsWith('---\n\nSee whether Dana replied'));
+  });
+
+  test('a scheduled task report opens to its full result', () {
+    final parsed = parse(
+      '<socketagent_scheduled_task_report task_id="t1" started_at="2026-11-22T20:46:39.670Z">\n'
+      'Scheduled task: Nightly backup\n'
+      'Status: completed\n'
+      'Run session ID: abc123\n'
+      'You linked this task to this conversation. Review its result.\n'
+      '<task_result>\n'
+      '## Backup\n'
+      '- 12 files copied\n'
+      '</task_result>\n'
+      '</socketagent_scheduled_task_report>',
+    );
+    expect(parsed.hidden, isTrue);
+    final notice = parsed.notices.single;
+    expect(notice.text, 'Nightly backup: completed');
+    expect(notice.toolName, 'ScheduleTask');
+    expect(
+      notice.detail,
+      startsWith('### Nightly backup\n\nCompleted · started '),
+    );
+    expect(
+      notice.detail,
+      endsWith('Run session `abc123`\n\n---\n\n## Backup\n- 12 files copied'),
+    );
   });
 
   test('context the server adds ahead of a prompt is not shown', () {

@@ -13723,6 +13723,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       timestamp: DateTime.now(),
       textContent: notice.text,
       toolName: notice.toolName,
+      toolInput: {
+        'notificationKind': 'prompt_notice',
+        'detail': ?notice.detail,
+      },
     );
   }
 
