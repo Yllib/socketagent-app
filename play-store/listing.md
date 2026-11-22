@@ -6,11 +6,11 @@ SocketAgent
 
 ## Short description
 
-Use Claude Code, OpenAI Codex and Gemini from your Android phone.
+Use Claude Code, OpenAI Codex and Gemini on your computer, from anywhere.
 
 ## Full description
 
-SocketAgent connects your Android phone to Claude Code, OpenAI Codex and Google's Gemini running on your computer.
+SocketAgent connects you to Claude Code, OpenAI Codex and Google's Gemini running on your computer.
 
 Send instructions, follow the agent’s work, approve requests, and pick up existing sessions from your phone. Your agent keeps working on your computer, with access to your projects and tools.
 
@@ -32,6 +32,8 @@ Messages, tool output, and files sent through the relay are end-to-end encrypted
 Your chosen AI provider processes agent requests. Push notifications use Google Firebase and are handled separately from the encrypted connection.
 
 SocketAgent does not provide an AI model or AI subscription. A computer running the SocketAgent server software is required. Claude Code, OpenAI Codex and Gemini each require their own supported account and are governed by their providers’ terms. Remote relay access may require a Google Play subscription.
+
+SocketAgent is also available for Windows and in your browser at socketagent.rbno.net.
 
 SocketAgent is not affiliated with or endorsed by Anthropic, OpenAI or Google.
 
