@@ -163,7 +163,8 @@ class _ConnectComputerScreenState extends State<ConnectComputerScreen> {
                               ? 'Sign in with the Google account your phone uses. '
                                     'Your computers join this browser end-to-end '
                                     'encrypted.'
-                              : 'Use Claude or Codex from this phone through an end-to-end encrypted connection.'),
+                              : 'Use Claude, Codex or Gemini from this phone through an end-to-end '
+                                    'encrypted connection.'),
                 style: theme.textTheme.bodyLarge?.copyWith(
                   color: widget.notice == null
                       ? theme.colorScheme.onSurfaceVariant
