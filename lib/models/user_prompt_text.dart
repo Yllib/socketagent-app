@@ -26,6 +26,7 @@ enum UserPromptNoticeKind {
   todoDismissed,
   secretAttachment,
   scheduledTask,
+  scheduledReminder,
   delegationQuestion,
 }
 
@@ -61,8 +62,9 @@ class ParsedUserPrompt {
   /// Notices to render above the bubble, in the order they appeared.
   final List<UserPromptNotice> notices;
 
-  /// True for prompts that exist only to feed the agent: monitor injections
-  /// and delegated-agent reports. Any notices already parsed still render.
+  /// True for prompts that exist only to feed the agent, such as monitor
+  /// output, delegated-agent reports and scheduled reminders. Any notices
+  /// already parsed still render.
   final bool hidden;
 }
 
@@ -70,6 +72,14 @@ final _cancelPrefix = RegExp(
   r'^\[The user cancelled your previous action\. Follow their instructions below\.\][\s]*',
 );
 final _systemPrefix = RegExp(r'^\[System: [^\]]*\][\s]*');
+
+/// Context the server puts ahead of a prompt for the agent: a handoff from
+/// another session, the project board, Codex instructions, a quiet scheduled
+/// run's note and a recurring task's prior runs. None of it is the user's.
+final _contextBlock = RegExp(
+  r'^\s*<(socketagent_(?:session_handoff|project_board|integration_instructions|scheduled_task|prior_runs))>.*?</\1>\s*(?:Current user message:\r?\n)?',
+  dotAll: true,
+);
 final _todoDismissPrefix = RegExp(
   r'^\[The user dismissed the task list\..*?\][\s]*',
 );
@@ -91,6 +101,17 @@ ParsedUserPrompt parseUserPrompt(
   var text = content;
   final notices = <UserPromptNotice>[];
   final attachments = <MessageAttachment>[];
+
+  for (
+    var block = _contextBlock.firstMatch(text);
+    block != null;
+    block = _contextBlock.firstMatch(text)
+  ) {
+    text = text.substring(block.end);
+  }
+  if (text.trim().isEmpty && content.trim().isNotEmpty) {
+    return ParsedUserPrompt(text: '', notices: notices, hidden: true);
+  }
 
   final cancelled = _cancelPrefix.firstMatch(text);
   if (cancelled != null) {
@@ -163,6 +184,23 @@ ParsedUserPrompt parseUserPrompt(
       UserPromptNotice(
         kind: UserPromptNoticeKind.scheduledTask,
         text: '${name ?? 'Scheduled task'}: ${status ?? 'result received'}',
+        toolName: 'ScheduleTask',
+      ),
+    );
+    return ParsedUserPrompt(text: '', notices: notices, hidden: true);
+  }
+
+  // A reminder an agent scheduled for its own session. The card names it; the
+  // instructions under it are the agent's note to itself.
+  if (text.startsWith('<socketagent_scheduled_reminder ')) {
+    final name = RegExp(
+      r'^Scheduled reminder: (.+)$',
+      multiLine: true,
+    ).firstMatch(text)?.group(1);
+    notices.add(
+      UserPromptNotice(
+        kind: UserPromptNoticeKind.scheduledReminder,
+        text: 'Reminder: ${name ?? 'scheduled follow-up'}',
         toolName: 'ScheduleTask',
       ),
     );

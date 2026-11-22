@@ -13623,6 +13623,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final prompt = rawContent.isEmpty ? null : _parseUserPrompt(rawContent);
     bool livesAsCard(UserPromptNotice notice) =>
         notice.kind == UserPromptNoticeKind.scheduledTask ||
+        notice.kind == UserPromptNoticeKind.scheduledReminder ||
         notice.kind == UserPromptNoticeKind.delegationQuestion;
     if (prompt != null &&
         prompt.notices.any(livesAsCard) &&

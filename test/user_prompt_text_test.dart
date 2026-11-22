@@ -92,4 +92,41 @@ void main() {
       'Bash: List rooster docs and size the help file',
     );
   });
+
+  test('a scheduled reminder is one card naming it', () {
+    final parsed = parse(
+      '<socketagent_scheduled_reminder task_id="t1" started_at="2026-11-22T20:46:39.670Z">\n'
+      'Scheduled reminder: Check Dana\n'
+      'This conversation scheduled the message below to come back to it now. Act on it here.\n'
+      '</socketagent_scheduled_reminder>\n'
+      '\n'
+      'See whether Dana replied',
+    );
+    expect(parsed.hidden, isTrue);
+    expect(parsed.text, isEmpty);
+    expect(parsed.notices.single.kind, UserPromptNoticeKind.scheduledReminder);
+    expect(parsed.notices.single.text, 'Reminder: Check Dana');
+  });
+
+  test('context the server adds ahead of a prompt is not shown', () {
+    final scheduled = parse(
+      '<socketagent_scheduled_task>\nThis scheduled task is running in quiet mode.\n</socketagent_scheduled_task>\n\n'
+      '<socketagent_prior_runs>\nRun 1\nStatus: completed\n</socketagent_prior_runs>\n\n'
+      'Check the backup',
+    );
+    expect(scheduled.text, 'Check the backup');
+    expect(scheduled.hidden, isFalse);
+
+    final handoff = parse(
+      '<socketagent_session_handoff>\nEarlier: fixed the build\n</socketagent_session_handoff>\n\n'
+      'Current user message:\n[Attached file: /tmp/log.txt]\nwhat failed?',
+    );
+    expect(handoff.text, 'what failed?');
+    expect(handoff.attachments.single.path, '/tmp/log.txt');
+
+    final instructions = parse(
+      '<socketagent_integration_instructions>\nUse the tools.\n</socketagent_integration_instructions>',
+    );
+    expect(instructions.hidden, isTrue);
+  });
 }
