@@ -193,6 +193,37 @@ class BoardStore extends ChangeNotifier {
     );
   }
 
+  /// Deletes every board on this device, and the boards in [others] (secrets
+  /// by project ID, such as the account vault's), from the relay. For Delete
+  /// account, so it skips the vault removal that [disable] records. A board
+  /// the relay did not delete stays on (or comes onto) this device, so
+  /// turning it off tries again. Returns how many stayed.
+  Future<int> deleteAll(Map<String, String> others) async {
+    final boards = <String, _Board>{
+      for (final board in _boards.values) board.secret: board,
+    };
+    for (final MapEntry(key: projectId, value: secret) in others.entries) {
+      if (boards.containsKey(secret)) continue;
+      final board = _Board.tryCreate(projectId, secret);
+      if (board != null) boards[secret] = board;
+    }
+    final url = _relayUrl?.call();
+    _boards.clear();
+    for (final board in boards.values) {
+      try {
+        if (url == null) throw BoardRelayDown('Not connected to the relay');
+        await _makeRelay(url, board.keys).delete();
+      } catch (error) {
+        debugPrint('[Boards] Delete failed: $error');
+        _boards.putIfAbsent(board.projectId, () => board);
+      }
+    }
+    _secretsChanged();
+    _save();
+    notifyListeners();
+    return _boards.length;
+  }
+
   /// Brings the boards in line with the account vault: boards turned on
   /// elsewhere appear, boards in [removed] (turned off elsewhere) go, a new
   /// secret starts the board over from the relay. A board in neither stays:

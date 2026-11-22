@@ -8638,6 +8638,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     account.relayHttpUrl = () => relayHttpUrl;
     account.onDeviceJoined = _approveJoinedDevice;
     account.onDeviceRemoved = _removeDeviceEverywhere;
+    account.deleteBoards = BoardStore.shared.deleteAll;
     account.deviceName = _deviceName;
     account.devicePlatform = _devicePlatform;
     account.devicePublicKey = devicePublicKey;

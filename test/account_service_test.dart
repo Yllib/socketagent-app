@@ -1012,6 +1012,27 @@ void main() {
       expect(cloud.driveFiles, isEmpty);
     });
 
+    test('deletes the vault\'s boards, and says when some are left', () async {
+      final cloud = FakeCloud();
+      final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);
+      b.boards = {'p_1': 'secret-1', 'p_2': 'secret-2'};
+      await b.sync();
+      await a.sync();
+      Map<String, String>? asked;
+      a.service.deleteBoards = (secrets) async {
+        asked = secrets;
+        return 1;
+      };
+
+      await expectLater(
+        a.service.deleteAccount(),
+        throwsA(_stateError(contains('1 project board is still on the relay'))),
+      );
+      expect(asked, {'p_1': 'secret-1', 'p_2': 'secret-2'});
+      expect(a.service.hasAccount, isFalse);
+      expect(cloud.liveAccounts, isEmpty);
+    });
+
     test('a 404 is not a delete: Drive is kept and the device stays', () async {
       final cloud = FakeCloud();
       final [a, b] = await pinAccount(cloud, ['Pixel', 'Laptop']);

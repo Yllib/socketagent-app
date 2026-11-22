@@ -205,6 +205,11 @@ class AccountService extends ChangeNotifier {
   /// [keepToken] is set for Forget, which leaves pairing tokens alone.
   void Function(String publicKey, {required bool keepToken})? onDeviceRemoved;
 
+  /// The account is deleted: delete these boards (secrets by project ID),
+  /// and this device's, from the relay. Returns how many the relay did not
+  /// delete.
+  Future<int> Function(Map<String, String> secrets)? deleteBoards;
+
   String deviceName = '';
   String devicePlatform = '';
   String devicePublicKey = '';
@@ -2317,6 +2322,10 @@ class AccountService extends ChangeNotifier {
     if (_pending != null) {
       throw StateError('An earlier change is still finishing. Try again.');
     }
+    final boardSecrets = {
+      for (final board in _vault?.projectBoards ?? const <VaultProjectBoard>[])
+        board.projectId: board.secret,
+    };
     try {
       await _withRelay((client) => client.delete(keys));
     } on VaultRequestFailed catch (error) {
@@ -2324,19 +2333,32 @@ class AccountService extends ChangeNotifier {
     } on Exception catch (error) {
       throw StateError('The account was not deleted: ${_errorText(error)}');
     }
+    final leftOver = <String>[];
     if (session != null) {
       try {
         await _drive(session).deleteAll();
       } catch (error) {
-        await _leaveLocally(null);
-        throw StateError(
-          'The account is deleted, but its key in Google Drive is not: '
-          '$error. To remove it, open Google Drive settings, Manage apps, '
-          'SocketAgent, Delete hidden app data.',
+        leftOver.add(
+          'its key in Google Drive is not: $error. To remove it, open '
+          'Google Drive settings, Manage apps, SocketAgent, Delete hidden '
+          'app data',
         );
       }
     }
+    final boardsLeft = await deleteBoards?.call(boardSecrets) ?? 0;
+    if (boardsLeft > 0) {
+      leftOver.add(
+        '$boardsLeft project ${boardsLeft == 1 ? 'board is' : 'boards are'} '
+        'still on the relay. Turn ${boardsLeft == 1 ? 'it' : 'them'} off to '
+        'try again',
+      );
+    }
     await _leaveLocally(null);
+    if (leftOver.isNotEmpty) {
+      throw StateError(
+        'The account is deleted, but ${leftOver.join('. Also, ')}.',
+      );
+    }
   });
 
   /// Drops everything this device holds about the account, in memory.

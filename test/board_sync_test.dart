@@ -259,4 +259,34 @@ void main() {
     expect(relay.intakes, isEmpty);
     expect(phone.board('p_1')!.intakes, isEmpty);
   });
+
+  test('deleting every board deletes the vault-only ones too, and keeps '
+      'any the relay refused', () async {
+    final relays = <String, _Relay>{};
+    var refuse = '';
+    final store = BoardStore(
+      relayUrl: () => 'https://relay.test',
+      relay: (_, keys) {
+        if (keys.boardId == refuse) throw BoardRelayDown('down');
+        return _Client(relays.putIfAbsent(keys.boardId, _Relay.new), keys);
+      },
+    );
+    addTearDown(store.dispose);
+    store.enable('p_here');
+    final here = BoardKeys.fromSecret(store.secrets['p_here']!).boardId;
+    final elsewhere = BoardKeys.newSecret();
+    final broken = BoardKeys.newSecret();
+    refuse = BoardKeys.fromSecret(broken).boardId;
+
+    final left = await store.deleteAll({
+      'p_elsewhere': elsewhere,
+      'p_broken': broken,
+      'p_here': store.secrets['p_here']!,
+    });
+
+    expect(left, 1);
+    expect(relays[here]!.gone, isTrue);
+    expect(relays[BoardKeys.fromSecret(elsewhere).boardId]!.gone, isTrue);
+    expect(store.secrets, {'p_broken': broken});
+  });
 }
