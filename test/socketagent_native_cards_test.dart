@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:app/models/message.dart';
 import 'package:app/widgets/notification_receipt_card.dart';
+import 'package:app/widgets/prompt_notice_card.dart';
 import 'package:app/widgets/socketagent_tool_card.dart';
 import 'package:app/widgets/structured_data_view.dart';
 import 'package:app/widgets/tool_output_block.dart';
@@ -16,6 +17,30 @@ void main() {
       ),
     );
   }
+
+  testWidgets('a prompt notice expands its full message in place', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      const PromptNoticeCard(
+        icon: Icons.alarm,
+        color: Colors.blue,
+        background: Colors.black,
+        label: 'REMINDER',
+        text: 'Reminder: Check Dana',
+        markdown: '### Check Dana\n\n---\n\nSee whether Dana replied',
+      ),
+    );
+
+    expect(find.text('REMINDER'), findsOneWidget);
+    expect(find.text('See whether Dana replied'), findsNothing);
+
+    await tester.tap(find.text('Reminder: Check Dana'));
+    await tester.pump();
+    expect(find.text('See whether Dana replied'), findsOneWidget);
+    expect(find.byIcon(Icons.expand_less), findsOneWidget);
+  });
 
   testWidgets('notification receipt separates title and collapsible body', (
     tester,

@@ -43,7 +43,7 @@ import 'workflow_card.dart';
 import 'codex_activity_card.dart';
 import 'notification_receipt_card.dart';
 import 'socketagent_tool_card.dart';
-import 'prompt_notice_sheet.dart';
+import 'prompt_notice_card.dart';
 import '../models/composer_attachment.dart';
 import '../config/app_palette.dart';
 import 'light_backdrop.dart';
@@ -2075,7 +2075,23 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
       bgColor = Colors.blue.shade900.withAlpha(50);
     }
 
-    final card = Container(
+    if (detail is String) {
+      return PromptNoticeCard(
+        icon: icon,
+        color: color,
+        background: bgColor,
+        label: isDelegationQuestion
+            ? 'QUESTION'
+            : isScheduledTask
+            ? 'TASK'
+            : 'REMINDER',
+        text: msg.textContent,
+        markdown: detail,
+        serverId: widget.serverId,
+      );
+    }
+
+    return Container(
       margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
@@ -2134,10 +2150,6 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
                   ? 'OLD MODEL'
                   : isDelegationQuestion
                   ? 'QUESTION'
-                  : isScheduledTask
-                  ? 'TASK'
-                  : isScheduledReminder
-                  ? 'REMINDER'
                   : status.toUpperCase(),
               style: TextStyle(
                 color: color,
@@ -2146,22 +2158,8 @@ class ChatViewState extends State<ChatView> with WidgetsBindingObserver {
               ),
             ),
           ),
-          if (detail is String) ...[
-            const SizedBox(width: 4),
-            Icon(Icons.chevron_right, size: 16, color: color),
-          ],
         ],
       ),
-    );
-    if (detail is! String) return card;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => showPromptNoticeSheet(
-        context,
-        markdown: detail,
-        serverId: widget.serverId,
-      ),
-      child: card,
     );
   }
 
