@@ -30,6 +30,7 @@ import 'screens/tasks/tasks_screen.dart';
 import 'screens/home_screen.dart';
 import 'package:app/platform/app_platform.dart';
 import 'platform/browser_session.dart';
+import 'platform/web_keyboard.dart';
 import 'services/nacl_cipher.dart';
 
 /// Global notifier for assist intent events — HomeScreen listens to this
@@ -160,6 +161,21 @@ class ClaudeAssistantApp extends StatelessWidget {
               ),
               child: child ?? const SizedBox.shrink(),
             );
+            final keyboard = webKeyboardInset;
+            if (keyboard != null) {
+              return ValueListenableBuilder<double>(
+                valueListenable: keyboard,
+                builder: (context, inset, body) => MediaQuery(
+                  data: MediaQuery.of(context).copyWith(
+                    viewInsets: MediaQuery.viewInsetsOf(
+                      context,
+                    ).copyWith(bottom: inset),
+                  ),
+                  child: body!,
+                ),
+                child: body,
+              );
+            }
             return AppPlatform.isWindows
                 ? Overlay.wrap(
                     child: DesktopWindowFrame(
