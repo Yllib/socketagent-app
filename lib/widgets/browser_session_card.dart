@@ -52,7 +52,7 @@ class BrowserSessionCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   runtimeRequired
-                      ? 'Browser component required on this computer.'
+                      ? 'No browser on this computer yet.'
                       : 'Remote browser. Passwords and MFA stay out of chat.',
                   style: TextStyle(
                     color: context.palette.textSecondary,

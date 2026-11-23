@@ -529,7 +529,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
               ),
               const SizedBox(height: 18),
               Text(
-                'Browser component required',
+                'No browser on this computer',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.onSurface,
@@ -539,7 +539,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
               ),
               const SizedBox(height: 10),
               Text(
-                'Install it on this computer to use remote sign-in. The normal SocketAgent install stays small.',
+                'SocketAgent installs one when the server starts. Install browser tries again and shows what went wrong.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   color: context.palette.textSecondary,
@@ -566,7 +566,7 @@ class _BrowserSessionScreenState extends State<BrowserSessionScreen>
               FilledButton(
                 onPressed: _installingRuntime ? null : _installRuntime,
                 child: Text(
-                  _installingRuntime ? 'Installing...' : 'Install on computer',
+                  _installingRuntime ? 'Installing...' : 'Install browser',
                 ),
               ),
             ],
