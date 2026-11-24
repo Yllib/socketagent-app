@@ -3517,7 +3517,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<ServerProbeResult> probeServerConnection(
     ServerConfig candidate, {
-    Duration timeout = const Duration(seconds: 18),
+    Duration timeout = const Duration(seconds: 30),
   }) {
     return const ServerConnectionProbe().verify(
       candidate,

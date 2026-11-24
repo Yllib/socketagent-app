@@ -22,8 +22,9 @@ const int maxMessage2Bytes = 2096;
 /// The largest `hs1` or `hs2` text frame, whole.
 const int maxHandshakeFrameBytes = 4096;
 
-/// How long an initiator waits for `hs2`.
-const Duration hs2Timeout = Duration(seconds: 10);
+/// How long an initiator waits for `hs2`. A round trip through the relay can
+/// take several seconds when either end is on a slow cellular link.
+const Duration hs2Timeout = Duration(seconds: 25);
 
 /// The longest device name message 1 carries.
 const int maxDeviceNameLength = 80;

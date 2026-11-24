@@ -709,7 +709,9 @@ class WebSocketService {
     return IOWebSocketChannel(
       dial.then(
         (socket) {
-          socket.pingInterval = const Duration(seconds: 20);
+          // dart:io closes the socket when a ping goes this long without a
+          // pong. On a slow link the pong can wait behind queued data.
+          socket.pingInterval = const Duration(seconds: 30);
           if (gen == _connectionGeneration) _rawSocket = socket;
           return socket;
         },

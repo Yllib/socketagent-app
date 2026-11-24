@@ -71,11 +71,13 @@ class ServerConnectionProbe {
   /// what the computer answered. A v2 computer is probed over v2 and no
   /// other way. [identity] is what v2's message 1 tells the computer about
   /// this device, which the computer keeps, so it has to be the real one.
+  /// The default [timeout] outlasts [hs2Timeout], so a slow link gets its
+  /// whole handshake.
   Future<ServerProbeResult> verify(
     ServerConfig config, {
     required String subscriberToken,
     DeviceIdentity identity = (name: '', platform: '', appVersion: ''),
-    Duration timeout = const Duration(seconds: 18),
+    Duration timeout = const Duration(seconds: 30),
   }) async {
     final crypto = CryptoService();
     try {
