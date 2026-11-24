@@ -2514,6 +2514,8 @@ class _SessionsTabState extends State<SessionsTab> {
       selector: (context, provider) => [
         provider.activeSessionId,
         provider.activeSessionServerId,
+        // The open session's row follows its chat; see listPreviewFor.
+        provider.activeSessionListPreview,
         provider.activeServerId,
         provider.connectionStatus,
         provider.isLoadingSessionCache,
@@ -4295,7 +4297,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
     // Lead with the stable session name; keep recent conversation text as context.
     final hasTitle = session.title.isNotEmpty && session.title != 'Untitled';
-    final previewText = session.messagePreview.trim();
+    final previewText = provider.listPreviewFor(session).trim();
     final titleOrProject = hasTitle
         ? session.title
         : _projectLabelForCwd(displayCwd);

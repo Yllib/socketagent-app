@@ -1106,6 +1106,52 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       _activeSessionServerId ?? _connMgr.activeServerId;
   String? get activeSessionCwd => _activeSessionCwd;
   String? get activeSessionTitle => _activeSessionTitle;
+
+  /// The open chat's newest agent message, by the rule the server uses for a
+  /// session row: the latest main-thread agent text, or for Claude a tool
+  /// call written as `[Tool] target`. The session list shows it for the open
+  /// session, so the row is as current as the chat instead of waiting for the
+  /// next session list. Null when the chat holds no such message.
+  String? get activeSessionListPreview {
+    final claude =
+        _activeSessionBackend == null ||
+        _activeSessionBackend!.isEmpty ||
+        _activeSessionBackend == 'claude';
+    for (final message in _messages.reversed) {
+      if (message.sender != MessageSender.assistant ||
+          message.parentToolUseId != null) {
+        continue;
+      }
+      final String text;
+      if (message.type == MessageType.text) {
+        text = message.textContent;
+      } else if (claude &&
+          message.type == MessageType.toolCall &&
+          message.toolName != null) {
+        final input = message.toolInput ?? const <String, dynamic>{};
+        final target = ['file_path', 'command', 'pattern', 'query', 'prompt']
+            .map((key) => input[key])
+            .whereType<String>()
+            .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+        text = '[${message.toolName}] $target';
+      } else {
+        continue;
+      }
+      final cleaned = text.replaceAll(RegExp(r'\s+'), ' ').trim();
+      if (cleaned.isEmpty) continue;
+      return cleaned.length > 200 ? cleaned.substring(0, 200) : cleaned;
+    }
+    return null;
+  }
+
+  /// The text a session row shows under its title.
+  String listPreviewFor(Session session) {
+    final open =
+        session.id == _activeSessionId &&
+        session.serverId == activeSessionServerId;
+    return (open ? activeSessionListPreview : null) ?? session.messagePreview;
+  }
+
   List<ActiveBrowserSession> get activeBrowserSessions {
     final sessionId = _activeSessionId;
     final serverId = activeSessionServerId;
