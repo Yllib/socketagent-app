@@ -16532,7 +16532,9 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final msg = {
       'type': 'auth_code',
       'code': code,
-      'sessionId': _activeSessionId,
+      // Sign-in can start from Settings with no chat open; the server rejects
+      // a null sessionId.
+      'sessionId': ?_activeSessionId,
       if (authRequestId != null && authRequestId.isNotEmpty)
         'authRequestId': authRequestId,
     };
