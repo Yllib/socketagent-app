@@ -27,6 +27,14 @@ class _SignInProvider extends ChatProvider {
   @override
   bool backendServerIsLocal(String serverId) => true;
 
+  final submittedCodes = <String>[];
+
+  @override
+  void submitAuthCode(String code, {String? serverId, String? authRequestId}) {
+    submittedCodes.add(code);
+    notifyListeners();
+  }
+
   @override
   void authenticateBackend(
     String serverId, {
@@ -41,7 +49,9 @@ class _SignInProvider extends ChatProvider {
       requestId: 'test',
       operation: 'auth',
       authMethod: authMethod,
-      authUrl: authMethod == 'browser'
+      authUrl: backend == 'gemini'
+          ? 'https://accounts.google.com/o/oauth2/auth?state=test'
+          : authMethod == 'browser'
           ? 'https://auth.openai.com/authorize?state=test&redirect_uri=http%3A%2F%2Flocalhost%3A1455%2Fauth%2Fcallback'
           : null,
     );
@@ -162,6 +172,44 @@ void main() {
       await tester.pumpAndSettle();
     });
   }
+
+  testWidgets(
+    'a submitted Gemini code shows it is being checked until sign-in finishes',
+    (tester) async {
+      final provider = _SignInProvider();
+      await tester.pumpWidget(
+        ChangeNotifierProvider<ChatProvider>(
+          create: (_) => provider,
+          child: MaterialApp(
+            home: Builder(
+              builder: (context) => Scaffold(
+                body: TextButton(
+                  onPressed: () =>
+                      showBackendSignIn(context, provider, 'server', 'gemini'),
+                  child: const Text('Sign in'),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Sign in'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '4/0abc');
+      await tester.tap(find.text('Submit Code'));
+      await tester.pump();
+      expect(provider.submittedCodes, ['4/0abc']);
+      expect(find.text('Checking the code with Google...'), findsOneWidget);
+      expect(find.text('Submit Code'), findsNothing);
+
+      provider.finish('completed');
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 10));
+      expect(find.text('Gemini sign-in complete'), findsOneWidget);
+      await tester.tap(find.text('Done'));
+      await tester.pumpAndSettle();
+    },
+  );
 
   test(
     'browser link survives later progress without being treated as a device code',

@@ -568,6 +568,18 @@ void showBackendOperationDialog(
                   if (pastesCode &&
                       isAuthOperation &&
                       running &&
+                      hasAuthUrl &&
+                      state!.codeSubmitted) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      backend == 'gemini'
+                          ? 'Checking the code with Google...'
+                          : 'Checking the code...',
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                    ),
+                  ] else if (pastesCode &&
+                      isAuthOperation &&
+                      running &&
                       hasAuthUrl) ...[
                     const SizedBox(height: 12),
                     TextField(
@@ -585,7 +597,7 @@ void showBackendOperationDialog(
                       onSubmitted: (_) => _submitAuthCode(
                         currentProvider,
                         serverId,
-                        state?.requestId,
+                        state,
                         authCodeCtrl.text,
                       ),
                     ),
@@ -598,7 +610,7 @@ void showBackendOperationDialog(
                         onPressed: () => _submitAuthCode(
                           currentProvider,
                           serverId,
-                          state?.requestId,
+                          state,
                           authCodeCtrl.text,
                         ),
                       ),
@@ -695,13 +707,20 @@ void showBackendOperationDialog(
   });
 }
 
+/// Sends the pasted code once; the dialog then shows it is being checked
+/// until the server reports the sign-in finished or failed.
 void _submitAuthCode(
   ChatProvider provider,
   String serverId,
-  String? requestId,
+  BackendInstallState? state,
   String rawCode,
 ) {
   final code = rawCode.trim();
-  if (code.isEmpty || requestId == null || requestId.isEmpty) return;
-  provider.submitAuthCode(code, serverId: serverId, authRequestId: requestId);
+  if (code.isEmpty || state == null || state.requestId.isEmpty) return;
+  state.codeSubmitted = true;
+  provider.submitAuthCode(
+    code,
+    serverId: serverId,
+    authRequestId: state.requestId,
+  );
 }

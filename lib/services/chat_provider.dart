@@ -343,6 +343,9 @@ class BackendInstallState {
   String? authCode;
   String authMethod;
   bool running;
+
+  /// The user sent the sign-in code and the server has not answered yet.
+  bool codeSubmitted = false;
   final List<String> output;
   String _authTextTail = '';
 
@@ -16543,6 +16546,8 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     } else {
       _connMgr.send(msg);
     }
+    // The sign-in dialog marks its state as sent before calling this.
+    notifyListeners();
   }
 
   Future<void> answerQuestion(
