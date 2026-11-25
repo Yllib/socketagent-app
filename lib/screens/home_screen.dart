@@ -1,6 +1,7 @@
 import '../widgets/composer_editor_screen.dart';
 import '../widgets/browser_profile_sheet.dart';
 import '../widgets/extra_folders_dialog.dart';
+import '../widgets/hold_to_stop_button.dart';
 import '../widgets/light_backdrop.dart';
 import '../widgets/offline_watermark.dart';
 import '../models/session_scheduled_tasks.dart';
@@ -4277,17 +4278,9 @@ class _ChatScreenState extends State<_ChatScreen> {
                 SizedBox(
                   height: 44,
                   child: Center(
-                    child: IconButton(
-                      icon: Icon(
-                        Icons.stop_circle,
-                        color: theme.colorScheme.error,
-                      ),
-                      onPressed: () => provider.abortQuery(),
-                      padding: const EdgeInsets.all(8),
-                      constraints: const BoxConstraints(
-                        minWidth: 40,
-                        minHeight: 40,
-                      ),
+                    child: HoldToStopButton(
+                      color: theme.colorScheme.error,
+                      onStop: () => provider.abortQuery(),
                     ),
                   ),
                 ),
