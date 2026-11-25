@@ -203,14 +203,19 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
                         : [
                             FilledButton(
                               onPressed: _busy ? null : () => _answer('once'),
-                              child: const Text('Allow once'),
-                            ),
-                            OutlinedButton(
-                              onPressed: _busy ? null : () => _answer('chat'),
                               child: Text(
-                                'Allow ${request.chatGrantLabel} for this chat',
+                                request.action == 'board_access'
+                                    ? 'Allow'
+                                    : 'Allow once',
                               ),
                             ),
+                            if (!request.isBoardAction)
+                              OutlinedButton(
+                                onPressed: _busy ? null : () => _answer('chat'),
+                                child: Text(
+                                  'Allow ${request.chatGrantLabel} for this chat',
+                                ),
+                              ),
                             TextButton(
                               onPressed: _busy ? null : () => _answer('deny'),
                               child: const Text('Deny'),

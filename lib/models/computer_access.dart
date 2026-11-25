@@ -95,6 +95,10 @@ class ComputerAccessRequest {
   };
   bool get pending => status == 'pending';
 
+  /// Board cards are answered once: board_access is kept on the client's
+  /// grant and board_delete covers one card, so neither offers a chat grant.
+  bool get isBoardAction => action.startsWith('board_');
+
   static ComputerAccessRequest? fromJson(Object? raw) {
     if (raw is! Map) return null;
     final requestId = raw['requestId'];
@@ -181,6 +185,9 @@ class ComputerAccessRequest {
     'agent_message' => 'Message an agent',
     'agent_stop' => 'Stop an agent',
     'agent_status' || 'agent_tail' || 'agent_list' => 'Check an agent',
+    'session_message' => 'Message a session',
+    'board_access' => 'Use a board',
+    'board_delete' => 'Delete a card',
     _ => action.replaceAll('_', ' '),
   };
 }

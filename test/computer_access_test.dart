@@ -230,5 +230,17 @@ void main() {
       expect(find.text('Allow for today'), findsOneWidget);
       expect(find.text('Allow permanently'), findsOneWidget);
     });
+
+    testWidgets('a board approval offers no chat grant', (tester) async {
+      await pumpCard(tester, {
+        ...approval,
+        'action': 'board_access',
+        'summary': 'Let Claude use the Wakespeed board.',
+      });
+      expect(find.text('Use a board'), findsOneWidget);
+      expect(find.text('Allow'), findsOneWidget);
+      expect(find.textContaining('for this chat'), findsNothing);
+      expect(find.text('Deny'), findsOneWidget);
+    });
   });
 }
