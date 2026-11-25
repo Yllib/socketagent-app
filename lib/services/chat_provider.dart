@@ -5727,6 +5727,18 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     final type = msg['type'] as String?;
     if (type == null) return;
 
+    // App-wide approval cards belong to no chat, so they skip session
+    // routing and prompt wherever the app is.
+    if (type == 'computer_access_request' && msg['appWide'] == true) {
+      _handleAppWideAccessRequest(msg, serverId);
+      return;
+    }
+    if (type == 'computer_access_resolved' &&
+        _appWideAccess.any((m) => m.questionId == msg['requestId'])) {
+      _handleComputerAccessResolved(msg);
+      return;
+    }
+
     final messageSessionId = msg['sessionId'] as String?;
     _cacheDurableLiveEvent(msg, serverId);
     final isForActiveSession = sessionMessageBelongsToActiveChat(
@@ -9897,6 +9909,54 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     notifyListeners();
   }
 
+  /// Open app-wide cards, oldest first. Each leaves once it is answered,
+  /// denied or expired.
+  final List<ChatMessage> _appWideAccess = [];
+  final Map<String, String> _appWideAccessServers = {};
+  final _appWideAccessController = StreamController<ChatMessage>.broadcast();
+  final List<ChatMessage> _unpromptedAppWideAccess = [];
+
+  /// Fires once per new app-wide card so the shell can prompt.
+  Stream<ChatMessage> get appWideAccessEvents =>
+      _appWideAccessController.stream;
+
+  /// Cards that arrived before the shell listened, such as the ones a
+  /// computer sends again on connect after a notification opened the app.
+  List<ChatMessage> takeUnpromptedAppWideAccess() {
+    final queued = List<ChatMessage>.of(_unpromptedAppWideAccess);
+    _unpromptedAppWideAccess.clear();
+    return queued;
+  }
+
+  /// Prompts again for every open app-wide card, after something closed the
+  /// dialogs that showed them.
+  void promptOpenAppWideAccess() {
+    for (final card in _appWideAccess) {
+      if (_appWideAccessController.hasListener) {
+        _appWideAccessController.add(card);
+      } else if (!_unpromptedAppWideAccess.contains(card)) {
+        _unpromptedAppWideAccess.add(card);
+      }
+    }
+  }
+
+  void _handleAppWideAccessRequest(Map<String, dynamic> msg, String? serverId) {
+    final request = ComputerAccessRequest.fromJson(msg);
+    if (request == null || request.status != 'pending') return;
+    if (_appWideAccess.any((m) => m.questionId == request.requestId)) return;
+    final card = ChatMessage.computerAccess(request);
+    _appWideAccess.add(card);
+    if (serverId != null) {
+      _appWideAccessServers[request.requestId] = serverId;
+    }
+    if (_appWideAccessController.hasListener) {
+      _appWideAccessController.add(card);
+    } else {
+      _unpromptedAppWideAccess.add(card);
+    }
+    notifyListeners();
+  }
+
   void _handleComputerAccessResolved(Map<String, dynamic> msg) {
     final requestId = msg['requestId'] as String? ?? '';
     final decision = msg['decision'] as String? ?? 'expired';
@@ -9904,6 +9964,20 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   void _setComputerAccessStatus(String requestId, String status) {
+    final appWide = _appWideAccess
+        .where((m) => m.questionId == requestId)
+        .firstOrNull;
+    if (appWide != null) {
+      appWide.toolInput?['status'] = status;
+      appWide.answered = status != 'pending';
+      if (appWide.answered) {
+        _appWideAccess.remove(appWide);
+        _unpromptedAppWideAccess.remove(appWide);
+        _appWideAccessServers.remove(requestId);
+      }
+      notifyListeners();
+      return;
+    }
     final idx = _messages.indexWhere(
       (m) => m.type == MessageType.computerAccess && m.questionId == requestId,
     );
@@ -10008,13 +10082,22 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     String decision, {
     ComputerAccess? access,
   }) async {
-    final idx = _messages.indexWhere(
-      (m) => m.type == MessageType.computerAccess && m.questionId == requestId,
-    );
-    if (idx < 0) return;
-    final request = ComputerAccessRequest.fromJson(_messages[idx].toolInput);
+    final card =
+        _appWideAccess.where((m) => m.questionId == requestId).firstOrNull ??
+        _messages
+            .where(
+              (m) =>
+                  m.type == MessageType.computerAccess &&
+                  m.questionId == requestId,
+            )
+            .firstOrNull;
+    if (card == null) return;
+    final request = ComputerAccessRequest.fromJson(card.toolInput);
     if (request == null) return;
-    final source = _computerAccessSource(request);
+    final appWideServer = _appWideAccessServers[requestId];
+    final source = appWideServer != null
+        ? _serverConfigs.where((c) => c.id == appWideServer).firstOrNull
+        : _computerAccessSource(request);
     final sourceId = source?.id ?? '';
     if (sourceId.isEmpty) {
       throw StateError(
@@ -21981,6 +22064,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (_sessionCacheSaveTimer != null) unawaited(_saveSessionCache());
     _deviceAuthSub?.cancel();
     _pendingDeviceController.close();
+    _appWideAccessController.close();
     account.dispose();
     _outgoingDisposed = true;
     _outgoingTimer?.cancel();

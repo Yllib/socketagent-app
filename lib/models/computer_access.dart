@@ -23,6 +23,7 @@ class ComputerAccessRequest {
     this.clientName = '',
     this.clientPublicKey = '',
     this.approvalKey = '',
+    this.appWide = false,
   });
 
   final String requestId;
@@ -67,6 +68,11 @@ class ComputerAccessRequest {
   /// target and the approval must name the client instead.
   final String approvalKey;
 
+  /// Prompted anywhere in the app instead of shown in a chat. Cards from AI
+  /// connector clients are app-wide; their [sessionId] is the client's
+  /// activity log, which the approval still names.
+  final bool appWide;
+
   bool get isLink => kind == 'link';
   bool get fromConnector => clientName.isNotEmpty;
 
@@ -94,6 +100,11 @@ class ComputerAccessRequest {
     _ => 'agents',
   };
   bool get pending => status == 'pending';
+
+  /// Who a `chat` answer covers. On an app-wide card that is the AI client,
+  /// for the 12 hours a chat grant lasts.
+  String get chatGrantScope =>
+      appWide && fromConnector ? '$clientName for 12 hours' : 'this chat';
 
   /// Board cards are answered once: board_access is kept on the client's
   /// grant and board_delete covers one card, so neither offers a chat grant.
@@ -133,6 +144,7 @@ class ComputerAccessRequest {
           ? client['publicKey'] as String? ?? ''
           : '',
       approvalKey: raw['approvalKey'] as String? ?? '',
+      appWide: raw['appWide'] == true,
     );
   }
 
@@ -153,6 +165,7 @@ class ComputerAccessRequest {
     if (fromConnector)
       'client': {'name': clientName, 'publicKey': clientPublicKey},
     if (approvalKey.isNotEmpty) 'approvalKey': approvalKey,
+    if (appWide) 'appWide': true,
   };
 
   ComputerAccessRequest withStatus(String status) =>

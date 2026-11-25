@@ -440,6 +440,9 @@ class _AppLauncherState extends State<AppLauncher>
     }
     if (sessionId == null) {
       Navigator.of(context).popUntil((route) => route.isFirst);
+      // That also closed any approval prompt, such as the one this
+      // notification was about, so show the open ones again.
+      provider.promptOpenAppWideAccess();
       return;
     }
     provider.resumeSessionFromNotification(

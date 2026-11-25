@@ -213,7 +213,7 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
                               OutlinedButton(
                                 onPressed: _busy ? null : () => _answer('chat'),
                                 child: Text(
-                                  'Allow ${request.chatGrantLabel} for this chat',
+                                  'Allow ${request.chatGrantLabel} for ${request.chatGrantScope}',
                                 ),
                               ),
                             TextButton(
@@ -292,7 +292,8 @@ class _ComputerAccessCardState extends State<ComputerAccessCard> {
     if (expired) return 'Expired';
     return switch (status) {
       'once' || 'action' => 'Allowed once',
-      'chat' => 'Allowed ${request.chatGrantLabel} for this chat',
+      'chat' =>
+        'Allowed ${request.chatGrantLabel} for ${request.chatGrantScope}',
       'deny' => 'Denied',
       'today' => 'Linked until midnight',
       'linked' => 'Linked',

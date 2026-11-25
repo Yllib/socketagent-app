@@ -7,6 +7,7 @@ import '../main.dart' show routeObserver;
 import '../services/chat_provider.dart';
 import '../services/desktop_shortcuts.dart';
 import '../services/desktop_workspace_controller.dart';
+import '../widgets/computer_access_dialog.dart';
 import '../widgets/device_approval_dialog.dart';
 import '../widgets/desktop_split_view.dart';
 import '../widgets/pause_while_hidden.dart';
@@ -48,6 +49,7 @@ class MainShellScreenState extends State<MainShellScreen>
   bool _desktopRouteVisible = true;
   StreamSubscription? _backendAuthRequiredSub;
   StreamSubscription? _pendingDeviceSub;
+  StreamSubscription? _appWideAccessSub;
   StreamSubscription? _backendAuthResolvedSub;
   ScaffoldFeatureController<SnackBar, SnackBarClosedReason>?
   _backendAuthSnackBar;
@@ -83,6 +85,14 @@ class MainShellScreenState extends State<MainShellScreen>
       // notice fetched during a cold start from a notification.
       for (final pending in provider.takeUnpromptedPendingDevices()) {
         showDeviceApprovalDialog(context, pending);
+      }
+      // Approval cards from AI clients, which belong to no chat.
+      _appWideAccessSub = provider.appWideAccessEvents.listen((card) {
+        if (!mounted) return;
+        showComputerAccessDialog(context, card);
+      });
+      for (final card in provider.takeUnpromptedAppWideAccess()) {
+        showComputerAccessDialog(context, card);
       }
       _backendAuthRequiredSub = provider.backendAuthRequiredEvents.listen((
         event,
@@ -214,6 +224,7 @@ class MainShellScreenState extends State<MainShellScreen>
     _scheduledTaskRefreshTimer?.cancel();
     _backendAuthRequiredSub?.cancel();
     _pendingDeviceSub?.cancel();
+    _appWideAccessSub?.cancel();
     _backendAuthResolvedSub?.cancel();
     _updateService.removeListener(_onUpdateChange);
     _updateBannerDismissed.dispose();
