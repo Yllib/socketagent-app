@@ -2065,9 +2065,9 @@ class AccountService extends ChangeNotifier {
     final computers = {for (final c in base.computers) c.key: c};
     final tombstones = {for (final t in base.removedComputers) t.key: t};
     final present = <String>{};
-    // Loopback-only entries go last so a shareable entry for the same
-    // computer wins, and they are never uploaded: 127.0.0.1 means a
-    // different machine on every other device.
+    // Loopback-only entries go last so another entry for the same computer
+    // wins. One goes up only with a v2 pairing, as a relay entry: 127.0.0.1
+    // means a different machine on every other device.
     final ordered = [
       ...local.computers.where((c) => !c.isLoopbackOnly),
       ...local.computers.where((c) => c.isLoopbackOnly),
@@ -2075,9 +2075,21 @@ class AccountService extends ChangeNotifier {
     for (final config in ordered) {
       final key = VaultComputer.keyFor(config);
       if (!present.add(key)) continue;
-      if (config.isLoopbackOnly) continue;
-      final fields = VaultComputer.sharedFields(config);
+      final fields = VaultComputer.uploadFields(
+        config,
+        hostname: AppPlatform.localHostname,
+      );
+      if (fields == null) continue;
       final existing = computers[key];
+      // An entry another device uploaded for this machine has the fields
+      // that device uses. The loopback entry replaces it only with a new
+      // pairing, or the two devices would overwrite each other every sync.
+      if (config.isLoopbackOnly &&
+          existing != null &&
+          existing.fields['pairingToken'] == fields['pairingToken'] &&
+          existing.fields['pairingSecret'] == fields['pairingSecret']) {
+        continue;
+      }
       final stone = tombstones.remove(key);
       if (existing == null || !existing.sameFieldsAs(fields)) {
         computers[key] = VaultComputer(

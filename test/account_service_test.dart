@@ -458,6 +458,54 @@ void main() {
       expect(phone.computers.single.name, 'Desk');
     });
 
+    test('a desktop whose only computer is its own paired server lists it '
+        'as a relay entry', () async {
+      final cloud = FakeCloud();
+      ServerConfig local(String secret) => ServerConfig(
+        id: 'windows_local_8085',
+        name: 'This computer',
+        host: '127.0.0.1',
+        port: 8085,
+        token: 'local-token',
+        serverPubkey: 'D',
+        pairingToken: 'room-D',
+        pairingSecret: secret,
+        transport: 2,
+      );
+      final desktop = Device('Desktop', cloud, computers: [local('s1')]);
+      await desktop.createAccount(goodPin);
+      final shared = desktop.service.vault!.computers.single;
+      expect(shared.key, 'D');
+      expect(shared.fields['relayUrl'], defaultRelayUrl);
+      expect(shared.fields['pairingToken'], 'room-D');
+      expect(shared.fields['pairingSecret'], 's1');
+      expect(shared.fields, isNot(contains('host')));
+      expect(shared.fields, isNot(contains('token')));
+      expect(shared.fields['name'], isNot('This computer'));
+
+      final browser = Device('Browser', cloud);
+      cloud.now += 1000;
+      expect(await browser.join(goodPin), isA<Joined>());
+      final reached = browser.computers.single;
+      expect(reached.isLoopbackOnly, isFalse);
+      expect(reached.relayUrl, defaultRelayUrl);
+
+      // The browser's entry differs, but it carries the same pairing, so
+      // the desktop leaves it alone. A new pairing replaces it.
+      cloud.now += 1000;
+      await browser.sync();
+      cloud.relayLog.clear();
+      await desktop.sync();
+      expect(cloud.relayLog, ['GET /api/account/vault 200']);
+      desktop.computers[0] = local('s2');
+      cloud.now += 1000;
+      await desktop.sync();
+      expect(
+        desktop.service.vault!.computers.single.fields['pairingSecret'],
+        's2',
+      );
+    });
+
     test('a computer removed on one device goes on the other, and comes '
         'back when added again', () async {
       final cloud = FakeCloud();

@@ -207,6 +207,17 @@ class ServerConfig {
   bool get isRelayPaired =>
       relayUrl.isNotEmpty && pairingToken.isNotEmpty && serverPubkey.isNotEmpty;
 
+  /// Whether the account vault lists this computer for the user's other
+  /// devices. A loopback entry is listed only with a v2 pairing, which any
+  /// device can use through the relay; see [VaultComputer.uploadFields].
+  bool get isShareable =>
+      !isLoopbackOnly ||
+      (isV2 &&
+          pairingToken.isNotEmpty &&
+          pairingSecret.isNotEmpty &&
+          serverPubkey.isNotEmpty &&
+          relayOrDefault != null);
+
   /// Reachable only from the machine the server runs on. Discovery adds these
   /// on Windows; another device can't use 127.0.0.1 to reach this computer.
   bool get isLoopbackOnly => _loopbackOnly(

@@ -2831,7 +2831,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
 
     _savedComputerKeys = {
       for (final c in _serverConfigs)
-        if (!c.isLoopbackOnly) c.id: VaultComputer.keyFor(c),
+        if (c.isShareable) c.id: VaultComputer.keyFor(c),
     };
     await PushKeys.sync(_serverConfigs);
     _loadServerBuildCache(prefs);
@@ -3061,7 +3061,7 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
   void _recordChangedComputerKeys() {
     final now = {
       for (final c in _serverConfigs)
-        if (!c.isLoopbackOnly) c.id: VaultComputer.keyFor(c),
+        if (c.isShareable) c.id: VaultComputer.keyFor(c),
     };
     final kept = now.values.toSet();
     for (final MapEntry(key: id, value: old) in _savedComputerKeys.entries) {
@@ -3630,10 +3630,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
     if (record) {
       final kept = {for (final c in _serverConfigs) VaultComputer.keyFor(c)};
       for (final config in gone) {
-        // Loopback entries are never uploaded, so there is nothing to
-        // remove, and another entry for the same computer keeps it listed.
+        // An entry that is never uploaded has nothing to remove, and
+        // another entry for the same computer keeps it listed.
         final key = VaultComputer.keyFor(config);
-        if (config.isLoopbackOnly || kept.contains(key)) continue;
+        if (!config.isShareable || kept.contains(key)) continue;
         account.recordRemoval(VaultList.computers, key);
       }
     }
@@ -8785,6 +8785,10 @@ class ChatProvider extends ChangeNotifier with WidgetsBindingObserver {
       if (computer.sameFieldsAs(VaultComputer.sharedFields(existing))) {
         continue;
       }
+      // The server on this machine, paired from its own files. Those files
+      // stay the truth for it here; the vault's relay entry is for other
+      // devices.
+      if (existing.isLoopbackOnly && existing.isShareable) continue;
       try {
         // The pairing is read from the vault entry alone. Laid over the
         // saved secret, an entry that names a room and no secret would

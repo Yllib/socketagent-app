@@ -293,6 +293,27 @@ class VaultComputer {
       if (!localOnlyFields.contains(entry.key)) entry.key: entry.value,
   };
 
+  /// What this device uploads for [config], or null when it is not
+  /// [ServerConfig.isShareable]. The desktop's entry for the server on its
+  /// own machine goes up as a relay entry: without the 127.0.0.1 address
+  /// and local token, which mean nothing elsewhere, and named [hostname]
+  /// instead of "This computer".
+  static Map<String, Object?>? uploadFields(
+    ServerConfig config, {
+    required String hostname,
+  }) {
+    if (!config.isShareable) return null;
+    final fields = sharedFields(config);
+    if (!config.isLoopbackOnly) return fields;
+    return {
+      ...fields
+        ..remove('host')
+        ..remove('token'),
+      'relayUrl': config.relayOrDefault,
+      if (config.name == 'This computer') 'name': hostname,
+    };
+  }
+
   factory VaultComputer.fromConfig(ServerConfig config, {required int now}) =>
       VaultComputer(
         key: keyFor(config),

@@ -169,13 +169,14 @@ void main() {
   final secret = base64Encode(List.filled(32, 5));
 
   /// A stored entry at a port nothing listens on, for what reads only the
-  /// config.
+  /// config. Not 127.0.0.1, which with a v2 pairing would be this machine's
+  /// own server, paired from its files and left alone by the vault.
   Future<void> store({String? key, bool v2 = false, String relayUrl = ''}) =>
       provider.addServer(
         ServerConfig(
           id: 'computer',
           name: 'Computer',
-          host: '127.0.0.1',
+          host: '127.0.0.2',
           port: 1,
           token: v2 ? '' : 'token',
           serverPubkey: key ?? '',
